@@ -334,7 +334,10 @@ def _workflow_runtime_response(workflow_id, run_id, *, group=False, action=None)
         return jsonify({'runtime': runtime, 'can_decide': can_decide})
     except WorkflowRuntimeConflict as exc:
         return jsonify({'error': exc.public_message, 'code': exc.code}), 409
-    except PermissionError:
+    except PermissionError as exc:
+        if isinstance(exc, AnalysisResultUnavailable):
+            # A saved record behind the progress view failed its own check, not the caller's access.
+            return jsonify({'error': f'Workflow progress is unavailable. {exc.public_message}'}), 403
         return jsonify({'error': 'Workflow progress is unavailable because current access could not be confirmed.'}), 403
     except (LookupError, CosmosResourceNotFoundError):
         return jsonify({'error': 'Durable workflow run not found.'}), 404

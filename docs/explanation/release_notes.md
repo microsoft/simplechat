@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.234)**
+### **(v0.261.235)**
 
 #### New Features
 
@@ -16,6 +16,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   New route `POST /api/notifications/<notification_id>/acknowledge`, open only to the alert's recipients. `GET /api/notifications/workflow-alerts` now also returns pending alerts that need acknowledgment and team alerts from the user's groups, with `complete` and `sounds_enabled`. Read, dismiss and acknowledge writes are now conditional on the stored version, so concurrent writes to a shared alert can't drop each other.
     *   Both the V2 and classic workflow editors have the new options, and both mirror the server's reviewed validation messages.
     *   (Ref: #1634, `functions_workflow_alerts.py`, `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, `WorkflowAlertEditor.tsx`, `workflowAlertStore.ts`, `workflowAlertSound.ts`, `PreferencesTab.tsx`, `notifications.js`, `workflow-alert-sound.js`, `workspace_workflows.js`, [Workflow Alert Acknowledgment](features/WORKFLOW_ALERT_ACKNOWLEDGMENT.md))
+
+### **(v0.261.234)**
+
+#### Bug Fixes
+
+*   **Clearer Messages When A Saved Result Can't Be Used**
+    *   Errors about saved and generated results no longer say that source access could not be confirmed. Since saved results stopped re-checking their source documents, most of these errors mean something else, and the message now says which kind of problem it is.
+    *   A source document that can't be read now, or that changed while it was read: "A source document for this analysis is no longer available or has changed." Only reading an uploaded document as an input can raise this.
+    *   A conversation, workflow or run that no longer exists or isn't yours: "The conversation, workflow or run that holds this result no longer exists or isn't available to you."
+    *   A saved result whose earlier result, record or loop and Repeat state is missing or changed: "This saved result can't be used because something it depends on is missing or has changed."
+    *   Workflow task errors, a task result that couldn't be saved, a paused loop item, saved analysis explanations, Analyze saves, the Analyze publication check and the workflow progress view now show the matching message. Placeholders in chat history for an unavailable saved analysis or saved workflow output no longer mention access confirmation.
+    *   Error codes and HTTP statuses are unchanged, apart from two internal codes for a message or workflow binding mismatch (`analysis_message_unavailable` and `analysis_workflow_unavailable`) that map to the same response codes as before.
+    *   (Ref: #1621, `functions_analysis_access.py`, `functions_workflow_runner.py`, `functions_workflow_flow_runner.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `test_analysis_unavailable_message_families.py`, [Saved-Result Error Messages Fix](fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md))
 
 ### **(v0.261.233)**
 

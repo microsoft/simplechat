@@ -5,7 +5,12 @@ import json
 from copy import deepcopy
 
 from functions_workflow_bindings import WorkflowInputError
-from functions_analysis_access import AnalysisResultUnavailable
+from functions_analysis_access import (
+    ANALYSIS_UNAVAILABLE_CONTAINER,
+    ANALYSIS_UNAVAILABLE_SAVED_RESULT,
+    ANALYSIS_UNAVAILABLE_SOURCE,
+    AnalysisResultUnavailable,
+)
 from functions_workflow_definitions import workflow_output_kind_matches
 from functions_workflow_flow import MISSING, compile_workflow_flow, evaluate_predicate
 from functions_workflow_identity import canonical_digest, workflow_execution_id, workflow_node_identity
@@ -15,6 +20,18 @@ from functions_workflow_node_results import (
 from functions_workflow_results import (
     WorkflowResultNotReadyError, _build_task_result, persist_workflow_task_result, workflow_result_summary,
 )
+
+
+# Pause reasons for a loop item that could not be read, by AnalysisResultUnavailable.family.
+LOOP_ITEM_UNAVAILABLE_REASONS = {
+    ANALYSIS_UNAVAILABLE_SOURCE: "The current loop item's original source is no longer available.",
+    ANALYSIS_UNAVAILABLE_CONTAINER: (
+        "The conversation, workflow or run that holds the current loop item's input is no longer available."
+    ),
+    ANALYSIS_UNAVAILABLE_SAVED_RESULT: (
+        "The current loop item's saved input can't be used because something it depends on is missing or has changed."
+    ),
+}
 
 
 class WorkflowFlowRunner:
@@ -457,9 +474,12 @@ class WorkflowFlowRunner:
                     current = self.execution.store.journal_read("iteration", key)
                     if current["payload"].get("state") not in {"running", "completed", "skipped"}:
                         item_state = "failed"
-                except AnalysisResultUnavailable:
+                except AnalysisResultUnavailable as exc:
                     self.execution.pause_input(
-                        "The current loop item's original source is no longer available.", code="workflow_loop_source_unavailable",
+                        LOOP_ITEM_UNAVAILABLE_REASONS.get(
+                            getattr(exc, "family", None), LOOP_ITEM_UNAVAILABLE_REASONS[ANALYSIS_UNAVAILABLE_SOURCE],
+                        ),
+                        code="workflow_loop_source_unavailable",
                     )
                 except WorkflowInputError:
                     exports, item_state = {}, "failed"

@@ -11092,10 +11092,18 @@ def _execute_workflow_task_sequence(
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
+                # Keyed by AnalysisResultUnavailable.family (functions_analysis_access); a source is the default.
+                unavailable_error = {
+                    'container': 'A conversation, workflow or run that this task needs is no longer available.',
+                    'saved_result': (
+                        "A saved result this task needs can't be used because something it depends on "
+                        'is missing or has changed.'
+                    ),
+                }.get(getattr(safe_error, 'family', None), 'A required source is no longer available for this workflow run.')
                 task_error = (
                     str(safe_error) if isinstance(safe_error, (WorkflowContextBudgetError, WorkflowResultNotReadyError))
                     else safe_error.public_message if isinstance(safe_error, WorkflowInputError)
-                    else 'A required source is no longer available for this workflow run.' if isinstance(safe_error, AnalysisResultUnavailable)
+                    else unavailable_error if isinstance(safe_error, AnalysisResultUnavailable)
                     else {
                         'runner': (
                             'The task runner is unavailable, disabled, or no longer authorized. '
@@ -11275,10 +11283,20 @@ def _execute_workflow_task_sequence(
             except AnalysisResultUnavailable as exc:
                 # Raised when the task's own analysis could not confirm the sources it read
                 # while it ran, or its result provenance is malformed. Nothing was saved.
-                message = (
+                # The error's family (functions_analysis_access) picks the wording; a source is the default.
+                message = {
+                    'container': (
+                        'The analysis result was not saved because the conversation, workflow or run that '
+                        'holds it is no longer available. Dependent tasks were not run.'
+                    ),
+                    'saved_result': (
+                        'The analysis result was not saved because something it depends on is missing or '
+                        'has changed. Dependent tasks were not run.'
+                    ),
+                }.get(getattr(exc, 'family', None), (
                     'The analysis result was not saved because a document it read changed or became '
                     'unavailable while it ran. Dependent tasks were not run.'
-                )
+                ))
                 _save_workflow_task_run_item(
                     workflow, run_id, task, 'failed', attempt_count=attempt_count,
                     error=message, created_at=created_at, runner_audit=runner_audit,

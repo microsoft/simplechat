@@ -94,7 +94,7 @@ class AnalysisWorkUnitCheckpoints:
             require_snapshot=True,
         )
         if allowed is False:
-            raise AnalysisResultUnavailable()
+            raise AnalysisResultUnavailable('analysis_source_unavailable')
 
     def initialize(self, request, sources):
         assigned = analysis_source_snapshot(sources)
