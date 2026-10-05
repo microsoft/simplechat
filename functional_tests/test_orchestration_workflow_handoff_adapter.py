@@ -1060,3 +1060,7 @@ def test_a_retried_run_reuses_the_hand_off_it_already_prepared(modules, monkeypa
     _same(again["workflow_handoff"], first["workflow_handoff"], "reused sidecar")
     _same([call["origin"]["orchestration_run_id"] for call in dry_runs], ["run-1"], "dry runs")
     _same(writes, [], "workflow writes")
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))
