@@ -183,9 +183,9 @@ class SaveParityHarness:
         self._clock = itertools.count()
         self._uuids = itertools.count(1)
         self.stubs = self._build_stubs()
-        # The real modules import others in turn, such as ``functions_workflow_chat_delivery``, which
-        # would bind to the doubles. Every change is undone once loading is complete, so no module
-        # stays installed for a later test to import.
+        # Loading installs the doubles and the real modules, and the real modules import others in
+        # turn. Every change is undone once loading is complete, so no module stays installed for a
+        # later test to import.
         with _restored_modules():
             sys.modules.update(self.stubs)
             self.modules = {name: _load(name, APP_ROOT / f"{name}.py") for name in REAL_MODULES}
