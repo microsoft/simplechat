@@ -90,7 +90,9 @@
     transform-origin: 50% 12%;
 }
 
-/* The callout's pointer at My Workspace, drawn in the notice's own surface and edge. */
+/* The callout's pointer at the bell, drawn in the notice's own surface and edge. Its offsets
+ * are what WorkflowAlertCalloutSlot lines the notice up by: 18px in below the bell, 16px down
+ * beside it. */
 .wf-alert-notch {
     position: absolute;
     width: 12px;
@@ -114,6 +116,18 @@
     left: -7px;
     border-top-width: 0;
     border-right-width: 0;
+}
+
+/* An alert that needs acknowledgment, in its own row under the rail's header, spans the rail.
+ * WorkflowAlertRowSlot measures where the bell is from the row's left edge; the notch is placed
+ * from the notice's padding edge, one 1px border in, and centred on its 12px width, so it sits
+ * 7px left of that measure. Its entrance grows from the same point. */
+[data-in-flow='true'] > [data-placement='below'] > .wf-alert-notch {
+    left: calc(var(--wf-alert-notch-centre, 24px) - 7px);
+}
+
+[data-in-flow='true'] > .wf-alert-enter-drop {
+    transform-origin: var(--wf-alert-notch-centre, 24px) 0;
 }
 
 @media (prefers-reduced-transparency: reduce) {

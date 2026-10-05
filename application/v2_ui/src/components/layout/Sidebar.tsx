@@ -44,7 +44,7 @@ import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
 import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
-import { WorkflowAlertCalloutSlot, useWorkflowAlertCalloutShown } from '../notifications/WorkflowAlertNotice';
+import { useWorkflowAlertCalloutShown, WorkflowAlertRowSlot } from '../notifications/WorkflowAlertNotice';
 
 interface NavItem {
     to: string;
@@ -282,10 +282,13 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     const location = useLocation();
     const expandRef = useRef<HTMLButtonElement>(null);
     const collapseRef = useRef<HTMLButtonElement>(null);
+    const railScrollRef = useRef<HTMLDivElement>(null);
     const alertCalloutShown = useWorkflowAlertCalloutShown();
 
     const onChatPage = location.pathname.startsWith('/chat');
     const collapsed = mobile ? !mobileNavOpen : railCollapsed;
+    // The conversation list is drawn only on the chat page, and only in the full rail.
+    const showConversations = onChatPage && !collapsed;
     const toggleNavigation = () => mobile ? setMobileNavOpen(!mobileNavOpen) : toggleRail();
 
     useEffect(() => {
@@ -349,7 +352,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 collapsed ? 'w-[68px]' : 'w-[280px]',
                 mobile && 'absolute inset-y-0 left-0 z-50 max-w-full',
                 mobile && mobileNavOpen && 'glass-modal',
-                // A workflow alert's callout flies out past the collapsed strip, over the page.
+                // A workflow alert's notice hangs from the bell past the rail's edge, over the page.
                 !mobile && alertCalloutShown && 'z-40',
             )}
         >
@@ -379,11 +382,18 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 )}
             </div>
 
+            {/* An alert that needs acknowledgment stays until someone acknowledges it, so in the
+                full rail it takes a row of its own here, under the bell it hangs from, rather
+                than covering New chat and the page as an ordinary notice briefly does. */}
+            <WorkflowAlertRowSlot collapsed={collapsed} />
+
             {collapsed && (
                 <>
                     {/* The collapsed strip has no room beside the brand, so the bell takes the
-                        row under it and shows a dot instead of a number. */}
-                    <NotificationBell collapsed className="mx-auto mb-1" />
+                        row under it and shows a dot instead of a number. Its wrapper spans the
+                        strip's inner width, so a workflow alert flying out from the bell starts
+                        at the strip's edge. */}
+                    <NotificationBell collapsed className="mx-3 mb-1 justify-center" />
                     <button
                         type="button"
                         ref={expandRef}
@@ -422,49 +432,54 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 </div>
             )}
 
-            <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
-                {NAV_ITEMS.map((item) => (
-                    <li key={item.to} className={item.to === '/workspace' ? 'relative' : undefined}>
-                        {(() => {
-                            const label = item.to === '/public' ? publicLabels.plural : item.label;
-                            return (
-                        <NavLink
-                            to={item.to}
-                            onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
-                            title={collapsed ? label : item.hint}
-                            className={({ isActive }) =>
-                                clsx(
-                                    'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
-                                    collapsed && 'justify-center px-0',
-                                    isActive
-                                        ? 'bg-accent-soft font-medium text-accent'
-                                        : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
-                                )
-                            }
-                        >
-                            <item.icon size={17} className="shrink-0" />
-                            {!collapsed && <span className="truncate">{label}</span>}
-                        </NavLink>
-                            );
-                        })()}
-                        {/* Workflows live in My Workspace, so a workflow's alert appears here. */}
-                        {item.to === '/workspace' && <WorkflowAlertCalloutSlot collapsed={collapsed} />}
-                    </li>
-                ))}
-            </ul>
+            {/* On the chat page, everything between New chat and the footer scrolls as one
+                panel, as the classic sidebar does. Reading down the conversation list carries
+                the navigation up out of view and pins the list's search right under New chat,
+                so the list gets nearly the whole rail rather than whatever the navigation
+                leaves it. Everywhere else, and in the collapsed strip, nothing here scrolls: the
+                region only fills the height the footer leaves, as the spacer it replaced did. */}
+            <div
+                ref={railScrollRef}
+                data-rail-scroll-region=""
+                className={clsx('flex-1', showConversations && 'min-h-0 overflow-y-auto')}
+            >
+                <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
+                    {NAV_ITEMS.map((item) => (
+                        <li key={item.to}>
+                            {(() => {
+                                const label = item.to === '/public' ? publicLabels.plural : item.label;
+                                return (
+                            <NavLink
+                                to={item.to}
+                                onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
+                                title={collapsed ? label : item.hint}
+                                className={({ isActive }) =>
+                                    clsx(
+                                        'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
+                                        collapsed && 'justify-center px-0',
+                                        isActive
+                                            ? 'bg-accent-soft font-medium text-accent'
+                                            : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+                                    )
+                                }
+                            >
+                                <item.icon size={17} className="shrink-0" />
+                                {!collapsed && <span className="truncate">{label}</span>}
+                            </NavLink>
+                                );
+                            })()}
+                        </li>
+                    ))}
+                </ul>
 
-            {/* Custom pages and external links an administrator configured. Renders
-                nothing when neither is enabled, which is the default. */}
-            <NavExtras collapsed={collapsed} />
+                {/* Custom pages and external links an administrator configured. Renders
+                    nothing when neither is enabled, which is the default. */}
+                <NavExtras collapsed={collapsed} />
 
-            {/* The conversation list only belongs in the rail while the chat page is open,
-                so other pages get the full rail height for their own navigation. */}
-            {onChatPage && !collapsed && (
-                <div className="mt-4 min-h-0 flex-1 border-t border-edge pt-3">
-                    <ConversationRail />
-                </div>
-            )}
-            {(!onChatPage || collapsed) && <div className="flex-1" />}
+                {/* The conversation list only belongs in the rail while the chat page is open,
+                    so other pages get the full rail height for their own navigation. */}
+                {showConversations && <ConversationRail scrollRootRef={railScrollRef} />}
+            </div>
 
             <div className="shrink-0 space-y-1 border-t border-edge p-3">
                 <button

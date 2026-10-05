@@ -1,9 +1,12 @@
 # test_v2_workflow_alert_notices.py
 """
 Browser regressions for the V2 workflow alert notice, its alert card and their runtime.
-Version: 0.261.228
+Version: 0.261.236
 Implemented in: 0.261.199
 Open and Dismiss up front, everything else under Show more: 0.261.228
+Must-acknowledge alerts, sounds and team delivery: 0.261.235
+Hanging from the bell rather than My Workspace, whatever the chat rail's scroll, with a row of
+its own under the rail's header for an alert that needs acknowledgment: 0.261.236
 
 Exercises the real rail, bell, notice, card, live region, stores and both notification
 runtimes, bundled by fixtures/workflow_alerts. Only HTTP answers and the browser APIs a
@@ -275,6 +278,28 @@ GEOMETRY = r"""
 }
 """
 
+# Where the notice hangs from: the bell, the notch that points at it, and the rail's edge.
+ANCHOR = r"""
+() => {
+    const bell = document.querySelector('button[data-notification-bell]').getBoundingClientRect();
+    const notice = document.querySelector('[data-workflow-alert-notice]');
+    const box = notice.getBoundingClientRect();
+    const notch = notice.querySelector('.wf-alert-notch').getBoundingClientRect();
+    const nav = document.getElementById('primary-navigation').getBoundingClientRect();
+    return {
+        bellX: bell.left + bell.width / 2,
+        bellY: bell.top + bell.height / 2,
+        bellBottom: bell.bottom,
+        top: box.top,
+        left: box.left,
+        right: box.right,
+        notchX: notch.left + notch.width / 2,
+        notchY: notch.top + notch.height / 2,
+        navRight: nav.right,
+    };
+}
+"""
+
 # The properties every wf-* keyframe animates.
 KEYFRAMES = r"""
 () => {
@@ -421,6 +446,8 @@ class AlertServer:
         self.errors = []
         self.unexpected = []
         self.expected_http_failures = set()
+        # The conversation feed's rows, served a page at a time; empty unless a test fills it.
+        self.conversations = []
         # When set, the alerts route leaves out its delivery and recency filters, as a server
         # from before they existed would, so the client's own checks are what is tested.
         self.leaky = False
@@ -532,9 +559,13 @@ class AlertServer:
 
     def conversation_route(self, route, method, path, query, tab):
         if method == "GET" and path == "/api/conversations/feed":
+            size = int(query.get("page_size", 50))
+            start = int(query.get("cursor") or 0)
+            more = start + size < len(self.conversations)
             route.fulfill(json={
-                "success": True, "conversations": [], "has_more": False, "next_cursor": None,
-                "page_size": int(query.get("page_size", 50)), "hidden_count": 0, "priority_count": 0,
+                "success": True, "conversations": self.conversations[start:start + size], "has_more": more,
+                "next_cursor": str(start + size) if more else None,
+                "page_size": size, "hidden_count": 0, "priority_count": 0,
                 "recent_count": 0, "source_offsets": {},
             })
         elif method == "GET" and (match := re.fullmatch(r"/api/conversations/([^/]+)/kind", path)):
@@ -1249,13 +1280,15 @@ def test_hover_and_focus_pause_the_tuck_timer(tab, server, alert, now):
     tab.run_for(5000)
     expect(tab.notice).to_be_visible()
 
-    tab.focus('textarea[aria-label="Notes"]')
+    # Somewhere the notice does not cover. Hanging from the bell past the rail's edge, it lies
+    # over the top of the page, Notes included, and focus moving under it tucks it at once.
+    tab.focus('button[aria-label^="Switch to"]')
     tab.run_for(2400)
     expect(tab.notice).to_be_visible()
     assert tab.state()["phase"] == "notice"
     tab.run_for(200)
     tab.wait_tucked()
-    expect(tab.notes).to_be_focused()
+    expect(tab.page.locator('button[aria-label^="Switch to"]')).to_be_focused()
 
 
 def test_high_and_critical_alerts_stay_until_handled(tab, server, alert, now):
@@ -1429,8 +1462,8 @@ def test_the_notice_and_card_work_from_the_keyboard(tab, server, alert):
     tab.poll()
     expect(tab.notice).to_be_visible()
 
-    # The notice sits in the tab order right after the rail item it hangs from.
-    tab.my_workspace.focus()
+    # The notice sits in the tab order right after the bell it hangs from.
+    tab.bell.focus()
     tab.page.keyboard.press("Tab")
     expect(tab.open_button).to_be_focused()
     tab.page.keyboard.press("Enter")
@@ -1445,7 +1478,7 @@ def test_the_notice_and_card_work_from_the_keyboard(tab, server, alert):
 
     tab.page.keyboard.press("Escape")
     expect(tab.card).to_have_count(0)
-    expect(tab.my_workspace).to_be_focused()
+    expect(tab.bell).to_be_focused()
     assert server.find("kb-1")["is_read"] is False
     assert set(tab.claims()) == {"kb-1"}
     expect(tab.notice).to_have_count(0)
@@ -1454,12 +1487,12 @@ def test_the_notice_and_card_work_from_the_keyboard(tab, server, alert):
     server.add(alert("kb-2", title="Canary error rate is up"))
     tab.poll()
     expect(tab.notice).to_contain_text("Canary error rate is up")
-    expect(tab.my_workspace).to_be_focused()
+    expect(tab.bell).to_be_focused()
     tab.page.keyboard.press("Tab")
     expect(tab.open_button).to_be_focused()
     tab.page.keyboard.press("Escape")
     tab.wait_tucked()
-    expect(tab.my_workspace).to_be_focused()
+    expect(tab.bell).to_be_focused()
     expect(tab.bell_ring).to_have_count(1)
     assert server.find("kb-2")["is_read"] is False
 
@@ -1470,13 +1503,19 @@ def test_tabbing_onto_what_the_notice_covers_tucks_it(tab, server, alert):
     tab.poll()
     expect(tab.notice).to_be_visible()
 
-    tab.my_workspace.focus()
+    # From the bell: the notice's own two buttons, then Collapse navigation beside the bell,
+    # which the notice hangs below rather than over, then Chats, which it does cover.
+    tab.bell.focus()
     for _ in range(3):
         tab.page.keyboard.press("Tab")
-    group_workspaces = tab.page.get_by_role("link", name="Group Workspaces", exact=True)
-    expect(group_workspaces).to_be_focused()
+    collapse = tab.page.get_by_role("button", name="Collapse navigation", exact=True)
+    expect(collapse).to_be_focused()
+    expect(tab.notice).to_be_visible()
+    tab.page.keyboard.press("Tab")
+    chats = tab.page.get_by_role("link", name="Chats", exact=True)
+    expect(chats).to_be_focused()
     tab.wait_tucked()
-    expect(group_workspaces).to_be_focused()
+    expect(chats).to_be_focused()
     assert server.find("covering")["is_read"] is False
     assert tab.state()["ringToken"] == 1
 
@@ -1545,6 +1584,17 @@ def test_the_notice_fits_every_rail_layout_and_theme(tab, server, alert, layout,
     assert geometry["onTop"], f"Something covers the notice: {geometry}"
     assert geometry["background"] == NOTICE_SURFACE[theme], geometry
 
+    # It hangs from the bell: dropping from it like the bell's panel when the rail is
+    # expanded, past the rail's edge, and flying out from the strip's edge beside it otherwise.
+    anchor = tab.js(ANCHOR)
+    if setup["placement"] == "below":
+        assert abs(anchor["notchX"] - anchor["bellX"]) <= 2, f"The notch must point at the bell: {anchor}"
+        assert abs(anchor["top"] - (anchor["bellBottom"] + 8)) <= 1, f"It drops 8px below the bell: {anchor}"
+        assert anchor["right"] > anchor["navRight"], f"It hangs past the rail's edge: {anchor}"
+    else:
+        assert abs(anchor["notchY"] - anchor["bellY"]) <= 2, f"The notch must be level with the bell: {anchor}"
+        assert abs(anchor["left"] - anchor["navRight"]) <= 1, f"It flies out from the strip's edge: {anchor}"
+
     if layout == "phone":
         # The open navigation drawer has the reader's attention; the notice waits behind it.
         tab.page.get_by_role("button", name="Expand navigation", exact=True).click()
@@ -1552,6 +1602,53 @@ def test_the_notice_fits_every_rail_layout_and_theme(tab, server, alert, layout,
         tab.page.keyboard.press("Escape")
         expect(tab.notice).to_be_visible()
         assert tab.notice.evaluate(GEOMETRY)["onTop"]
+
+
+@pytest.mark.parametrize("must_acknowledge", [False, True], ids=["ordinary", "must-acknowledge"])
+def test_the_notice_hangs_from_the_bell_however_far_the_chat_rail_is_scrolled(tab, server, alert, must_acknowledge):
+    """The chat rail scrolls its navigation away; the bell, and the notice, stay put."""
+    server.conversations = [
+        {"id": f"conv-{index:02d}", "title": f"Conversation {index:02d}", "chat_type": "personal_single_user",
+         "context": [], "is_pinned": False, "is_hidden": False, "has_unread_assistant_response": False}
+        for index in range(40)
+    ]
+    tab.open(path="/chat")
+    rows = tab.page.locator("#primary-navigation li.group\\/row")
+    expect(rows).to_have_count(30)
+    scrolled = tab.js(
+        """() => {
+            const region = document.querySelector('[data-rail-scroll-region]');
+            region.scrollTop = region.scrollHeight;
+            return region.scrollTop;
+        }"""
+    )
+    assert scrolled > 0
+    tab.wait_for(
+        lambda: tab.my_workspace.bounding_box()["y"] + tab.my_workspace.bounding_box()["height"]
+        <= tab.js("() => document.querySelector('[data-rail-scroll-region]').getBoundingClientRect().top"),
+        "My Workspace should have scrolled out of view with the rest of the navigation.",
+    )
+
+    if must_acknowledge:
+        server.add(must_ack_alert(alert, "scrolled", title="Deploy gate is red"))
+    else:
+        server.add(alert("scrolled", title="Deploy gate is red"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    tab.page.wait_for_timeout(300)
+
+    geometry = tab.notice.evaluate(GEOMETRY)
+    assert geometry["onTop"], f"Something covers the notice: {geometry}"
+    assert geometry["top"] >= 0 and geometry["bottom"] <= geometry["viewportHeight"], geometry
+    anchor = tab.js(ANCHOR)
+    assert abs(anchor["notchX"] - anchor["bellX"]) <= 2, anchor
+    if must_acknowledge:
+        # In its own row, above New chat and the scroll region, so nothing it stays over is lost.
+        new_chat = tab.page.get_by_title("Start a new chat", exact=True)
+        assert new_chat.evaluate("(button) => button.getBoundingClientRect().top") >= geometry["bottom"]
+        assert anchor["right"] <= anchor["navRight"], anchor
+    # The rail stays where the reader left it.
+    assert tab.js("() => document.querySelector('[data-rail-scroll-region]').scrollTop") >= scrolled - 1
 
 
 @pytest.mark.parametrize("transparency", ["normal", "reduced"], ids=["glass", "reduced-transparency"])
@@ -2192,11 +2289,26 @@ def test_a_notice_waiting_for_acknowledgment_takes_its_own_room_in_the_rail(tab,
     tab.poll()
     expect(tab.notice).to_be_visible()
     expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "true")
+    tab.page.wait_for_timeout(300)
+
+    # Its room is a row under the rail's header, the row the bell is in: it points up at the
+    # bell, stays inside the rail, and pushes the navigation down rather than covering it.
+    anchor = tab.js(ANCHOR)
+    assert abs(anchor["notchX"] - anchor["bellX"]) <= 2, f"The notch must point at the bell: {anchor}"
+    assert anchor["top"] >= anchor["bellBottom"], anchor
+    assert anchor["right"] <= anchor["navRight"], f"It must not reach over the page: {anchor}"
+    chats = tab.page.get_by_role("link", name="Chats", exact=True)
+    notice_bottom = tab.notice.evaluate("(notice) => notice.getBoundingClientRect().bottom")
+    assert chats.evaluate("(link) => link.getBoundingClientRect().top") >= notice_bottom
 
     group_workspaces = tab.page.get_by_role("link", name="Group Workspaces", exact=True)
-    notice_bottom = tab.notice.evaluate("(notice) => notice.getBoundingClientRect().bottom")
     item_top = group_workspaces.evaluate("(link) => link.getBoundingClientRect().top")
     assert item_top >= notice_bottom, (item_top, notice_bottom)
+
+    # It comes after the rail's header controls in the tab order, before the navigation.
+    tab.page.get_by_role("button", name="Collapse navigation", exact=True).focus()
+    tab.page.keyboard.press("Tab")
+    expect(tab.open_button).to_be_focused()
 
     # Focus on the item under it is in plain sight, and the notice stays.
     group_workspaces.focus()
@@ -2204,6 +2316,14 @@ def test_a_notice_waiting_for_acknowledgment_takes_its_own_room_in_the_rail(tab,
     expect(group_workspaces).to_be_focused()
     expect(tab.notice).to_be_visible()
     expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+
+    # Collapsing the rail turns it into the bell's flyout, and expanding gives it its row back.
+    tab.page.get_by_role("button", name="Collapse navigation", exact=True).click()
+    expect(tab.notice).to_have_attribute("data-placement", "flyout")
+    expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "false")
+    tab.page.get_by_role("button", name="Expand navigation", exact=True).click()
+    expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "true")
+    expect(tab.notice).to_contain_text("Needs its own room")
 
 
 PLACE_UNDER_NOTICE = r"""

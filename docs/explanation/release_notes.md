@@ -15,6 +15,23 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   New requester-only routes under `/api/v2/orchestration/runs/<run_id>/workflow-handoffs` read a plan's hand-offs, accept one as proposed or edited, decline one, and read its editor draft. The V2 hand-off card is a separate change; until it ships, users can't accept a hand-off in the browser, so leave the setting off.
     *   (Ref: #1549, #1543, `functions_orchestration_workflow_handoffs.py`, `functions_orchestration_workflow_handoff_decisions.py`, `functions_workflow_handoff_builder.py`, `functions_workflow_drafts.py`, `functions_workflow_runtime.py`, `functions_workflow_result_reader.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Hand-off](features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md))
 
+### **(v0.261.236)**
+
+#### User Interface Enhancements
+
+*   **V2 Chat Rail Scrolls As One Panel**
+    *   On the V2 chat page, everything between **New chat** and the theme and account controls now scrolls as one panel, as the classic sidebar does. As you read down the conversation list, the navigation and any **External Links** or **Custom Pages** groups move out of view, and **Search chats** stays right under **New chat**. The list gets nearly the whole rail: a 720-pixel-tall window with two external links went from two visible conversations to twelve.
+    *   The held search box gets a solid backing and an edge only while it is held, so the rail looks as it did at rest. Searching while it is held no longer makes the box jump. Keyboard focus on a conversation is never hidden under it. The next page of conversations now loads just before you reach the end of the list.
+    *   The collapsed icon strip and other pages are unchanged.
+    *   (Ref: #1642, `Sidebar.tsx`, `ConversationRail.tsx`, `test_v2_sidebar_conversation_scroll.py`, [V2 Sidebar Conversation Scroll Fix](fixes/V2_SIDEBAR_CONVERSATION_SCROLL_FIX.md))
+
+*   **V2 Workflow Alerts Pop Up From The Bell**
+    *   Workflow alert notices now hang from the notification bell instead of **My Workspace**. With the rail expanded, the notice drops down from the bell the way the bell's panel does, hanging past the rail's edge so most of **New chat** stays clickable. When the rail is collapsed or on a phone, it flies out beside the bell.
+    *   An alert that needs acknowledgment still never covers anything in the expanded rail. It now takes a row of its own right under the rail's header, pointing up at the bell and pushing **New chat** and the navigation down, instead of a space under **My Workspace**. As a flyout it still steps aside from focus it would cover.
+    *   The notice comes right after the bell in the tab order. Because the bell never scrolls, a notice can no longer be carried off screen with the navigation.
+    *   Timers, claims, the tuck into the bell, the alert card and the announcements are unchanged.
+    *   (Ref: #1642, `NotificationBell.tsx`, `WorkflowAlertNotice.tsx`, `test_v2_workflow_alert_notices.py`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md))
+
 ### **(v0.261.235)**
 
 #### New Features
