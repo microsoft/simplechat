@@ -340,10 +340,6 @@
         getWorkflowAlertSoundManager()?.stop?.(notificationId);
     }
 
-    function stopAllWorkflowAlertSounds() {
-        getWorkflowAlertSoundManager()?.stopAll?.();
-    }
-
     function formatWorkflowTriggeredTime(isoString) {
         if (!isoString) {
             return 'Triggered: --:--:--';

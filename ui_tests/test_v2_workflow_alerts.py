@@ -449,7 +449,7 @@ def test_sound_admin_note_is_shown_when_sounds_are_disabled(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.workflow_alert_sounds_enabled = False
     open_workflows(ui, "personal")
-    dialog = edit(ui, NAMES["personal"])
+    edit(ui, NAMES["personal"])
     region = alerts_region(page)
     field(region, "When to alert").select_option("rules")
     region.get_by_role("button", name="Add alert rule", exact=True).click()

@@ -24,7 +24,7 @@ from flask import current_app
 import logging
 from config import cosmos_notifications_container
 from functions_appinsights import log_event
-from functions_group import assert_group_role, find_group_by_id, get_user_groups
+from functions_group import assert_group_role, get_user_groups
 from functions_group_workflow_policy import GROUP_WORKFLOW_MEMBER_ROLES
 from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
