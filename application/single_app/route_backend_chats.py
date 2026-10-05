@@ -420,7 +420,12 @@ from functions_workflow_context import (
     raise_if_workflow_context_blocked,
     workflow_context_budget_scope,
 )
-from functions_analysis_access import AnalysisResultUnavailable, resolve_analysis_source_manifest
+from functions_analysis_access import (
+    ANALYSIS_UNAVAILABLE_CONTAINER,
+    ANALYSIS_UNAVAILABLE_SAVED_RESULT,
+    AnalysisResultUnavailable,
+    resolve_analysis_source_manifest,
+)
 from azure.core.exceptions import AzureError
 from functions_workflow_result_store import AnalysisWorkUnitConflictError, WorkflowResultStorageUnavailableError
 from functions_workflow_results import WorkflowResultNotReadyError
@@ -15875,7 +15880,10 @@ def register_route_backend_chats(bp):
                       extra={'error_type': type(exc).__name__}, level=logging.WARNING)
             message = 'The saved analysis could not be explained. Its saved data is unchanged.'
             status = 503
-            if isinstance(exc, PermissionError):
+            if isinstance(exc, AnalysisResultUnavailable):
+                message = exc.public_message
+                status = 403
+            elif isinstance(exc, PermissionError):
                 message = 'This analysis is unavailable because access to its conversation or saved result could not be confirmed.'
                 status = 403
             elif isinstance(exc, (WorkflowContextBudgetError, WorkflowResultNotReadyError, SavedAnalysisFollowupUnsupported)):
@@ -16754,7 +16762,9 @@ def register_route_backend_chats(bp):
                 )
                 return {
                     'error': (
-                        'The analysis could not be saved because this conversation or a selected document is no longer available.'
+                        'The analysis could not be saved because something it depends on is missing or has changed.'
+                        if isinstance(exc, AnalysisResultUnavailable) and exc.family == ANALYSIS_UNAVAILABLE_SAVED_RESULT
+                        else 'The analysis could not be saved because this conversation or a selected document is no longer available.'
                         if isinstance(exc, PermissionError)
                         else 'The analysis completed, but its final data could not be saved.'
                     ),
@@ -16852,7 +16862,18 @@ def register_route_backend_chats(bp):
                     detail=f"phase={getattr(exc, 'phase', 'finalization')}",
                 )
             if isinstance(exc, AnalysisResultUnavailable):
-                return {'error': 'This analysis conversation is unavailable.', 'conversation_id': conversation_id}, 403
+                return {
+                    'error': {
+                        ANALYSIS_UNAVAILABLE_CONTAINER: 'This analysis conversation is unavailable.',
+                        ANALYSIS_UNAVAILABLE_SAVED_RESULT: (
+                            'The analysis could not be saved because something it depends on is missing or has changed.'
+                        ),
+                    }.get(
+                        exc.family,
+                        'The analysis could not be saved because a selected document is no longer available or has changed.',
+                    ),
+                    'conversation_id': conversation_id,
+                }, 403
             if isinstance(exc, ScreeningError):
                 return {
                     'error': exc.public_message, 'error_code': exc.code, 'conversation_id': conversation_id,

@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow save parity across the workflow draft service refactor.
-Version: 0.261.202
+Version: 0.261.234
 Implemented in: 0.261.202
+Chat delivery contract loaded by the harness in: 0.261.234
 
 This test ensures that ``save_personal_workflow`` and ``save_group_workflow`` behave byte for byte
 as they did before each save was split into a write-free build step and a persist step.
@@ -103,10 +104,12 @@ GLOBAL_AGENTS = [
 # A save imports these lazily; they are tracked so a call never leaves one installed afterwards.
 LAZY_MODULES = ("functions_workflow_execution", "functions_agent_delegation")
 # Real modules, in import-graph order. The structured-flow modules are loaded here because a version
-# 3 save imports them lazily and the application folder is not on this test's import path.
+# 3 save imports them lazily and the application folder is not on this test's import path. The
+# personal store imports the chat delivery contract, which imports the Microsoft 365 binding.
 REAL_MODULES = (
     "functions_workflow_alert_safety", "functions_workflow_definitions", "functions_workflow_alerts",
-    "functions_m365_workflow_binding", "functions_workflow_definition_store", "functions_document_actions",
+    "functions_m365_workflow_binding", "functions_workflow_chat_delivery",
+    "functions_workflow_definition_store", "functions_document_actions",
     "functions_workflow_limits", "functions_workflow_schedules",
     "functions_workflow_loop_schema", "functions_workflow_flow", "functions_workflow_identity",
     "functions_workflow_loop_runners",
