@@ -1,8 +1,8 @@
 # test_v2_workflow_run_card.py
 """
 UI test for the V2 workflow run card, the app-shell run tracker and delivered-message footers.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.237
+Implemented in: 0.261.237
 
 This test ensures that a saved workflow run a chat-orchestration plan started is shown and settled
 correctly in V2. It mounts the real app shell, chat list and chat page with the real stores and the
@@ -53,7 +53,7 @@ from ui_tests.test_v2_notifications_bell import Harness, STATIC, V2_SOURCE  # no
 
 pytestmark = pytest.mark.ui
 
-IMPLEMENTED_IN = "0.261.234"
+IMPLEMENTED_IN = "0.261.237"
 FIXTURE = ROOT / "ui_tests" / "fixtures" / "workflow_run_tracking"
 BUNDLE = FIXTURE / "harness.bundle.js"
 

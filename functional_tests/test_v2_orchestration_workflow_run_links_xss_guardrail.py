@@ -2,9 +2,9 @@
 # test_v2_orchestration_workflow_run_links_xss_guardrail.py
 """
 Functional test for the V2 workflow run links passing the XSS sink guardrail.
-Version: 0.261.234
+Version: 0.261.237
 Implemented in: 0.261.212
-A group run's link built through the checked group path builder: 0.261.234
+A group run's link built through the checked group path builder: 0.261.237
 
 This test ensures that the Started workflows links under a chat answer pass
 scripts/check_xss_sinks.py the way CI runs it. The link component calls the
