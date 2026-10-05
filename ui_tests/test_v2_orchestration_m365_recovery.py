@@ -1,8 +1,8 @@
 # test_v2_orchestration_m365_recovery.py
 """
 Real-component browser coverage for plan steps that stopped for Microsoft 365.
-Version: 0.261.237
-Implemented in: 0.261.237
+Version: 0.261.238
+Implemented in: 0.261.238
 
 A step that stopped for Microsoft 365 sign-in offers Connect Microsoft 365 in its run's
 recovery notice, and a step that stopped for approval links to Approvals. The production

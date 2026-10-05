@@ -1,11 +1,11 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.237
+Version: 0.261.238
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
-Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.237
+Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.238
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.

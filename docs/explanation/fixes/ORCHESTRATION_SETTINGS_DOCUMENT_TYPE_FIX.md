@@ -1,8 +1,8 @@
 # Orchestration Settings Document Type Fix
 
-**Version: 0.261.236**
+**Version: 0.261.237**
 
-Fixed in version: **0.261.236**, recorded in
+Fixed in version: **0.261.237**, recorded in
 `application/single_app/config.py`.
 
 This affects the React V2 branch (`paullizer-react-v2-ui`) and deployments built
@@ -80,7 +80,7 @@ a `dict`.
 | File | Change |
 | --- | --- |
 | `app_settings_store.py` | Cosmos reads and writes return plain `dict` copies. |
-| `config.py` | Version `0.261.236`. |
+| `config.py` | Version `0.261.237`. |
 | `functional_tests/test_app_settings_store_plain_dict_reads.py` | New regression tests. |
 
 No setting, deployment or data change is needed.

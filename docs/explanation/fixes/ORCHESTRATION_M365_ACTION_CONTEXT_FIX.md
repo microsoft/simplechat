@@ -1,8 +1,8 @@
 # Orchestration Microsoft 365 Action Context Fix
 
-**Version: 0.261.237**
+**Version: 0.261.238**
 
-Fixed in version: **0.261.237**, recorded in
+Fixed in version: **0.261.238**, recorded in
 `application/single_app/config.py`.
 
 This affects the React V2 branch (`paullizer-react-v2-ui`) and deployments built
@@ -131,7 +131,7 @@ source as `sc_resource`. A step that stops logs
 | `v2_ui/src/lib/m365Connect.ts` | New. The popup connect flow. |
 | `v2_ui/src/components/chat/OrchestrationM365Notice.tsx` | New. Connect and Approvals follow-ups. |
 | `v2_ui/src/components/chat/OrchestrationRecoveryNotice.tsx`, `v2_ui/src/lib/orchestration.ts` | Show the follow-up and keep `m365_sources`. |
-| `config.py` | Version `0.261.237`. |
+| `config.py` | Version `0.261.238`. |
 
 ## Validation
 

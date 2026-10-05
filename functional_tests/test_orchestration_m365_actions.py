@@ -2,11 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 actions in chat orchestration.
-Version: 0.261.237
-Implemented in: 0.261.237
+Version: 0.261.238
+Implemented in: 0.261.238
 
 An orchestration "Use an action" step runs in its own request context, the execution
-identity's bridge. Before 0.261.237 no Microsoft 365 execution context existed there, so
+identity's bridge. Before 0.261.238 no Microsoft 365 execution context existed there, so
 every Microsoft 365 function refused the call with ``m365_context_required`` before reaching
 Microsoft Graph, and the step still reported completed.
 

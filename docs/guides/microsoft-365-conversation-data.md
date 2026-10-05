@@ -73,7 +73,7 @@ fresh source sign-in.
 
 ## Use Microsoft 365 in a plan
 
-Implemented in version: **0.261.237** (`application/single_app/config.py`).
+Implemented in version: **0.261.238** (`application/single_app/config.py`).
 
 With **Orchestrate** on in V2 chat, a plan can include a **Use an action** step
 that runs one of your Calendar, Email, OneDrive, or SharePoint Online actions.
