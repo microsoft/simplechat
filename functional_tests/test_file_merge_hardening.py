@@ -2,7 +2,7 @@
 # test_file_merge_hardening.py
 """
 Functional test for V2 file merge hardening against hostile files.
-Version: 0.261.241
+Version: 0.261.244
 Implemented in: 0.261.241
 
 This test ensures that merging never turns a hostile file into a merged file that
@@ -662,7 +662,8 @@ def test_unreadable_parts_and_failing_checks_are_told_apart():
     with pytest.raises(Stopped):
         first_unsafe_xml_part(many, many.infolist(), check=stop)
     calls.clear()
-    assert first_unsafe_xml_part(many, many.infolist(), check=lambda: calls.append(True)) is None
+    unsafe = first_unsafe_xml_part(many, many.infolist(), check=lambda: calls.append(True))
+    assert unsafe is None
     # The check runs every 64 parts, so a package can't hold up cancellation for long.
     assert len(calls) == -(-len(many.infolist()) // 64)
 

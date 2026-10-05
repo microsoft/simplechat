@@ -1,7 +1,7 @@
 # functions_document_merge_pptx.py
 """PowerPoint assembly for V2 file merge: slides appended in order into one deck.
 
-Version: 0.261.241
+Version: 0.261.244
 
 The merge works on the Office Open XML package itself, so every slide is copied with
 everything it relates to — pictures, media, charts and their embedded workbooks,
@@ -23,7 +23,7 @@ import re
 import uuid
 import zipfile
 
-from functions_document_merge import (
+from functions_document_merge_core import (
     DocumentMergeError,
     FORMATTING_KEEP_SOURCE,
     finish_output,
@@ -48,7 +48,6 @@ RT_OFFICE_DOCUMENT = _RT + "officeDocument"
 RT_SLIDE = _RT + "slide"
 RT_SLIDE_LAYOUT = _RT + "slideLayout"
 RT_SLIDE_MASTER = _RT + "slideMaster"
-RT_NOTES_SLIDE = _RT + "notesSlide"
 RT_NOTES_MASTER = _RT + "notesMaster"
 RT_HYPERLINK = _RT + "hyperlink"
 _COMMENT_RELATIONSHIP_SUFFIXES = ("/comments", "/commentAuthors")

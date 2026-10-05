@@ -2,7 +2,7 @@
 # test_file_merge_scratch_dir.py
 """
 Functional test for where V2 file merges spill their spooled data to disk.
-Version: 0.261.243
+Version: 0.261.244
 Implemented in: 0.261.243
 
 This test ensures that a merge too large to keep in memory spills its spooled rows or
@@ -25,10 +25,14 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 from test_support.versioning import assert_app_version_at_least
 
 import functions_document_merge
+import functions_document_merge_core
 import functions_tabular_merge
 import functions_temp_files
-from functions_document_merge import DocumentMergePart, merge_documents
-from functions_tabular_merge import TabularMergeSource, merge_tabular_sources
+
+DocumentMergePart = functions_document_merge_core.DocumentMergePart
+merge_documents = functions_document_merge.merge_documents
+TabularMergeSource = functions_tabular_merge.TabularMergeSource
+merge_tabular_sources = functions_tabular_merge.merge_tabular_sources
 
 
 def pdf_bytes(pages):
@@ -103,7 +107,7 @@ def merge(kind):
 def spill_every_spool(monkeypatch, scratch_directory):
     """Make every merge spool spill to disk on its first write and record each file's directory."""
     monkeypatch.setattr(functions_temp_files, "SC_TEMP_FILES_DIR", str(scratch_directory))
-    monkeypatch.setattr(functions_document_merge, "_SPOOL_MEMORY_BYTES", 1)
+    monkeypatch.setattr(functions_document_merge_core, "_SPOOL_MEMORY_BYTES", 1)
     monkeypatch.setattr(functions_tabular_merge, "_SPOOL_MEMORY_BYTES", 1)
     real = tempfile.TemporaryFile
     directories = []

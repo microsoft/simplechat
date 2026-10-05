@@ -2,7 +2,7 @@
 # test_tabular_merge_engine.py
 """
 Functional test for the deterministic tabular merge engine.
-Version: 0.261.235
+Version: 0.261.244
 Implemented in: 0.261.235
 
 This test ensures that functions_tabular_merge appends the rows of same-structure
@@ -26,14 +26,13 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 from test_support.versioning import assert_app_version_at_least
 
 import functions_tabular_merge as merge
-from functions_tabular_merge import (
-    TabularMergeCancelled,
-    TabularMergeError,
-    TabularMergeLimits,
-    TabularMergeOptions,
-    TabularMergeSource,
-    merge_tabular_sources,
-)
+
+TabularMergeCancelled = merge.TabularMergeCancelled
+TabularMergeError = merge.TabularMergeError
+TabularMergeLimits = merge.TabularMergeLimits
+TabularMergeOptions = merge.TabularMergeOptions
+TabularMergeSource = merge.TabularMergeSource
+merge_tabular_sources = merge.merge_tabular_sources
 
 
 def csv_source(name, text, encoding="utf-8", source_id=None):
@@ -410,15 +409,12 @@ def test_cancellation_stops_between_sources():
 
 def test_rows_can_be_read_more_than_once_until_closed_and_progress_is_reported():
     events = []
-    result = merge_tabular_sources(
+    with merge_tabular_sources(
         [csv_source("a.csv", "A\n1\n2\n"), csv_source("b.csv", "A\n3\n")], on_progress=events.append,
-    )
-    try:
+    ) as result:
         assert records(result) == records(result)
         assert [event["index"] for event in events] == [1, 2]
         assert events[-1] == {"index": 2, "total": 2, "file_name": "b.csv", "rows": 1}
-    finally:
-        result.close()
     with pytest.raises(TabularMergeError) as caught:
         list(result.iter_rows())
     assert caught.value.code == "result_closed"

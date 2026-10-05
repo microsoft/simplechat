@@ -290,6 +290,7 @@ from functions_search import normalize_search_id_list, normalize_search_scope, n
 from functions_simplechat_operations import (
     delete_generated_chat_artifact_for_current_user,
     delete_generated_chat_artifact_for_user,
+    upload_generated_file_artifact_stream_for_user,
     upload_generated_analysis_artifact_for_current_user,
     upload_generated_analysis_artifact_for_user,
 )
@@ -9939,8 +9940,7 @@ def _execute_document_merge_workflow(
     thought_tracker=None,
 ):
     """Run a task's Merge document action: many files into one file, without a model."""
-    # The merge engine and its upload path load only when a workflow merges files.
-    from functions_simplechat_operations import upload_generated_file_artifact_stream_for_user
+    # The merge engine loads only when a workflow merges files.
     from functions_workflow_merge import (
         WORKFLOW_MERGE_CAPABILITY,
         WorkflowMergeAccessError,

@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.244)**
+
+#### Bug Fixes
+
+*   **CodeQL Alerts Fixed For Merge File Support**
+    *   Fixed new CodeQL alerts from the V2 merge file PR by separating shared document merge primitives from the merge dispatcher, avoiding import cycles while keeping lazy loading of PDF, Word, PowerPoint and workbook assemblers.
+    *   Cleaned up merge tests and workbook handling so assertions do not call side-effecting helpers, result cleanup uses context managers, NaN checks are explicit, and intentionally ignored cleanup failures are documented.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py`, `test_file_merge_hardening.py`, `test_tabular_merge_engine.py`, `test_file_merge_scratch_dir.py`, `test_workflow_merge_task.py`)
+
 ### **(v0.261.243)**
 
 #### Bug Fixes

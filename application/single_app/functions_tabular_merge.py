@@ -1,12 +1,13 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.243
+Version: 0.261.244
 Implemented in: 0.261.235
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.236
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.237
 Workbooks with unsafe or unreadable XML refused in: 0.261.241
 Spooled rows written to the container's scratch directory in: 0.261.243
+CodeQL cleanup for intentionally ignored reader cleanup failures added in: 0.261.244
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.
@@ -1985,6 +1986,7 @@ class _XlsxReader(_Reader):
             try:
                 workbook.close()
             except Exception:
+                # The reader is closing; library cleanup failures are safe to ignore.
                 pass
 
 
@@ -2125,6 +2127,7 @@ class _XlsReader(_Reader):
             try:
                 book.release_resources()
             except Exception:
+                # The reader is closing; library cleanup failures are safe to ignore.
                 pass
 
 

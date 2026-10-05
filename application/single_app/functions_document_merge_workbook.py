@@ -1,7 +1,7 @@
 # functions_document_merge_workbook.py
 """Workbook assembly for V2 file merge: each source file becomes its own sheet.
 
-Version: 0.261.241
+Version: 0.261.244
 
 Excel sources keep their cell types — numbers stay numbers and dates stay dates with
 their number format — while CSV sources are copied as text so codes keep their leading
@@ -14,10 +14,11 @@ packages are checked for unsafe XML, with cancellation checks, before they are o
 
 from datetime import date, datetime, time, timedelta
 import io
+import math
 import re
 import zipfile
 
-from functions_document_merge import (
+from functions_document_merge_core import (
     DocumentMergeError,
     WORKBOOK_SHEETS_ALL,
     finish_output,
@@ -145,12 +146,14 @@ def _discard_workbook(workbook):
         try:
             worksheet.close()
         except Exception:
+            # The workbook is already failing; best-effort cleanup errors are ignored.
             pass
         writer = getattr(worksheet, "_writer", None)
         if writer is not None:
             try:
                 writer.cleanup()
             except Exception:
+                # The workbook is already failing; best-effort cleanup errors are ignored.
                 pass
 
 
@@ -237,6 +240,7 @@ def _xls_sheets(part, content, context):
         try:
             book.release_resources()
         except Exception:
+            # The reader has finished; release failures do not change the merge result.
             pass
 
 
@@ -321,7 +325,7 @@ def _write_rows(worksheet, rows, context, totals, part):
 def _cell_value(value, part):
     """The value to write, and how many characters Excel can't store were removed from it."""
     if value is None or isinstance(value, (bool, int, float, datetime, date, time, timedelta)):
-        if isinstance(value, float) and value != value:
+        if isinstance(value, float) and math.isnan(value):
             return None, 0
         return value, 0
     text, removed = _ILLEGAL_CHARACTERS.subn("", str(value))

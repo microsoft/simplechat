@@ -2,7 +2,7 @@
 # test_workflow_merge_task.py
 """
 Functional test for workflow Merge tasks.
-Version: 0.261.241
+Version: 0.261.244
 Implemented in: 0.261.237
 Scale and formula checks added in: 0.261.241
 Refs: microsoft/simplechat#1619
@@ -813,6 +813,7 @@ def runner_merge(app, monkeypatch, files, *, cancelled=False):
         "WorkflowRunCancelledError": WorkflowRunCancelledError,
         "WorkflowInputError": WorkflowInputError,
         "WORKFLOW_RUN_CANCELLED_MESSAGE": "Workflow cancellation was requested.",
+        "upload_generated_file_artifact_stream_for_user": upload,
     })
     workflow = {"id": "wf-1", "user_id": OWNER, "active_task": {"id": TASK_ID, "name": "Merge sales"}}
     run = namespace["_execute_document_merge_workflow"]
