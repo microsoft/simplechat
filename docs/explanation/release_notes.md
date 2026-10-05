@@ -2,6 +2,157 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.248)**
+
+#### Bug Fixes
+
+*   **Merge Code Passes CodeQL Analysis**
+    *   CodeQL flagged import cycles and small code-quality issues in the new merge code. The code that the PDF, Word, PowerPoint and workbook assemblers share moved to `functions_document_merge_core.py`, so no assembler imports `functions_document_merge.py`, the module that loads them. Each assembler still loads only when its kind of file is merged.
+    *   The workflow runner imports the upload function for merged files along with its other upload functions. Cleanup errors that are deliberately ignored now say why, the workbook check for NaN uses `math.isnan`, and the merge tests no longer call helpers with side effects inside `assert`, use both `import` and `from ... import` for one module, or close results by hand.
+    *   Merges behave exactly as before.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py`, `functions_workflow_runner.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md#document-merge-engine))
+
+### **(v0.261.247)**
+
+#### Bug Fixes
+
+*   **Large Merges Spill To The Container's Scratch Directory**
+    *   A merge keeps its data in memory up to 16 MiB for an assembled PDF, Word document, deck or workbook, and 8 MiB of rows for a spreadsheet merge. Larger merges now spill into `/sc-temp-files`, the directory the container image creates for scratch files, like file renders and downloads since 0.261.233. Before, they used the platform temp directory (`/tmp` in the image), which also works.
+    *   Where `/sc-temp-files` doesn't exist or can't be written, such as on a development machine, merges still use the platform temp directory, and never the working directory. Spilling doesn't change the merged file.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_temp_files.py`, `test_file_merge_scratch_dir.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk))
+
+### **(v0.261.246)**
+
+#### User Interface Enhancements
+
+*   **Chat Asks Whether Merged Spreadsheets Share One Sheet**
+    *   Merging several CSV or Excel files into one Excel file can mean every row on one sheet or each file on its own sheet. When a request such as "merge these files into one Excel file" doesn't say which, V2 chat now asks first, with two choices: **All rows on one sheet** or **Each file on its own sheet**. Before, it assumed one sheet.
+    *   It doesn't ask when the request already decides the layout. CSV output holds one table. Words like "stack the rows", "one table" or "a sheet per file" also decide it, as do a saved preference or an earlier answer. Choosing **Decline** puts every row on one sheet and the plan says so.
+    *   The question is offered only while **Merge spreadsheets**, **Merge documents** and **Create a file** are all available, so a deployment that narrows out **Merge documents** keeps stacking rows. Workflows that chat proposes for repeated merges ask the same question.
+    *   The planner's general rule to prefer a stated assumption over a question now names its exceptions: capability guidance, deliverables facts and workflow instructions that say to ask.
+    *   (Ref: #1619, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file), [Merge files](../guides/merge-files.md#one-sheet-or-a-sheet-per-file))
+
+### **(v0.261.245)**
+
+#### New Features
+
+*   **Merge PDFs, Word Documents, Decks And Workbooks In Chat**
+    *   V2 chat orchestration can join whole documents in a chat turn, without a workflow: "combine these contracts into one PDF" plans a **Merge documents** step (`document_merge`) and a file to create. It joins PDFs into one PDF, Word documents into one Word document or PowerPoint decks into one deck, or puts CSV and Excel files on separate sheets of one workbook, with the same deterministic engine and options as workflow merges. No model reads or rewrites the files.
+    *   The merge step checks the merged file and retains only a description of it: the kind, options, files in order, and the file's size and SHA-256. Rendering with the new `assembled_document_v1` profile reads only that merge's own files, with current access checked again, assembles them again, and delivers the file only if it is byte-for-byte identical. A file that changed in between fails as `output_source_changed` and nothing is uploaded.
+    *   The plan card says what a document merge creates and lists only the settings that differ from the defaults. Plans must name the kind, use only that kind's settings, and render the merge in its own format. Failures use application-owned messages, including the new `document_merge_active_content`.
+    *   Merges stay governed by **Enable Merge** and the Merge chat file limit; deployments with a narrowed orchestration capability list must add **Merge documents**. The planner now proposes merge workflows only for scheduled, synced or very large merges.
+    *   (Ref: #1619, `functions_document_merge_assembly.py`, `functions_orchestration_document_merge.py`, `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `functions_orchestration_rendering.py`, `functions_generated_office_adapters.py`, `functions_generated_export_registry.py`, `orchestrationMerge.ts`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md), [Merge files](../guides/merge-files.md#merge-pdfs-word-documents-decks-or-workbooks))
+
+#### Bug Fixes
+
+*   **Hostile Files Can't Make A Merged File Run Programs Or Read Server Files**
+    *   Word documents with fields that start other programs (DDE or DDEAUTO) are refused, however the field code is split, nested, cased or encoded, in the body, headers, footers or notes. The first document's link to its template is removed so Word never fetches it, and other linked content is reported.
+    *   PowerPoint click and hover actions that start a program or run a macro are removed from every merged deck, including the first, in every part declared as Office XML whatever its name or encoding; web links are kept.
+    *   Word, PowerPoint and Excel packages with an XML part that declares a document type, which Office Open XML forbids and which is how a part asks a parser to read other files, or that is written or declared in an encoding other than UTF-8 or UTF-16, are refused before any library parses them, in document merges and in spreadsheet merges of `.xlsx` and `.xlsm` files. Parts are chosen by name and by declared content type, and only each part's prolog is read, within a fixed budget per package.
+    *   A storage fault while a merged file's originals are read again for delivery now stays retryable instead of reading as a screening hold.
+    *   Verified that 100 files of 1,000 rows merge in one workflow run, that merged CSV and Excel files never carry a live formula, and that the merge modules import without loading any Office or PDF library.
+    *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_ooxml_package_guard.py`, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_orchestration_rendering.py`, [Phase 7 hardening](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening))
+
+*   **Word Merges With Lists Give The Same File Every Time**
+    *   docxcompose gave every list it copied from a later document a random ID, so a Word merge whose later documents had ordinary bulleted or numbered lists produced different bytes on each run. A retried workflow Word merge could attach a second copy, and a chat merge of such documents could never be delivered. The ID is now derived and unique within the document, so each document's list still restarts and the same documents always give the same file.
+    *   (Ref: #1619, `functions_document_merge_docx.py`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md))
+
+### **(v0.261.244)**
+
+#### New Features
+
+*   **Merge PowerPoint Decks In Workflows**
+    *   A workflow **Merge files** task can use **Combine PowerPoint decks** as its **Merge type**: the slides of PowerPoint decks are appended, in order, into one deck with code and no model, choosing files the same four ways as every merge. Every merge type is now available in workflows.
+    *   **PowerPoint formatting** keeps each deck's layouts, masters and themes (reusing identical ones) or places every slide on the first deck's matching layout and theme. **Create one section per deck** groups each deck's slides under its file name. Pictures, media, charts with their workbooks, diagrams, tables and speaker notes come along.
+    *   The first deck decides the slide size, and a deck with a different size is reported; embedded fonts of later decks and slide comments aren't carried over. Encrypted, damaged, oversized and macro-enabled decks are refused, and a merge assembles up to 2,000 slides from at most 300 MB of decks.
+    *   The same decks always produce the same bytes, so a retried task reuses the file it attached, and errors name only the file. Run activity reports slides per deck.
+    *   Chat can propose PowerPoint merges (blueprint `merge.kind` `pptx`, with `formatting` and `sections`).
+    *   (Ref: #1619, `functions_document_merge_pptx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, [Phase 6](features/V2_FILE_MERGE_PHASE_6_POWERPOINT.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
+
+### **(v0.261.243)**
+
+#### New Features
+
+*   **Merge Word Documents In Workflows**
+    *   A workflow **Merge files** task can use **Combine Word documents** as its **Merge type**: Word documents are appended, in order, into one Word document with code and no model, choosing files the same four ways as every merge.
+    *   **Word formatting** keeps each document's look, copying a style that shares a name but looks different under a new name, or uses the first document's styles for all of them. **Page break between documents** and **Add source headings** are optional. Styles, numbering, images, tables, footnotes and shapes come along; comments don't, and the merged document uses the first document's headers, footers and page setup.
+    *   The same documents always produce the same bytes, so a retried task reuses the file it attached. A Word merge reads at most 300 MB of documents; encrypted, damaged and macro-enabled files are refused, and errors name only the file.
+    *   Chat can propose Word merges (blueprint `merge.kind` `docx`, with `formatting`, `page_breaks` and `source_headings`), and the `merge_options_invalid` repair hint now lists the options each kind takes.
+    *   Adds the `docxcompose` 2.2.0 dependency (MIT).
+    *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, `requirements.txt`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
+
+### **(v0.261.242)**
+
+#### New Features
+
+*   **Merge PDFs And Build Workbooks In Workflows**
+    *   A workflow **Merge files** task now has a **Merge type**. **Combine PDFs** joins PDFs, in order, into one PDF with a bookmark for each file (keeping each file's own bookmarks beneath it); **One workbook, a sheet per file** puts each CSV or Excel file on its own sheet of one Excel workbook, named after the file. **Combine rows (CSV/Excel)** is the existing row merge.
+    *   Both use the same four ways to choose files as row merges (selected files in order, every matching file, recent files, or the files File Sync changed), authorize every file again, run with code and no model, and attach one file to the run. A workflow can assemble up to 10,000 pages or 500 sheets; a PDF merge reads at most 300 MB of PDFs, because every source stays in memory until the merged PDF is written.
+    *   PDF pages are copied unchanged; encrypted PDFs are refused rather than decrypted, and scripts and actions that could run code, open files or programs, or submit forms are removed wherever they appear (open actions, page, link and form-field scripts, XFA forms), while links to pages and to web and email addresses are kept. Workbooks keep Excel cell types and number formats, copy CSV values as text so codes keep their leading zeros, never evaluate text that looks like a formula, and remove control characters Excel can't store. The same files always produce the same bytes, so a retried task reuses the file it attached. Library errors are reported by file name only, never with text from the file. The task's answer lists the files merged and anything left out or removed.
+    *   Chat can propose PDF and workbook merges: the workflow blueprint's `merge` field gains `kind` (`tabular`, `workbook` or `pdf`), with the new draft code `merge_format_invalid`, and the proposal card describes each kind, for example "Merges every PDF in your personal workspace into one PDF with code. No model runs."
+    *   Merging PDFs or workbooks directly in a chat turn, without a workflow, is planned with Word and PowerPoint for a later release.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_workflow_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
+
+### **(v0.261.241)**
+
+#### New Features
+
+*   **Merge Files As A Workflow Task**
+    *   A V2 workflow task can now merge many CSV and Excel files into one CSV or Excel file with code: choose **Merge files** as the task's **Document action**. It suits merges too big for one chat turn, such as a year of weekly exports, and merges that should happen on their own, every week or whenever a synced folder gets a new export. A workflow merges up to 100 files and 1,000,000 rows by default, using the existing Merge workflow limits.
+    *   **Files to merge** can be files chosen in the editor, in an order the owner sets; every CSV and Excel file in the workflow's workspace; files added or changed in a recent window (60 minutes by default); or the files File Sync added or changed in that run. Files found when the run starts are merged in file-name order, and more matching files than the limit fail the task rather than merging only some.
+    *   The task takes the same column, sheet, duplicate and sort settings as a chat merge, and an output format and file name. Every file is authorized again as the workflow's owner and read through the access boundary, no model runs, and one file is attached to the run's conversation, even when a durable run resumes.
+    *   Files found at run time that are unavailable or aren't spreadsheets are skipped and named in the task's answer; a run with nothing to merge says so without creating a file. Merge failures, such as a selected file that's gone or columns that don't fit, are shown on the task in terms of the owner's files and aren't retried. A durable run repeats an interrupted merge instead of pausing for review, and reuses the file it already attached when the bytes are the same.
+    *   A save that breaks a merge rule now says why, naming the task by position, for example "Workflow task 2: Select at least two files to merge." The editor learns from the server whether Merge is on and how many files a run may merge, so it doesn't offer **Merge files** while an administrator has Merge off and checks the file limit before saving.
+    *   Chat can propose a workflow with a merge task when a user asks for a recurring merge. The blueprint gains a `merge` task field, with new repairable draft codes `merge_unavailable`, `merge_inputs_required`, `merge_trigger_required`, `merge_options_invalid` and `merge_runner_invalid`, and a merge task never needs the default model.
+    *   (Ref: #1619, `functions_workflow_merge.py`, `functions_workflow_runner.py`, `functions_document_actions.py`, `functions_personal_workflows.py`, `functions_workflow_editor.py`, `functions_workflow_drafts.py`, `functions_orchestration_workflows.py`, `functions_orchestration_planner.py`, [Phase 3](features/V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow), [Merge files](../guides/merge-files.md))
+
+#### User Interface Enhancements
+
+*   **Merge Files In The V2 Workflow Editor And Proposal Card**
+    *   The V2 workflow editor's **Merge files** action offers **Files to merge**, **Merge order** with **Up** and **Down**, **Output format**, **Output file name**, the recent window, and **More merge options** for column matching, aliases, sheets, header row, incompatible files, the source column, duplicates and sorting. The **Analysis mode** choice no longer appears for actions that don't analyze.
+    *   A proposed workflow's card describes a merge task as code that runs no model, for example "Merges the input files below, in order, into one Excel file with code. No model runs.", and lists its files under "Files to merge, in order".
+    *   The classic workflow editor doesn't open a workflow with a Merge files task, which it can't represent, and points to V2 instead; Run and Cancel still work there.
+    *   (Ref: `application/v2_ui/src/lib/workflowEditor.ts`, `WorkflowTaskFields.tsx`, `WorkflowFileSyncFields.tsx`, `workflowProposals.ts`, `WorkflowProposalCard.tsx`, `static/js/workspace/workspace_workflows.js`)
+
+### **(v0.261.240)**
+
+#### New Features
+
+*   **Merge Spreadsheets Whose Columns Differ**
+    *   V2 chat merges can now reconcile files whose columns don't match. A merge can keep every column from every file (a file without a column leaves it blank), keep only a listed set of columns, treat differently named headers as one column (for example `cust_id` and `CustomerID` as `Customer ID`), or leave out and report the files or sheets that don't fit instead of failing.
+    *   Merges can also read headers below a title row, merge every visible sheet of each workbook with a **Source Sheet** column, remove duplicate rows (identical rows, or rows with the same key columns, keeping the first or last copy), and sort by up to three columns as text, numbers or dates (up to 250,000 rows).
+    *   When the user asks chat to line the columns up, the plan inspects the files, a **Prepare content** step prepares a column mapping with the new `tabular_column_mapping_v1` profile, and the merge validates that mapping again before code applies it. No model copies or rewrites rows, and the merge report lists mapped, left-out and low-confidence columns.
+    *   Merged columns that some files lack are retained as nullable and render as blank cells. A merge that leaves out files says so in its limitations and step summary.
+    *   New fixed failure messages cover settings that can't be combined, an invalid prepared mapping, missing duplicate or sort columns, and merges where nothing fits; the "different columns" message now suggests the new options.
+    *   (Ref: #1619, `functions_tabular_merge.py`, `functions_orchestration_merge.py`, `functions_orchestration_adapters.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_services.py`, [Phase 2](features/V2_FILE_MERGE_PHASE_2_RECONCILIATION.md), [Merge files in chat](../guides/merge-files.md))
+
+*   **Inspect Spreadsheets In V2 Chat**
+    *   A new Gather capability, **Inspect spreadsheets** (`tabular_inspect`), reads the sheet names, column headers, row counts and a few sample rows of CSV or Excel files, and reports which files share the same columns, which columns look like the same thing under different names, likely title rows, and a suggested merge policy. A file that can't be read is reported instead of stopping the step, and no model is used.
+    *   It answers questions such as "what columns do these files have?" and prepares merges whose columns differ. The **Enable Merge** switch and its chat file limit govern it, and it appears in the orchestration Capabilities list.
+    *   (Ref: #1619, `run_tabular_inspect`, `inspect_tabular_sources`, `admin_settings_fields.py`, [Phase 2](features/V2_FILE_MERGE_PHASE_2_RECONCILIATION.md))
+
+#### User Interface Enhancements
+
+*   **Merge Settings In Words On The Plan Review**
+    *   The V2 plan review now states merge and inspection settings in plain words, such as "Keep every column from every file" or "Remove rows with the same Customer ID, keeping the last", leaves out values that only repeat a default, and shows column and sheet names as plain text.
+    *   (Ref: `application/v2_ui/src/lib/orchestrationMerge.ts`, `OrchestrationRunView.tsx`)
+
+### **(v0.261.239)**
+
+#### New Features
+
+*   **Merge Spreadsheets In V2 Chat**
+    *   V2 chat orchestration can now combine two or more CSV or Excel files that share the same columns into one table and deliver it as a CSV or Excel file, for example "merge these three regional sales files into one Excel file". It is a new Reason capability, **Merge spreadsheets** (`tabular_merge`), alongside Analyze and Compare; a following **Create a file** step renders the result.
+    *   Code appends the rows, not a model: every row is copied exactly in the order the files are listed, values stay text so codes such as `007` keep their leading zeros, and a **Source File** column records where each row came from. Columns may appear in any order in each file; files whose columns differ are not merged, and nothing is created.
+    *   Files can be selected, or found by a search step whose source set the merge binds. Every file is authorized again and read through the screening-aware byte reader, at the revision the plan approved. CSV encodings and delimiters are detected, Excel values become canonical text (ISO dates, `TRUE`/`FALSE`), and encrypted or damaged workbooks are refused.
+    *   A new **Merge** entry under **Document Action Capabilities** turns the feature on or off (on by default) and sets how many files and merged rows one chat request may merge (10 files, 250,000 rows by default) and, for upcoming workflow merges, the workflow limits (100 files, 1,000,000 rows).
+    *   Merge failures reach users only as fixed, application-owned messages, such as "The selected files don't all have the same columns, so nothing was merged."
+    *   (Ref: #1619, `functions_tabular_merge.py`, `functions_orchestration_merge.py`, `functions_orchestration_adapters.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_executor.py`, `functions_document_actions.py`, [V2 File Merge](features/V2_FILE_MERGE.md), [Phase 1](features/V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md), [Merge files in chat](../guides/merge-files.md))
+
+*   **Exact-Schema CSV And Excel Exports**
+    *   Two new generated-file profiles, `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX, optional sheet name), export every retained column in its retained order. They let a plan deliver a table whose columns are only known when it runs, such as a merge of files a search found, without the planner having to name the columns.
+    *   (Ref: `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py`, [Generated File Export Framework](features/GENERATED_FILE_EXPORT_FRAMEWORK.md))
+
 ### **(v0.261.238)**
 
 #### Bug Fixes

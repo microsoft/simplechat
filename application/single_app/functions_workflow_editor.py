@@ -26,7 +26,8 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
                                   agents, endpoints, default_model=None,
                                   max_loop_items=WORKFLOW_LOOP_ITEMS_DEFAULT,
                                   max_repeat_iterations=WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
-                                  min_schedule_interval_seconds=WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT):
+                                  min_schedule_interval_seconds=WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
+                                  merge=None):
     if scope_type not in {"personal", "group"}:
         raise ValueError("Unsupported workflow editor scope.")
     agent_options = [
@@ -65,7 +66,7 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
             })
     default_model = default_model or {}
     default_model_valid = bool(default_model.get("valid"))
-    return {
+    options = {
         "definition_version": WORKFLOW_DEFINITION_VERSION,
         "supported_definition_versions": [1, 2, 3],
         "supported_node_kinds": ["task", "if", "route", "for_each", "collect", "repeat_until"],
@@ -100,11 +101,24 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
             "loop_eligible": default_model_valid,
         },
     }
+    if merge is not None:
+        # Whether a task may merge files, and how many one run may merge, as the save will check.
+        options["document_actions"] = {"merge": {
+            "enabled": bool(merge.get("enabled")),
+            "workflow_max_documents": int(merge["workflow_max_documents"]),
+        }}
+    return options
 
 
 def get_workflow_editor_options(user_id, settings, *, group_id=""):
     # Existing stores own agent/model eligibility and initialize app services.
     # Import them only at this already-authorized request boundary.
+    from functions_document_actions import (
+        DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+        DOCUMENT_ACTION_TYPE_MERGE,
+        get_document_action_max_documents,
+        is_document_action_enabled,
+    )
     from functions_group import assert_group_role
     from functions_group_workflows import (
         GROUP_WORKFLOW_MEMBER_ROLES,
@@ -141,4 +155,10 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         max_loop_items=get_workflow_max_loop_items(settings),
         max_repeat_iterations=get_workflow_max_repeat_iterations(settings),
         min_schedule_interval_seconds=get_workflow_min_schedule_interval_seconds(settings),
+        merge={
+            "enabled": is_document_action_enabled(DOCUMENT_ACTION_TYPE_MERGE, settings=settings),
+            "workflow_max_documents": get_document_action_max_documents(
+                DOCUMENT_ACTION_TYPE_MERGE, DOCUMENT_ACTION_CONTEXT_WORKFLOW, settings=settings,
+            ),
+        },
     )

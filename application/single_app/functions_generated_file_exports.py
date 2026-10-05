@@ -678,6 +678,7 @@ def build_generated_file_export(
     limits: Optional[GeneratedFileExportLimits] = None,
     office_limits: Optional["OfficeRenderLimits"] = None,
     image_resolver: Optional[Callable[[str], bytes]] = None,
+    document_reader: Optional[Callable[[str], bytes]] = None,
 ) -> GeneratedFileExportStream: ...
 
 
@@ -707,6 +708,7 @@ def build_generated_file_export(
     limits: Optional[GeneratedFileExportLimits] = None,
     office_limits: Optional["OfficeRenderLimits"] = None,
     image_resolver: Optional[Callable[[str], bytes]] = None,
+    document_reader: Optional[Callable[[str], bytes]] = None,
 ) -> Optional[Dict[str, Any]] | GeneratedFileExportStream:
     """Render an explicit complete source, or preserve the existing response-export policy."""
     if source is not None or export_request is not None:
@@ -723,14 +725,14 @@ def build_generated_file_export(
 
             return _render_generated_office_source(
                 source, export_request, max_output_bytes=max_output_bytes, check=check, limits=limits,
-                office_limits=office_limits, image_resolver=image_resolver,
+                office_limits=office_limits, image_resolver=image_resolver, document_reader=document_reader,
             )
-        if office_limits is not None or image_resolver is not None:
+        if office_limits is not None or image_resolver is not None or document_reader is not None:
             raise GeneratedFileExportError('invalid_options', 'This export profile does not accept Office options.')
         return _render_generated_file_source(
             source, export_request, max_output_bytes=max_output_bytes, check=check, limits=limits,
         )
-    if office_limits is not None or image_resolver is not None:
+    if office_limits is not None or image_resolver is not None or document_reader is not None:
         raise GeneratedFileExportError('invalid_options', 'Office options require an explicit Office source request.')
     output_format = get_requested_generated_file_format(user_question) or _normalize_pending_output_format(
         pending_output_format,

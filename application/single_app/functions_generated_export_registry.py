@@ -37,6 +37,12 @@ class GeneratedFileExportFormat:
 
 
 PREPARED_SLIDE_DECK_VERSION = 'prepared_slide_deck_v1'
+EXACT_TABULAR_RECORDS_PROFILE = 'exact_tabular_records_v1'
+EXACT_TABULAR_WORKBOOK_PROFILE = 'exact_tabular_workbook_v1'
+EXACT_TABULAR_PROFILES = (EXACT_TABULAR_RECORDS_PROFILE, EXACT_TABULAR_WORKBOOK_PROFILE)
+# A file assembled again from the original files a document merge described and checked.
+ASSEMBLED_DOCUMENT_PROFILE = 'assembled_document_v1'
+EXACT_TABULAR_DEFAULT_SHEET_NAME = 'Sheet1'
 GENERATED_IMAGE_REFERENCE_PATTERN = r'^asset:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
 _OPTION_SCHEMAS = {
     'columns': {
@@ -158,10 +164,15 @@ _STRUCTURED_PROFILES = (
     GeneratedFileExportProfile('structured_records_v1', ('records',)),
     GeneratedFileExportProfile('structured_value_v1', ('structured_value',)),
 )
+_ASSEMBLED_PROFILE = GeneratedFileExportProfile(ASSEMBLED_DOCUMENT_PROFILE, ('structured_value',))
 GENERATED_FILE_EXPORT_REGISTRY = (
     GeneratedFileExportFormat(
         'csv', ('csv',), 'csv', 'text/csv; charset=utf-8',
-        (GeneratedFileExportProfile('tabular_records_v1', ('records',), ('columns',)),),
+        (
+            GeneratedFileExportProfile('tabular_records_v1', ('records',), ('columns',)),
+            # Every retained column in retained order, for results whose schema is known only at run time.
+            GeneratedFileExportProfile(EXACT_TABULAR_RECORDS_PROFILE, ('records',)),
+        ),
         'csv',
     ),
     GeneratedFileExportFormat(
@@ -190,24 +201,34 @@ GENERATED_FILE_EXPORT_REGISTRY = (
     ),
     GeneratedFileExportFormat(
         'xlsx', ('xlsx',), 'xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        (GeneratedFileExportProfile('tabular_workbook_v1', ('records',), ('columns', 'sheet_name')),),
+        (
+            GeneratedFileExportProfile('tabular_workbook_v1', ('records',), ('columns', 'sheet_name')),
+            GeneratedFileExportProfile(EXACT_TABULAR_WORKBOOK_PROFILE, ('records',), optional_options=('sheet_name',)),
+            _ASSEMBLED_PROFILE,
+        ),
         'office', ('openpyxl',),
     ),
     GeneratedFileExportFormat(
         'docx', ('docx',), 'docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        (GeneratedFileExportProfile('prepared_report_v1', ('text', 'markdown'), optional_options=('title',)),),
+        (
+            GeneratedFileExportProfile('prepared_report_v1', ('text', 'markdown'), optional_options=('title',)),
+            _ASSEMBLED_PROFILE,
+        ),
         'office', ('python-docx', 'markdown2', 'beautifulsoup4', 'Pillow'),
         streaming=False, rich_media=True,
     ),
     GeneratedFileExportFormat(
         'pdf', ('pdf',), 'pdf', 'application/pdf',
-        (GeneratedFileExportProfile('prepared_report_v1', ('text', 'markdown'), optional_options=('title',)),),
+        (
+            GeneratedFileExportProfile('prepared_report_v1', ('text', 'markdown'), optional_options=('title',)),
+            _ASSEMBLED_PROFILE,
+        ),
         'office', ('PyMuPDF', 'markdown2', 'beautifulsoup4', 'Pillow'),
         streaming=False, rich_media=True,
     ),
     GeneratedFileExportFormat(
         'pptx', ('pptx',), 'pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        (GeneratedFileExportProfile(PREPARED_SLIDE_DECK_VERSION, ('structured_value',)),),
+        (GeneratedFileExportProfile(PREPARED_SLIDE_DECK_VERSION, ('structured_value',)), _ASSEMBLED_PROFILE),
         'office', ('python-pptx', 'PyMuPDF', 'Pillow'),
         streaming=False, rich_media=True,
     ),
@@ -237,11 +258,14 @@ def _options_schema(profile):
 def _input_schema(profile):
     if profile.profile == PREPARED_SLIDE_DECK_VERSION:
         return get_prepared_slide_deck_schema()
+    if profile.profile == ASSEMBLED_DOCUMENT_PROFILE:
+        # Only a document merge's retained "assembly" output; Render checks it in full.
+        return {'type': 'object'}
     if profile.profile in ('prepared_text_v1', 'prepared_report_v1'):
         return {'type': 'string'}
     if profile.source_kinds == ('records',):
         record = {'type': 'object'}
-        if profile.profile in ('tabular_records_v1', 'tabular_workbook_v1'):
+        if profile.profile in ('tabular_records_v1', 'tabular_workbook_v1', *EXACT_TABULAR_PROFILES):
             record['additionalProperties'] = {'type': ['string', 'number', 'boolean', 'null']}
         return {'type': 'array', 'items': record}
     return {}

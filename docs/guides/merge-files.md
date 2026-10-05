@@ -1,0 +1,272 @@
+---
+layout: page
+title: "Merge files in chat"
+description: "Combine several CSV or Excel files into one table, or several PDFs, Word documents or PowerPoint decks into one file."
+section: "Guides"
+audience: user
+version: "0.261.246"
+---
+
+## What this does
+
+Merging takes several spreadsheets, such as one sales export per region or one timesheet
+per month, and stacks their rows into a single table. The chat then gives you that table
+as a downloadable CSV or Excel file. It can also join whole documents: several PDFs into
+one PDF, Word documents into one Word document, PowerPoint decks into one deck, or
+spreadsheets onto the separate sheets of one Excel workbook.
+
+Code does the merge, not a model. Every row is copied exactly, in the order you list the
+files, so codes such as `007` keep their leading zeros, and nothing is summarized,
+rounded or rewritten. The number of rows in the result is checked against the files it
+came from.
+
+The files don't need identical columns. You can keep every column from every file, line
+up columns that have different names, or leave out files that don't fit, and chat can
+inspect the files first to show you how they differ.
+
+## Why you would use this
+
+Use it when you would otherwise open each file and copy-paste rows into one sheet, or ask
+chat to "write a combined CSV" and hope nothing was dropped. Merging is exact and fast,
+and it keeps a **Source File** column so you can always see which file each row came from.
+
+It is not a lookup or join. Merging adds rows; it does not match rows from one file to
+another on a key column, such as adding each customer's region from a second file. Ask
+for that work separately.
+
+## Before you start
+
+- Use the V2 chat with **Orchestrate** on. An administrator must enable Chat
+  Orchestration and leave **Merge spreadsheets**, **Inspect spreadsheets**, **Merge
+  documents** and **Enable Merge** on; all are on by default. See
+  [orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
+- The files must be documents you can open in SimpleChat, in a personal, group or public
+  workspace: CSV (`.csv`) or Excel (`.xlsx`, `.xlsm`, `.xls`) files to combine rows, or
+  PDFs, Word documents (`.docx`) or PowerPoint decks (`.pptx`) to join documents.
+- Chat merges up to 10 files, and 250,000 rows when combining spreadsheets, by default.
+  Your administrator may set different limits.
+
+## Merge files
+
+1. Select the files in the chat's document picker, or name them in your message.
+2. Ask for the merge and the file you want back, for example:
+
+   > Stack the rows of these three regional sales files into one Excel sheet.
+
+   > Combine the selected CSVs into one CSV. Don't add a column for the file name.
+
+   > Stack the "Data" sheet from each of these workbooks into one CSV.
+
+3. If you asked for one Excel file without saying whether the rows share one sheet, chat
+   asks first. See [One sheet, or a sheet per file](#one-sheet-or-a-sheet-per-file).
+4. Review the plan. It shows a **Merge spreadsheets** task followed by the file to
+   create. Check the files and settings listed, then run the plan.
+5. Download the file from the answer.
+
+If you don't select the files, you can describe them, for example "merge the monthly
+timesheet files from my workspace". The plan then searches for matching files first and
+merges the ones it finds, so check the plan's search wording before you run it.
+
+## One sheet, or a sheet per file
+
+Merging spreadsheets into one Excel file can mean two different things:
+
+- **All rows on one sheet.** The rows of every file are stacked into one table, as
+  described on this page.
+- **Each file on its own sheet.** The files stay separate tables, one sheet each, in a
+  single workbook. See [Merge PDFs, Word documents, decks or
+  workbooks](#merge-pdfs-word-documents-decks-or-workbooks).
+
+From version **0.261.246**, when you ask to merge or combine spreadsheets into one Excel
+file, or don't name a format, and your request doesn't say which you want, chat asks
+before it plans the merge. Pick **All rows on one sheet** or **Each file on its own
+sheet**. If you choose **Decline**, chat doesn't ask again: it puts every row on one sheet
+and says so in the plan.
+
+Say which in your request to skip the question:
+
+| You want | Ask like this |
+| --- | --- |
+| Every row in one table | "Stack the rows into one sheet", "combine them into one table", or ask for a CSV file, which always holds one table. |
+| Each file kept separate | "Put each file on its own sheet", "one tab per file", or "keep them as separate sheets". |
+
+A workflow that chat proposes for a repeated merge asks the same question. If your
+administrator turned off **Merge documents**, chat can only stack rows, so it doesn't ask.
+
+## Check the files first
+
+Ask what the files contain before you merge them, for example:
+
+> What columns do these spreadsheets have, and do they match?
+
+The plan runs **Inspect spreadsheets**, which reads each file's sheet names, column
+headers, row count and a few sample rows. The answer tells you which files share the same
+columns, which columns look like the same thing under different names (such as
+`Customer ID` and `customer_id`), and whether a file seems to have a title row above its
+headers. Inspection never changes your files, and a file that can't be read is reported
+rather than stopping the others.
+
+## When the columns differ
+
+Say how you want the differences handled. The plan card shows the choice in words before
+you run it.
+
+| What you want | Ask for it like this |
+| --- | --- |
+| Keep every column from every file. A file that lacks a column leaves it blank. | "Merge these files and keep all the columns." |
+| Treat differently named columns as one column. | "Merge them, and treat `cust_id` and `CustomerID` as `Customer ID`." |
+| Let chat work out how the columns line up. | "Merge these files and line up the columns that mean the same thing." |
+| Keep only some columns. | "Merge them with just the Customer ID, Name and Amount columns." |
+| Leave out files or sheets that don't match. | "Merge the files that have the same columns as the first one and skip the rest." |
+
+When chat lines up the columns for you, it inspects the files, prepares a column mapping
+and then merges with it. Code checks the mapping before any row is copied, and the merge
+report lists which headers were mapped, which were left out, and any mapping chat marked
+as uncertain. To review the differences before anything is merged, ask chat to inspect
+the files first and merge in your next message.
+
+Files that are left out are named in the merge report, and the merge step's summary says
+how many were left out. The merged rows are still complete for the files that were merged.
+
+## More ways to shape the merge
+
+- **Headers below a title.** If each file has a title or notes above the headers, say
+  which row holds the headers: "the headers are on row 3".
+- **Every sheet.** Ask to merge every sheet of each workbook. Hidden and empty sheets are
+  skipped, and a **Source Sheet** column records each row's sheet.
+- **Duplicates.** Ask to remove rows that are exactly the same, or rows with the same
+  value in one or more columns, such as the same order number. You can keep the first or
+  the last copy. Missing values and empty values count as the same, and rows whose key is
+  blank are always kept.
+- **Order.** Ask to sort by up to three columns, as text, numbers or dates. Numbers may
+  use thousands separators or a leading currency symbol; dates sort when they're written
+  as `YYYY-MM-DD`, which is how Excel dates are copied. Values that aren't numbers or
+  dates sort after those that are, and blanks come last. Sorting is available for merges
+  of up to 250,000 rows.
+
+## What you get
+
+- **Columns** follow the first file's column order and spelling. Headers in the other
+  files are matched by name, ignoring capitalization and extra spaces. When you keep
+  every column, columns found only in later files are added at the end.
+- **Source File** is added as the first column unless you ask not to include it. If your
+  files already have a column with that name, the new column is called
+  **Source File (2)** instead.
+- **Rows** appear file by file, in the order the files were listed, unless you ask for a
+  sort. Completely blank rows are skipped, and rows with fewer values than columns are
+  padded with blanks.
+- **Excel values** are copied as plain text. Dates become `YYYY-MM-DD`, true and false
+  become `TRUE` and `FALSE`, and formulas contribute their last calculated value.
+- **Workbooks** contribute their first visible sheet unless you name a sheet or ask for
+  every sheet.
+
+## If the merge doesn't run
+
+| Message | What to do |
+| --- | --- |
+| The selected files don't all have the same columns | Ask to keep every column, to line up columns that have different names, or to leave out the files that don't match. |
+| A selected file couldn't be read as a CSV or Excel file | The file may be damaged or password-protected. Open and save it again without a password. |
+| A selected workbook doesn't have the requested sheet | Check the sheet name, leave it out to use each workbook's first visible sheet, or ask to skip workbooks without it. |
+| A column named for removing duplicates or sorting isn't in the merged files | Check the column's spelling against the files' headers. Inspecting the files first lists them. |
+| None of the selected files had a sheet with column headers that fit the merge | Check that the files have headers, or say which row holds them. |
+| This merge's settings can't be used together | Ask again with fewer instructions at once, for example keep every column or list the columns to keep, not both. |
+| The column mapping prepared for this merge isn't valid | Ask again, or name the columns to treat as the same yourself. |
+| The merge is larger than chat allows | Merge fewer or smaller files at a time, or ask your administrator about the Merge limits. |
+| Merging needs at least two different CSV or Excel files | Select at least two spreadsheets. To join PDFs, Word documents or decks, ask for one PDF, Word document or deck instead. |
+
+Nothing is created when a merge stops, so there is never a partial file to clean up.
+
+## Merge many files, or the same files every week
+
+A chat merge suits a handful of files. When you have dozens of files, or the same merge
+should run every week or whenever a synced folder gets a new export, make it a workflow
+task instead. A workflow merge handles up to 100 files and 1,000,000 rows by default,
+runs on its own schedule, and attaches the merged file to each run.
+
+1. In the V2 workflow editor, add a task and choose **Merge files** as its **Document
+   action**.
+2. Under **Files to merge**, choose which files each run merges:
+   - **Selected files, in this order** merges the files you pick. Use **Up** and **Down**
+     to set their order.
+   - **All matching files in scope** merges every CSV and Excel file in the workflow's
+     workspace when the run starts.
+   - **Recently added or updated files** merges those added or changed in the last hour,
+     or the number of minutes you set.
+   - **Files changed by File Sync** merges the files each sync adds or changes. It
+     appears when the workflow's File Sync is set to use changed files.
+
+   Files found when the run starts are merged in file-name order.
+3. Choose CSV or Excel output, and optionally a file name. Open **More merge options** to
+   keep every column, line up columns with different names, read every sheet, remove
+   duplicates or sort, just as you would ask in chat.
+
+You can also ask chat for it, for example "every Monday, merge the regional sales files
+into one Excel file". Chat proposes a workflow with a merge task, and its card says the
+task merges the files with code and runs no model. See
+[Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
+
+A run with nothing to merge, such as a sync that brought no spreadsheets, finishes and
+says so without creating a file. If a selected file is gone or isn't a spreadsheet, or
+more files match than the workflow limit allows, the task fails and says which.
+
+## Merge PDFs, Word documents, decks or workbooks
+
+From version **0.261.245**, chat joins whole documents as well as rows. Select the files in
+the order you want them, then ask, for example:
+
+> Combine these three signed contracts into one PDF.
+
+> Put these two Word reports together, using the first one's styles.
+
+> Merge the selected decks into one presentation without sections.
+
+> Keep each of these CSV files as its own sheet in one Excel workbook.
+
+The plan shows a **Merge documents** task that says what it creates and any setting you
+asked to change, followed by the file to create. Every file must be the kind being merged.
+Code copies the files exactly: nothing is summarized, translated or rewritten.
+
+| You get | What it contains | You can ask to |
+| --- | --- | --- |
+| One PDF | Every page of each file, in order. Each file starts with a bookmark named after it, with its own bookmarks beneath it. | Leave out the bookmarks. |
+| One Word document | Each document in order, each starting on a new page. Each keeps its own look: styles that share a name but look different are kept as separate copies. The first document's page setup, headers and footers apply throughout. | Use the first document's styles for all of them, not start each on a new page, or put each file's name as a heading before it. |
+| One PowerPoint deck | Each deck's slides in order, in a section named after the file. Slides keep their layouts, masters and themes, and the first deck decides the slide size. | Use the first deck's theme for all slides, or leave out the sections. |
+| One Excel workbook | A sheet per file, named after it. Values and number formats are copied; styles, charts and images are not. | Copy every visible sheet of each workbook, or one named sheet from each. |
+
+Chat checks the merged file when the merge task runs, then creates it from the same files.
+If one of them changes in between, no file is created; ask again to merge the current
+versions.
+
+Some content never reaches a merged file, and the merge report says when something was
+left out:
+
+- A Word document with fields that start other programs (DDE fields) can't be merged.
+- The first Word document's link to its template is removed, so Word doesn't fetch it.
+- PowerPoint actions that start a program or run a macro are removed; web links stay.
+- PDF scripts, form actions and links that open files or programs are removed; links to
+  pages, websites and email addresses stay.
+- Comments in the Word documents and decks after the first, and fonts embedded in later
+  decks, are not carried over.
+
+| Message | What to do |
+| --- | --- |
+| Merging needs at least two different files of the kind being merged | Select at least two files of one kind, such as two PDFs. To combine spreadsheet rows instead, ask for one CSV or Excel table. |
+| A selected file couldn't be read | The file may be damaged, password-protected or macro-enabled. Open it and save it again as a regular, unprotected file. |
+| A selected Word document has fields that start other programs | Remove the DDE fields from the document, or merge it without that document. |
+| The merged file would be larger than chat allows | Merge fewer or smaller files, or use a workflow. |
+
+To merge documents on a schedule, whenever a synced folder gets new files, or more files
+than chat allows, use a workflow task. Since **0.261.242** a workflow merge task has a
+**Merge type**: besides combining rows, it can join PDFs into one PDF or put each CSV or
+Excel file on its own sheet of one workbook. Since **0.261.243** it can append Word
+documents, and since **0.261.244** PowerPoint decks. Choose the type after choosing
+**Merge files**; the rest works the same way. You can also ask chat, for example "every
+month, combine the signed contracts into one PDF", and it proposes a workflow that does it.
+See [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}#merge-files-in-a-workflow).
+
+## Related
+
+- [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }})
+- [Create files with orchestration]({{ '/guides/create-files-with-orchestration/' | relative_url }})
+- [Orchestration settings]({{ '/admin/orchestration/' | relative_url }})
+- [Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card)

@@ -1,13 +1,14 @@
 # functions_orchestration_services.py
 """Bind initialized application resources to the retained-result runtime.
 
-Version: 0.261.139
+Version: 0.261.245
 
 The web and scheduler owners supply storage, current access callbacks and private
 artifact transport. This module never discovers configuration, credentials or
 Flask request state, and never initializes a client as an import side effect.
 Each run attempt is its own approved work, so a retry's files never reuse the
-superseded attempt's output identity.
+superseded attempt's output identity. A merged document's original files are read
+only through the owner-supplied document reader (0.261.245).
 """
 
 from copy import deepcopy
@@ -28,6 +29,9 @@ from functions_orchestration_result_contracts import (
     InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest,
 )
 from functions_orchestration_results import OrchestrationResultAccess, OrchestrationResults
+from functions_tabular_merge import (
+    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_column_mapping_schema, tabular_mapping_from_profile,
+)
 from functions_workflow_result_store import _orchestration_identity
 
 
@@ -35,11 +39,24 @@ MAX_RESULT_ALIASES = 64
 
 
 def composition_profiles():
-    """Use the renderer's exact prepared-content schema, not a second slide grammar."""
-    return {PREPARED_SLIDE_DECK_VERSION: get_prepared_slide_deck_schema()}
+    """Use each owner's exact prepared-content schema, not a second grammar.
+
+    The slide deck schema is the renderer's; the column mapping schema is the merge engine's.
+    """
+    return {
+        PREPARED_SLIDE_DECK_VERSION: get_prepared_slide_deck_schema(),
+        TABULAR_COLUMN_MAPPING_PROFILE: tabular_column_mapping_schema(),
+    }
 
 
 def validate_composition_profile(profile, value):
+    if profile == TABULAR_COLUMN_MAPPING_PROFILE:
+        try:
+            tabular_mapping_from_profile(value)
+        except TabularMergeError as exc:
+            # Asking once more names the broken rule; the reply itself is never logged.
+            raise ResultContractError("result_schema_invalid") from exc
+        return True
     if profile != PREPARED_SLIDE_DECK_VERSION:
         raise ResultContractError("result_profile_unavailable")
     # Office libraries are execution dependencies, not registry/bootstrap dependencies.
@@ -131,7 +148,7 @@ class OrchestrationServices:
         transport, authorize_execution, max_output_bytes,
         external_source_catalog=None, external_source_authorizer=None,
         external_source_admission=None, external_source_preflight=None, native_bridge_for_step=None,
-        capture_external_source_configuration=None, image_asset_reader=None,
+        capture_external_source_configuration=None, image_asset_reader=None, document_bytes_reader=None,
     ):
         if external_source_preflight is not None and not callable(external_source_preflight):
             raise ResultContractError("result_external_reader_required")
@@ -170,7 +187,7 @@ class OrchestrationServices:
         self.rendering = OrchestrationRenderingService(
             self.outputs, self.results, transport,
             authorize_execution=authorize_execution, max_output_bytes=max_output_bytes,
-            image_asset_reader=image_asset_reader,
+            image_asset_reader=image_asset_reader, document_bytes_reader=document_bytes_reader,
         )
 
     @property

@@ -228,6 +228,51 @@ use personal workflows, in their own private conversations. Reading a result
 changes nothing, so it never makes a plan wait for approval. Clearing it keeps
 saved results out of plans; **Ask in chat** on a run is not affected.
 
+Since **0.261.239**, **Merge spreadsheets** (`tabular_merge`) combines the rows
+of two or more CSV or Excel files into one table, which the plan then delivers as
+a CSV or Excel file through **Create a file**. Code appends every row exactly, in
+the order the files are listed, and adds a **Source File** column by default; no
+model reads or rewrites the rows, so codes such as `007` keep their leading
+zeros. Columns may appear in any order. Since **0.261.240**, a merge can also
+reconcile files whose columns differ: keep every column, treat differently named
+headers as one column, keep only listed columns, leave out files or sheets that
+don't fit, read headers below a title row, merge every sheet of a workbook,
+remove duplicate rows and sort. Without one of those choices, files whose
+columns differ are not merged: the run says so and nothing is created. Merge
+never matches rows on a key column the way a lookup or join would.
+
+**Inspect spreadsheets** (`tabular_inspect`), since **0.261.240**, reads the
+sheet names, headers, row counts and a few sample rows of CSV or Excel files and
+reports how their columns line up, without changing anything. Plans use it to
+answer questions about files' structure, and before a merge whose columns may
+differ, so **Prepare content** can line up the columns as a column mapping that
+the merge checks and applies with code.
+
+**Merge documents** (`document_merge`), since **0.261.245**, joins two or more
+PDFs into one PDF, Word documents into one Word document or PowerPoint decks into
+one deck, or puts CSV and Excel files on separate sheets of one workbook, which
+the plan then delivers through **Create a file**. Code copies the files in the
+order listed; no model reads or rewrites them. The merge step checks the merged
+file and keeps only a description of it, and **Create a file** assembles the same
+files again and delivers the file only if it is identical, so a file that changed
+in between is never delivered. Word documents whose fields start other programs
+are refused, and PowerPoint actions that start programs or run macros are
+removed.
+
+Since **0.261.246**, while both **Merge spreadsheets** and **Merge documents** are
+offered, a plan asks whether spreadsheets merged into one Excel file should share
+one sheet or keep a sheet each, unless the request already says. Clearing **Merge
+documents** keeps that question out of plans, and merged rows always share one
+sheet.
+
+All three are offered while **Enable Merge** is on under
+[Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card),
+which also sets how many files and rows one chat request may merge or inspect.
+Clearing any of them here keeps it out of plans; a narrowed list needs **Inspect
+spreadsheets** and **Prepare content** for merges that line up columns, and
+**Create a file** to deliver any merged file. See
+[Merge files in chat]({{ '/guides/merge-files/' | relative_url }}).
+
 Selecting a capability does not grant source/model access or enable another
 feature's prerequisite. Orchestration still publishes truthful delivery status
 when composition is not requested, including file-only plans that consume already
