@@ -1,10 +1,10 @@
 # test_v2_workflow_alert_notices.py
 """
 Browser regressions for the V2 workflow alert notice, its alert card and their runtime.
-Version: 0.261.230
+Version: 0.261.233
 Implemented in: 0.261.199
 Open and Dismiss up front, everything else under Show more: 0.261.228
-Open run in Open workflow's place for an alert that names its run: 0.261.230
+Open run in Open workflow's place for an alert that names its run: 0.261.233
 
 Exercises the real rail, bell, notice, card, live region, stores and both notification
 runtimes, bundled by fixtures/workflow_alerts. Only HTTP answers and the browser APIs a
