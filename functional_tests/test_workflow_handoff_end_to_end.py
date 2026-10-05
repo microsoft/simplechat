@@ -61,7 +61,8 @@ from test_workflow_for_each_execution import LoopJournalContainer  # noqa: E402
 
 
 MINIMUM_VERSION = "0.261.233"
-# The report contract's bounds, written out so a changed production constant fails here.
+# The report contract's bounds, written out so the observed report is checked against the contract
+# rather than against the production constants under test.
 PAGE_RECORDS = 100
 PAGE_BYTES = 128 * 1024
 REDUCTION_CHILDREN = 32
