@@ -1,8 +1,9 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.207
+Version: 0.261.233
 Implemented in: 0.261.207
+Next and last run on a created card: 0.261.233 (microsoft/simplechat#1546)
 Refs: microsoft/simplechat#1547
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in
@@ -14,12 +15,17 @@ including the editor round trip through the real save functions, is covered by
 `functional_tests/test_orchestration_workflow_proposal_routes.py` and
 `functional_tests/test_orchestration_workflow_proposal_editor_round_trip.py`.
 
+A created card also says when its workflow runs next and how the last run went. It reads them
+from `GET /api/user/workflows` and `GET /api/user/workflows/<id>/runs`, stubbed here in the shapes
+`route_backend_workflows.py` returns, in a browser set to New York time.
+
 Build CSS with the existing V2 build, keeping outputs in UI test artifacts:
 npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
 Run: python -m pytest .\\ui_tests\\test_v2_orchestration_workflow_proposal_card.py -q
 """
 
 import copy
+import hashlib
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -41,6 +47,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 import functions_workflow_schedules  # noqa: E402  (the server's own schedule choices)
+import functions_workflow_result_masking as masking  # noqa: E402  (the result descriptor's version)
 
 
 pytestmark = pytest.mark.ui
@@ -848,6 +855,303 @@ def test_no_card_and_no_request_outside_a_personal_proposal_answer(card_ui, kind
     page.wait_for_timeout(400)
     expect(page.get_by_role("region", name="Workflow proposals")).to_have_count(0)
     assert not api.calls("GET") and not api.writes(), api.requests
+
+
+# --- When a created workflow runs next, and how its last run went (phase 6b) ---
+# The card reads the workflow and its recent runs once, through the routes the Workflows page uses,
+# answered here from `RecurringApi.workflows` and `.runs`. Follow up reads the run's result
+# descriptor from its result-context route, as Ask in chat does.
+WORKFLOWS_PATH = "/api/user/workflows"
+RUNS_PATH = f"/api/user/workflows/{WORKFLOW_ID}/runs"
+RESULT_CONTEXT = re.compile(r"/api/user/workflows/([^/]+)/runs/([^/]+)/result-context")
+RESULT_SHA = hashlib.sha256(b"Monday email review, week of Sep 14").hexdigest()
+NEXT_RUN_AT = "2026-10-05T12:00:00+00:00"
+NEXT_RUN_TEXT = r"^Mon, Oct 5, 8:00\sAM EDT$"
+HOSTILE_NAME = '<img src=x onerror="window.__hostile = 3">Monday email review'
+
+
+def workflow_record(**fields):
+    """The created workflow as the workflow list returns it: the saved draft and its run fields."""
+    record = copy.deepcopy(DRAFT)
+    record.update(
+        id=WORKFLOW_ID, is_enabled=True, next_run_at=NEXT_RUN_AT, last_run_status=None, last_run_at=None,
+    )
+    record.update(fields)
+    return record
+
+
+def history_row(run_id, status, *, started_at, completed_at=None, definition_version=2):
+    """One run as the workflow's run history lists it."""
+    return {
+        "id": run_id, "workflow_id": WORKFLOW_ID, "status": status, "trigger_source": "scheduled",
+        "started_at": started_at, "completed_at": completed_at, "definition_version": definition_version,
+    }
+
+
+def weekly_runs():
+    """Newest first: last Monday's run failed, and the one before it completed."""
+    return [
+        history_row("run-weekly-2", "failed", started_at="2026-09-21T12:00:00+00:00",
+                    completed_at="2026-09-21T12:01:00+00:00"),
+        history_row("run-weekly-1", "completed", started_at="2026-09-14T12:00:00+00:00",
+                    completed_at="2026-09-14T12:03:00+00:00"),
+    ]
+
+
+class RecurringApi(ProposalApi):
+    """The proposal routes for a created proposal, plus its workflow, the workflow's runs and a result."""
+
+    def __init__(self, assets):
+        super().__init__(assets)
+        self.proposal = proposal("created_enabled")
+        self.workflows = [workflow_record()]
+        self.runs = weekly_runs()
+        self.read_errors = {}
+
+    def handle(self, route):
+        request = route.request
+        parsed = urlsplit(request.url)
+        path = parsed.path
+        result = RESULT_CONTEXT.fullmatch(path)
+        if (f"{parsed.scheme}://{parsed.netloc}" != ORIGIN or request.method != "GET"
+                or not (path in (WORKFLOWS_PATH, RUNS_PATH) or result)):
+            super().handle(route)
+            return
+        self.requests.append({"method": "GET", "path": path, "query": parse_qs(parsed.query), "body": None})
+        self.expect(not parsed.query, f"GET {path}?{parsed.query}")
+        if path in self.read_errors:
+            self.error(route, self.read_errors[path], "Workflows aren't available right now.", "unavailable")
+        elif path == WORKFLOWS_PATH:
+            route.fulfill(json={"workflows": copy.deepcopy(self.workflows)})
+        elif path == RUNS_PATH:
+            route.fulfill(json={"workflow_id": WORKFLOW_ID, "runs": copy.deepcopy(self.runs)})
+        else:
+            workflow_id, run_id = unquote(result[1]), unquote(result[2])
+            run = next((row for row in self.runs if row["id"] == run_id), None)
+            if workflow_id != WORKFLOW_ID or run is None:
+                self.unexpected.append(f"GET {path}")
+                route.fulfill(status=404, json={"error": "Unmocked request"})
+                return
+            route.fulfill(json={"workflow_result": {
+                "version": masking.WORKFLOW_RESULT_VERSION, "workflow_id": workflow_id, "run_id": run_id,
+                "workflow_name": NAME, "status": run["status"], "completed_at": run["completed_at"],
+                "result_sha256": RESULT_SHA, "available": True,
+            }})
+
+    def summary_reads(self):
+        return [call for call in self.requests if call["path"] in (WORKFLOWS_PATH, RUNS_PATH)]
+
+    def result_reads(self):
+        return [call for call in self.requests if RESULT_CONTEXT.fullmatch(call["path"])]
+
+
+@pytest.fixture
+def recurring_ui(editor_browser, editor_assets):
+    # New York time, from the Monday the proposal was created, so every time shown is fixed.
+    context = editor_browser.new_context(
+        viewport={"width": 1440, "height": 900}, locale="en-US", timezone_id="America/New_York",
+    )
+    page = context.new_page()
+    page.clock.install(time=CLOCK_START)
+    api = RecurringApi(editor_assets)
+    errors = []
+    dialogs = []
+    page.route("**/*", api.handle)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def on_dialog(dialog):
+        dialogs.append(dialog.message)
+        dialog.dismiss()
+
+    page.on("dialog", on_dialog)
+
+    def console_error(message):
+        if message.type != "error":
+            return
+        path = urlsplit(message.location.get("url", "")).path
+        if any(path == expected and str(status) in message.text for expected, status in api.expected_errors):
+            return
+        errors.append(message.text)
+
+    page.on("console", console_error)
+    try:
+        yield page, api
+        hostile = page.evaluate("() => window.__hostile ?? null")
+        assert hostile is None, hostile
+    finally:
+        context.close()
+    assert not api.unexpected, f"Unexpected browser requests: {api.unexpected}"
+    assert not errors, f"Unexpected browser errors: {errors}"
+    assert not dialogs, f"Unexpected browser dialogs: {dialogs}"
+
+
+def mount_with_workflows(page, api, *, workflows=True, results=True):
+    """`mount` on the chat page, for a reader who may use workflows and, optionally, their results in chat."""
+    page.goto(ORIGIN + HARNESS)
+    page.wait_for_function("() => Boolean(window.OrchHarness)")
+    for url in api.assets:
+        if url.endswith(".css"):
+            page.add_style_tag(url=ORIGIN + url)
+    page.evaluate(
+        """(spec) => {
+            const H = window.OrchHarness;
+            H.reset();
+            H.stores.bootstrap.useBootstrapStore.setState({ data: {
+                version: '0.261.233', settings: {}, branding: { app_title: 'SimpleChat' },
+                features: {
+                    enable_chat_orchestration: true,
+                    allow_user_workflows: spec.workflows,
+                    enable_chat_workflow_results: spec.results,
+                },
+                user: { id: 'proposal-tester', display_name: 'Proposal Tester' },
+                scope: { groups: [], public_workspaces: [] },
+                orchestration: { enabled: true, capabilities: [] },
+                catalogs: { models: [], agents: [], prompts: [] },
+            } });
+            H.stores.chat.useChatStore.setState({
+                activeConversationId: spec.conversation, activeConversationKind: 'personal',
+                messagesLoading: false, messagesError: null, streaming: false, streamingContent: '',
+                streamError: null, thoughts: [], messages: spec.messages,
+                conversations: [{ id: spec.conversation, title: 'Weekly email' }],
+            });
+            H.mount('mount-a', 'MessageList', {}, { strictMode: true, initialEntries: ['/chat'] });
+        }""",
+        {"conversation": CONVERSATION, "workflows": workflows, "results": results, "messages": answer()},
+    )
+    expect(page.get_by_text("Every Monday at 8, review my email", exact=False)).to_be_visible()
+
+
+def run_line(summary, term):
+    return summary.locator(f"div:has(> dt:text-is('{term}')) > dd")
+
+
+def chosen_result(page):
+    return page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().workflowResultContext")
+
+
+def test_a_created_card_says_when_it_runs_next_and_how_the_last_run_went(recurring_ui):
+    page, api = recurring_ui
+    mount_with_workflows(page, api)
+    article = card(page)
+    summary = article.locator("[data-workflow-proposal-runs='']")
+    # Only the next and last runs: the card's When line already names the schedule.
+    expect(summary.locator("dt")).to_have_text(["Next run", "Last run"])
+    # Monday at 8:00 in New York, a week after the card was created, with its time zone.
+    expect(run_line(summary, "Next run")).to_have_text(re.compile(NEXT_RUN_TEXT))
+    # The newest run, however it ended.
+    expect(run_line(summary, "Last run")).to_have_text(re.compile(r"^Failed · Mon, Sep 21, 8:01\sAM EDT$"))
+    # Results come from the newest run that finished with some.
+    results = summary.get_by_role("link", name=f"Open latest results of {NAME}", exact=True)
+    expect(results).to_have_text("Open latest results")
+    expect(results).to_have_attribute(
+        "href", f"/workspace/workflows?workflow_id={WORKFLOW_ID}&run_id=run-weekly-1")
+    follow_up = summary.get_by_role(
+        "button", name=f"Follow up on the {NAME} run of Mon, Sep 14, 8:03 AM in a new chat", exact=True)
+    expect(follow_up).to_be_visible()
+
+    # Read when the card opens, and never polled.
+    assert {call["path"] for call in api.summary_reads()} == {WORKFLOWS_PATH, RUNS_PATH}, api.requests
+    reads = len(api.summary_reads())
+    page.clock.run_for(600000)
+    page.wait_for_timeout(300)
+    assert len(api.summary_reads()) == reads, "The run summary polled."
+
+    # Follow up opens a new chat about that run, reading its result descriptor fresh.
+    follow_up.focus()
+    page.keyboard.press("Enter")
+    wait_for(page, lambda: chosen_result(page), "Follow up did not choose the run's result.")
+    assert [call["path"] for call in api.result_reads()] == [
+        f"/api/user/workflows/{WORKFLOW_ID}/runs/run-weekly-1/result-context"]
+    chosen = chosen_result(page)
+    assert chosen["conversation_id"] is None, chosen
+    descriptor = chosen["descriptor"]
+    assert (descriptor["workflow_id"], descriptor["run_id"], descriptor["result_sha256"]) == (
+        WORKFLOW_ID, "run-weekly-1", RESULT_SHA), descriptor
+    expect(page.get_by_role("region", name="Workflow proposals")).to_have_count(0)
+    assert not api.writes()
+
+
+@pytest.mark.parametrize("state,record,runs,next_run,last_run", [
+    ("created_paused", {"is_enabled": False}, [], None, r"^No runs yet$"),
+    ("created_enabled", {"next_run_at": "2026-09-28T11:00:00+00:00"}, [], r"^Due now$", r"^No runs yet$"),
+    ("created_enabled", {"last_run_status": "skipped", "last_run_at": "2026-09-21T12:00:00+00:00"}, [],
+     NEXT_RUN_TEXT, r"^Skipped · Mon, Sep 21, 8:00\sAM EDT$"),
+    ("created_enabled", {}, [history_row("run-odd", "<b>exploded</b>", started_at="2026-09-21T12:00:00+00:00")],
+     NEXT_RUN_TEXT, r"^Status unavailable · Mon, Sep 21, 8:00\sAM EDT$"),
+], ids=["paused", "due now", "only the workflow record has run", "unknown run status"])
+def test_the_run_lines_follow_the_workflow_and_never_guess(recurring_ui, state, record, runs, next_run, last_run):
+    page, api = recurring_ui
+    api.proposal = proposal(state)
+    api.workflows = [workflow_record(**record)]
+    api.runs = runs
+    mount_with_workflows(page, api)
+    summary = card(page).locator("[data-workflow-proposal-runs='']")
+    expect(run_line(summary, "Last run")).to_have_text(re.compile(last_run))
+    if next_run is None:
+        # A paused workflow has no next run, whatever its record still holds.
+        expect(summary.locator("dt")).to_have_text(["Last run"])
+    else:
+        expect(run_line(summary, "Next run")).to_have_text(re.compile(next_run))
+    # None of these runs finished with results, so there is nothing to open or follow up on.
+    expect(summary.get_by_role("link")).to_have_count(0)
+    expect(summary.get_by_role("button")).to_have_count(0)
+    expect(summary).not_to_contain_text("exploded")
+
+
+@pytest.mark.parametrize("variant", ["results in chat off", "structured run", "workflows off"])
+def test_the_summary_and_follow_up_need_their_features(recurring_ui, variant):
+    page, api = recurring_ui
+    if variant == "structured run":
+        # Chat can't answer from a structured (v3) run's result yet.
+        api.runs[1]["definition_version"] = 3
+    mount_with_workflows(page, api, workflows=variant != "workflows off", results=variant != "results in chat off")
+    article = card(page)
+    if variant == "workflows off":
+        # The workflow routes would refuse this reader, so nothing is read or shown.
+        expect(article.get_by_role("status")).to_have_text("Created")
+        page.wait_for_timeout(400)
+        expect(article.locator("[data-workflow-proposal-runs]")).to_have_count(0)
+        assert not api.summary_reads(), api.requests
+        return
+    summary = article.locator("[data-workflow-proposal-runs='']")
+    expect(summary.get_by_role("link", name=f"Open latest results of {NAME}", exact=True)).to_have_attribute(
+        "href", f"/workspace/workflows?workflow_id={WORKFLOW_ID}&run_id=run-weekly-1")
+    expect(summary.get_by_role("button")).to_have_count(0)
+    expect(summary).not_to_contain_text("Follow up")
+
+
+@pytest.mark.parametrize("failure", ["runs read fails", "workflow list fails", "workflow not listed"])
+def test_a_failed_read_says_run_details_are_unavailable(recurring_ui, failure):
+    page, api = recurring_ui
+    if failure == "runs read fails":
+        api.read_errors[RUNS_PATH] = 503
+    elif failure == "workflow list fails":
+        api.read_errors[WORKFLOWS_PATH] = 503
+    else:
+        # Deleted since the card was created: nothing is filled in from the proposal instead.
+        api.workflows = [workflow_record(id="wf-someone-else")]
+    mount_with_workflows(page, api)
+    article = card(page)
+    expect(article.locator("[data-workflow-proposal-runs='unavailable']")).to_have_text(
+        "Run details aren't available right now.")
+    expect(article.locator("[data-workflow-proposal-runs='']")).to_have_count(0)
+    expect(article).not_to_contain_text("Last run")
+    # The rest of the card still works.
+    expect(article.get_by_role("link", name="Open workflow", exact=True)).to_be_visible()
+
+
+def test_a_hostile_workflow_name_stays_text_in_the_run_summary(recurring_ui):
+    page, api = recurring_ui
+    api.proposal["workflow"]["name"] = HOSTILE_NAME
+    api.workflows = [workflow_record(name=HOSTILE_NAME)]
+    mount_with_workflows(page, api)
+    article = card(page, HOSTILE_NAME)
+    summary = article.locator("[data-workflow-proposal-runs='']")
+    expect(summary.get_by_role("link", name=f"Open latest results of {HOSTILE_NAME}", exact=True)).to_be_visible()
+    expect(summary.get_by_role(
+        "button", name=f"Follow up on the {HOSTILE_NAME} run of Mon, Sep 14, 8:03 AM in a new chat", exact=True,
+    )).to_be_visible()
+    expect(article.locator("img")).to_have_count(0)
 
 
 if __name__ == "__main__":
