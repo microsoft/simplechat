@@ -71,6 +71,35 @@ access. A disconnected workflow account does not mean interactive chat is
 disabled. Reloading already-published file evidence also does not require a
 fresh source sign-in.
 
+## Use Microsoft 365 in a plan
+
+Implemented in version: **0.261.236** (`application/single_app/config.py`).
+
+With **Orchestrate** on in V2 chat, a plan can include a **Use an action** step
+that runs one of your Calendar, Email, OneDrive, or SharePoint Online actions.
+The step reads as you, the person who sent the request, and uses only that one
+action. An agent step doesn't make its agent's Microsoft 365 actions available.
+
+Plans only read Microsoft 365 data. Sending mail, sending calendar invitations,
+and marking mail as read aren't offered to a plan step, even when the action
+allows them. Ask in chat without a plan to prepare a message for review.
+
+The step checks your delegated Microsoft 365 access before any model or
+Microsoft Graph call. If you haven't connected the source, or your sign-in has
+expired, the step stops and the plan's run details show **Connect Microsoft
+365** for the sources that step needs. Sign in in the window that opens, then
+select **Retry from failed step**. Completed steps aren't repeated.
+
+Some file analysis needs your approval first. The step then stops and links to
+**Approvals**. Deciding the approval doesn't restart the plan. Select **Retry
+from failed step** afterward: the retried step continues the same Microsoft 365
+request, so an approval you gave applies while the action is unchanged.
+
+Plans don't use Microsoft 365 in shared conversations, and a step there stops
+before reading anything. An answer from a plan step that read Microsoft 365
+counts as Microsoft 365 history: sharing that conversation later asks for your
+approval, as it does for a chat answer.
+
 ## Review an email or meeting before delivery
 
 Chat shows a saved action card for manual or delayed Email and Calendar

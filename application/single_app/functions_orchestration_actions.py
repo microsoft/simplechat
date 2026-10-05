@@ -5,7 +5,8 @@ When the request asks for a chart, a separate chart sub-step runs after gatherin
 kernel holds only the built-in chart tools, never the action's own functions, so saved
 visual preferences can be applied there without reaching calls to the integration.
 
-Version: 0.261.139
+Version: 0.261.236
+Microsoft 365 actions authorized for their own step in: 0.261.236
 """
 
 import asyncio
@@ -13,7 +14,7 @@ import inspect
 import json
 import logging
 import uuid
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from copy import deepcopy
 from typing import Annotated
 
@@ -34,7 +35,14 @@ from functions_chart_operations import (
     extract_result_rows,
     normalize_chart_kind,
 )
+from functions_m365_approvals import M365PolicyError
 from functions_orchestration_invocation_capture import require_invocation_capture
+from functions_orchestration_m365 import (
+    action_step_scope,
+    is_m365_action_manifest,
+    result_refusal,
+    step_error,
+)
 from functions_orchestration_model_capture import azure_chat_construction_metadata
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
@@ -431,7 +439,7 @@ def _step_chart_titles(invocations):
 
 async def invoke_action(
     action_ref, task, context, *, settings, user_id, cancel_requested, invocation_capture=None,
-    visual_request=None,
+    visual_request=None, m365_request_key=None, m365_origin=None,
 ):
     """Run only this action's enabled functions and return its findings and invocation scope.
 
@@ -440,6 +448,9 @@ async def invoke_action(
     loop ends.
     The sub-step holds only the built-in chart tools and the rows already retrieved, so under
     invocation capture it acquires nothing the capture has not already attested.
+
+    A Microsoft 365 action runs inside its own step's Microsoft 365 context, keyed by
+    ``m365_request_key`` so a retry of the step reuses its request and any approval.
     """
     # Keep the planner/registry importable without SK and the Azure application bootstrap.
     from semantic_kernel import Kernel
@@ -489,7 +500,9 @@ async def invoke_action(
     )
     seen_before = {id(invocation) for invocation in budget.invocations()}
     bridge = identity.bridge(reference) if identity.bridge else nullcontext()
-    with bridge, agent_execution(frame) as frame:
+    # Entered once the saved manifest is known, and exited inside the bridge with the outcome.
+    m365_scope = ExitStack()
+    with bridge, agent_execution(frame) as frame, m365_scope:
         invocation_capture = frame.invocation_capture
         if invocation_capture is not None:
             invocation_capture('action', settings=settings, selector=action_ref)
@@ -502,6 +515,14 @@ async def invoke_action(
         if invocation_capture is not None:
             current_settings = deepcopy(current_settings)
             manifest = deepcopy(manifest)
+        m365_step = is_m365_action_manifest(manifest)
+        if m365_step:
+            # Sign-in is checked here, before the model or Microsoft Graph is called.
+            m365_scope.enter_context(action_step_scope(
+                action_ref, user_id=user_id, conversation_id=getattr(context, 'conversation_id', None),
+                request_key=m365_request_key, user_groups=getattr(context, 'active_group_ids', None),
+                origin=m365_origin,
+            ))
         kernel = Kernel()
         loader = create_logged_plugin_loader(kernel)
         history = ChatHistory()
@@ -557,6 +578,10 @@ async def invoke_action(
                     await next(invocation)
                 except AgentExecutionCancelled:
                     raise
+                except M365PolicyError as exc:
+                    # Sign-in, approval and policy refusals stop the step with their own failure.
+                    failure = step_error(exc)
+                    raise failure from exc
                 except Exception as exc:
                     # Contain arbitrary plugin exceptions before SK puts them in model context.
                     log_event(
@@ -566,6 +591,11 @@ async def invoke_action(
                     )
                     failure = ActionExecutionError('An action function could not complete.')
                     raise failure from exc
+                refusal = result_refusal(invocation.result.value) if m365_step and invocation.result is not None else None
+                if refusal is not None:
+                    # A refused Microsoft 365 call is not data: the model would report it as findings.
+                    failure = refusal
+                    raise failure
                 if invocation.result is not None:
                     outputs.append(invocation.result.value)
                     retrieved.append({

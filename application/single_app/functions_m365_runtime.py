@@ -41,7 +41,10 @@ from functions_m365_execution import (
 from functions_m365_operations import (
     M365_ACTION_DEFINITIONS,
     M365_LEGACY_OPERATION_SOURCES,
+    M365_WRITE_FUNCTIONS,
+    get_m365_enabled_function_names,
 )
+from functions_msgraph_operations import get_msgraph_enabled_function_names
 from functions_m365_connections import preflight_m365_chat_authentication
 from functions_m365_workflow_binding import (
     M365_REVISION_AUTHORSHIP_FIELD,
@@ -63,6 +66,10 @@ M365_RESUME_FIELDS = frozenset({
     "selection_mode", "document_context_requested", "prompt_info",
     "conversation_task_document_ids", "image_generation",
 })
+# The approved orchestration step's own action, set only inside that step's execution
+# bridge. Like every g.m365_* value, it is cleared when the step scope exits.
+M365_STEP_SELECTION_KEY = "m365_step_selection"
+_STEP_ORIGIN_FIELDS = ("run_id", "attempt_index", "step_id", "capability_id")
 
 
 def m365_resume_payload(payload):
@@ -538,6 +545,220 @@ def validate_m365_workflow_execution(context):
     )
 
 
+def _step_action_manifest(action):
+    """A saved action's own enabled functions, with no agent overlay."""
+    manifest = dict(action)
+    if action.get("type") == "msgraph":
+        fields = action.get("additionalFields") or {}
+        functions = set(get_msgraph_enabled_function_names(
+            fields.get("msgraph_capabilities", action.get("msgraph_capabilities")),
+        ))
+        if action.get("msgraph_capabilities") is not None:
+            functions.intersection_update(get_msgraph_enabled_function_names(action["msgraph_capabilities"]))
+        if action.get("enabled_functions") is not None:
+            functions.intersection_update(action["enabled_functions"])
+        manifest["enabled_functions"] = sorted(functions)
+    else:
+        manifest["enabled_functions"] = get_m365_enabled_function_names(action["type"], action)
+    return manifest
+
+
+def step_selected_m365_manifests(selection, actor_user_id):
+    """Resolve an orchestration action step's selection from current storage, never the plan.
+
+    The selection names the approved step's saved action by its exact reference, and the
+    catalog reauthorizes that reference on every read.
+    """
+    if not isinstance(selection, dict) or selection.get("kind") != "action":
+        raise M365PolicyError(
+            "m365_action_selection_unavailable",
+            "The selected Microsoft 365 actions could not be resolved.",
+        )
+    # The catalog owns exact-reference reauthorization; it loads storage only when called.
+    from functions_action_catalog import resolve_action_manifest
+
+    try:
+        action = resolve_action_manifest(
+            actor_user_id, selection.get("action_ref"),
+            user_groups=selection.get("user_groups") or None,
+        )
+    except (PermissionError, LookupError) as error:
+        raise M365PolicyError("m365_action_not_authorized", "The step's action is unavailable.") from error
+    if action.get("type") != "msgraph" and action.get("type") not in M365_ACTION_DEFINITIONS:
+        return []
+    manifest = _step_action_manifest(action)
+    return [manifest] if manifest["enabled_functions"] else []
+
+
+def _readable_m365_manifests(manifests):
+    """Plans only read Microsoft 365 data: send, invite and read-state functions are removed."""
+    readable = []
+    for manifest in manifests:
+        functions = [name for name in manifest.get("enabled_functions") or [] if name not in M365_WRITE_FUNCTIONS]
+        if functions:
+            readable.append({**manifest, "enabled_functions": functions})
+    return readable
+
+
+def _begin_step_m365_request(context, origin):
+    """Mark a plan step's request running. A retry of the step reuses the same record."""
+    container = cosmos_m365_execution_runs_container
+    origin = {
+        key: value for key, value in (origin or {}).items()
+        if key in _STEP_ORIGIN_FIELDS and isinstance(value, (str, int)) and not isinstance(value, bool)
+    }
+    for attempt in range(3):
+        try:
+            prior = container.read_item(context.request_id, partition_key=context.data_user_id)
+        except CosmosResourceNotFoundError:
+            prior = None
+        if prior is not None and (
+            prior.get("type") != "m365_execution_request"
+            or prior.get("conversation_id") != context.conversation_id
+            or prior.get("actor_user_id") != context.actor_user_id
+            or prior.get("workflow_id")
+        ):
+            raise M365PolicyError("m365_request_changed", "This Microsoft 365 request belongs to other work.")
+        record = {
+            **(prior or {}),
+            "id": context.request_id, "user_id": context.data_user_id,
+            "actor_user_id": context.actor_user_id, "type": "m365_execution_request",
+            "status": "running", "conversation_id": context.conversation_id,
+            "workflow_id": None, "run_id": None, "orchestration": origin,
+        }
+        try:
+            if prior is None:
+                container.create_item(body=record)
+            else:
+                container.replace_item(
+                    record["id"], body=record,
+                    etag=prior["_etag"], match_condition=MatchConditions.IfNotModified,
+                )
+            g.m365_has_pending_record = True
+            return
+        except CosmosHttpResponseError as error:
+            if error.status_code not in {409, 412} or attempt == 2:
+                raise
+
+
+def _report_step_approval_outcome(approval_id, context, status):
+    """Show a retried step's outcome on the approval it stopped for, as a resumed chat does."""
+    try:
+        get_m365_approval_service().record_execution_status(
+            approval_id, context.data_user_id, context.request_id, status,
+        )
+    except (M365PolicyError, LookupError):
+        # Still pending, or no longer this request's approval: the step's own outcome stands.
+        return
+
+
+def _finish_step_m365_request(context, status, approval_id=None):
+    """Record a plan step's outcome.
+
+    A step never pauses for a decision: a stop for approval is recorded as failed with its
+    approval, so deciding it does not resume a chat request, and the user retries the step.
+    """
+    container = cosmos_m365_execution_runs_container
+    for attempt in range(3):
+        try:
+            record = container.read_item(context.request_id, partition_key=context.data_user_id)
+        except CosmosResourceNotFoundError:
+            return
+        if record.get("status") in {"cancelled", "recovery_required"}:
+            return
+        updated = {**record, "status": status}
+        if approval_id:
+            updated["approval_id"] = approval_id
+        try:
+            container.replace_item(
+                record["id"], body=updated,
+                etag=record["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        except CosmosHttpResponseError as error:
+            if error.status_code != 412 or attempt == 2:
+                raise
+            continue
+        if record.get("approval_id") and not approval_id:
+            _report_step_approval_outcome(record["approval_id"], context, status)
+        return
+
+
+def _stopping_approval_id(error):
+    """The approval a step stopped for, read from the stop or the refusal it wraps."""
+    for _depth in range(5):
+        if error is None:
+            return None
+        approval_id = getattr(error, "approval_id", None)
+        if isinstance(approval_id, str) and approval_id:
+            return approval_id
+        error = error.__cause__ or error.__context__
+    return None
+
+
+@contextmanager
+def step_m365_context(*, user_id, conversation_id, request_id, selection, origin=None):
+    """Authorize Microsoft 365 for one orchestration action step inside its execution bridge.
+
+    A plan step runs in a fresh request context, so the chat request's Microsoft 365
+    context never reaches it. This context uses the signed-in user as actor and data user,
+    selects only the step's own action, and never enables send, invite or read-state
+    functions. Shared conversations are refused: their source-sharing approvals resume chat
+    requests, not plan steps. Delegated sign-in is checked here, before any model call or
+    Microsoft Graph request.
+    """
+    if not has_request_context() or (session.get("user") or {}).get("oid") != user_id:
+        raise M365PolicyError("m365_session_required", "Sign in again to use Microsoft 365.")
+    conversation, _access, shared = _conversation_access(user_id, conversation_id)
+    if conversation is None or conversation.get("user_id") != user_id:
+        raise M365PolicyError("conversation_not_found", "Conversation not found.")
+    if shared is not None:
+        raise M365PolicyError(
+            "m365_shared_conversation_unsupported",
+            "Plans can't use Microsoft 365 in a shared conversation.",
+        )
+    previous_state = {name: value for name, value in vars(g).items() if name.startswith("m365_")}
+    for name in previous_state:
+        delattr(g, name)
+    setattr(g, M365_STEP_SELECTION_KEY, deepcopy(selection))
+    try:
+        context = M365ExecutionContext(
+            actor_user_id=user_id, data_user_id=user_id, tenant_id=TENANT_ID,
+            conversation_id=conversation_id, shared=False, request_id=request_id,
+            audience_version=_audience_version(conversation, None),
+        )
+        install_m365_context(context)
+        selected = step_selected_m365_manifests(selection, user_id)
+        manifests = _readable_m365_manifests(selected)
+        if not manifests:
+            if selected:
+                raise M365PolicyError("m365_read_only_step", "Plans can only read Microsoft 365 data.")
+            raise M365PolicyError("m365_action_not_selected", "No Microsoft 365 action is selected for this step.")
+        _begin_step_m365_request(context, origin)
+        status, approval_id = "failed", None
+        try:
+            preflight_m365_manifests(manifests)
+            yield get_m365_execution_context()
+            status = "completed"
+        except BaseException as error:
+            approval_id = _stopping_approval_id(error)
+            raise
+        finally:
+            try:
+                _finish_step_m365_request(context, status, approval_id)
+            except (CosmosHttpResponseError, M365PolicyError) as error:
+                # The step's own outcome is already decided; a stale record only delays sharing.
+                log_event(
+                    "[MS_GRAPH_PLUGIN] A plan step's Microsoft 365 request status was not saved.",
+                    level=logging.WARNING, extra={"error_type": type(error).__name__, "status": status},
+                )
+    finally:
+        for name in list(vars(g)):
+            if name.startswith("m365_"):
+                delattr(g, name)
+        for name, value in previous_state.items():
+            setattr(g, name, value)
+
+
 def configure_m365_pending_delivery_runtime(request_context_factory):
     """Bootstrap supplies a request-context factory, never another user's session."""
     from config import cosmos_msgraph_pending_actions_container
@@ -704,6 +925,9 @@ def resolve_m365_selected_manifests(context):
         current = load_current_workflow(workflow)
         manifests, _ = workflow_m365_manifests(current)
         return manifests
+    step = getattr(g, M365_STEP_SELECTION_KEY, None) if has_request_context() else None
+    if step is not None:
+        return _readable_m365_manifests(step_selected_m365_manifests(step, context.actor_user_id))
     selection = getattr(g, "m365_selected_agent_ref", None) if has_request_context() else None
     if not selection:
         return []

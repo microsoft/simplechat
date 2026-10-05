@@ -17,6 +17,7 @@ import {
     type OrchestrationPlan, type PlanStatus,
 } from '../../lib/orchestration';
 import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
+import { OrchestrationM365Notice } from './OrchestrationM365Notice';
 
 function RecoveryConfirmation({
     busy, onConfirm, onClose,
@@ -135,6 +136,11 @@ export function OrchestrationRecoveryNotice({
             </p>
             {attempt.failure?.message ? <p>{attempt.failure.message}</p> : null}
             {saved?.error ? <p role="alert">{saved.error}</p> : null}
+            {failed && !saved?.transportUnknown && !legacy && (!newer || newer === runId) ? (
+                <OrchestrationM365Notice
+                    failures={[...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])]}
+                />
+            ) : null}
             {waiting ? (
                 <p>
                     This computation is still pending in the same attempt. Dependent tasks will wait for its results.
