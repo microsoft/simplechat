@@ -1,14 +1,14 @@
 # functions_orchestration_services.py
 """Bind initialized application resources to the retained-result runtime.
 
-Version: 0.261.242
+Version: 0.261.243
 
 The web and scheduler owners supply storage, current access callbacks and private
 artifact transport. This module never discovers configuration, credentials or
 Flask request state, and never initializes a client as an import side effect.
 Each run attempt is its own approved work, so a retry's files never reuse the
 superseded attempt's output identity. A merged document's original files are read
-only through the owner-supplied document reader (0.261.242).
+only through the owner-supplied document reader (0.261.243).
 """
 
 from copy import deepcopy

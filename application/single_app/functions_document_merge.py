@@ -1,16 +1,16 @@
 # functions_document_merge.py
 """Ordered assembly of several PDF, Word, PowerPoint or spreadsheet files into one file.
 
-Version: 0.261.245
+Version: 0.261.246
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage or routes, and performs no model work. Each assembler reads
 one source at a time, checks a package's size and refuses XML parts that declare a document
 type or aren't UTF-8 or UTF-16 before parsing it, and writes the output to a bounded spooled
 file whose size is checked before it is returned; a spool larger than 16 MiB spills into the
-container's scratch directory (0.261.244). The same files and options always produce the
+container's scratch directory (0.261.245). The same files and options always produce the
 same bytes, so a replayed merge reuses its file. CodeQL import-cycle cleanup added in
-0.261.245.
+0.261.246.
 """
 
 from typing import Callable, Optional, Sequence

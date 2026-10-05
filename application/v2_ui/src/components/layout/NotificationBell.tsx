@@ -4,6 +4,10 @@
 // V2 has no top bar, so the bell sits in the rail's header beside the brand mark. Expanded,
 // it shows how many notices are unread; collapsed to the icon strip there is no room for a
 // number, so a dot says there is something to read and the accessible name says how much.
+//
+// A workflow alert that pops up hangs from the bell as well, so it arrives where every notice
+// can be found again and tucks back into the thing it came out of. The bell's wrapper is the
+// notice's positioning anchor, and the notice follows the bell in the tab order.
 
 import { useCallback, useId, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -12,9 +16,15 @@ import { formatNotificationCount } from '../../lib/notifications';
 import { useReducedMotion } from '../../lib/workflowAlertMotion';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useWorkflowAlertStore } from '../../stores/workflowAlertStore';
+import { WorkflowAlertCalloutSlot } from '../notifications/WorkflowAlertNotice';
 import { NotificationPanel } from './NotificationPanel';
 import '../notifications/WorkflowAlertNotice.css';
 
+/**
+ * `className` lays out the bell's wrapper in the rail. The workflow alert notice is positioned
+ * from that wrapper, so in the collapsed strip it spans the strip's inner width: the notice
+ * then flies out from the strip's edge rather than from inside it.
+ */
 export function NotificationBell({ collapsed, className }: { collapsed: boolean; className?: string }) {
     const count = useNotificationStore((state) => state.count);
     // Bumped when a workflow alert's notice tucks in here; the bell swings once in answer.
@@ -37,7 +47,7 @@ export function NotificationBell({ collapsed, className }: { collapsed: boolean;
     }, []);
 
     return (
-        <>
+        <div className={clsx('relative flex shrink-0', className)}>
             <button
                 ref={buttonRef}
                 type="button"
@@ -52,7 +62,6 @@ export function NotificationBell({ collapsed, className }: { collapsed: boolean;
                 className={clsx(
                     'relative shrink-0 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
                     open && 'bg-surface-2 text-text-1',
-                    className,
                 )}
             >
                 <span
@@ -80,7 +89,8 @@ export function NotificationBell({ collapsed, className }: { collapsed: boolean;
                     </span>
                 )}
             </button>
+            <WorkflowAlertCalloutSlot collapsed={collapsed} />
             {open && <NotificationPanel id={panelId} anchorRef={buttonRef} onClose={close} />}
-        </>
+        </div>
     );
 }

@@ -2,9 +2,9 @@
 # test_workflow_merge_task.py
 """
 Functional test for workflow Merge tasks.
-Version: 0.261.245
-Implemented in: 0.261.238
-Scale and formula checks added in: 0.261.242
+Version: 0.261.246
+Implemented in: 0.261.239
+Scale and formula checks added in: 0.261.243
 Refs: microsoft/simplechat#1619
 
 This test ensures that a workflow task can merge many CSV and Excel files into one CSV or
@@ -211,7 +211,7 @@ def csv_rows(content):
 
 
 def test_version_includes_workflow_merge_tasks():
-    assert_app_version_at_least("0.261.238")
+    assert_app_version_at_least("0.261.239")
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +567,7 @@ def test_merge_failures_name_what_to_fix(app):
 
 
 def test_a_withheld_kind_is_refused_by_the_contract_and_the_merge(app, monkeypatch):
-    # Every kind is available from 0.261.241; a kind left out of the list must still be refused everywhere.
+    # Every kind is available from 0.261.242; a kind left out of the list must still be refused everywhere.
     withheld = tuple(kind for kind in app.actions.MERGE_KINDS if kind != "pptx")
     monkeypatch.setattr(app.actions, "MERGE_KINDS_AVAILABLE", withheld)
     monkeypatch.setattr(app.merge, "MERGE_KINDS_AVAILABLE", withheld)

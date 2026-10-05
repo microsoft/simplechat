@@ -2,8 +2,8 @@
 # test_workflow_merge_powerpoint.py
 """
 Functional test for PowerPoint Merge tasks in workflows.
-Version: 0.261.241
-Implemented in: 0.261.241
+Version: 0.261.242
+Implemented in: 0.261.242
 Refs: microsoft/simplechat#1619
 
 This test ensures that a workflow Merge task can append the slides of PowerPoint decks, in
@@ -83,7 +83,7 @@ def section_names(content):
 
 
 def test_version_includes_powerpoint_merge_tasks():
-    assert_app_version_at_least("0.261.241")
+    assert_app_version_at_least("0.261.242")
 
 
 def test_a_powerpoint_task_takes_only_powerpoint_options_and_creates_pptx(app):

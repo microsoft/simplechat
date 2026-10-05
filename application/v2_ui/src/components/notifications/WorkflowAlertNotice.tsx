@@ -1,11 +1,17 @@
 // WorkflowAlertNotice.tsx
 // The small notice a workflow alert first appears as, before it is opened into the card.
 //
-// It is a callout from the My Workspace item in the rail, where workflows live, with a notch
-// pointing at the item. In the full rail it drops down below the item and overlays the items
-// under it rather than pushing them, so the conversation list never jumps. With the rail
-// collapsed to its icon strip, including mobile's, it flies out to the right of the icon
-// instead. (A top-centre pill was also built and compared in the alert lab; the callout was
+// It is a callout from the bell in the rail, the place every notice can be found again, with a
+// notch pointing at the bell. In the full rail it drops down from the bell the way the bell's
+// own panel does, hanging past the rail's edge over the page. It overlays what is under it
+// rather than pushing it, so the conversation list never jumps, and most of New chat stays
+// clickable beside it. With the rail collapsed to its icon strip, including mobile's, it flies
+// out to the right of the bell instead.
+//
+// It used to hang from My Workspace, where workflows live. It moved to the bell (0.261.236)
+// because the chat page's rail scrolls its navigation out of view as the conversation list is
+// read, which could carry the item, and the notice with it, off screen; the bell never
+// scrolls. (A top-centre pill was also built and compared in the alert lab; the callout was
 // chosen because the pill covered the page's own header and actions on a phone.)
 //
 // It shows one entry at a time, the loudest waiting, and says how many more are behind it. It
@@ -16,14 +22,15 @@
 // unread there.
 //
 // An alert that needs acknowledgment never tucks away, so it must never cover anything for
-// long: in the full rail it takes its own room below My Workspace, pushing the items under it
-// down, and as a flyout it steps aside -- invisible, out of the pointer's way -- when focus moves
-// onto something it would cover, and comes back when focus moves on. A new alert taking the lead
-// is shown, whatever focus did before it arrived.
+// long: in the full rail it takes a row of its own under the rail's header, still pointing at
+// the bell, and pushes New chat and the navigation down; as a flyout it steps aside --
+// invisible, out of the pointer's way -- when focus moves onto something it would cover, and
+// comes back when focus moves on. A new alert taking the lead is shown, whatever focus did
+// before it arrived.
 //
 // Everything shown is the alert's own text, rendered as text.
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { clsx } from 'clsx';
 import { BellRing, X } from 'lucide-react';
 import {
@@ -63,6 +70,11 @@ function useNoticeShown(): boolean {
     return useWorkflowAlertStore(
         (state) => state.entries.length > 0 && (state.phase === 'notice' || state.phase === 'tucking'),
     );
+}
+
+/** Whether an alert waiting to be shown needs acknowledgment, and so never tucks away. */
+function useMustAcknowledge(): boolean {
+    return useWorkflowAlertStore((state) => state.entries.some((entry) => entry.requireAcknowledgment));
 }
 
 /** Whether `notice` lies over `target`, so that focus on `target` would be hidden under it. */
@@ -146,8 +158,8 @@ function NoticeBody({
         () => void tuck(),
     );
 
-    // The notice overlays the rail items below My Workspace, or the page beside the strip, so
-    // tabbing on from it lands on something it covers. Focus must never sit hidden under it
+    // The notice overlays the rail items under the bell, or the page beside the rail, so
+    // tabbing on from it can land on something it covers. Focus must never sit hidden under it
     // (WCAG 2.2, 2.4.11), so it tucks into the bell and leaves focus where it went. The alert
     // stays unread there, like any other tuck. One that needs acknowledgment can't tuck away,
     // so as a flyout it steps aside instead, until focus is somewhere it doesn't cover. Every
@@ -362,30 +374,94 @@ export function WorkflowAlertNotice({ placement }: { placement: WorkflowAlertNot
 }
 
 /**
- * The notice's anchor, inside the My Workspace item. Below the item in the full rail; beside
- * its icon when the rail is a strip, capped so a phone's narrow screen still fits it. In the
- * full rail an alert that needs acknowledgment takes its own room, since it stays until it is
- * acknowledged and must not sit over the items under it.
+ * The notice's anchor, inside the bell's wrapper.
+ *
+ * In the full rail it drops from the bell as the bell's panel does, eight pixels below it, and
+ * is shifted left so its notch (18px in, 12px wide, so centred 24px in) sits under the bell's
+ * centre. In the collapsed strip, including a phone's, it flies out from the strip's edge with
+ * its notch (16px down, centred 22px down) level with the bell, capped so a phone's narrow
+ * screen still fits it.
+ *
+ * An alert that needs acknowledgment stays until it is acknowledged, so in the full rail it must
+ * not sit over anything. There WorkflowAlertRowSlot gives it a row of its own, and this slot
+ * stands aside.
  */
 export function WorkflowAlertCalloutSlot({ collapsed }: { collapsed: boolean }) {
     const shown = useNoticeShown();
-    const mustAcknowledge = useWorkflowAlertStore((state) => state.entries.some((entry) => entry.requireAcknowledgment));
-    if (!shown) {
+    const mustAcknowledge = useMustAcknowledge();
+    if (!shown || (!collapsed && mustAcknowledge)) {
         return null;
     }
-    const inFlow = !collapsed && mustAcknowledge;
     return (
         <div
             data-workflow-alert-slot="callout"
-            data-in-flow={inFlow ? 'true' : 'false'}
+            data-in-flow="false"
             className={clsx(
-                inFlow ? 'relative mt-2' : 'absolute z-50',
+                'absolute z-50 w-72',
                 collapsed
-                    ? 'top-0 left-full ml-3 w-72 max-w-[calc(100vw_-_68px_-_1rem)]'
-                    : !inFlow && 'top-full right-0 left-0 mt-2',
+                    ? 'top-[calc(50%_-_22px)] left-full ml-3 max-w-[calc(100vw_-_68px_-_1rem)]'
+                    : 'top-full left-[calc(50%_-_24px)] mt-2',
             )}
         >
             <WorkflowAlertNotice placement={collapsed ? 'flyout' : 'below'} />
+        </div>
+    );
+}
+
+/**
+ * The full rail's room for an alert that needs acknowledgment: a row of its own under the rail's
+ * header, the row the bell sits in. It hangs from the bell like any other notice but pushes New
+ * chat and the navigation down instead of covering them, and, being outside the chat page's
+ * scroll region, it can't be scrolled away either.
+ *
+ * The row spans the rail rather than sitting under the bell, so the slot measures where the
+ * bell is and hands the notch that position (`--wf-alert-notch-centre`, from the slot's left).
+ */
+export function WorkflowAlertRowSlot({ collapsed }: { collapsed: boolean }) {
+    const shown = useNoticeShown();
+    const mustAcknowledge = useMustAcknowledge();
+    const suspended = useWorkflowAlertStore((state) => state.suspended);
+    const slotRef = useRef<HTMLDivElement>(null);
+    const [notchCentre, setNotchCentre] = useState<number | null>(null);
+    const active = shown && !collapsed && mustAcknowledge;
+
+    // Measured before paint, so the notch never shows pointing anywhere but the bell.
+    useLayoutEffect(() => {
+        const slot = slotRef.current;
+        const bell = slot?.closest('nav')?.querySelector('[data-notification-bell]');
+        if (!active || !slot || !bell) {
+            return undefined;
+        }
+        const measure = () => {
+            const slotBox = slot.getBoundingClientRect();
+            const bellBox = bell.getBoundingClientRect();
+            setNotchCentre(bellBox.left + bellBox.width / 2 - slotBox.left);
+        };
+        measure();
+        if (typeof ResizeObserver === 'undefined') {
+            return undefined;
+        }
+        const observer = new ResizeObserver(measure);
+        observer.observe(slot);
+        return () => observer.disconnect();
+    }, [active]);
+
+    if (!active) {
+        return null;
+    }
+    const notchStyle = notchCentre === null
+        ? undefined
+        : ({ '--wf-alert-notch-centre': `${notchCentre}px` } as CSSProperties);
+    return (
+        <div
+            ref={slotRef}
+            data-workflow-alert-slot="callout"
+            data-in-flow="true"
+            style={notchStyle}
+            // While something else has the page the notice is hidden, and its gap goes with it.
+            className={clsx('relative mx-3', !suspended && 'mb-3')}
+        >
+            <WorkflowAlertNotice placement="below" />
         </div>
     );
 }

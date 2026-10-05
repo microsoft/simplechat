@@ -1,9 +1,9 @@
 # test_v2_orchestration_merge_arguments.py
 """
 Real-component browser tests for how the plan review states merge settings.
-Version: 0.261.242
-Implemented in: 0.261.237
-Document merge settings added in: 0.261.242
+Version: 0.261.243
+Implemented in: 0.261.238
+Document merge settings added in: 0.261.243
 Refs: microsoft/simplechat#1619
 
 The production OrchestrationPlanCard and OrchestrationRunView run in Chromium with the
@@ -42,7 +42,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
-IMPLEMENTED_IN = "0.261.237"
+IMPLEMENTED_IN = "0.261.238"
 CONVERSATION = "conversation-merge"
 TURN = "merge-turn"
 RUN = "/api/v2/orchestration/run"
@@ -202,7 +202,7 @@ def mount_plan(page, api, plan, *, theme="light"):
             H.reset();
             document.documentElement.classList.toggle('dark', spec.theme === 'dark');
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.237', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.238', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: { enable_chat_orchestration: true },
                 user: { id: 'owner', display_name: 'Merge Owner' },
                 scope: { groups: [], public_workspaces: [] },

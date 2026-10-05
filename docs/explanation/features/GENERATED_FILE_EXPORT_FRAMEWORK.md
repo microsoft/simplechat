@@ -2,7 +2,7 @@
 
 Implemented in version: **0.250.072**
 
-Updated through version: **0.261.236**
+Updated through version: **0.261.237**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
@@ -152,12 +152,12 @@ orchestration capability. The workflow admission constant
 | `json`, `yaml` / `yml` | `structured_records_v1` | `records` | Complete array/sequence, record and object insertion order, nested values and JSON-domain types preserved. |
 | `json`, `yaml` / `yml` | `structured_value_v1` | `structured_value` | One complete JSON-domain value, preserving object insertion order. |
 | `csv` | `tabular_records_v1` | `records` | Explicit ordered columns, matching scalar-only records and formula-safe headers/cells. |
-| `csv` | `exact_tabular_records_v1` | `records` | Since **0.261.236**: every retained column in retained order, with the same scalar, formula-safe cells as `tabular_records_v1`. No options. Requires a source with a retained column schema. |
+| `csv` | `exact_tabular_records_v1` | `records` | Since **0.261.237**: every retained column in retained order, with the same scalar, formula-safe cells as `tabular_records_v1`. No options. Requires a source with a retained column schema. |
 | `xml` | `typed_xml_v1` | `records`, `structured_value` | A fixed typed XML vocabulary that preserves keys, nested values and scalar distinctions. |
 | `md` / `markdown` | `prepared_text_v1` | `markdown` | Prepared Markdown bytes; no hidden composition or rich-document conversion. |
 | `txt` / `text` | `prepared_text_v1` | `text` | Prepared plain text bytes. |
 | `xlsx` | `tabular_workbook_v1` | `records` | One explicitly named sheet, ordered columns and streaming scalar records. Required options: `columns`, `sheet_name`. |
-| `xlsx` | `exact_tabular_workbook_v1` | `records` | Since **0.261.236**: one sheet holding every retained column in retained order. Optional `sheet_name`, default `Sheet1`. |
+| `xlsx` | `exact_tabular_workbook_v1` | `records` | Since **0.261.237**: one sheet holding every retained column in retained order. Optional `sheet_name`, default `Sheet1`. |
 | `docx`, `pdf` | `prepared_report_v1` | `text`, `markdown` | The same complete prepared report, with literal text or supported Markdown semantics according to source kind. Optional `title`. |
 | `pptx` | `prepared_slide_deck_v1` | `structured_value` | Versioned prepared-slide JSON with positioned shapes. No request options; deck title/size belong to the prepared JSON. |
 

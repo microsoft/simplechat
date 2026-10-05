@@ -2,8 +2,8 @@
 # test_file_merge_scratch_dir.py
 """
 Functional test for where V2 file merges spill their spooled data to disk.
-Version: 0.261.245
-Implemented in: 0.261.244
+Version: 0.261.246
+Implemented in: 0.261.245
 
 This test ensures that a merge too large to keep in memory spills its spooled rows or
 assembled file into the container's dedicated scratch directory (/sc-temp-files) when the
@@ -122,7 +122,7 @@ def spill_every_spool(monkeypatch, scratch_directory):
 
 
 def test_version_includes_merge_scratch_directory():
-    assert_app_version_at_least("0.261.244")
+    assert_app_version_at_least("0.261.245")
 
 
 @pytest.mark.parametrize("kind", KINDS)

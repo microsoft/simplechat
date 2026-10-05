@@ -1,14 +1,14 @@
 # test_admin_document_action_capabilities_card.py
 """
 UI test for admin document action capabilities placement.
-Version: 0.261.236
+Version: 0.261.237
 Implemented in: 0.241.089
-Updated in: 0.261.236
+Updated in: 0.261.237
 
 This test ensures the Document Action Capabilities card is visible at the top of
 the Actions tab, explains that it controls the Action dropdown in Chat and
 Workflow, and renders its configured limits, including the Merge file and row
-limits added in 0.261.236.
+limits added in 0.261.237.
 
 The limit assertions are the regression guard for the Admin Settings 500: the
 card reads values that used to be set in the Agents pane, and sibling

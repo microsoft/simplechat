@@ -1,8 +1,8 @@
 # V2 File Merge — Phase 6: PowerPoint Merges
 
-Version: **0.261.241**
+Version: **0.261.242**
 
-Implemented in version: **0.261.241**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.242**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md).
@@ -113,9 +113,9 @@ See [Create a workflow](../../guides/create-a-workflow.md#merge-files-in-a-workf
 - The first deck decides the slide size.
 - Fonts embedded in later decks and slide comments are not carried over.
 - Links, linked media and embedded objects are copied as they are. PowerPoint opens
-  downloaded files in Protected View. Since **0.261.242**, actions that start a program or
+  downloaded files in Protected View. Since **0.261.243**, actions that start a program or
   run a macro are removed from every deck
   ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening)).
 - Slide ranges are supported by the engine but not yet offered in the workflow editor.
-- In this phase PowerPoint merges ran only in workflows. Since **0.261.242** a chat turn
+- In this phase PowerPoint merges ran only in workflows. Since **0.261.243** a chat turn
   merges decks directly ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).

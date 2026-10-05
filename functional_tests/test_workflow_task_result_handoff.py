@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.239
+Version: 0.261.240
 Implemented in: 0.261.106
 Harness dependencies restored in: 0.261.234
 

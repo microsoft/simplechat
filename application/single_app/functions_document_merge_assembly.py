@@ -1,8 +1,8 @@
 # functions_document_merge_assembly.py
 """The retained description of a document merge, and its exact re-assembly for Render.
 
-Version: 0.261.242
-Implemented in: 0.261.242
+Version: 0.261.243
+Implemented in: 0.261.243
 
 A chat ``document_merge`` step assembles the authorized files once, to check them and
 measure the result, and retains this description instead of the bytes: the kind, every
