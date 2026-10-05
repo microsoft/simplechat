@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.235)**
+
+#### Bug Fixes
+
+*   **Orchestration Runs No Longer Fail When Settings Are Read During A Save**
+    *   A chat orchestration run could finish every step and still end as **Partially completed** with "A required retained result is unavailable or changed." It affected runs that kept web search, linked-page, deep research, agent, action or Fact Memory results, and retrying could fail the same way.
+    *   Orchestration rechecks a kept result's access with the current admin settings, and that check requires exactly a `dict`. Settings read from the shared Redis copy were a `dict`, but settings read from Cosmos DB came back as the SDK's `CosmosDict` type, so the check refused them. Cosmos serves the read while any settings save is in progress, such as the Cosmos throughput autoscale saving its status, when the shared copy is repaired or unreachable, and on every read when Redis is off.
+    *   The settings store now returns a plain `dict` from every read and write, whichever backend served it. The orchestration check is unchanged. No setting or deployment change is needed.
+    *   (Ref: `app_settings_store.py`, `functions_orchestration_external_sources.py`, `test_app_settings_store_plain_dict_reads.py`, [Orchestration Settings Document Type Fix](fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX.md))
+
 ### **(v0.261.234)**
 
 #### Bug Fixes
