@@ -17,7 +17,7 @@ real run tracker, stubs every server route at the network layer, and checks:
   chat after any active stream or orchestration turn ends, without overriding the user's choice
   of source;
 - the footer on each delivered message (Follow up, Retry workflow run, Open run), and that the
-  plain chat Retry is hidden on delivered messages;
+  plain chat Retry and Edit are absent on delivered messages;
 - that nothing reads run status when the feature flags are off, that one tracker tick is one
   request, and that deliveries already in the first read stay quiet.
 
@@ -362,11 +362,25 @@ class RunHarness(Harness):
         return self.page.locator(f"#workflow-delivery-{message_id}")
 
     def expect_no_plain_retry(self, message_id):
-        """The delivered message keeps its own actions, but not the plain chat Retry."""
+        """The delivered message keeps its own actions, but not the plain chat Retry or Edit."""
         message = self.page.locator(f"#message-{message_id}")
         expect(message.get_by_role("button", name="Copy", exact=True)).to_have_count(1)
         expect(message.get_by_role("button", name="Retry", exact=True)).to_have_count(0)
         expect(message.get_by_role("button", name="Review orchestration recovery")).to_have_count(0)
+        # The question in the same chat still offers Edit, so its absence below is not a closed menu.
+        self.expect_edit_offered("user-1", True)
+        self.expect_edit_offered(message_id, False)
+
+    def expect_edit_offered(self, message_id, offered):
+        """Open the message's More actions menu, check it opened, and look for Edit."""
+        message = self.page.locator(f"#message-{message_id}")
+        more = message.get_by_role("button", name="More actions", exact=True)
+        copy_with_sources = message.get_by_role("button", name="Copy with sources", exact=True)
+        more.click()
+        expect(copy_with_sources).to_be_visible()
+        expect(message.get_by_role("button", name="Edit", exact=True)).to_have_count(1 if offered else 0)
+        more.click()
+        expect(copy_with_sources).to_have_count(0)
 
     def tag(self, label=f"Running {NAME}"):
         return self.page.get_by_role("img", name=label, exact=True)
