@@ -1,10 +1,10 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.242
+Version: 0.261.243
 Implemented in: 0.261.138
-Document merge recipes added in: 0.261.241
-One-sheet or sheet-per-file question for spreadsheet merges added in: 0.261.242
+Document merge recipes added in: 0.261.242
+One-sheet or sheet-per-file question for spreadsheet merges added in: 0.261.243
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
 diagrams the user asked for (``requested: explicit``) and anything it adds on its own

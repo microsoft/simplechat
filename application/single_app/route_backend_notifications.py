@@ -178,14 +178,21 @@ def register_route_backend_notifications(bp):
     @user_required
     def api_get_workflow_alert_notifications():
         """
-        Get unread workflow alert notifications for the current user.
+        Get the workflow alerts that should pop up for the current user.
+
+        Unread pop-up alerts, plus every alert that must be acknowledged and hasn't been,
+        whatever its age. Includes team alerts from the user's groups.
 
         Query Parameters:
-            limit (int): Most alerts to return, 1-10 (default: 5)
-            since_hours (int): Only alerts created within this many hours, 1-1440 (optional).
+            limit (int): Most alerts per bounded read, 1-10 (default: 5)
+            since_hours (int): Only unread alerts created within this many hours, 1-1440 (optional).
                 The V2 interface asks for 24 so older alerts stay in the bell; the classic
                 interface leaves it out. With since_hours, a failed read answers 500 rather
-                than an empty list.
+                than an empty list. Alerts that must be acknowledged ignore it.
+
+        Returns:
+            notifications (list), complete (bool: no bounded read came back full) and
+            sounds_enabled (bool: the administrator allows workflow alert sounds).
         """
         try:
             since_hours = parse_workflow_alert_since_hours(request.args.get('since_hours'))
@@ -202,10 +209,10 @@ def register_route_backend_notifications(bp):
             if limit < 1 or limit > 10:
                 limit = 5
 
-            # V2 is the caller that asks for since_hours, and it reads a short list as every
-            # unread pop-up alert there is. A failed read therefore answers 500 rather than an
-            # empty list it would take at its word; classic keeps the empty list it always had.
-            notifications = get_unread_workflow_priority_notifications(
+            # V2 is the caller that asks for since_hours, and it reads the list as every pop-up
+            # alert there is unless `complete` says otherwise. A failed read therefore answers 500
+            # rather than an empty list it would take at its word; classic keeps the empty list.
+            popups = get_workflow_alert_popups(
                 user_id,
                 limit=limit,
                 since_hours=since_hours,
@@ -213,13 +220,71 @@ def register_route_backend_notifications(bp):
             )
             return jsonify({
                 'success': True,
-                'notifications': notifications,
+                'notifications': popups['notifications'],
+                'complete': popups['complete'],
+                'sounds_enabled': bool(get_settings().get('enable_workflow_alert_sounds', True)),
             })
         except Exception as e:
             debug_print(f"Error fetching workflow alert notifications: {e}")
             return jsonify({
                 'success': False,
                 'notifications': [],
+            }), 500
+
+    @bp.route("/api/notifications/<notification_id>/acknowledge", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_acknowledge_workflow_alert(notification_id):
+        """
+        Acknowledge a workflow alert that must be acknowledged.
+
+        One acknowledgment clears the alert for everyone who receives it: its owner, or every
+        member of a team alert's group. Only those recipients can acknowledge it; anyone else
+        is answered 404. Also marks the alert read for the caller.
+        """
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+            user_info = get_current_user_info() or {}
+            display_name = user_info.get('displayName') or user_info.get('email') or ''
+            status, notification = acknowledge_workflow_alert(
+                notification_id,
+                user_id,
+                display_name=display_name,
+            )
+            if status == 'not_found':
+                return jsonify({
+                    'success': False,
+                    'error': 'Alert not found.',
+                }), 404
+            if status == 'not_required':
+                return jsonify({
+                    'success': False,
+                    'error': 'This alert does not need acknowledgment.',
+                }), 400
+
+            bump_conversation_cache_version(user_id, reason="workflow_alert_acknowledged")
+            return jsonify({
+                'success': True,
+                'notification_id': notification.get('id'),
+                'acknowledged_at': notification.get('acknowledged_at'),
+                'acknowledged_by_name': notification.get('acknowledged_by_name'),
+                'already_acknowledged': status == 'already_acknowledged',
+            })
+        except Exception as e:
+            log_event(
+                "[NOTIFICATIONS] Workflow alert acknowledgment failed.",
+                extra={
+                    "user_id": user_id,
+                    "error_type": type(e).__name__,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                'success': False,
+                'error': 'Unable to acknowledge the alert.',
             }), 500
 
     @bp.route("/api/notifications/<notification_id>/read", methods=["POST"])

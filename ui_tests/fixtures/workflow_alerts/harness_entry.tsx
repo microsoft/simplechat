@@ -30,6 +30,7 @@ import { useNotificationRuntime } from '../../../application/v2_ui/src/lib/useNo
 import { useWorkflowAlertRuntime } from '../../../application/v2_ui/src/lib/useWorkflowAlertRuntime';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { Modal } from '../../../application/v2_ui/src/components/ui/Modal';
+import { PreferencesTab } from '../../../application/v2_ui/src/components/settings/PreferencesTab';
 import type { NotificationCountChange } from '../../../application/v2_ui/src/stores/notificationStore';
 
 function Runtime({ children }: { children: ReactNode }) {
@@ -82,6 +83,7 @@ function Frame() {
                     <Route path="/workspace/workflows" element={<WorkflowsPage />} />
                     <Route path="/groups/:groupId/workflows" element={<WorkflowsPage />} />
                     <Route path="/chat" element={<p className="p-6">Chat page</p>} />
+                    <Route path="/settings" element={<div className="p-6"><PreferencesTab /></div>} />
                     <Route path="*" element={<p className="p-6">Another page</p>} />
                 </Routes>
             </AppShell>

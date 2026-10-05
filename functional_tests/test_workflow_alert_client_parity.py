@@ -131,6 +131,14 @@ CASES = {
     "scope_type_blank_defaults_to_final": (rules_case(rule(scope={"type": "  "})), None, TASK_IDS),
     "unknown_rule_fields_accepted": (rules_case(rule(category="failure", extra={"kept": True})), None, TASK_IDS),
     "enabled_string_is_accepted": (rules_case(rule(enabled="no")), None, TASK_IDS),
+    "acknowledgment_valid": (rules_case(rule(require_acknowledgment=True, severity="high")), None, TASK_IDS),
+    "sound_once_valid": (rules_case(rule(sound="once", severity="medium")), None, TASK_IDS),
+    "size_large_valid": (rules_case(rule(size="large", severity="critical")), None, TASK_IDS),
+    "audience_group_valid_for_group_scope": (rules_case(rule(audience="group", severity="high")), None, TASK_IDS, "group"),
+    "audience_group_skips_unknown_scope": (rules_case(rule(audience="group", severity="high")), None, TASK_IDS),
+    "acknowledgment_repeat_valid": (rules_case(rule(require_acknowledgment=True, sound="repeat", severity="high")), None, TASK_IDS),
+    "string_flag_yes_repeat_valid": (rules_case(rule(require_acknowledgment=" Yes ", sound="repeat", severity="high")), None, TASK_IDS),
+    "string_flag_zero_sound_once_valid": (rules_case(rule(require_acknowledgment="0", sound="once", severity="high")), None, TASK_IDS),
     "python_whitespace_stripped_from_mode": ({"alert_mode": "\x1crules\x85", "alert_rules": [VALID]}, None, TASK_IDS),
     "feff_is_not_regex_whitespace": (rules_case(rule({"type": "text_match", "mode": "regex", "pattern": "(a+)\ufeff+"})), None, TASK_IDS),
 
@@ -156,6 +164,14 @@ CASES = {
     "R4_severity": (rules_case(rule(severity="urgent")), None, TASK_IDS),
     "R4_whitespace_severity": (rules_case(rule(severity="   ")), None, TASK_IDS),
     "R4_stored_rule_not_sent": ({}, {"alert_mode": "rules", "alert_rules": [rule(severity="urgent")]}, TASK_IDS),
+    "P1_sound_invalid": (rules_case(rule(sound="always")), None, TASK_IDS),
+    "P2_size_invalid": (rules_case(rule(size="giant")), None, TASK_IDS),
+    "P3_audience_invalid": (rules_case(rule(audience="company")), None, TASK_IDS),
+    "P4_group_audience_in_personal_scope": (rules_case(rule(audience="group")), None, TASK_IDS, "personal"),
+    "P5_acknowledgment_on_notify_only_delivery": (rules_case(rule(require_acknowledgment=True, severity="high", delivery="notify_only")), None, TASK_IDS),
+    "P5_sound_on_default_info_delivery": (rules_case(rule(sound="once", severity="info", delivery="default")), None, TASK_IDS),
+    "P5_size_on_default_low_delivery": (rules_case(rule(size="medium", severity="low", delivery="default")), None, TASK_IDS),
+    "P6_repeat_without_acknowledgment": (rules_case(rule(sound="repeat", severity="high")), None, TASK_IDS),
 
     # Refused: S1-S3.
     "S1_scope_type": (rules_case(rule(scope={"type": "everything"})), None, TASK_IDS),
@@ -229,7 +245,9 @@ const lib = (name) => pathToFileURL(path.join(root, 'application', 'v2_ui', 'src
 const [alerts, editor] = await Promise.all([import(lib('workflowAlerts')), import(lib('workflowEditor'))]);
 const output = { cases: {}, resolved: {}, described: [], editor: {} };
 for (const [name, testCase] of Object.entries(input.cases)) {
-    output.cases[name] = alerts.workflowAlertErrors(testCase.sent, testCase.existing, testCase.task_ids);
+    output.cases[name] = alerts.workflowAlertErrors(
+        testCase.sent, testCase.existing, testCase.task_ids, testCase.workflow_scope ?? undefined,
+    );
 }
 for (const [name, record] of Object.entries(input.resolved)) {
     const { legacy, ...config } = alerts.workflowAlertConfig(record);
@@ -316,11 +334,11 @@ EDITOR_CASES = {
 }
 
 
-def _server(sent, existing, task_ids):
+def _server(sent, existing, task_ids, workflow_scope=None):
     """(accepted, message) from the real normalizer; any other exception fails the test."""
     try:
         ALERTS.normalize_workflow_alert_settings(copy.deepcopy(sent), existing_workflow=copy.deepcopy(existing),
-                                                 task_ids=list(task_ids))
+                                                 task_ids=list(task_ids), workflow_scope=workflow_scope)
     except DEFINITIONS.WorkflowPublicValidationError as exc:
         return False, exc.public_message
     return True, ""
@@ -328,8 +346,15 @@ def _server(sent, existing, task_ids):
 
 @pytest.fixture(scope="module")
 def client():
-    cases = {name: {"sent": sent, "existing": existing, "task_ids": task_ids}
-             for name, (sent, existing, task_ids) in CASES.items()}
+    cases = {
+        name: {
+            "sent": item[0],
+            "existing": item[1],
+            "task_ids": item[2],
+            "workflow_scope": item[3] if len(item) > 3 else None,
+        }
+        for name, item in CASES.items()
+    }
     for name, pattern in REGEX_DIVERGENCE.items():
         cases[name] = {"sent": rules_case(rule({"type": "text_match", "mode": "regex", "pattern": pattern})),
                        "existing": None, "task_ids": TASK_IDS}
@@ -352,8 +377,8 @@ def client():
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_the_client_refuses_exactly_what_the_server_refuses(client, name):
-    sent, existing, task_ids = CASES[name]
-    accepted, message = _server(sent, existing, task_ids)
+    sent, existing, task_ids, *rest = CASES[name]
+    accepted, message = _server(sent, existing, task_ids, rest[0] if rest else None)
     errors = client["cases"][name]
 
     if accepted:
@@ -393,9 +418,10 @@ def test_the_resolved_view_matches_resolve_workflow_alert_config(client):
         assert view["config"]["alert_priority"] == server["alert_priority"], name
         assert view["config"]["alert_rules"] == server["alert_rules"], name
         assert view["config"]["alert_evaluation"]["on_error"] == server["alert_evaluation"]["on_error"], name
-        assert view["summary"] == {
+        assert {key: view["summary"][key] for key in ("mode", "priority", "ruleCount")} == {
             "mode": server["alert_mode"], "priority": server["alert_priority"], "ruleCount": len(server["alert_rules"]),
         }, name
+        assert isinstance(view["summary"]["optionSummary"], list), name
     assert client["resolved"]["priority_only"]["legacy"] is True
     assert client["resolved"]["rules"]["legacy"] is False
 

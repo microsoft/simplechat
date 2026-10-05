@@ -326,6 +326,7 @@ class NotificationApi:
         self.list_queries = []
         self.read_calls = []
         self.dismiss_calls = []
+        self.acknowledge_calls = []
         self.mark_all_calls = 0
         self.conversation_reads = []
         self.set_active_calls = []
@@ -420,6 +421,8 @@ class NotificationApi:
             self.answer_notice_change(route, path, unquote(match.group(1)), "read")
         elif method == "DELETE" and (match := re.fullmatch(r"/api/notifications/([^/]+)/dismiss", path)):
             self.answer_notice_change(route, path, unquote(match.group(1)), "dismiss")
+        elif method == "POST" and (match := re.fullmatch(r"/api/notifications/([^/]+)/acknowledge", path)):
+            self.answer_acknowledge(route, path, unquote(match.group(1)))
         else:
             return False
         return True
@@ -535,6 +538,25 @@ class NotificationApi:
         else:
             record["is_dismissed"] = True
             route.fulfill(json={"success": True, "message": "Notification dismissed"})
+
+    def answer_acknowledge(self, route, path, notice_id):
+        self.acknowledge_calls.append(notice_id)
+        record = self.find(notice_id)
+        if record is None:
+            self.expected_http_failures.add((path, 404))
+            route.fulfill(status=404, json={"success": False, "error": "Alert not found."})
+            return
+        record["acknowledged"] = True
+        record["acknowledged_at"] = iso(CLOCK_START)
+        record["acknowledged_by_name"] = "Riley Chen"
+        record["is_read"] = True
+        route.fulfill(json={
+            "success": True,
+            "notification_id": notice_id,
+            "acknowledged_at": record["acknowledged_at"],
+            "acknowledged_by_name": record["acknowledged_by_name"],
+            "already_acknowledged": False,
+        })
 
     def answer_mark_all(self, route, path):
         self.mark_all_calls += 1
@@ -956,6 +978,44 @@ def test_bell_sits_beside_the_brand_and_its_panel_lists_every_kind_of_notice(har
     expect(panel).to_have_count(0)
     expect(bell).to_be_focused()
     expect(bell).to_have_attribute("aria-expanded", "false")
+
+
+def test_workflow_alert_acknowledge_state_in_bell(harness):
+    pending = workflow_notice("n-ack", "Operations alarm", read=False)
+    pending.update({
+        "require_acknowledgment": True,
+        "sound": "repeat",
+        "size": "large",
+        "audience": "group",
+        "acknowledged": False,
+        "acknowledged_at": None,
+        "acknowledged_by_name": None,
+        "content_scope": "full",
+    })
+    done = workflow_notice("n-done", "Handled by teammate", read=True)
+    done.update({
+        "require_acknowledgment": True,
+        "sound": "once",
+        "size": "small",
+        "audience": "group",
+        "acknowledged": True,
+        "acknowledged_at": iso(CLOCK_START),
+        "acknowledged_by_name": "Morgan Lee",
+        "content_scope": "full",
+    })
+    harness.add(done, pending)
+    harness.open("/chat")
+    harness.open_panel()
+
+    pending_row = harness.row("n-ack")
+    expect(pending_row.locator("[data-notification-ack-tag]")).to_have_text("Needs acknowledgment")
+    harness.action("n-ack", "acknowledge").click()
+    harness.wait_for(lambda: harness.acknowledge_calls == ["n-ack"], f"Ack calls: {harness.acknowledge_calls}")
+    harness.wait_for(lambda: harness.list_queries, "Acknowledge did not refresh the list.")
+
+    expect(harness.row("n-done").locator("[data-notification-acknowledged]")).to_contain_text(
+        "Acknowledged by Morgan Lee at",
+    )
 
 
 def test_collapsed_rail_shows_a_dot_and_the_panel_pages_through_the_list(harness):

@@ -84,7 +84,7 @@ The card shows what the workflow would do:
   whether it can send email or calendar invitations, and whose account it uses.
 - Each task, with the agent or model that runs it and the documents it reads.
   Expand **Instructions** to read exactly what the task is told to do on every
-  run. From version **0.261.237**, a task that merges spreadsheets says so
+  run. From version **0.261.238**, a task that merges spreadsheets says so
   instead, for example "Merges the input files below, in order, into one Excel
   file with code. No model runs.", and lists the files under **Files to merge,
   in order**.
@@ -203,7 +203,7 @@ sources to choose from:
   decide whether the workflow waits, and whether it runs when nothing changed.
 - **Use changed files as Analyze targets** lets an Analyze task with no
   selected documents work on the files each sync changed. From version
-  **0.261.237**, it also lets a **Merge files** task merge them; see
+  **0.261.238**, it also lets a **Merge files** task merge them; see
   [Merge files in a workflow](#merge-files-in-a-workflow).
 
 A group workflow uses between 1 and 10 of the group's own sources. A source the
@@ -227,10 +227,10 @@ same message as for a group, and a source you're no longer allowed to use with
 
 ## Merge files in a workflow
 
-From version **0.261.237**, a task can merge many CSV and Excel files into one CSV
-or Excel file, from **0.261.238** it can also join PDFs into one PDF or put
-several spreadsheets on separate sheets of one workbook, from **0.261.239** it
-can append Word documents into one Word document, and from **0.261.240** it can
+From version **0.261.238**, a task can merge many CSV and Excel files into one CSV
+or Excel file, from **0.261.239** it can also join PDFs into one PDF or put
+several spreadsheets on separate sheets of one workbook, from **0.261.240** it
+can append Word documents into one Word document, and from **0.261.241** it can
 append PowerPoint decks into one deck. Use it for a merge that's
 too big for one chat turn, such as a year of weekly exports, or one that should
 happen on its own, such as every Monday or whenever a synced folder gets a new
@@ -344,6 +344,44 @@ alert settings is shown with the rule's number.
 
 Members who can't manage the workflow see a read-only summary. A workflow saved
 in V2 can no longer be opened by the classic editor.
+
+### Make an alert hard to miss
+
+From version **0.261.235**, each rule also has **Pop-up options**. Use them for
+alerts someone must see and act on, such as a failure that an operations team has to
+pick up:
+
+- **Require acknowledgment** keeps the alert coming back after a refresh, in every
+  tab, and on every device, until someone selects **Acknowledge** or opens it.
+  Closing the alert only shrinks it, and **Mark all read** never clears it.
+- **Sound** plays a tone that gets more urgent with the severity. **Play once**
+  sounds when the alert pops up. **Repeat until acknowledged** sounds every five
+  seconds until someone acknowledges the alert, so choosing it also turns on
+  **Require acknowledgment**.
+- **Size** decides how much of the screen the alert takes. **Small** is the usual
+  pop-up. **Medium** opens the full alert straight away. **Large (full screen)**
+  fills the screen, which suits a wall display.
+
+These options only apply to alerts that pop up. A rule that goes to the bell, such
+as an info rule left at **Default for severity**, can't use them until you set its
+delivery to **Pop-up alert**. When several rules match one run, the alert gets the
+strongest option any of them asked for, even if the rule with the highest severity
+didn't ask for it. **On every run** alerts don't have these options. To get them,
+use a rule such as **Run finished with a status: Completed**.
+
+### Alert everyone in the group
+
+In a group workflow, **Who gets it** chooses between the **Workflow owner** and
+**Everyone in the group**. A team alert is a single shared alert. When any member
+acknowledges it, it stops popping up and sounding for everyone, and each member's
+bell shows who acknowledged it and when.
+
+Members other than the owner see a simpler alert: its severity, the workflow, the rules
+that matched, and **Open** to what the run created in the group, such as a group
+conversation. The full alert describes the owner's side of the run, including
+conversations in the owner's own space, so only the owner sees it.
+
+The classic workflow editor has the same options.
 
 ## Choose the Microsoft 365 Run as account
 

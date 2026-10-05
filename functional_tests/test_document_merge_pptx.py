@@ -2,8 +2,8 @@
 # test_document_merge_pptx.py
 """
 Functional test for PowerPoint assembly in V2 file merge.
-Version: 0.261.240
-Implemented in: 0.261.240
+Version: 0.261.241
+Implemented in: 0.261.241
 
 This test ensures that functions_document_merge appends slides in order at the package
 level: keep_source carries each deck's layouts, masters and themes (reusing identical
@@ -155,7 +155,7 @@ def assert_package_is_consistent(archive):
 
 
 def test_version_includes_powerpoint_merges():
-    assert_app_version_at_least("0.261.240")
+    assert_app_version_at_least("0.261.241")
 
 
 def test_keep_source_keeps_each_decks_look_and_reuses_identical_masters():

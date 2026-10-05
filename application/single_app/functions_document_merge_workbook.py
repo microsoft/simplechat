@@ -1,7 +1,7 @@
 # functions_document_merge_workbook.py
 """Workbook assembly for V2 file merge: each source file becomes its own sheet.
 
-Version: 0.261.244
+Version: 0.261.245
 
 Excel sources keep their cell types — numbers stay numbers and dates stay dates with
 their number format — while CSV sources are copied as text so codes keep their leading

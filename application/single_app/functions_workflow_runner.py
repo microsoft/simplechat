@@ -5653,6 +5653,10 @@ def _record_workflow_alert_decision(workflow, run_record, decision):
         'severity': decision.get('severity') or '',
         'category': decision.get('category') or '',
         'delivery': decision.get('delivery') or '',
+        'require_acknowledgment': bool(decision.get('require_acknowledgment')),
+        'sound': decision.get('sound') or 'off',
+        'size': decision.get('size') or 'small',
+        'audience': decision.get('audience') or 'owner',
         'mode': decision.get('mode') or '',
         'summary': summarize_alert_decision(decision),
         'matched_rules': [
@@ -5782,6 +5786,10 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
             'priority': priority,
             'category': decision.get('category') or 'alert',
             'delivery': decision.get('delivery') or 'popup',
+            'require_acknowledgment': bool(decision.get('require_acknowledgment')),
+            'sound': decision.get('sound') or 'off',
+            'size': decision.get('size') or 'small',
+            'audience': 'owner',
             'alert_mode': decision.get('mode') or 'rules',
             'matched_rules': [
                 {
@@ -5816,6 +5824,23 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
         if execution_result.get('agent_display_name'):
             metadata['agent_display_name'] = execution_result.get('agent_display_name')
 
+        # A rule can alert everyone in a group workflow's group. That raises one shared,
+        # group-scoped alert instead of the owner's personal one; members other than the owner
+        # read a reduced version of it (see project_workflow_alert_for_reader).
+        team_group_id = ''
+        if decision.get('audience') == 'group':
+            if _get_workflow_scope(workflow) == 'group':
+                team_group_id = _get_workflow_group_id(workflow)
+            else:
+                log_event(
+                    '[WORKFLOW_RUNNER] Group audience ignored for a workflow outside a group.',
+                    extra={'workflow_id': workflow_id, 'run_id': metadata['run_id']},
+                    level=logging.WARNING,
+                )
+        if team_group_id:
+            metadata['audience'] = 'group'
+            metadata['owner_user_id'] = user_id
+
         return create_workflow_priority_notification(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -5826,6 +5851,7 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
             link_url=primary_target.get('link_url') if primary_target else '',
             link_context=primary_target.get('link_context') if primary_target else {},
             metadata=metadata,
+            group_id=team_group_id or None,
         )
     except Exception as exc:
         log_event(

@@ -26,8 +26,10 @@
 
 import { useEffect } from 'react';
 import { NOTIFICATION_COUNT_CAP } from './notifications';
-import { fetchWorkflowAlerts, workflowAlertEntryIds } from './workflowAlertNotices';
+import { fetchWorkflowAlerts } from './workflowAlertNotices';
 import { lastWorkflowAlertActionAt } from './workflowAlertActions';
+import { workflowAlertMonitorEnabled } from './workflowAlertDevicePreferences';
+import { setWorkflowAlertSoundsEnabled } from './workflowAlertSound';
 import {
     subscribeNotificationCount,
     useNotificationStore,
@@ -45,6 +47,7 @@ const RETURN_FETCH_GAP_MS = 2_000;
 const RETURN_HOLD_MS = 3_000;
 /** How often a waiting alert checks whether the page is free to show it. */
 const GATE_INTERVAL_MS = 700;
+const MUST_ACK_FETCH_MS = 20_000;
 
 const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"], dialog[open]';
 
@@ -109,11 +112,18 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
         // Bumped when a hold starts, so only a read that leaves after it can lift it.
         let holdGeneration = 0;
         let gateTimer: ReturnType<typeof setInterval> | null = null;
+        let mustAckTimer: ReturnType<typeof setInterval> | null = null;
         let gateQueued = false;
 
         const pending = (): boolean => {
             const state = store.getState();
             return state.queue.length > 0 || state.entries.length > 0;
+        };
+
+        const pendingMustAck = (): boolean => {
+            const state = store.getState();
+            return [...state.queue, ...state.entries.flatMap((entry) => entry.alerts)]
+                .some((alert) => alert.requireAcknowledgment && !alert.acknowledged);
         };
 
         const updateGate = (): void => {
@@ -162,10 +172,11 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             inFlight = controller;
             lastFetchAt = Date.now();
             void fetchWorkflowAlerts(controller.signal)
-                .then(({ alerts, complete }) => {
+                .then(({ alerts, complete, soundsEnabled }) => {
                     if (disposed || feedPaused || controller.signal.aborted) {
                         return;
                     }
+                    setWorkflowAlertSoundsEnabled(soundsEnabled);
                     const state = store.getState();
                     // The gate is only watched while something waits, so a dialog opened
                     // while nothing did is noticed here, before these alerts can be shown.
@@ -200,6 +211,10 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             if (feedPaused) {
                 return;
             }
+            if (change.reason === 'poll' && workflowAlertMonitorEnabled()) {
+                fetchNow();
+                return;
+            }
             if (change.count <= 0) {
                 // Never a reason on its own to retire an alert: see the header. A complete
                 // answer retires what it no longer lists, and a failed read keeps it. A read
@@ -218,7 +233,8 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             }
             const now = Date.now();
             const fell = change.previousCount !== null && change.count < change.previousCount;
-            if (change.rose
+            if ((change.reason === 'poll' && workflowAlertMonitorEnabled())
+                || change.rose
                 || (change.reason === 'poll' && change.count >= NOTIFICATION_COUNT_CAP)
                 || (change.reason === 'poll' && now - lastFetchAt >= SAFETY_FETCH_MS)
                 || (fell && pending() && now - lastWorkflowAlertActionAt() > OWN_ACTION_GRACE_MS)) {
@@ -239,24 +255,30 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
         };
 
         // The bell's store is where this tab reads and dismisses notices. An alert handled
-        // there is done with here.
+        // there is done with here, except one that needs acknowledgment: reading or dismissing
+        // it doesn't settle it, so only an acknowledgment the bell shows retires it.
         const unsubscribeBell = useNotificationStore.subscribe((state, previous) => {
             if (state.items === previous.items) {
                 return;
             }
             const alerts = store.getState();
-            const tracked = new Set([
-                ...alerts.queue.map((alert) => alert.id),
-                ...alerts.entries.flatMap(workflowAlertEntryIds),
-            ]);
+            const tracked = new Map([
+                ...alerts.queue,
+                ...alerts.entries.flatMap((entry) => entry.alerts),
+            ].map((alert) => [alert.id, alert]));
             if (!tracked.size) {
                 return;
             }
             const items = new Map(state.items.map((item) => [item.id, item]));
             const handled: string[] = [];
-            for (const id of tracked) {
+            const acknowledged: string[] = [];
+            for (const [id, alert] of tracked) {
                 const item = items.get(id);
-                if (item?.is_read) {
+                if (alert.requireAcknowledgment && !alert.acknowledged) {
+                    if (item?.acknowledged) {
+                        acknowledged.push(id);
+                    }
+                } else if (item?.is_read) {
                     handled.push(id);
                 } else if (!item && state.pendingIds[id] && previous.items.some((candidate) => candidate.id === id)) {
                     handled.push(id);
@@ -265,11 +287,20 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             if (handled.length) {
                 store.getState().removeAlerts(handled);
             }
+            if (acknowledged.length) {
+                store.getState().retireAcknowledged(acknowledged);
+            }
         });
 
         const unsubscribeAlerts = store.subscribe((state, previous) => {
             if (state.queue !== previous.queue || state.entries !== previous.entries) {
                 queueGate();
+                if (pendingMustAck() && mustAckTimer === null) {
+                    mustAckTimer = setInterval(() => fetchNow(), MUST_ACK_FETCH_MS);
+                } else if (!pendingMustAck() && mustAckTimer !== null) {
+                    clearInterval(mustAckTimer);
+                    mustAckTimer = null;
+                }
             }
         });
         const unsubscribeUi = useUiStore.subscribe((state, previous) => {
@@ -301,6 +332,9 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             inFlight = null;
             if (gateTimer !== null) {
                 clearInterval(gateTimer);
+            }
+            if (mustAckTimer !== null) {
+                clearInterval(mustAckTimer);
             }
             observer.disconnect();
             document.removeEventListener('visibilitychange', onVisibilityChange);

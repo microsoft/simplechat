@@ -1,7 +1,7 @@
 // test_v2_orchestration_merge_arguments.mjs
-// Version: 0.261.241
-// Implemented in: 0.261.236
-// Document merge settings added in: 0.261.241
+// Version: 0.261.242
+// Implemented in: 0.261.237
+// Document merge settings added in: 0.261.242
 // Executes how the V2 plan card states the settings of a spreadsheet merge, inspection or
 // document merge step: every policy, alias, sheet, duplicate and sort setting, and what a
 // document merge creates, is put in words, defaults are not restated, document selections are

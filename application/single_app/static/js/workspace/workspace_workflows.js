@@ -183,6 +183,20 @@ const WORKFLOW_ALERT_DELIVERIES = [
     { value: "notify_only", label: "Notification bell only" },
     { value: "popup", label: "Pop-up alert" },
 ];
+const WORKFLOW_ALERT_SOUNDS = [
+    { value: "off", label: "Off" },
+    { value: "once", label: "Play once" },
+    { value: "repeat", label: "Repeat until acknowledged" },
+];
+const WORKFLOW_ALERT_SIZES = [
+    { value: "small", label: "Small" },
+    { value: "medium", label: "Medium" },
+    { value: "large", label: "Large (full screen)" },
+];
+const WORKFLOW_ALERT_AUDIENCES = [
+    { value: "owner", label: "Workflow owner" },
+    { value: "group", label: "Everyone in the group" },
+];
 const WORKFLOW_ALERT_CONDITION_TYPES = [
     { value: "run_status", label: "Run finished with a status" },
     { value: "task_status", label: "A task finished with a status" },
@@ -1588,13 +1602,16 @@ function getWorkflowAlertLabel(workflow) {
         if (!enabledCount) {
             return "Off";
         }
-        return `${enabledCount} ${enabledCount === 1 ? "rule" : "rules"}`;
+        const optionParts = getWorkflowAlertRulesOptionSummary(rules);
+        const ruleCountLabel = `${enabledCount} ${enabledCount === 1 ? "rule" : "rules"}`;
+        return optionParts.length ? `${ruleCountLabel} · ${optionParts.join(" · ")}` : ruleCountLabel;
     }
 
     if (mode === "every_run" || (!mode && priority && priority !== "none")) {
         if (!priority || priority === "none") {
             return "Off";
         }
+
         return `Every run (${priority})`;
     }
 
@@ -1606,6 +1623,43 @@ function createWorkflowAlertRuleId() {
         return window.crypto.randomUUID();
     }
     return `alert-rule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeWorkflowAlertFlag(value) {
+    if (typeof value === "string") {
+        return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+    }
+    return Boolean(value);
+}
+
+function normalizeWorkflowAlertOption(value, options, fallback) {
+    const normalizedValue = normalizeText(value).toLowerCase() || fallback;
+    return options.some((option) => option.value === normalizedValue) ? normalizedValue : fallback;
+}
+
+function getWorkflowAlertRulesOptionSummary(rules) {
+    const enabledRules = Array.isArray(rules) ? rules.filter((rule) => rule?.enabled !== false) : [];
+    const parts = [];
+
+    if (enabledRules.some((rule) => normalizeWorkflowAlertFlag(rule?.require_acknowledgment))) {
+        parts.push("Must be acknowledged");
+    }
+    if (enabledRules.some((rule) => normalizeWorkflowAlertOption(rule?.sound, WORKFLOW_ALERT_SOUNDS, "off") === "repeat")) {
+        parts.push("Repeats sound");
+    } else if (enabledRules.some((rule) => normalizeWorkflowAlertOption(rule?.sound, WORKFLOW_ALERT_SOUNDS, "off") === "once")) {
+        parts.push("Plays sound");
+    }
+    if (enabledRules.some((rule) => normalizeWorkflowAlertOption(rule?.size, WORKFLOW_ALERT_SIZES, "small") === "large")) {
+        parts.push("Large");
+    } else if (enabledRules.some((rule) => normalizeWorkflowAlertOption(rule?.size, WORKFLOW_ALERT_SIZES, "small") === "medium")) {
+        parts.push("Medium");
+    }
+    if (workflowWorkspaceConfig.scope === "group"
+        && enabledRules.some((rule) => normalizeWorkflowAlertOption(rule?.audience, WORKFLOW_ALERT_AUDIENCES, "owner") === "group")) {
+        parts.push("Everyone in the group");
+    }
+
+    return parts;
 }
 
 function normalizeWorkflowAlertRule(rawRule) {
@@ -1621,6 +1675,10 @@ function normalizeWorkflowAlertRule(rawRule) {
         enabled: rule.enabled !== false,
         severity: normalizeText(rule.severity).toLowerCase() || "medium",
         delivery: normalizeText(rule.delivery).toLowerCase() || "default",
+        requireAcknowledgment: normalizeWorkflowAlertFlag(rule.require_acknowledgment),
+        sound: normalizeWorkflowAlertOption(rule.sound, WORKFLOW_ALERT_SOUNDS, "off"),
+        size: normalizeWorkflowAlertOption(rule.size, WORKFLOW_ALERT_SIZES, "small"),
+        audience: normalizeWorkflowAlertOption(rule.audience, WORKFLOW_ALERT_AUDIENCES, "owner"),
         scopeType: normalizeText(scope.type).toLowerCase() || "final",
         scopeTaskId: normalizeText(scope.task_id),
         conditionType,
@@ -1678,11 +1736,111 @@ function createWorkflowAlertField(labelText, controlElement, columnClass = "col-
     const label = document.createElement("label");
     label.className = "form-label small mb-1";
     label.textContent = labelText;
-    const controlId = `alert-field-${Math.random().toString(16).slice(2)}`;
+    const controlId = controlElement.id || `alert-field-${Math.random().toString(16).slice(2)}`;
     label.setAttribute("for", controlId);
     controlElement.id = controlId;
     column.append(label, controlElement);
     return column;
+}
+
+function isWorkflowAlertSoundEnabledByAdmin() {
+    const rawValue = window.workflowSettings?.enable_workflow_alert_sounds;
+    if (typeof rawValue === "string") {
+        return rawValue.trim().toLowerCase() !== "false";
+    }
+    return rawValue !== false;
+}
+
+function createWorkflowAlertPopupOptionsSection(rule) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "mt-2";
+
+    const heading = document.createElement("div");
+    heading.className = "small fw-semibold";
+    heading.textContent = "Pop-up options";
+
+    const hint = document.createElement("div");
+    hint.className = "form-text mt-0 mb-2";
+    hint.textContent = "These apply when the rule pops up.";
+
+    const row = document.createElement("div");
+    row.className = "row g-2 align-items-start";
+
+    const acknowledgmentColumn = document.createElement("div");
+    acknowledgmentColumn.className = "col-md-4";
+    const acknowledgmentWrapper = document.createElement("div");
+    acknowledgmentWrapper.className = "form-check";
+    const acknowledgmentInput = document.createElement("input");
+    acknowledgmentInput.className = "form-check-input";
+    acknowledgmentInput.type = "checkbox";
+    acknowledgmentInput.id = `alert-require-acknowledgment-${rule.id}`;
+    acknowledgmentInput.name = `alert-require-acknowledgment-${rule.id}`;
+    acknowledgmentInput.dataset.alertRuleField = "require_acknowledgment";
+    acknowledgmentInput.checked = Boolean(rule.requireAcknowledgment);
+    const acknowledgmentLabel = document.createElement("label");
+    acknowledgmentLabel.className = "form-check-label small";
+    acknowledgmentLabel.setAttribute("for", acknowledgmentInput.id);
+    acknowledgmentLabel.textContent = "Require acknowledgment";
+    const acknowledgmentHelp = document.createElement("div");
+    acknowledgmentHelp.className = "form-text";
+    acknowledgmentHelp.textContent = "The alert keeps coming back, on every page and device, until someone acknowledges it.";
+    acknowledgmentInput.addEventListener("change", (event) => {
+        rule.requireAcknowledgment = Boolean(event.target.checked);
+        if (!rule.requireAcknowledgment && rule.sound === "repeat") {
+            rule.sound = "once";
+            soundSelect.value = "once";
+        }
+    });
+    acknowledgmentWrapper.append(acknowledgmentInput, acknowledgmentLabel);
+    acknowledgmentColumn.append(acknowledgmentWrapper, acknowledgmentHelp);
+
+    const soundSelect = createWorkflowAlertSelect(WORKFLOW_ALERT_SOUNDS, rule.sound, (value) => {
+        rule.sound = value;
+        if (rule.sound === "repeat") {
+            rule.requireAcknowledgment = true;
+            acknowledgmentInput.checked = true;
+        }
+    });
+    soundSelect.id = `alert-sound-${rule.id}`;
+    soundSelect.name = `alert-sound-${rule.id}`;
+    soundSelect.dataset.alertRuleField = "sound";
+    const soundColumn = createWorkflowAlertField("Sound", soundSelect, "col-md-4");
+    if (!isWorkflowAlertSoundEnabledByAdmin()) {
+        const soundNote = document.createElement("div");
+        soundNote.className = "form-text";
+        soundNote.dataset.alertRuleField = "sound-admin-note";
+        soundNote.textContent = "Your administrator has turned off workflow alert sounds. This setting is kept, but no sound plays.";
+        soundColumn.appendChild(soundNote);
+    }
+
+    const sizeSelect = createWorkflowAlertSelect(WORKFLOW_ALERT_SIZES, rule.size, (value) => {
+        rule.size = value;
+    });
+    sizeSelect.id = `alert-size-${rule.id}`;
+    sizeSelect.name = `alert-size-${rule.id}`;
+    sizeSelect.dataset.alertRuleField = "size";
+
+    row.append(
+        acknowledgmentColumn,
+        soundColumn,
+        createWorkflowAlertField("Size", sizeSelect, "col-md-4"),
+    );
+    wrapper.append(heading, hint, row);
+
+    if (workflowWorkspaceConfig.scope === "group") {
+        const audienceSelect = createWorkflowAlertSelect(WORKFLOW_ALERT_AUDIENCES, rule.audience, (value) => {
+            rule.audience = value;
+        });
+        audienceSelect.id = `alert-audience-${rule.id}`;
+        audienceSelect.name = `alert-audience-${rule.id}`;
+        audienceSelect.dataset.alertRuleField = "audience";
+        const audienceRow = document.createElement("div");
+        audienceRow.className = "row g-2 mt-1";
+        audienceRow.appendChild(createWorkflowAlertField("Who gets it", audienceSelect, "col-md-4"));
+        wrapper.appendChild(audienceRow);
+    }
+
+    return wrapper;
 }
 
 function getWorkflowAlertTaskOptions() {
@@ -1810,6 +1968,7 @@ function buildWorkflowAlertRuleRow(rule, index) {
         ),
     );
     card.appendChild(primaryRow);
+    card.appendChild(createWorkflowAlertPopupOptionsSection(rule));
 
     const conditionFields = buildWorkflowAlertConditionFields(rule);
     if (!WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType)) {
@@ -1948,7 +2107,7 @@ function buildWorkflowAlertRulePayload(rule) {
     }
 
     const scopeType = WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType) ? "final" : rule.scopeType;
-    return {
+    const payload = {
         id: rule.id,
         name: normalizeText(rule.name),
         enabled: rule.enabled !== false,
@@ -1960,6 +2119,21 @@ function buildWorkflowAlertRulePayload(rule) {
         },
         condition,
     };
+
+    if (rule.requireAcknowledgment) {
+        payload.require_acknowledgment = true;
+    }
+    if (rule.sound && rule.sound !== "off") {
+        payload.sound = rule.sound;
+    }
+    if (rule.size && rule.size !== "small") {
+        payload.size = rule.size;
+    }
+    if (workflowWorkspaceConfig.scope === "group" && rule.audience && rule.audience !== "owner") {
+        payload.audience = rule.audience;
+    }
+
+    return payload;
 }
 
 function collectWorkflowAlertRulesPayload() {

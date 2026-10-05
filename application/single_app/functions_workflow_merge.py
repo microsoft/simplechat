@@ -1,9 +1,9 @@
 # functions_workflow_merge.py
 """Workflow Merge tasks: combine many authorized files into one downloadable file.
 
-Version: 0.261.238
-Implemented in: 0.261.237
-PDF and workbook merges added in: 0.261.238
+Version: 0.261.239
+Implemented in: 0.261.238
+PDF and workbook merges added in: 0.261.239
 
 A workflow task whose document action is ``merge`` runs here instead of a model or agent.
 The runner says which files to merge: the files selected on the task, in that order, or

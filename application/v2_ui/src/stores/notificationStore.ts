@@ -47,6 +47,10 @@ import {
     type AppNotification,
 } from '../lib/notifications';
 import { toast } from './toastStore';
+import {
+    subscribeWorkflowAlertDevicePreferences,
+    workflowAlertMonitorEnabled,
+} from '../lib/workflowAlertDevicePreferences';
 
 export type NotificationCountReason = 'initial' | 'poll' | 'focus' | 'visibility' | 'action';
 
@@ -103,6 +107,7 @@ let changeEpoch = 0;
 let changesInFlight = 0;
 let listToken = 0;
 const listeners = new Set<NotificationCountListener>();
+let unsubscribeDevicePreferences: (() => void) | null = null;
 
 /**
  * A change made here that a list page may not show yet.
@@ -133,6 +138,10 @@ function isVisible(): boolean {
     return typeof document === 'undefined' || document.visibilityState === 'visible';
 }
 
+function shouldPollWhileHidden(): boolean {
+    return workflowAlertMonitorEnabled();
+}
+
 function clearTimer(): void {
     if (timer !== null) {
         clearTimeout(timer);
@@ -142,11 +151,11 @@ function clearTimer(): void {
 
 function schedule(): void {
     clearTimer();
-    if (!running || useNotificationStore.getState().halted || !isVisible()) {
+    if (!running || useNotificationStore.getState().halted || (!isVisible() && !shouldPollWhileHidden())) {
         return;
     }
     // Plus or minus ten percent.
-    const wait = Math.round(intervalMs * (0.9 + Math.random() * 0.2));
+    const wait = shouldPollWhileHidden() ? NOTIFICATION_POLL_BASE_MS : Math.round(intervalMs * (0.9 + Math.random() * 0.2));
     timer = setTimeout(() => {
         timer = null;
         void readCount('poll');
@@ -257,7 +266,11 @@ function onFocus(): void {
 function onVisibilityChange(): void {
     if (!isVisible()) {
         // Nothing is looking at the bell. The read on return catches up in one request.
-        clearTimer();
+        if (shouldPollWhileHidden()) {
+            schedule();
+        } else {
+            clearTimer();
+        }
         return;
     }
     if (Date.now() - lastReadStartedAt < RETURN_READ_GAP_MS) {
@@ -278,6 +291,7 @@ export function startNotificationPolling(): void {
     running = true;
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    unsubscribeDevicePreferences = subscribeWorkflowAlertDevicePreferences(schedule);
     if (inFlight) {
         return;
     }
@@ -293,6 +307,8 @@ export function stopNotificationPolling(): void {
     queuedReason = null;
     window.removeEventListener('focus', onFocus);
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    unsubscribeDevicePreferences?.();
+    unsubscribeDevicePreferences = null;
 }
 
 /**

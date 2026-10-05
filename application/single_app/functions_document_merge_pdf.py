@@ -1,7 +1,7 @@
 # functions_document_merge_pdf.py
 """PDF assembly for V2 file merge: ordered pages, one bookmark per source file.
 
-Version: 0.261.244
+Version: 0.261.245
 
 Pages are copied with pypdf, so text, images, links and fonts stay exactly as they were.
 Each source becomes a top-level bookmark that keeps the source's own bookmarks beneath

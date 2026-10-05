@@ -72,9 +72,14 @@ def is_workflow_alerts(method, path):
     return method == "GET" and path == WORKFLOW_ALERTS_PATH
 
 
-def workflow_alerts_payload(notifications):
+def workflow_alerts_payload(notifications, *, complete=True, sounds_enabled=True):
     """The answer of route_backend_notifications.api_get_workflow_alert_notifications."""
-    return {"success": True, "notifications": list(notifications)}
+    return {
+        "success": True,
+        "notifications": list(notifications),
+        "complete": complete,
+        "sounds_enabled": sounds_enabled,
+    }
 
 
 def workflow_alert_conversation_target(conversation_id, *, label="Open workflow", group_id=None):
@@ -100,7 +105,9 @@ def workflow_alert_document(notification_id, *, created_at, user_id="user-1", wo
                             title="Release checklist has 3 blocking items", summary="", detail="", error="",
                             trigger_reason=None, matched_rules=None, enrichments=None, link_targets=None,
                             trigger_source="schedule", runner_type="agent", status=None,
-                            is_read=False, is_dismissed=False):
+                            is_read=False, is_dismissed=False, require_acknowledgment=False,
+                            sound="off", size="small", audience="owner", acknowledged=False,
+                            acknowledged_at=None, acknowledged_by_name=None, content_scope="full"):
     """
     A workflow alert as functions_workflow_runner writes it and the workflow-alerts route
     returns it: the runner's metadata, plus the fields the route adds at the top level.
@@ -131,6 +138,10 @@ def workflow_alert_document(notification_id, *, created_at, user_id="user-1", wo
         "priority": priority,
         "category": category,
         "delivery": delivery,
+        "require_acknowledgment": require_acknowledgment,
+        "sound": sound,
+        "size": size,
+        "audience": audience,
         "alert_mode": "rules",
         "matched_rules": rules,
         "trigger_reason": trigger_reason,
@@ -172,5 +183,13 @@ def workflow_alert_document(notification_id, *, created_at, user_id="user-1", wo
         "priority": priority,
         "category": category,
         "delivery": delivery,
+        "require_acknowledgment": require_acknowledgment,
+        "sound": sound,
+        "size": size,
+        "audience": audience,
+        "acknowledged": acknowledged,
+        "acknowledged_at": acknowledged_at,
+        "acknowledged_by_name": acknowledged_by_name,
+        "content_scope": content_scope,
         "type_config": type_config,
     }

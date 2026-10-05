@@ -2,9 +2,9 @@
 # test_workflow_file_sync_prompt_context.py
 """
 Functional test for File Sync prompt context reaching the first workflow task.
-Version: 0.261.237
+Version: 0.261.238
 Implemented in: 0.250.226
-Stub namespace extended for workflow Merge tasks in: 0.261.237
+Stub namespace extended for workflow Merge tasks in: 0.261.238
 
 This test ensures that:
   1. _apply_file_sync_context_to_workflow() publishes file_sync_prompt_context, the producer

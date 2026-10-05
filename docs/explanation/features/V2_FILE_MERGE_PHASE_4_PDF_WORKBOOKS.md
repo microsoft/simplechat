@@ -1,8 +1,8 @@
 # V2 File Merge — Phase 4: PDF and Workbook Merges
 
-Version: **0.261.244**
+Version: **0.261.245**
 
-Implemented in version: **0.261.238**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.239**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on
@@ -28,7 +28,7 @@ again, runs with code and no model, and attaches one file to the run.
 Chat can propose a workflow with any of these kinds. Merging PDFs and workbooks directly in
 a chat turn, without a workflow, was scheduled for Phase 7 together with Word and
 PowerPoint, so that every document kind reaches chat through one shared Render path; it
-arrived in **0.261.241** ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
+arrived in **0.261.242** ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 
 ## Technical specifications
 
@@ -46,7 +46,7 @@ resolves documents or settings, and performs no model work.
 | `guard_ooxml_package` | Refuses encrypted, damaged or oversized Office packages before they are parsed. |
 | `document-merge-report-v1` | Kind, options, one entry per file (status, pages or sheets, sheet names, warnings), totals, warnings, and limitations. |
 
-Since **0.261.244**, `functions_document_merge.py` keeps only `merge_documents`, its checks
+Since **0.261.245**, `functions_document_merge.py` keeps only `merge_documents`, its checks
 of the parts, and `document_merge_kind_for_extension`. Everything the assemblers share moved to
 `functions_document_merge_core.py`: the parts, options, limits, errors and result, the merge
 context and report, the output spools, and `guard_ooxml_package`. The assemblers import that
@@ -179,7 +179,7 @@ bookmarks** for PDFs and **Sheets** for workbooks. See
 ## Known limitations
 
 - In this phase PDF and workbook merges ran only in workflows, and chat proposed a workflow
-  that did it. Since **0.261.241** a chat turn merges them directly
+  that did it. Since **0.261.242** a chat turn merges them directly
   ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 - Page ranges are supported by the engine but not yet offered in the workflow editor.
 - A workbook merge copies values and number formats, not styles, charts or images.

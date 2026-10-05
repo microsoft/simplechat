@@ -26,6 +26,7 @@ import { GlassButton } from '../ui/primitives';
 import { resolveNotificationLink, type NotificationTarget } from '../../lib/notificationLinks';
 import { formatRelativeTime } from '../../lib/userStats';
 import { growFromRect } from '../../lib/workflowAlertMotion';
+import { retryWorkflowAlertSound, useWorkflowAlertSoundBlocked } from '../../lib/workflowAlertSound';
 import { openWorkflowResultInChat } from '../../lib/workflowResultFollowUp';
 import {
     WORKFLOW_ALERT_CREATED_LINK_LABEL,
@@ -102,7 +103,34 @@ function CardBanner({ entry, onClose }: { entry: WorkflowAlertEntry; onClose: ()
                 <p className="text-xs font-semibold">
                     {WORKFLOW_ALERT_PRIORITY_LABELS[entry.priority]} priority · {workflowAlertKindLabel(alert.category)}
                 </p>
-                <h2 className="mt-0.5 text-base leading-snug font-semibold break-words">{alert.title}</h2>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                    {entry.requireAcknowledgment && (
+                        <span
+                            data-workflow-alert-ack-tag=""
+                            className="rounded-full border border-current/30 px-2 py-0.5 text-[11px] font-semibold"
+                        >
+                            Needs acknowledgment
+                        </span>
+                    )}
+                    {entry.audience === 'group' && (
+                        <span
+                            data-workflow-alert-team=""
+                            className={clsx('text-[11px] font-medium', tone.bandMuted)}
+                        >
+                            Sent to everyone in the group
+                        </span>
+                    )}
+                </div>
+                <h2
+                    data-workflow-alert-title=""
+                    className={clsx(
+                        'mt-0.5 leading-snug font-semibold break-words',
+                        // A full-screen alert is read from across a room.
+                        entry.size === 'large' ? 'text-3xl sm:text-4xl' : entry.size === 'medium' ? 'text-xl' : 'text-base',
+                    )}
+                >
+                    {alert.title}
+                </h2>
                 <p className={clsx('mt-1 text-xs break-words', tone.bandMuted)}>
                     <span>{alert.workflowName}</span>
                     {when && (
@@ -135,7 +163,7 @@ function CardBanner({ entry, onClose }: { entry: WorkflowAlertEntry; onClose: ()
     );
 }
 
-function CardBody({ alert, more }: { alert: WorkflowAlert; more: ReactNode }) {
+function CardBody({ alert, more, large = false }: { alert: WorkflowAlert; more: ReactNode; large?: boolean }) {
     const [expanded, setExpanded] = useState(false);
     const moreId = useId();
     const whyId = useId();
@@ -171,7 +199,12 @@ function CardBody({ alert, more }: { alert: WorkflowAlert; more: ReactNode }) {
             </section>
 
             <section aria-label="Summary">
-                <p data-workflow-alert-summary="" className="text-sm break-words text-text-1">{alert.summary}</p>
+                <p
+                    data-workflow-alert-summary=""
+                    className={clsx('break-words text-text-1', large ? 'text-xl' : 'text-sm')}
+                >
+                    {alert.summary}
+                </p>
             </section>
 
             {alert.error && (
@@ -242,11 +275,13 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
     const nextEntry = useWorkflowAlertStore((state) => state.nextEntry);
     const markEntryRead = useWorkflowAlertStore((state) => state.markEntryRead);
     const dismissEntry = useWorkflowAlertStore((state) => state.dismissEntry);
+    const acknowledgeEntry = useWorkflowAlertStore((state) => state.acknowledgeEntry);
     const markAllRead = useWorkflowAlertStore((state) => state.markAllRead);
     const openFromCard = useWorkflowAlertStore((state) => state.openFromCard);
     const workflowResultsEnabled = useBootstrapStore((state) =>
         state.data?.features?.enable_chat_workflow_results === true);
     const panelRef = useRef<HTMLDivElement>(null);
+    const soundBlocked = useWorkflowAlertSoundBlocked();
 
     const entry = entries[cardIndex] ?? entries[0];
     const alert = entry.lead;
@@ -363,6 +398,7 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
         <Modal
             title={`${label} priority ${alert.category === 'failure' ? 'workflow run failed' : 'workflow alert'}: ${alert.title}`}
             onClose={closeCard}
+            size={entry.size === 'large' ? 'full' : entry.size === 'medium' ? 'lg' : 'md'}
             panelRef={panelRef}
             banner={<CardBanner entry={entry} onClose={closeCard} />}
             footer={(
@@ -404,6 +440,9 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
                                 size="sm"
                                 data-workflow-alert-mark-all=""
                                 aria-disabled={busy || undefined}
+                                title={entries.some((item) => item.requireAcknowledgment)
+                                    ? 'Alerts that need acknowledgment stay until acknowledged.'
+                                    : undefined}
                                 onClick={() => void markAllRead()}
                                 className={BUSY_CLASS}
                             >
@@ -411,18 +450,46 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
                             </GlassButton>
                         </>
                     )}
-                    <GlassButton
-                        type="button"
-                        variant="ghost"
-                        size="lg"
-                        data-workflow-alert-dismiss=""
-                        aria-disabled={busy || undefined}
-                        title={groupNote}
-                        onClick={() => void dismissEntry()}
-                        className={BUSY_CLASS}
-                    >
-                        Dismiss
-                    </GlassButton>
+                    {soundBlocked && (
+                        <GlassButton
+                            type="button"
+                            variant="subtle"
+                            size="lg"
+                            data-workflow-alert-enable-sound=""
+                            onClick={retryWorkflowAlertSound}
+                        >
+                            Enable sound
+                        </GlassButton>
+                    )}
+                    {entry.requireAcknowledgment ? (
+                        // Open acknowledges too, so it stays the one green action when there is
+                        // somewhere to go; with nowhere to go, Acknowledge is the way to settle it.
+                        <GlassButton
+                            type="button"
+                            variant={primary ? 'subtle' : 'success'}
+                            size="lg"
+                            data-workflow-alert-acknowledge=""
+                            aria-disabled={busy || undefined}
+                            title={groupNote}
+                            onClick={() => void acknowledgeEntry()}
+                            className={clsx(!primary && 'min-w-36 justify-center', BUSY_CLASS)}
+                        >
+                            Acknowledge
+                        </GlassButton>
+                    ) : (
+                        <GlassButton
+                            type="button"
+                            variant="ghost"
+                            size="lg"
+                            data-workflow-alert-dismiss=""
+                            aria-disabled={busy || undefined}
+                            title={groupNote}
+                            onClick={() => void dismissEntry()}
+                            className={BUSY_CLASS}
+                        >
+                            Dismiss
+                        </GlassButton>
+                    )}
                     {primary ? (
                         <GlassButton
                             type="button"
@@ -439,7 +506,7 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
                             Open
                             <ArrowRight size={18} aria-hidden="true" />
                         </GlassButton>
-                    ) : (
+                    ) : entry.requireAcknowledgment ? null : (
                         // Nothing to open, so reading it is the way to settle it.
                         <GlassButton
                             type="button"
@@ -459,7 +526,7 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
             )}
         >
             {/* Keyed on the entry, so Show more starts closed for each one. */}
-            <CardBody key={entry.key} alert={alert} more={more} />
+            <CardBody key={entry.key} alert={alert} more={more} large={entry.size === 'large'} />
         </Modal>
     );
 }

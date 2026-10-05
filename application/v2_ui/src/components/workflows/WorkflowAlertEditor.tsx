@@ -8,6 +8,8 @@ import { Pill } from '../workspace/primitives';
 import {
     describeWorkflowAlertCondition,
     newWorkflowAlertRule,
+    workflowAlertRuleWithFlagOption,
+    workflowAlertRuleWithSelectOption,
     workflowAlertConditionForType,
     workflowAlertConfig,
     workflowAlertRuleEnabled,
@@ -15,14 +17,22 @@ import {
     workflowAlertsEdited,
     WORKFLOW_ALERT_MAX_RULES,
     WORKFLOW_ALERT_EVALUATION_PROMPT_MAX_LENGTH,
+    WORKFLOW_ALERT_AUDIENCES,
     WORKFLOW_ALERT_SCOPELESS_CONDITIONS,
     WORKFLOW_ALERT_SEVERITY_DELIVERY,
+    WORKFLOW_ALERT_SIZES,
+    WORKFLOW_ALERT_SOUNDS,
     type WorkflowAlertConditionType,
+    type WorkflowAlertAudience,
+    type WorkflowAlertScope,
     type WorkflowAlertSettings,
     type WorkflowAlertSeverity,
+    type WorkflowAlertSize,
+    type WorkflowAlertSound,
 } from '../../lib/workflowAlerts';
 import { isRecord } from '../../lib/workspaceAuthoring';
-import type { WorkflowDefinition } from '../../lib/workflowEditor';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import type { WorkflowDefinition, WorkflowScope } from '../../lib/workflowEditor';
 
 const fieldClass = 'mt-1 w-full min-w-0 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
 const checkboxClass = 'accent-[var(--accent)]';
@@ -88,6 +98,20 @@ const DELIVERY_OPTIONS: Option[] = [
     { value: 'notify_only', label: 'Notification bell only' },
     { value: 'popup', label: 'Pop-up alert' },
 ];
+const SOUND_OPTIONS: Option[] = [
+    { value: 'off', label: 'Off' },
+    { value: 'once', label: 'Play once' },
+    { value: 'repeat', label: 'Repeat until acknowledged' },
+];
+const SIZE_OPTIONS: Option[] = [
+    { value: 'small', label: 'Small' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'large', label: 'Large (full screen)' },
+];
+const AUDIENCE_OPTIONS: Option[] = [
+    { value: 'owner', label: 'Workflow owner' },
+    { value: 'group', label: 'Everyone in the group' },
+];
 const ON_ERROR_OPTIONS: Option[] = [
     { value: 'skip', label: 'Skip the rule and stay silent' },
     { value: 'alert', label: 'Alert anyway so it is not missed' },
@@ -131,6 +155,16 @@ function withCurrent(options: Option[], value: string): Option[] {
 function storedChoice(stored: unknown, options: Option[], resolved: string): string {
     const text = typeof stored === 'string' ? stored.trim().toLowerCase() : '';
     return text && !options.some((option) => option.value === text) ? text : resolved;
+}
+
+function flagValue(value: unknown): boolean {
+    if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+    return Boolean(value);
+}
+
+function optionValue(value: unknown, allowed: readonly string[], fallback: string): string {
+    const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return text && allowed.includes(text) ? text : fallback;
 }
 
 function Select({ label, value, options, onChange, disabled }: {
@@ -270,17 +304,31 @@ function ConditionFields({ position, condition, onChange }: {
     return null;
 }
 
-function AlertRuleRow({ rule, position, count, tasks, error, onChange, onMove, onRemove }: {
+function AlertRuleRow({
+    rule,
+    position,
+    count,
+    tasks,
+    error,
+    workflowScope,
+    soundsEnabled,
+    onChange,
+    onMove,
+    onRemove,
+}: {
     rule: Rule;
     position: number;
     count: number;
     tasks: { id: string; name: string }[];
     error?: string;
+    workflowScope: WorkflowAlertScope;
+    soundsEnabled: boolean;
     onChange: (rule: Rule) => void;
     onMove: (direction: -1 | 1) => void;
     onRemove: () => void;
 }) {
     const headingId = useId();
+    const optionsBaseId = useId();
     const condition = record(rule.condition);
     const scope = record(rule.scope);
     const type = stringValue(condition.type, '');
@@ -288,6 +336,10 @@ function AlertRuleRow({ rule, position, count, tasks, error, onChange, onMove, o
     const taskId = typeof scope.task_id === 'string' ? scope.task_id : '';
     const severity = stringValue(rule.severity, 'medium');
     const delivery = stringValue(rule.delivery, 'default');
+    const requireAcknowledgment = flagValue(rule.require_acknowledgment);
+    const sound = optionValue(rule.sound, WORKFLOW_ALERT_SOUNDS, 'off');
+    const size = optionValue(rule.size, WORKFLOW_ALERT_SIZES, 'small');
+    const audience = optionValue(rule.audience, WORKFLOW_ALERT_AUDIENCES, 'owner');
     const knownSeverity = SEVERITY_OPTIONS.find((option) => option.value === severity);
     const described = describeWorkflowAlertCondition(condition);
     const name = typeof rule.name === 'string' ? rule.name : '';
@@ -301,6 +353,20 @@ function AlertRuleRow({ rule, position, count, tasks, error, onChange, onMove, o
             ? [{ value: taskId, label: taskId ? 'Removed task (review)' : 'Choose a task' }] : []),
     ];
     const set = (changes: Rule) => onChange({ ...rule, ...changes });
+    const setAcknowledgment = (checked: boolean) => {
+        let next = workflowAlertRuleWithFlagOption(rule, 'require_acknowledgment', checked);
+        if (!checked && sound === 'repeat') {
+            next = workflowAlertRuleWithSelectOption(next, 'sound', 'once');
+        }
+        onChange(next);
+    };
+    const setSound = (value: string) => {
+        let next = workflowAlertRuleWithSelectOption(rule, 'sound', value as WorkflowAlertSound);
+        if (value === 'repeat') {
+            next = workflowAlertRuleWithFlagOption(next, 'require_acknowledgment', true);
+        }
+        onChange(next);
+    };
     return (
         <li aria-labelledby={headingId} className="space-y-3 border-t border-edge pt-4 first:border-t-0 first:pt-0">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -371,6 +437,66 @@ function AlertRuleRow({ rule, position, count, tasks, error, onChange, onMove, o
                     <Select label={`Alert rule ${position} delivery`} value={delivery} options={DELIVERY_OPTIONS}
                         onChange={(next) => set({ delivery: next })} />
                 </label>
+                <fieldset className="min-w-0 space-y-3 rounded-xl border border-edge bg-surface-2/40 p-3 sm:col-span-2"
+                    data-testid={`workflow-alert-popup-options-${position}`} data-workflow-alert-popup-options={position}>
+                    <legend className="px-1 text-sm font-medium text-text-1">Pop-up options</legend>
+                    <p className="text-xs text-text-3">These apply when the rule pops up.</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="min-w-0 sm:col-span-2">
+                            <label htmlFor={`${optionsBaseId}-acknowledgment`} className="flex items-center gap-2 text-sm text-text-1">
+                                <input id={`${optionsBaseId}-acknowledgment`} type="checkbox" className={checkboxClass}
+                                    data-testid={`workflow-alert-require-acknowledgment-${position}`}
+                                    checked={requireAcknowledgment} onChange={(event) => setAcknowledgment(event.target.checked)} />
+                                Require acknowledgment
+                            </label>
+                            <p className="mt-1 max-w-prose text-xs text-text-3">
+                                The alert keeps coming back, on every page and device, until someone acknowledges it.
+                            </p>
+                        </div>
+                        <label htmlFor={`${optionsBaseId}-sound`} className="min-w-0 text-sm text-text-2">
+                            Sound
+                            <select id={`${optionsBaseId}-sound`} className={fieldClass}
+                                aria-label="Sound"
+                                data-testid={`workflow-alert-sound-${position}`}
+                                value={sound} onChange={(event) => setSound(event.target.value)}>
+                                {withCurrent(SOUND_OPTIONS, sound).map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                            </select>
+                            {!soundsEnabled ? (
+                                <span className="mt-1 block text-xs text-text-3">
+                                    Your administrator has turned off workflow alert sounds. This setting is kept, but no sound plays.
+                                </span>
+                            ) : null}
+                        </label>
+                        <label htmlFor={`${optionsBaseId}-size`} className="min-w-0 text-sm text-text-2">
+                            Size
+                            <select id={`${optionsBaseId}-size`} className={fieldClass}
+                                aria-label="Size"
+                                data-testid={`workflow-alert-size-${position}`}
+                                value={size}
+                                onChange={(event) => onChange(workflowAlertRuleWithSelectOption(rule, 'size', event.target.value as WorkflowAlertSize))}>
+                                {withCurrent(SIZE_OPTIONS, size).map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                            </select>
+                        </label>
+                        {workflowScope === 'group' ? (
+                            <label htmlFor={`${optionsBaseId}-audience`} className="min-w-0 text-sm text-text-2">
+                                Who gets it
+                                <select id={`${optionsBaseId}-audience`} className={fieldClass}
+                                    aria-label="Who gets it"
+                                    data-testid={`workflow-alert-audience-${position}`}
+                                    value={audience}
+                                    onChange={(event) => onChange(workflowAlertRuleWithSelectOption(rule, 'audience', event.target.value as WorkflowAlertAudience))}>
+                                    {withCurrent(AUDIENCE_OPTIONS, audience).map((option) => (
+                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                </select>
+                            </label>
+                        ) : null}
+                    </div>
+                </fieldset>
             </div>
             <Toggle label={`Rule ${position} enabled`} checked={workflowAlertRuleEnabled(rule)}
                 onChange={(checked) => set({ enabled: checked })} />
@@ -381,16 +507,20 @@ function AlertRuleRow({ rule, position, count, tasks, error, onChange, onMove, o
 /** The Alerts section for a workflow the viewer can manage. Read-only viewers get WorkflowAlertSummary. */
 export function WorkflowAlertEditor({
     workflow,
+    scope,
     onChange,
 }: {
     workflow: WorkflowDefinition;
+    scope: WorkflowScope;
     onChange: (update: (workflow: WorkflowDefinition) => WorkflowDefinition) => void;
 }) {
     const titleId = useId();
+    const workflowScope = scope.type;
+    const soundsEnabled = useBootstrapStore((state) => state.data?.features?.enable_workflow_alert_sounds !== false);
     const config = workflowAlertConfig(workflow);
     const rules = config.alert_rules.map((rule) => record(rule));
     const tasks = workflow.tasks.map((task) => ({ id: task.id, name: task.name }));
-    const errors = new Map(workflowAlertRuleErrors(config.alert_rules, tasks.map((task) => task.id))
+    const errors = new Map(workflowAlertRuleErrors(config.alert_rules, tasks.map((task) => task.id), workflowScope)
         .map((error) => [error.position, error.message]));
     // A stored value the server refuses stays visible, so the author can see and replace it.
     const mode = storedChoice(workflow.alert_mode, MODE_OPTIONS, config.alert_mode);
@@ -468,7 +598,7 @@ export function WorkflowAlertEditor({
                             {rules.map((rule, index) => (
                                 <AlertRuleRow key={ruleKeys[index]}
                                     rule={rule} position={index + 1} count={rules.length} tasks={tasks}
-                                    error={errors.get(index + 1)}
+                                    error={errors.get(index + 1)} workflowScope={workflowScope} soundsEnabled={soundsEnabled}
                                     onChange={(next) => editRules((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
                                     onMove={(direction) => moveRule(index, direction)}
                                     onRemove={() => editRules((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
