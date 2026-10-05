@@ -477,6 +477,13 @@ encoded as query values. It doesn't
 poll; the status is as of the read, and **Try again** reloads after a failed
 read. A 404 renders nothing.
 
+Since **0.261.233**, while `allow_user_workflows` and
+`enable_chat_orchestration_workflow_runs` are both on, Phase 6b-2's
+`WorkflowRunCard` shows the same runs from the same read, with their live status
+and **Check now**, **Cancel run** and **Retry**. These links are what shows when
+either setting is off. See
+[V2 experience (6b-2)](CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2).
+
 | State | Label |
 | --- | --- |
 | `queued` | Queued |
@@ -591,7 +598,9 @@ See [Orchestration settings](../../admin/orchestration.md).
 4. Select **Approve**. The answer lists each workflow under **Saved workflows:**
    as started, already started or not started with the reason.
 5. Under the answer, **Started workflows** shows each run's status. **Open run**
-   opens the workflow in Workflows with its run history open at that run.
+   opens the workflow in Workflows with its run history open at that run. Since
+   **0.261.233** the status stays current while the run is in flight; see
+   [V2 experience (6b-2)](CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2).
 
 The user guide is
 [Trigger a workflow](../../guides/trigger-a-workflow.md#run-a-workflow-from-chat),
@@ -625,15 +634,21 @@ Ranking sorts the
 same bounded list proposals already read. A run step makes point reads of the
 conversation, the workflow and the run, and at most one queue call. The link
 route makes two point reads per started workflow, and none when the links are
-unavailable. The links don't poll.
+unavailable. The links don't poll. Live status since **0.261.233** comes from
+one tracker per browser tab and Phase 6b-1's batched status route, never a
+request per run.
 
 ### Known limitations
 
 - Only personal workflows, from a private conversation, with durable execution
   on. Group workflows from chat are Phase 8 (#1550).
 - The plan never waits for a run or reads its results. Reading results into the
-  conversation and posting them back are later phases (6a and 6b).
-- A link's status is as of when the message loaded. Reload to read it again.
+  conversation is Phase 6a
+  ([Workflow results in chat](CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md)), and posting
+  them back is Phase 6b
+  ([Workflow result delivery to chat](CHAT_WORKFLOW_RESULT_DELIVERY.md)).
+- With either setting for live status off, a link's status is as of when the
+  message loaded. Reload to read it again.
 - A Microsoft 365 wait is finished in Workflows, not in the chat.
 - There's no "Create & run now" for a workflow a plan proposes.
 - A background continuation never starts a new run. It links a run that already
