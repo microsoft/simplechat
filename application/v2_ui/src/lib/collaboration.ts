@@ -16,7 +16,7 @@
 //     conversation with its own id and leaves the original in place as the hidden source
 //     the AI actually runs in, so callers must follow the returned id.
 
-import { api, apiUrl } from './apiClient';
+import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import type { MessageVisualStyles } from './endpoints';
 import type {
     CollaborationConversation,
@@ -429,6 +429,64 @@ export const sendCollaborationTyping = (conversationId: string, isTyping: boolea
 /** URL of the conversation's server-sent event stream. Consumed with `EventSource`. */
 export const collaborationEventsUrl = (conversationId: string) =>
     apiUrl(`${base(conversationId)}/events`);
+
+/* -------------------------------------------------------------------------- */
+/* Generated documents                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A document an agent created in this conversation with the SimpleChat upload functions.
+ *
+ * `can_download` applies the workspace's own download rules for the reader: a document-managing
+ * role and downloads allowed for a group document, ownership for a personal one.
+ */
+export interface GeneratedDocument {
+    document_id: string;
+    file_name: string;
+    workspace_scope: 'group' | 'personal';
+    /** `markdown` when the file can be previewed in the app. */
+    preview: 'markdown' | null;
+    message_id: string;
+    created_at: string;
+    can_download: boolean;
+}
+
+export const fetchCollaborationGeneratedDocuments = (conversationId: string, signal?: AbortSignal) =>
+    api.get<{ documents: GeneratedDocument[] }>(`${base(conversationId)}/generated-documents`, signal);
+
+/** Where one generated document downloads from; the same request also feeds the preview. */
+export const collaborationGeneratedDocumentUrl = (conversationId: string, documentId: string) =>
+    apiUrl(`${base(conversationId)}/generated-documents/${encodeURIComponent(documentId)}/download`);
+
+/**
+ * Fetch a generated document's file, for saving or previewing.
+ *
+ * Rejects with the server's own explanation, such as downloads being disabled for the group,
+ * so the reader learns why rather than receiving a broken file.
+ */
+export async function fetchCollaborationGeneratedDocument(
+    conversationId: string,
+    documentId: string,
+    signal?: AbortSignal,
+): Promise<Blob> {
+    const response = await fetch(collaborationGeneratedDocumentUrl(conversationId, documentId), {
+        credentials: CREDENTIALS_MODE,
+        signal,
+    });
+    if (!response.ok) {
+        let message = `Download failed (${response.status})`;
+        try {
+            const payload = (await response.json()) as { error?: string } | null;
+            if (payload?.error) {
+                message = payload.error;
+            }
+        } catch {
+            // Not JSON: the status line is all there is to report.
+        }
+        throw new Error(message);
+    }
+    return response.blob();
+}
 
 /* -------------------------------------------------------------------------- */
 /* Images                                                                      */

@@ -217,6 +217,62 @@ export function mentionsCurrentUser(
     return ids.map((id) => String(id ?? '').trim()).includes(currentUserId);
 }
 
+/**
+ * Marks where a removed mention began a sentence, so the word after it can take the capital.
+ * A private-use character, so it cannot collide with anything a person typed.
+ */
+const SENTENCE_START = '\uE000';
+
+/**
+ * The message text with the given `@Name` mentions taken out, for display beside pills.
+ *
+ * The stored text keeps its mentions, because the AI and the classic client both read them.
+ * The thread shows the people and the agent as pills instead, so the names are not repeated
+ * in the sentence. Longer names are removed first for the reason given on
+ * `extractMentionedParticipants`.
+ *
+ * A name used to address someone ("@Sam, start with the vehicle") goes with its comma or
+ * colon, and when it began a sentence the next word takes the capital, so the text reads
+ * "Start with the vehicle." rather than ", start with the vehicle." Whitespace is tidied only
+ * when something was removed, and more gently than the classic client does it: blank lines
+ * between paragraphs are kept.
+ */
+export function stripMentionText(content: string, names: readonly string[]): string {
+    const original = String(content ?? '');
+    if (!original.includes('@')) {
+        return original;
+    }
+    const byLength = [...new Set(names.map((name) => String(name ?? '').trim()).filter(Boolean))]
+        .sort((left, right) => right.length - left.length);
+
+    let removed = false;
+    let stripped = original;
+    for (const name of byLength) {
+        const addressed = new RegExp(
+            `(^|\\s)@${escapeRegExp(name)}(?:[ \\t]*[,:](?=\\s|$))?(?=$|\\s|[.,!?;:])`,
+            'gi',
+        );
+        stripped = stripped.replace(addressed, (_whole: string, leading: string, offset: number, input: string) => {
+            removed = true;
+            const before = input.slice(0, offset).split(SENTENCE_START).join('').trimEnd();
+            const beganSentence = leading === '\n' || before === '' || /[.!?]["')\]]?$/.test(before);
+            return beganSentence ? `${leading}${SENTENCE_START}` : leading;
+        });
+    }
+    if (!removed) {
+        return original;
+    }
+    return stripped
+        .replace(new RegExp(`${SENTENCE_START}[ \\t]*(\\p{Ll})`, 'gu'), (_marker: string, letter: string) =>
+            letter.toUpperCase())
+        .split(SENTENCE_START).join('')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n[ \t]+/g, '\n')
+        .replace(/[ \t]+([.,!?;:])/g, '$1')
+        .trim();
+}
+
 /* -------------------------------------------------------------------------- */
 /* AI targets                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -572,4 +628,95 @@ export function conversationParticipants(
     return (conversation?.participants ?? []).filter((participant) =>
         Boolean(String(participant?.user_id ?? '').trim()),
     );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Mention chips in the composer                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A person or AI target picked from the mention menu, shown as a chip above the message box.
+ *
+ * Chips replace the `@Name` text the menu used to insert, so the reader can see at a glance
+ * who the message is for. The text is put back in front of the message when it is sent
+ * (`prefixComposerMentions`), because the send rule, the server and the classic client all
+ * read mentions from the text.
+ */
+export interface ComposerMention {
+    /** `person:<user id>` or `ai`; a message addresses at most one AI target. */
+    key: string;
+    kind: 'person' | 'ai';
+    display_name: string;
+    mention_text: string;
+    target_type?: InvocationTarget['target_type'];
+}
+
+/** The chip a mention menu row becomes. An invitation row names the person being added. */
+export function composerMentionFromSuggestion(suggestion: MentionSuggestion): ComposerMention {
+    if (suggestion.kind === 'ai') {
+        return {
+            key: 'ai',
+            kind: 'ai',
+            display_name: suggestion.display_name,
+            mention_text: suggestion.mention_text,
+            target_type: suggestion.target.target_type,
+        };
+    }
+    return {
+        key: `person:${suggestion.user_id}`,
+        kind: 'person',
+        display_name: suggestion.display_name,
+        mention_text: suggestion.mention_text,
+    };
+}
+
+/**
+ * Add a chip. A person already chosen is not added twice, and a new AI target replaces the
+ * previous one, because a message is answered by one model or agent.
+ */
+export function addComposerMention(
+    mentions: readonly ComposerMention[],
+    mention: ComposerMention,
+): ComposerMention[] {
+    const others = mentions.filter((entry) => entry.key !== mention.key);
+    return mention.kind === 'ai' ? [mention, ...others] : [...others, mention];
+}
+
+export function removeComposerMention(
+    mentions: readonly ComposerMention[],
+    key: string,
+): ComposerMention[] {
+    return mentions.filter((entry) => entry.key !== key);
+}
+
+/** The message text with the chips' mentions in front, as it is sent and stored. */
+export function prefixComposerMentions(
+    text: string,
+    mentions: readonly ComposerMention[] | undefined,
+): string {
+    const body = String(text ?? '').trim();
+    const prefix = (mentions ?? []).map((entry) => entry.mention_text.trim()).filter(Boolean).join(' ');
+    if (!prefix) {
+        return body;
+    }
+    return body ? `${prefix} ${body}` : prefix;
+}
+
+/**
+ * Remove the `@query` being typed, once the menu has turned it into a chip.
+ *
+ * One space is dropped with it when the text on both sides is already separated, so picking
+ * a name between two words leaves one space rather than two.
+ */
+export function removeMentionQuery(
+    text: string,
+    match: MentionMatch,
+): { value: string; caretIndex: number } {
+    const value = String(text ?? '');
+    const before = value.slice(0, match.startIndex);
+    let after = value.slice(match.endIndex);
+    if ((before === '' || /\s$/.test(before)) && after.startsWith(' ')) {
+        after = after.slice(1);
+    }
+    return { value: `${before}${after}`, caretIndex: before.length };
 }

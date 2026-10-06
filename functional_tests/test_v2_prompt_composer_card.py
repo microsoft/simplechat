@@ -1,7 +1,7 @@
 # test_v2_prompt_composer_card.py
 """
 Functional test for the attached-prompt card in the V2 composer.
-Version: 0.261.099
+Version: 0.261.255
 Implemented in: 0.261.092
 Controlled shared editor implemented in: 0.261.096
 Frozen prompt snapshots implemented in: 0.261.096
@@ -152,10 +152,11 @@ def test_a_prompt_only_turn_can_be_sent():
     print("Testing send gating...")
 
     composer = _strip_comments(_read(COMPOSER_TSX))
-    assert "if (!text.trim() && !attachedPrompt)" in composer, (
+    # Mention chips (0.261.255) are a third thing that makes a turn sendable without typed text.
+    assert "if (!text.trim() && !attachedPrompt && !hasMentionChips)" in composer, (
         "the send gate must not require typed text when a prompt is attached"
     )
-    assert "(!text.trim() && !attachedPrompt) || !canPost" in composer, (
+    assert "(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost" in composer, (
         "the send button must stay enabled for a prompt-only turn"
     )
     assert "if (!text.trim() || streaming || !canPost)" not in composer, (
