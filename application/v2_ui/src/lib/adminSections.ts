@@ -9,9 +9,11 @@
 import {
     asBoolean,
     asString,
+    asStringArray,
     evaluateDependency,
     evaluateSectionStatus,
     readFieldGroup,
+    readFieldValue,
     type AdminField,
     type AdminFieldDependency,
     type AdminFieldRequirement,
@@ -316,4 +318,75 @@ export function shouldGroupStartOpen(
         return false;
     }
     return group.variant === 'connection' && status === 'incomplete';
+}
+
+/** Where a section's groups are drawn. */
+export interface GroupPlacement {
+    /** Groups drawn in the card body, in declared order. */
+    topLevel: RenderedFieldGroup[];
+    /** Groups drawn beneath a switch, keyed by that switch's settings key. */
+    anchored: ReadonlyMap<string, RenderedFieldGroup[]>;
+}
+
+/**
+ * Decide which groups sit beneath a switch and which in the card body.
+ *
+ * A group names its switch with `anchor`, and is placed there only while that switch is
+ * actually drawn. A search that matches a panel's settings but not its switch would
+ * otherwise leave the panel nowhere to appear, so it falls back to the card body -- and
+ * takes the switch's name into its label, because three panels all called "Access" are
+ * indistinguishable without the toggle above them.
+ */
+export function placeAnchoredGroups(
+    groups: RenderedFieldGroup[],
+    renderedKeys: ReadonlySet<string>,
+    labelOf: (key: string) => string | undefined,
+): GroupPlacement {
+    const topLevel: RenderedFieldGroup[] = [];
+    const anchored = new Map<string, RenderedFieldGroup[]>();
+
+    for (const group of groups) {
+        const anchor = group.anchor;
+        if (!anchor) {
+            topLevel.push(group);
+            continue;
+        }
+        if (renderedKeys.has(anchor)) {
+            anchored.set(anchor, [...(anchored.get(anchor) ?? []), group]);
+            continue;
+        }
+        const anchorLabel = labelOf(anchor);
+        topLevel.push(
+            anchorLabel
+                ? { ...group, label: `${anchorLabel} · ${group.label ?? group.id}` }
+                : group,
+        );
+    }
+
+    return { topLevel, anchored };
+}
+
+/**
+ * What a collapsed group's header says about its contents.
+ *
+ * A count is all most groups can offer. A group holding a single choice list can say how
+ * much is chosen instead, which is what an administrator scanning a configured card
+ * wants: "3 selected" under Source types answers a question "1 setting" does not. Only
+ * declared options are counted, the same ones the control draws as checked.
+ */
+export function describeCollapsedGroup(
+    group: RenderedFieldGroup,
+    settings: Json,
+    draft: Json,
+): string {
+    const [only] = group.fields;
+    if (group.fields.length === 1 && only?.type === 'checkbox_set') {
+        const selected = asStringArray(readFieldValue(only, settings, draft));
+        const count = (only.options ?? []).filter((option) =>
+            selected.includes(option.value),
+        ).length;
+        return `${count} selected`;
+    }
+    const total = group.fields.length;
+    return `${total} ${total === 1 ? 'setting' : 'settings'}`;
 }

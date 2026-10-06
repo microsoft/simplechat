@@ -137,7 +137,7 @@ APP_ROLE_REQUIREMENTS = [
         "key": "file_sync_personal_require_app_role",
         "role": "PersonalFileSyncUser",
         "label": "Personal workspace file sync",
-        "section_id": "file-sync-personal-section",
+        "section_id": "file-sync-section",
         "grants": "Syncing files into a personal workspace.",
         "when_off": "Any signed-in user can set up personal workspace sync.",
         "depends_on": "enable_file_sync",

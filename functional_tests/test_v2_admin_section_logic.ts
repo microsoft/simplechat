@@ -1,10 +1,11 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.258
+// Version: 0.261.260
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
 // Every-section presentation and schema-derived hierarchy added in: 0.261.258
+// Anchored panels and collapsed-group summaries added in: 0.261.260
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -40,8 +41,10 @@ import {
     dependencyKeys,
     deriveFieldHierarchy,
     deriveSectionStatus,
+    describeCollapsedGroup,
     findCapabilityField,
     hasValue,
+    placeAnchoredGroups,
     shouldGroupStartOpen,
 } from '../application/v2_ui/src/lib/adminSections';
 import {
@@ -592,6 +595,226 @@ check('distinct subsection presentation preserves collapsed defaults and counts'
     assert.match(markup, /2 settings/);
     assert.doesNotMatch(markup, /Hero Title|Hero Subtitle/);
     assert.deepEqual(calls, []);
+});
+
+/** Every condition must hold, in the array shorthand the File Sync schema declares. */
+function gate(...keys: string[]): AdminFieldDependency {
+    return keys.map((key) => ({ key, equals: true }));
+}
+
+function accessPanel(id: string, anchor: string) {
+    return { id, label: 'Access', variant: 'access' as const, anchor };
+}
+
+const RUN_LIMITS = { id: 'limits', label: 'Run limits', variant: 'limits' as const };
+
+/** The File Sync card, shaped as `admin_settings_fields.py` declares it. */
+const FILE_SYNC_FIELDS: AdminField[] = [
+    capability('enable_file_sync', { label: 'Enable File Sync' }),
+    { key: 'enable_file_sync_personal', type: 'switch', label: 'Personal workspaces', depends_on: gate('enable_file_sync') },
+    { key: 'enable_file_sync_group', type: 'switch', label: 'Group workspaces', depends_on: gate('enable_file_sync') },
+    { key: 'enable_file_sync_public', type: 'switch', label: 'Public workspaces', depends_on: gate('enable_file_sync') },
+    {
+        key: 'file_sync_personal_admin_only',
+        type: 'switch',
+        label: 'Personal admins only',
+        group: accessPanel('personal-access', 'enable_file_sync_personal'),
+        depends_on: gate('enable_file_sync', 'enable_file_sync_personal'),
+    },
+    {
+        key: 'file_sync_group_admin_only',
+        type: 'switch',
+        label: 'Group admins only',
+        group: accessPanel('group-access', 'enable_file_sync_group'),
+        depends_on: gate('enable_file_sync', 'enable_file_sync_group'),
+    },
+    {
+        key: 'require_group_assignment_for_file_sync',
+        type: 'switch',
+        label: 'Restrict to assigned groups',
+        group: accessPanel('group-access', 'enable_file_sync_group'),
+        depends_on: gate('enable_file_sync', 'enable_file_sync_group'),
+    },
+    {
+        key: 'file_sync_allowed_group_ids',
+        type: 'id_list',
+        label: 'Assigned groups',
+        group: accessPanel('group-access', 'enable_file_sync_group'),
+        depends_on: gate('enable_file_sync', 'enable_file_sync_group', 'require_group_assignment_for_file_sync'),
+    },
+    {
+        key: 'file_sync_public_admin_only',
+        type: 'switch',
+        label: 'Public admins only',
+        group: accessPanel('public-access', 'enable_file_sync_public'),
+        depends_on: gate('enable_file_sync', 'enable_file_sync_public'),
+    },
+    { key: 'file_sync_max_files_per_run', type: 'number', label: 'Max files', group: RUN_LIMITS, depends_on: gate('enable_file_sync') },
+    { key: 'file_sync_max_concurrent_runs', type: 'number', label: 'Max runs', group: RUN_LIMITS, depends_on: gate('enable_file_sync') },
+    {
+        key: 'file_sync_visible_source_types',
+        type: 'checkbox_set',
+        label: 'Source types offered when adding a source',
+        group: { id: 'source-types', label: 'Source types', variant: 'behavior' },
+        options: [
+            { value: 'smb', label: 'SMB Share' },
+            { value: 'azure_files', label: 'Azure Files' },
+            { value: 'azure_blob', label: 'Azure Blob Storage' },
+            { value: 'onedrive', label: 'OneDrive', disabled: true },
+        ],
+        depends_on: gate('enable_file_sync'),
+    },
+];
+
+const FILE_SYNC_ON = {
+    enable_file_sync: true,
+    enable_redis_cache: true,
+    enable_file_sync_personal: true,
+    enable_file_sync_group: true,
+    enable_file_sync_public: false,
+    file_sync_visible_source_types: ['smb', 'azure_files', 'azure_blob'],
+};
+
+function fileSyncLabel(key: string): string | undefined {
+    return FILE_SYNC_FIELDS.find((field) => field.key === key)?.label;
+}
+
+function renderFileSync(fields: AdminField[], settings: Record<string, unknown>) {
+    return renderToStaticMarkup(createElement(SettingsSection, {
+        sectionId: 'file-sync-section',
+        label: 'File Sync',
+        groupLabel: 'Knowledge',
+        tabLabel: 'File Sync',
+        fields,
+        hierarchyFields: FILE_SYNC_FIELDS,
+        settings,
+        draft: {},
+        renderField: (field) => createElement('span', { key: field.key }, field.label),
+        renderCapability: (field) => createElement('span', { key: field.key }, field.label),
+    }));
+}
+
+check('a group keeps the switch it is anchored to', () => {
+    const groups = groupFields(FILE_SYNC_FIELDS.slice(1));
+    assert.deepEqual(
+        groups.map((group) => [group.id, group.anchor]),
+        [
+            ['', undefined],
+            ['personal-access', 'enable_file_sync_personal'],
+            ['group-access', 'enable_file_sync_group'],
+            ['public-access', 'enable_file_sync_public'],
+            ['limits', undefined],
+            ['source-types', undefined],
+        ],
+    );
+});
+
+check('workspace types nest under File Sync, and an assignment list under its restriction', () => {
+    assert.deepEqual(emphasisOf(FILE_SYNC_FIELDS), {
+        enable_file_sync: 'primary',
+        enable_file_sync_personal: 'dependent',
+        enable_file_sync_group: 'dependent',
+        enable_file_sync_public: 'dependent',
+        file_sync_allowed_group_ids: 'dependent',
+    });
+});
+
+check('an anchored group sits under its switch, or falls back carrying its name', () => {
+    const groups = groupFields(FILE_SYNC_FIELDS.slice(1));
+    const drawn = new Set(['enable_file_sync_personal', 'enable_file_sync_group', 'enable_file_sync_public']);
+
+    const placed = placeAnchoredGroups(groups, drawn, fileSyncLabel);
+    assert.deepEqual(placed.topLevel.map((group) => group.id), ['', 'limits', 'source-types']);
+    assert.deepEqual(
+        [...placed.anchored.entries()].map(([anchor, panels]) => [anchor, panels.map((group) => group.id)]),
+        [
+            ['enable_file_sync_personal', ['personal-access']],
+            ['enable_file_sync_group', ['group-access']],
+            ['enable_file_sync_public', ['public-access']],
+        ],
+    );
+
+    // A search that matched the panel's settings but not its switch: three panels all
+    // called "Access" would be indistinguishable, so each takes its switch's name.
+    const searched = placeAnchoredGroups(groups, new Set(), fileSyncLabel);
+    assert.equal(searched.anchored.size, 0);
+    assert.deepEqual(
+        searched.topLevel.map((group) => group.label ?? group.id),
+        [
+            '',
+            'Personal workspaces · Access',
+            'Group workspaces · Access',
+            'Public workspaces · Access',
+            'Run limits',
+            'Source types',
+        ],
+    );
+});
+
+check('a closed group says how much a lone choice list has chosen', () => {
+    const groups = groupFields(FILE_SYNC_FIELDS.slice(1));
+    const sources = groups.find((group) => group.id === 'source-types') as RenderedFieldGroup;
+    const limits = groups.find((group) => group.id === 'limits') as RenderedFieldGroup;
+
+    // Undeclared values are not drawn as checked, so they are not counted either.
+    const stored = { file_sync_visible_source_types: ['smb', 'azure_blob', 'retired_type'] };
+    assert.equal(describeCollapsedGroup(sources, stored, {}), '2 selected');
+    assert.equal(
+        describeCollapsedGroup(sources, stored, { file_sync_visible_source_types: ['smb'] }),
+        '1 selected',
+        'an unsaved edit is what the header reports',
+    );
+    assert.equal(describeCollapsedGroup(sources, {}, {}), '0 selected');
+    assert.equal(describeCollapsedGroup(limits, {}, {}), '2 settings');
+    assert.equal(describeCollapsedGroup({ ...limits, fields: [limits.fields[0]] }, {}, {}), '1 setting');
+});
+
+check('the File Sync card draws each Access panel under its own workspace type', () => {
+    const markup = renderFileSync(FILE_SYNC_FIELDS, FILE_SYNC_ON);
+
+    const order = [
+        'Enable File Sync',
+        'Personal workspaces',
+        'data-anchored-to="enable_file_sync_personal"',
+        'Group workspaces',
+        'data-anchored-to="enable_file_sync_group"',
+        'Public workspaces',
+        'Run limits',
+        'Source types',
+    ].map((marker) => {
+        const index = markup.indexOf(marker);
+        assert.ok(index >= 0, `missing ${marker}`);
+        return index;
+    });
+    assert.deepEqual([...order].sort((a, b) => a - b), order, 'panels sit between their switch and the next');
+
+    // Public is off, so its rules are hidden and nothing is anchored under it.
+    assert.doesNotMatch(markup, /data-anchored-to="enable_file_sync_public"/);
+    assert.equal(markup.match(/data-setting-emphasis="dependent"/g)?.length, 3);
+    assert.match(markup, /<span class="sr-only">Personal workspaces: <\/span>Access/);
+    assert.match(markup, /<span class="sr-only">Group workspaces: <\/span>Access/);
+
+    // Panels start closed and say what they hold: the restriction is off, so the group
+    // panel has two settings, and Source types reports its selection.
+    assert.match(markup, />1 setting</);
+    assert.match(markup, />2 settings</);
+    assert.match(markup, />3 selected</);
+    assert.doesNotMatch(markup, /admin-switch-grid/, 'anchors keep their own rows');
+    assert.doesNotMatch(markup, /Group admins only|Source types offered/);
+});
+
+check('with File Sync off the card is just its switch', () => {
+    const markup = renderFileSync(FILE_SYNC_FIELDS, { ...FILE_SYNC_ON, enable_file_sync: false });
+    assert.match(markup, /Enable File Sync/);
+    assert.doesNotMatch(markup, /Personal workspaces|data-anchored-to|Run limits|Source types/);
+});
+
+check('a panel whose switch a search filtered out falls back to the card body', () => {
+    const matches = FILE_SYNC_FIELDS.filter((field) => /admins only/i.test(field.label));
+    const markup = renderFileSync(matches, FILE_SYNC_ON);
+    assert.doesNotMatch(markup, /data-anchored-to/);
+    assert.match(markup, /Personal workspaces · Access/);
+    assert.match(markup, /Group workspaces · Access/);
 });
 
 let passed = 0;

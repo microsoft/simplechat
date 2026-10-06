@@ -4,7 +4,7 @@ counts:
   capabilities: 126
   admin_groups: 15
   admin_tabs: 49
-  admin_sections: 110
+  admin_sections: 106
   actions: 32
   chat_controls: 47
   sub_elements: 3
@@ -743,24 +743,8 @@ admin_sections:
   label: Maximum File Size
   tab: extraction
   group: knowledge
-- id: file-sync-group-section
-  label: Group Workspace Sync
-  tab: file-sync
-  group: knowledge
-- id: file-sync-personal-section
-  label: Personal Workspace Sync
-  tab: file-sync
-  group: knowledge
-- id: file-sync-public-section
-  label: Public Workspace Sync
-  tab: file-sync
-  group: knowledge
 - id: file-sync-section
   label: File Sync
-  tab: file-sync
-  group: knowledge
-- id: file-sync-source-types-section
-  label: Visible Source Types
   tab: file-sync
   group: knowledge
 - id: front-door-section
