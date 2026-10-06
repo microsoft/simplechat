@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.227**.
 
+V2 experience (6b-2) implemented in version: **0.261.251**.
+
 Application version tracking: `application\single_app\config.py`.
 
 Related issue: #1546 (part 6b-1), part of #1543. Builds on
@@ -20,9 +22,9 @@ Workflows later to see what the run produced. With **Use Workflow Results In
 Chat** on, the server posts that run's terminal outcome back into the same
 private chat that asked for it, even if the run finishes hours later.
 
-The delivery is server-side. It ships no V2 run-card UI in this pull request.
-6b-2 polls the status route documented below and decides how to render cards,
-Retry and Open run.
+The delivery is server-side. 6b-1 shipped no V2 run-card UI. 6b-2 (0.261.251)
+polls the status route documented below and renders the run card, Retry and
+Open run; see [V2 experience (6b-2)](#v2-experience-6b-2).
 
 What this version adds:
 
@@ -308,8 +310,9 @@ Notice titles and messages are fixed:
 
 Undeliverable and expired notices link to
 `/workflow-activity?workflowId=...&runId=...&scope=personal` and carry metadata
-`{workflow_id, run_id, workflow_scope: 'personal', delivery_status}`. Until 6b-2
-adds a V2 case, the V2 bell labels the new type generically as `Notification`.
+`{workflow_id, run_id, workflow_scope: 'personal', delivery_status}`. Since
+6b-2 (0.261.251), the V2 bell labels the type **Workflow results** and opens the
+run on V2's Workflows page; see [Run links](#run-links).
 
 ### Message shape and placement
 
@@ -692,6 +695,306 @@ The snapshot rule applies to every kind. If the workflow is later edited,
 deleted, resumed or blocked by another active run, 6b-2 must use the status row
 and route responses as the live truth.
 
+## V2 experience (6b-2)
+
+Implemented in version: **0.261.251** (#1546 part 6b-2).
+
+6b-1 posts the result on the server. 6b-2 shows it in V2 while the user is
+working, so they don't have to open Workflows to find out whether the run they
+asked for finished. 6b-2 adds no server route. Everything below reads the status
+route and calls the personal run routes described above.
+
+### When V2 tracks runs
+
+V2 tracks chat-started runs only when the role-aware bootstrap flags
+`allow_user_workflows` and `enable_chat_orchestration_workflow_runs` are both
+on. With either one off, an answer keeps Phase 5's **Started workflows** links
+and V2 makes no status requests.
+
+**Use Workflow Results In Chat** isn't needed for tracking. When it's off as a
+run starts, nothing is posted back: the row's delivery is `not_applicable`, and
+the card says the results are in the workflow's run history. When it's turned
+off after the run starts, 6b-1 posts a short `status` note in place of the
+result.
+
+As in Phase 5, the run card and the message footers appear only in the
+requester's own personal conversation, in the chat that's open, when nothing
+in the message is masked. The run card takes the place of Phase 5's links only
+while both flags are on. A footer doesn't need the tracker: only its Retry
+does, and **Follow up** and **Open run** keep their own conditions, described
+under [Posted messages](#posted-messages). With neither a result to follow up
+on nor `allow_user_workflows`, the footer shows nothing.
+
+### Run card
+
+Under an answer whose plan started workflows, each started run shows as a row
+with the workflow's name and a status badge. Until the tracker has read a run,
+its row keeps Phase 5's link and status. While none of the answer's runs has
+been read, the card's footnote says "Status when this message loaded. Open the
+run for its progress and results."
+
+The rows come from Phase 5's list of the runs the plan started. A run the
+tracker has read for the answer that the list doesn't name, for example because
+the list couldn't be read or came back empty, is added after the list's rows,
+oldest first, with the name from its status row. So when the list fails to
+load, the card still shows the error and **Try again**, and the answer's
+tracked runs keep their live status and **Check now**. These rows wait until
+the list has answered, so no link shows while it loads, and a step the list
+says can't be opened stays closed. When the plan's run can't be found (404),
+the card shows nothing, even if the tracker has read runs for it.
+
+Once read, the row follows the status row's `phase` and `status`:
+
+| Status row | Badge | What the row says |
+| --- | --- | --- |
+| `queued` or `running` | **Queued** or **Running** | How far the run has got, for example "Step 2 of 5 · 4 min elapsed", and the waiting reason when the row has one. A queued run hasn't started a step, so it shows only the time elapsed. `waiting_recovery` reads "Recovering after an interruption." and still counts as running. |
+| `waiting` (`needs_you`) | **Needs you** | Why the run is waiting, for example "Waiting for your approval." or "Reconnect Microsoft 365 to continue." |
+| `completed` or `completed_partial` | **Completed** or **Partly completed** | Where the results went (see below). |
+| `failed` or `expired` | **Failed** or **Timed out** | The row's fixed `error` text and, when `retry_blocked` is set, why Retry isn't offered. |
+| `cancelled` | **Cancelled** | The row's `error` text, or "The run was cancelled." when it has none. |
+| An unknown phase or status, a missing field, or a run that dropped out of a complete read | **Status unavailable** | Nothing else. Only **Open run** is offered. |
+
+`step_index` counts finished steps, so the step shown is `step_index + 1`,
+never more than `step_count`. Elapsed time reads "45 s", "3 min" or "1 h 5 min"
+as of the last check. A finished run says where its results went:
+
+| Delivery | What the card says |
+| --- | --- |
+| `pending` or `delivering` | "Posting results…" |
+| `delivered`, and the message is loaded in this chat | **Results posted below**, a button that scrolls to the message and moves focus to its footer |
+| `delivered`, but the message isn't loaded | "Results were posted to this chat." |
+| `undeliverable`, `expired` or `not_applicable` | "The results are in the workflow's run history." |
+
+#### Card actions
+
+Cancel, Retry and Review and approve come from the row's `actions`, never from
+its status alone. Reconnect comes from the run's waiting action. Cancel and
+Retry show only while the tracker is reading; the two links don't depend on it.
+
+| Control | Shown when | What it does |
+| --- | --- | --- |
+| **Cancel run** | `actions.cancel` is true and the run is queued, running or waiting | Asks first, then calls the run-level `POST /api/user/workflows/<workflow_id>/runs/<run_id>/cancel`. The workflow-level cancel is never used. |
+| **Retry** | `actions.retry` is true, the run failed, `retry_blocked` is null and the status response's `available` is true | Reads the run's runtime and checks the run can still be resumed, the same check the run's page makes. Then it calls `POST .../runtime/resume` with exactly `{expected_version, request_id}`: the runtime's current version and a fresh UUID per attempt. The run keeps its id, so its result still comes back to the chat. `/resume-failed` is never called. |
+| **Review and approve** | `actions.approve` is true, the run is waiting with the action `approve`, and the row has a `gate_id` | Opens the run in Workflows, where the gate's own prompt and choices are shown. Nothing is approved from the card, and this replaces **Open run**. |
+| **Reconnect Microsoft 365** | The run is waiting with the action `reconnect` | Opens the Microsoft 365 connection settings in the profile. |
+| **Open run** | Always, unless **Review and approve** is shown | Opens the run deep link (see [Run links](#run-links)). |
+
+When `available` is false, Retry is hidden and the card says "Starting workflows
+from chat is turned off, so Retry isn't available here." Cancel stays.
+
+Cancelling asks "Cancel this run?" first, explains that the workflow is asked to
+stop and that anything it already did stays done, and warns that a cancelled
+run can't be retried. **Cancel run** confirms and **Keep running** closes the
+dialog. The answer reads as plain text:
+
+| Cancel answer | What the card says |
+| --- | --- |
+| Accepted | Cancel requested. |
+| 404 | This run is no longer available. |
+| 409 | This run already finished or changed. Check its status. |
+| Anything else | Couldn't cancel the run. Try again. |
+
+Retry sends nothing when the runtime read says the run can't be resumed anymore
+("This run can't be retried anymore."), or when that read fails. A refusal reads
+as plain text, and only the response's `code` is read, never its sentence:
+
+| Retry answer | What the card says |
+| --- | --- |
+| Accepted | Retry requested. |
+| 409 with a `retry_blocked` code (`retry_unavailable`, `workflow_deleted`, `not_resumable`, `deadline_exceeded`, `workflow_definition_changed`, `workflow_already_running`) | The same sentence the row shows for that code, for example "The workflow changed after this run started. Start a new run from Workflows." or "Another run of this workflow is in progress. Retry when it finishes." |
+| 409 `workflow_deleting` | The workflow is being deleted, so this run can't be retried. |
+| 409 `stale_version` | The run changed since it was checked. Check its status and try again. |
+| 409 `invalid_state` | This run can't be retried in its current state. |
+| 409 `request_conflict` | Another request changed this run. Check its status and try again. |
+| Any other 409 | This run can't be retried right now. Check its status. |
+| 400 | The retry request wasn't accepted. |
+| 403 / 404 / 503, from the runtime read or the resume | You don't have access to this run. / This run is no longer available. / Workflows aren't available right now. Try again later. |
+| Another error status, no answer, or a runtime read that can't be used | Couldn't retry the run. Try again. |
+| A success whose answer couldn't be read | Couldn't confirm the retry. Check its status. |
+
+One action runs per run at a time, shared by the card and the run's note. Until
+the server answers and the chat's runs have been read again, that run's
+**Cancel run**, **Retry** and **Review and approve** stay in place with
+`aria-disabled` set, and a click or Enter does nothing. So a read that lands
+mid-Retry and finds the run waiting for approval can't open the gate while the
+Retry is still under way. The chat's runs are read again after every answer,
+and the answer's sentence stays until the run's status changes.
+
+#### Check now
+
+The card's footnote shows when its chat's runs were last checked, for example
+"Checked 9:07 AM", in an `aria-live="polite"` region. **Check now** shows while
+the tracker is reading and the answer started at least one run. It reads this
+chat's runs straight away and wakes the tracker if it had gone quiet; it's
+ignored while that read is under way. A failed read of the chat shows
+"Couldn't check the run status right now. Try again." and keeps the last good
+state. Once the tracker has halted, the card says "Live status isn't available
+right now." A failed global read isn't shown on the card; it only slows the
+tracker down.
+
+### Tracker
+
+One tracker per browser tab follows every chat-started run, so the chat list,
+the bell and any open card stay current from any page. `useWorkflowRunTracker`
+starts it from the app shell once the session has loaded, as
+`useNotificationRuntime` does. Starting it is idempotent: re-renders and page
+changes never add a second one, and it stops on sign-out or a session error.
+
+- **Requests.** Each tick is one global `GET
+  /api/v2/orchestration/workflow-runs/status`, never one request per run. A
+  run card reads its own chat with `?conversation_id=` when it appears, at most
+  once every 10 seconds per chat. **Check now**, the answer to a Cancel or
+  Retry, and a run that dropped out of a complete read force a fresh read of
+  that chat. Stopping aborts every read under way.
+- **Cadence.** While the tab is visible and a run is in flight (queued,
+  running, waiting, or with its delivery `pending` or `delivering`), it checks
+  after 15 seconds, then 30 seconds, 1 minute, 2 minutes and every 5 minutes. A
+  hidden tab pauses, and checks as soon as it's shown again if a run is in
+  flight or a check is owed. The one exception: with desktop notifications on
+  (permission granted and the user's setting on), a hidden tab keeps checking
+  every 5 minutes while a run is in flight.
+- **Going quiet.** With nothing in flight it stops checking, but stays started.
+  A plan answer wakes it with an immediate check. A run card appearing reads
+  its chat, and an in-flight run there wakes the tracker. **Check now** and the
+  answer to a Cancel or Retry wake it too.
+- **Errors.** Failed reads back off: 30 seconds, 1 minute, 2 minutes, then 5
+  minutes. A 401 or 403, or a 400 on the global read, halts it until the app
+  shell starts it again, after the session or the flags change.
+- **Partial reads.** Rows with `live: false` are shown as returned. A truncated
+  read never treats a missing run as finished; only a complete global read
+  retires a run that was in flight and dropped out of it.
+
+#### Baseline: each result is announced once
+
+The first good read in a page session that covers a chat sets that chat's
+baseline: the global read, or the chat's own read when it comes back first.
+Results already posted by then are recorded silently. A later result is
+announced only when it was posted at or after the baseline (by its
+`delivered_at`), or when the tab had already seen the run before its result was
+posted. It also needs a generation and a posted message id that starts with
+`assistant_workflow_delivery_`. Baselines survive the tracker stopping and
+starting within the page session. So a reload never announces a result twice,
+never marks a chat unread again and never shows a second desktop notification.
+
+### When a result lands
+
+When a run's delivery changes to `delivered` during the page session, V2 lands
+it the way it lands any other finished reply: through the chat store's shared
+`settleCompletedReply`, with source `workflow`, the run id and the posted
+message id.
+
+- **In the open chat**, V2 waits until no reply or plan is streaming and the
+  messages aren't loading, then re-reads the messages through the normal path.
+  If a reply starts or the messages change while that read is under way, for
+  example because the user sent a question, V2 drops what it read instead of
+  replacing the messages, and the result waits for the next quiet moment.
+  If the user already chose a source for the composer, it stays chosen. The
+  reply is marked read if the user is watching, and otherwise later, as other
+  replies are. If the re-read doesn't include the message yet, the chat stays
+  unread.
+- **In another chat**, the chat shows the unread dot and the bell count
+  refreshes. If the chat isn't in the list, the list reloads, unless the list
+  is empty, still loading or filtered by a search. 6b-1 already marked the chat
+  unread and created the bell notice, so V2 creates neither.
+- **A desktop notification** shows as it does for other replies, once per
+  message.
+- **Undeliverable or expired** results change nothing in the chat. 6b-1's bell
+  notice is the report. If the tab saw the run in flight earlier in the page
+  session, V2 refreshes the bell count.
+- **A run that drops out** of a complete read while it was in flight has
+  stopped, and how isn't known yet. Its row reads **Status unavailable**. For
+  the open chat, V2 reads that chat's runs again; for any other chat, it
+  reloads the chat list and refreshes the bell, once per read, because a result
+  may have been posted while the tab wasn't looking.
+
+### Running tag
+
+While a chat has a run that's still going or still being posted (its delivery
+`pending` or `delivering`), the chat list shows a small spinner next to the
+generating-images tag, labelled "Running Weekly digest", or "Running 2
+workflows" when there are several. It's built only from what the tracker already
+read, so it adds no requests. It hides while the chat is unread, so it gives way
+to the unread dot when the result is posted. It also hides when the tracker has
+stopped or halted, because what it last read may no longer be true.
+
+### Posted messages
+
+The message itself, the label line and the result or note, is 6b-1's text and
+renders like any other answer. V2 adds a footer, read from
+`metadata.workflow_delivery`:
+
+| Control | Shown on | What it does |
+| --- | --- | --- |
+| **Follow up** | `result` and `analysis` messages, with **Use Workflow Results In Chat** on and a result descriptor that's available and names the same workflow and run | Makes the run's result the composer's source in this chat, then focuses the composer. If the chat can't use it, the footer says "This result can't be used as a source here right now." |
+| **Retry workflow run** | `failed` notes | Resumes the same run, as the card's Retry does. A failed note reads its chat's runs when it appears, and offers Retry only while the tracker is reading, `available` is true, the run's row in this chat (same workflow, plan and step) allows a retry, and that row is for the same generation the note reported. It never starts a new run. |
+| **Open run** | Every posted message, with `allow_user_workflows` on | Opens the run deep link. |
+
+The chat's own **Retry** is hidden on these messages, and **Edit** is only ever
+offered on the user's own messages. The server refuses both for a posted
+message (`workflow_delivery_retry_unsupported`,
+`workflow_delivery_edit_unsupported`), and V2 shows that refusal if a stale
+page sends one.
+
+### Recurring-workflow card
+
+A created recurring-workflow proposal card (Phase 4) now shows when the workflow
+runs next and how its last run went. It needs `allow_user_workflows`. When the
+card renders with its created workflow, it reads the user's workflows and that
+workflow's recent runs once. It reads again only if **Use Workflow Results In
+Chat** changes, and it never polls:
+
+- **Next run**: shown when the workflow is on and has a valid `next_run_at`. A
+  time that has already passed reads "Due now".
+- **Last run**: the newest run's status and time, otherwise the workflow's
+  stored last run, otherwise "No runs yet". A status V2 doesn't know reads
+  "Status unavailable" rather than being guessed at.
+- **Open latest results**: opens the newest completed or partly completed run.
+- **Follow up**: opens a new chat about the newest run chat can answer from, as
+  **Ask in chat** does. It needs **Use Workflow Results In Chat**.
+
+Times include the time zone's name, so a schedule kept in another zone still
+reads correctly. The card's existing schedule line isn't repeated. If either
+read fails, or the workflow isn't in the list, the card says "Run details
+aren't available right now."
+
+### Run links
+
+Every V2 run link uses the Workflows page's query form,
+`/workspace/workflows?workflow_id=...&run_id=...` (or
+`/groups/<group_id>/workflows?...` for a group run), which opens that workflow
+with the run marked and expanded. `v2WorkflowRunPath` in
+`lib/notificationLinks.ts` now returns this path for a known scope with valid
+ids, instead of `null`, and `workflowRunHref` builds the personal form for the
+card, the footer and the recurring card.
+
+| Notice | Where it opens |
+| --- | --- |
+| 6b-1 undeliverable or expired (`workflow_chat_delivery`, classic `/workflow-activity?...&scope=personal` link) | The run in V2 |
+| 6b-1 delivered (`chat_response_complete`, chat link) | The chat (unchanged) |
+| Microsoft 365 (`m365_pending_action_id`) | Classic (unchanged) |
+| `/workflow-activity` with an unknown or missing scope, or a link and metadata that disagree | Classic |
+| `/workflow-activity` with `scope=group&groupId=...` (not Microsoft 365) | The group run in V2 |
+| No `link_url`, a `workflow_priority_alert` or `workflow_chat_delivery` notice with a valid scope and ids in its metadata | The run in V2 (previously no link) |
+| No `link_url` and no scope | No link (unchanged) |
+
+A workflow alert card with a run id and a scope now offers **Open run** in place
+of **Open workflow**; see [V2 workflow alert
+notices](V2_WORKFLOW_ALERT_NOTICES.md).
+
+### V2 limitations
+
+- Tracking needs both flags. When either is off, V2 tracks nothing.
+- A truncated global read never retires a run, so a run that stopped can stay
+  shown as in flight until a complete read.
+- A chat with more than 20 chat-started runs shows Phase 5's links for the
+  older ones.
+- An idle tab learns about runs started in another tab only at its next kick or
+  when the app starts.
+- A delivered row with a null message id or generation isn't announced.
+- `step_label` is always null from the server, so no step name is shown.
+  Elapsed time updates at each check, not every second.
+- Approving happens on the run's page, not inline on the card.
+
 ## Configuration
 
 | Setting or constant | Value or behavior |
@@ -719,6 +1022,8 @@ and route responses as the live truth.
 
 ## File structure
 
+### Server (6b-1)
+
 | File | Purpose |
 | --- | --- |
 | `application\single_app\functions_workflow_chat_delivery.py` | Pure delivery contract: constants, text builders, metadata, seed, merge, reconcile, message ids, notification keys and hint queue. |
@@ -733,6 +1038,39 @@ and route responses as the live truth.
 | `application\single_app\route_backend_orchestration.py` | Adds the V2 status route. |
 | `application\single_app\background_tasks.py` | Registers the delivery loop in the background task host and scheduler host. |
 | `application\single_app\config.py` | Tracks version `0.261.227`. |
+
+### V2 (6b-2)
+
+All paths are under `application\v2_ui\src\` except `config.py`.
+
+| File | Purpose |
+| --- | --- |
+| `lib\workflowRunStatus.ts` | Fail-closed reader for the status route, the phase and waiting texts, and which controls a row allows. |
+| `lib\workflowRunTracker.ts` | The tab's one tracker: cadence, back-off, halting, per-chat baselines, retiring runs, and which results are announced. |
+| `lib\useWorkflowRunTracker.ts` | Starts and stops the tracker from the app shell, and lands posted results through the chat store. |
+| `stores\workflowRunTrackerStore.ts` | The tracker's last snapshot for the card, the footer and the running tag, and the tag's label. |
+| `lib\workflowRunActions.ts` | The run-level cancel and the durable resume, with the text each answer reads as. |
+| `lib\useWorkflowRunAction.ts` | Allows one Cancel or Retry at a time per run, from the card or a posted note, and re-reads the chat afterwards. |
+| `lib\useFocusFallback.ts` | Moves focus to the run's row or the footer when the Cancel or Retry that had it disappears. |
+| `lib\workflowDelivery.ts` | Reads `metadata.workflow_delivery`, joins a posted message to its run, and decides Follow up and Retry. |
+| `lib\m365Links.ts` | The Microsoft 365 connection link, shared by the proposal card and the run card. |
+| `components\chat\WorkflowRunCard.tsx` | The run card under a plan's answer. |
+| `components\chat\WorkflowRunLinks.tsx` | Phase 5's started-workflows list, still shown while tracking is off. Its list read and links are shared with the run card. |
+| `components\chat\WorkflowDeliveryFooter.tsx` | The footer on a posted result or note. |
+| `components\chat\WorkflowRunningTag.tsx` | The chat list's running tag. |
+| `components\chat\WorkflowProposalRunSummary.tsx` | Next run, last run, Open latest results and Follow up on a created recurring-workflow card. |
+| `components\chat\WorkflowProposalCard.tsx` | Mounts the run summary, and imports the shared Microsoft 365 link. |
+| `components\chat\MessageList.tsx` | Mounts the run card in place of the started-workflows list when tracking is on, and the footer on posted messages. |
+| `components\chat\MessageActions.tsx` | Hides the chat's own Retry on posted messages. |
+| `components\chat\ConversationRail.tsx` | Mounts the running tag next to the generating-images tag. |
+| `stores\chatStore.ts` | Exports `settleCompletedReply`, so a posted result settles exactly as a streamed reply does. |
+| `App.tsx` | Starts the tracker once the session has loaded and both flags are on. |
+| `lib\workflowEditor.ts` | Adds the run-level cancel client and a shared request-id helper. |
+| `lib\workflowRunLink.ts` | Builds the personal or group run link. |
+| `lib\notificationLinks.ts` | `v2WorkflowRunPath` returns the run link, and workflow notices open their run in V2. |
+| `lib\workflowAlertNotices.ts` | A workflow alert's **Open run** uses the scoped run link. |
+| `lib\notifications.ts` | Labels `workflow_chat_delivery` notices **Workflow results** in the bell. |
+| `config.py` | Tracks version `0.261.251`. |
 
 ## Usage
 
@@ -771,6 +1109,8 @@ silently because the run link would be dead or unknowable.
 
 ## Testing and validation
 
+### Server (6b-1)
+
 When this documentation was written, these workflow chat delivery tests existed
 under `functional_tests\`:
 
@@ -799,6 +1139,34 @@ Route-policy changes are covered by:
 The docs inventory was regenerated with `scripts\build_docs_inventory.py`, and
 the documentation coverage and site-quality tests were run. Mutation testing
 results for the delivery implementation are recorded in the pull request.
+
+### V2 (6b-2)
+
+| Test | What it checks |
+| --- | --- |
+| `functional_tests\test_v2_workflow_run_status.mjs` | Reading the status route: rows dropped for ids that can't be used, rows that fail closed to "Status unavailable", the controls each row allows, the fixed texts, and the closed sets pinned against the server module that writes them. |
+| `functional_tests\test_v2_workflow_run_tracker.mjs` | The tracker against a fake clock: the cadence, the hidden-tab pause and its desktop-notification exception, going quiet and kicks, back-off and halts, an idempotent start, the per-chat baseline (including a run seen before its result was posted), the per-chat read's 10-second limit, closings and retirements. |
+| `functional_tests\test_v2_workflow_run_action_clients.mjs` | Cancel and Retry: the fresh runtime read, the exact resume body, no request to `/resume-failed` or the workflow-level `/cancel`, and the text for every refusal. |
+| `functional_tests\test_v2_workflow_delivery_messages.mjs` | Recognizing a posted message, reading its metadata, when its footer offers Follow up and Retry, how a result settles and where it lands, that only the result's re-read drops a read overtaken by a reply or a change to the messages, the running tag, and the bell's label. |
+| `functional_tests\test_v2_workflow_run_link_routing.mjs` | The run link in both scopes, where each of 6b-1's notices opens, and the alert card's **Open run**. |
+| `functional_tests\test_v2_workflow_run_tracking_xss_guardrail.py` | The new V2 files pass `scripts\check_xss_sinks.py`, and every link they render comes from a reviewed builder or a fixed path. |
+| `ui_tests\test_v2_workflow_run_card.py` | The card's states and actions, tracked runs the plan's list doesn't name, the running tag, how a result settles in the open chat and in another chat (including a question sent while the result is being read), and the footers, with the real stores and tracker in a test harness. |
+| `ui_tests\test_v2_workflow_run_tracker_spa.py` | In the built SPA: the tracker starts only after the app has loaded with both flags on, never twice across pages, and one posted result raises one desktop notification. |
+
+Shared fixtures are in `functional_tests\test_support\workflowRunStatusFixtures.mjs`,
+and the card test's harness is in `ui_tests\fixtures\workflow_run_tracking\`.
+6b-2 also extended these existing tests:
+
+- `ui_tests\test_v2_notifications_bell.py`: the **Workflow results** label and
+  where 6b-1's notices open.
+- `ui_tests\test_v2_orchestration_workflow_proposal_card.py`: the recurring
+  card's next run, last run and buttons.
+- `ui_tests\test_v2_workflow_alert_notices.py` and
+  `ui_tests\test_v2_document_provenance.py`: the alert card's **Open run**.
+- `functional_tests\test_v2_orchestration_workflow_run_links_xss_guardrail.py`:
+  the group form of the run link.
+
+Mutation testing results for 6b-2 are recorded in its pull request.
 
 ## Known limitations and residual risks
 
@@ -857,8 +1225,9 @@ The implementation differs from the approved plan in these documented ways:
 - Rebuilt or linked runs keep the older Phase 5 follow-up note text.
 - The workflow notice link is the classic
   `/workflow-activity?workflowId=...&runId=...&scope=personal` path.
-- The V2 bell shows the generic `Notification` label for
-  `workflow_chat_delivery` until 6b-2 adds a specific case.
+- The V2 bell showed the generic `Notification` label for
+  `workflow_chat_delivery` until 6b-2 added the **Workflow results** case in
+  0.261.251.
 
 ## Related
 

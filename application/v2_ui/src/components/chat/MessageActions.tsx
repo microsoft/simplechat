@@ -44,6 +44,7 @@ import { readSources } from '../../lib/messageDetails';
 import { messageToPlainText } from '../../lib/messageText';
 import { canMask, readMaskState } from '../../lib/masking';
 import { buildReplyPreview, messageAuthorName } from '../../lib/sharedMessage';
+import { isWorkflowDeliveryMessage } from '../../lib/workflowDelivery';
 import type { InspectorSection } from './MessageInspector';
 import type { ChatMessage, Json } from '../../lib/types';
 import {
@@ -483,6 +484,9 @@ export function MessageActions({
 
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
+    // A workflow run posted this message: the server refuses to retry it, so it isn't offered.
+    // The message's own footer offers Retry workflow run when the run can still be resumed.
+    const workflowDelivery = isWorkflowDeliveryMessage(message);
     const attempts = attemptState(message, attemptsByThread);
     const sources = readSources(message as unknown as Json);
     const masks = readMaskState(message);
@@ -616,7 +620,7 @@ export function MessageActions({
                             <Reply size={15} />
                         </IconButton>
                     )
-                ) : (
+                ) : workflowDelivery ? null : (
                     <IconButton
                         label={message.metadata?.orchestration ? 'Review orchestration recovery' : 'Retry'}
                         onClick={() => void retryMessage(message.id)}

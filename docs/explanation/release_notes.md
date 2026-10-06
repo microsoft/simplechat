@@ -2,6 +2,48 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.251)**
+
+#### New Features
+
+*   **Live Status For Workflows Started From V2 Chat**
+    *   Under a plan's answer, each workflow the plan started now shows its run's current status (Queued, Running, Needs you, Completed, Partly completed, Failed, Timed out or Cancelled), with the step it's on, the time elapsed, why it's waiting and where its results went. A status V2 can't read with certainty shows **Status unavailable** with only **Open run**, never a guess.
+    *   **Check now** reads the chat's runs straight away and shows when they were last checked. **Cancel run** asks you to confirm, then asks the run to stop. **Retry** resumes the same failed durable run after a fresh read of its runtime and never starts a new run; when the server refuses, for example because the workflow changed or another run is in progress, the card says why. **Review and approve** opens the run in Workflows, where the step's prompt and choices are shown; nothing is approved from the chat. **Reconnect Microsoft 365** opens the connection in your profile.
+    *   Shown in private personal chats while `allow_user_workflows` and `enable_chat_orchestration_workflow_runs` are both on. With either one off, the started-workflow links show as before and no status is requested.
+    *   (Ref: #1546, #1543, #1610, `WorkflowRunCard.tsx`, `WorkflowRunLinks.tsx`, `workflowRunStatus.ts`, `workflowRunActions.ts`, `useWorkflowRunAction.ts`, `workflowEditor.ts`, [Workflow result delivery to chat](features/CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2))
+
+*   **One Workflow Run Tracker Per Browser Tab**
+    *   V2 checks chat-started runs from the app shell, on any page, with one request per check to the batched status route, never one per run, so the chat list, the bell and the run card stay current. It checks first after 15 seconds, then less often up to every 5 minutes, pauses while the tab is hidden unless desktop notifications are on, and stops once nothing is in flight. A new plan answer, the run card or **Check now** starts it again, and it stops when the session ends.
+    *   When a run's results are posted while the page is open, the open chat reloads its messages once any reply in progress finishes, without replacing a source you already chose. Another chat gets its unread dot, and the bell count refreshes. The server's one bell notification is the only one, and a desktop notification, if you've turned them on, shows only while you aren't looking at the page.
+    *   The first check after the page loads records what was already posted, so reloading never announces a result, marks a chat unread or notifies again.
+    *   (Ref: `workflowRunTracker.ts`, `useWorkflowRunTracker.ts`, `workflowRunTrackerStore.ts`, `chatStore.ts`, `App.tsx`, [Workflow result delivery to chat](features/CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2))
+
+*   **Follow Up, Retry And Open Run On Posted Workflow Results**
+    *   A message a workflow run posted to its chat now ends with its own actions. **Follow up** makes a posted result or saved analysis the source of your next question in the same chat, while **Use Workflow Results In Chat** is on and the result is still available. **Open run** opens the run in Workflows. A note that the run failed offers **Retry workflow run** only while a fresh check says the same run can still be resumed.
+    *   The chat's own **Retry** and **Edit** are hidden on these messages, since the server refuses both. If a refusal still comes back, its message is shown.
+    *   (Ref: `WorkflowDeliveryFooter.tsx`, `workflowDelivery.ts`, `MessageActions.tsx`, `MessageList.tsx`, [Chat controls](../reference/chat-controls.md#results-posted-to-the-chat))
+
+*   **Next Run And Last Run On The Recurring-Workflow Card**
+    *   The card for a workflow created from a chat proposal now shows when it runs next, or **Due now**, and its newest run's status and time, or **No runs yet**. **Open latest results** opens the newest completed or partly completed run, and **Follow up** opens a new chat about the newest run chat can answer from.
+    *   The card reads these once when it's shown and doesn't keep checking. If the read fails, it says "Run details aren't available right now."
+    *   (Ref: `WorkflowProposalRunSummary.tsx`, `WorkflowProposalCard.tsx`, `workflowEditor.ts`)
+
+*   **Workflow Notifications Open The Run In V2**
+    *   In V2, a notification that links to a run on the classic workflow activity page now opens that run in the Workflows run history when the link and the notice agree on the workflow, the run and its workspace: personal, or a group with its id. Microsoft 365 notices, and notices whose link and details disagree or don't say which workspace, keep their classic link.
+    *   A workflow alert, or a notice that a run's results couldn't be posted to its chat, that has no link of its own but names its run and workspace now opens that run. Previously it had no link.
+    *   (Ref: `notificationLinks.ts`, `workflowRunLink.ts`, `workflowAlertNotices.ts`, [V2 Notifications Bell](features/V2_NOTIFICATIONS_BELL.md))
+
+#### User Interface Enhancements
+
+*   **Running Tag In The V2 Chat List**
+    *   A small spinner beside a chat shows that a workflow it started is still running or its results are being posted, labelled for example "Running Weekly digest" or "Running 2 workflows". It uses what the tracker already knows, so the list sends no requests of its own, and it gives way to the unread dot once the results arrive.
+    *   (Ref: `WorkflowRunningTag.tsx`, `ConversationRail.tsx`)
+
+*   **Workflow Results Notices And Alert Cards**
+    *   The bell labels notices about a run whose results couldn't be posted to its chat as **Workflow results**.
+    *   A workflow alert card that names its run now offers **Open run**, which opens the same place **Open workflow** did. Alerts without a run keep **Open workflow**.
+    *   (Ref: `notifications.ts`, `WorkflowAlertCard.tsx`, `workflowAlertNotices.ts`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md))
+
 ### **(v0.261.250)**
 
 #### New Features

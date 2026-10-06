@@ -73,25 +73,33 @@ Before you ask:
    shows **Paused**. Starting it here runs it once and leaves it turned off.
 3. Select **Approve**. The plan starts each workflow once.
 4. Read the answer. It says which workflows started, and which didn't and why.
-5. Under the answer, each started workflow shows its run's status as of when the message
-   loaded. Select **Open run** to follow its progress and results in the workflow's run
-   history.
+5. Under the answer, each started workflow shows its run's status: the step it's on,
+   the time elapsed, and anything it needs from you. V2 keeps checking while the run
+   is in flight, even while you're on another page. Select **Check now** to check
+   straight away, or **Open run** to follow it in the workflow's run history.
 
-The plan doesn't wait for the workflow to finish, and it doesn't bring the results into
-the chat. They arrive where the workflow already sends them, such as its conversation or
-alerts. Stopping the plan doesn't stop a workflow it already started, so cancel the run
-from its run history if you need to. Retrying a failed step never starts a workflow
-twice: when the plan already started it, the retry links that run instead.
+The plan doesn't wait for the workflow to finish. While a run is going, a spinner beside
+its chat in the chat list says so. From the card you can cancel a run that's still going
+with **Cancel run**, and resume a failed one with **Retry**, which continues the same run
+instead of starting another. Stopping the plan doesn't stop a workflow it already
+started. Retrying a failed step of the plan never starts a workflow twice: when the plan
+already started it, the retry links that run instead.
 
 When your administrator also turns on **Use Workflow Results In Chat**, a
 durable personal run started from chat can post its outcome back into that same
 private chat after it finishes. The chat is marked unread, and a bell
 notification opens the chat. If the chat was deleted or shared before delivery,
-you get a workflow notification that opens the run instead.
+you get a workflow notification that opens the run instead. A posted result has
+**Follow up**, to ask about it in the same chat, and **Open run**. A note that the
+run failed offers **Retry workflow run** while the run can still be resumed.
+Without that setting, results arrive where the workflow already sends them, such
+as its conversation or alerts. See
+[Results posted to the chat]({{ '/reference/chat-controls/' | relative_url }}#results-posted-to-the-chat).
 
 A workflow that's already running isn't started again; the answer says so, and you can
 start it once that run finishes. If a run the plan started waits for a Microsoft 365
-approval or sign-in, its status shows **Waiting**; follow
+approval or sign-in, its status shows **Needs you**, and for a sign-in the card offers
+**Reconnect Microsoft 365**; follow
 [Microsoft 365 authorization waits](#microsoft-365-authorization-waits) to continue it.
 
 ## Continue a durable run
@@ -297,6 +305,8 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | The answer says only workflows with durable execution can be started from chat | The workflow runs synchronously | Turn on **Durable execution** in the V2 editor and save, or select **Run** in Workflows. |
 | The answer says the workflow is waiting for a Microsoft 365 approval or sign-in | An earlier run is waiting on Microsoft 365 | Finish that approval or sign-in, then ask again. |
 | A started workflow's link says it's unavailable | The workflow was deleted, or the run is no longer in its run history | Open the workflow in Workflows to start a new run. |
+| A started workflow shows **Status unavailable** | V2 couldn't read the run's status with certainty, for example because the run stopped while nothing was checking it | Select **Check now**, or **Open run** to see the run in Workflows. |
+| A failed run started from chat doesn't offer **Retry** | The workflow changed or was deleted after the run started, another run of it is in progress, the run reached its time limit, it didn't run because nothing changed, or starting workflows from chat was turned off | Read the reason on the card, then start a new run from Workflows if you still need one. |
 
 ## Related
 

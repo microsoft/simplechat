@@ -2,19 +2,23 @@
 # test_v2_orchestration_workflow_run_links_xss_guardrail.py
 """
 Functional test for the V2 workflow run links passing the XSS sink guardrail.
-Version: 0.261.212
+Version: 0.261.251
 Implemented in: 0.261.212
+A group run's link built through the checked group path builder: 0.261.251
 
 This test ensures that the Started workflows links under a chat answer pass
 scripts/check_xss_sinks.py the way CI runs it. The link component calls the
 reviewed same-origin builder workflowRunHref inside the link, the checker lists
 that builder as approved, a link taken from a plain property is still flagged,
-and the builder still returns only the fixed Workflows path.
+and the builder still returns only the fixed Workflows path of the personal
+workspace or, for a group run, of that group's workspace.
 """
 
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -100,32 +104,25 @@ def test_checker_still_flags_a_link_from_a_property() -> None:
 
 
 def test_builder_returns_only_the_fixed_workflows_path() -> None:
-    """The approval holds only while the builder returns the fixed same-origin path."""
+    """The approval holds only while the builder returns a fixed same-origin Workflows path."""
     builder_source = read_text(RUN_LINK_BUILDER)
 
-    assert 'export function workflowRunHref(workflowId: string, runId: string): string {' in builder_source
+    assert (
+        'export function workflowRunHref(workflowId: string, runId: string, '
+        'scope: WorkflowScope = PERSONAL_SCOPE): string {'
+    ) in builder_source
+    assert "const PERSONAL_SCOPE: WorkflowScope = { type: 'personal' };" in builder_source
     assert (
         'const params = new URLSearchParams({ [WORKFLOW_LINK_PARAM]: workflowId, '
         '[WORKFLOW_RUN_LINK_PARAM]: runId });'
     ) in builder_source
     assert 'return `/workspace/workflows?${params}`;' in builder_source
+    # A group run opens that group's Workflows section, through the checked group path builder.
+    assert "import { groupWorkspacePath } from './groupWorkspaceNavigation';" in builder_source
+    assert "return `${groupWorkspacePath(scope.groupId, 'workflows')}?${params}`;" in builder_source
+    assert builder_source.count('return `') == 2
 
 
 if __name__ == '__main__':
-    tests = [
-        test_run_link_files_pass_xss_guardrail,
-        test_run_link_uses_the_reviewed_builder_in_the_link,
-        test_checker_still_flags_a_link_from_a_property,
-        test_builder_returns_only_the_fixed_workflows_path,
-    ]
-    failures = 0
-    for test in tests:
-        print(f'Running {test.__name__}...')
-        try:
-            test()
-            print('  passed')
-        except AssertionError as error:
-            failures += 1
-            print(f'  failed: {error}')
-    print(f'Results: {len(tests) - failures}/{len(tests)} tests passed')
-    sys.exit(1 if failures else 0)
+    # Run through pytest, which rewrites these asserts so they still run under python -O.
+    raise SystemExit(pytest.main([__file__, '-q']))

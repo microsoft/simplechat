@@ -575,6 +575,10 @@ the answer's files, and nothing is created until you choose. See
 | Deny | Declines the proposal after you confirm. Nothing is created. | Say you don't want this workflow. | Same as Instructions, until the proposal is decided or expires |
 | Create again | Creates the workflow again, paused, after you deleted it. | Bring back a workflow you removed, from the same proposal. | Same as Instructions, until the proposal expires |
 | Open workflow | Opens the created workflow in Workflows. | Run, edit or turn on the workflow the proposal created. | The workflow exists |
+| Next run | Shows when the created workflow runs next, with the time zone's name, or **Due now** once that time has passed. | Know when the recurring work happens without opening Workflows. | The workflow exists and is turned on |
+| Last run | Shows the newest run's status and when it ran, or **No runs yet**. A status V2 doesn't recognize reads **Status unavailable** rather than a guess. | See whether the workflow's latest run worked. | The workflow exists |
+| Open latest results | Opens the newest completed or partly completed run in the workflow's run history. | Read what the workflow last produced. | The workflow has a completed or partly completed run |
+| Follow up | Opens a new chat about the newest run chat can answer from, as **Ask in chat** does in Workflows. | Ask what the workflow found without copying its output into chat. | `enable_chat_workflow_results`, for a completed or partly completed run that isn't a structured run |
 | Check again | Reads the proposal's status again after automatic checking stops. | Confirm the result when creating the workflow takes longer than expected. | The proposal is still being created |
 | Try again | Reloads the proposals after a failed read. | Recover the card after a network or server error. | The proposals couldn't be loaded |
 
@@ -582,6 +586,13 @@ While a proposal is being created, the card checks its status every few seconds
 for up to two minutes, and waits while the browser tab is hidden. When
 Microsoft 365 isn't connected for workflows, the card links to the connection in
 your profile, and while a run waits for Run as approval, it links to Approvals.
+
+Since **0.261.251**, a created card reads the workflow and its recent runs once
+to show **Next run** and **Last run**. It doesn't keep checking, so open the
+chat again to see a newer run. If that read fails, the card says "Run details
+aren't available right now."
+
+{% include media.html src="reference/chat-controls-workflow-proposal-run-summary.png" alt="A created workflow proposal card showing Next run and Last run, with Open latest results and Follow up." title="Created workflow card" capture="Capture a created workflow proposal card for a scheduled workflow that has run, showing Next run with its time zone, Last run with its status, and the Open latest results and Follow up buttons. Redact the workflow name." %}
 
 ## Workflow runs (V2 interface)
 
@@ -591,20 +602,63 @@ the plan can start it. Only workflows with durable execution on can be started t
 and only from a conversation that's private to you. See
 [Run a workflow from chat]({{ '/guides/trigger-a-workflow/' | relative_url }}#run-a-workflow-from-chat).
 
+{% include media.html src="reference/chat-controls-workflow-run-card.png" alt="Started workflows card under a plan answer, showing a running run's step and elapsed time with Cancel run, Open run and Check now, and a running spinner beside the chat in the chat list." title="Workflow run card" capture="Capture a plan answer's Started workflows card with one running run (step, elapsed time, Cancel run, Open run, Check now and its Checked time) and the running spinner beside that chat in the chat list. Redact conversation titles and workflow names." %}
+
 | Control or state | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
 | Saved workflows notice | Says the plan always waits for you to approve it, and lists each workflow it would start with its trigger. A workflow that's turned off shows **Paused**. A paused workflow still runs once when you start it here, and starting it doesn't turn it back on. | Check which workflows will start before you approve. A countdown or Auto never starts one. | `enable_chat_orchestration`, `allow_user_workflows` and `enable_chat_orchestration_workflow_runs`, in a conversation that's private to you |
 | Workflow (Run view) | Shows the name of the workflow a step starts, with **Paused** when it's turned off. | Match each step to the workflow it starts. | A plan with a step that starts a saved workflow |
-| Started workflows | Lists, under the answer, each workflow the plan started with its run's status: **Queued**, **Running**, **Waiting**, **Completed**, **Partly completed**, **Failed**, **Cancelled** or **Skipped**. The status is as of when the message loaded; reload to read it again. | See at a glance whether the work you started is still going. | Your own private conversation, after a plan started a workflow |
+| Started workflows | Lists, under the answer, each workflow the plan started with its run's status. While runs are tracked, the status stays current: **Queued**, **Running**, **Needs you**, **Completed**, **Partly completed**, **Failed**, **Timed out** or **Cancelled**, with the step the run is on, the time elapsed, why it's waiting and where its results went. Otherwise, and until a run is first checked, the status is as of when the message loaded: **Queued**, **Running**, **Waiting**, **Completed**, **Partly completed**, **Failed**, **Cancelled** or **Skipped**. A status V2 can't read with certainty shows **Status unavailable** and only **Open run**. | See at a glance whether the work you started is still going, without leaving the chat. | Your own private conversation, after a plan started a workflow. Runs are tracked while `allow_user_workflows` and `enable_chat_orchestration_workflow_runs` are both on |
 | Open run | Opens the workflow in Workflows with its run history open at that run. | Follow the run's progress and read its results. | The workflow and its run still exist |
 | Unavailable | Replaces **Open run** with the reason the run can't be opened, for example because the workflow was deleted or the run is no longer in its history. | Understand why a link is missing without losing the rest. | The run can't be opened, or starting workflows from chat was turned off |
 | Try again | Reloads the started workflows after a failed read. | Recover the links after a network or server error. | The started workflows couldn't be loaded |
+| Check now | Reads this chat's runs again straight away. The card shows when they were last checked, for example "Checked 9:07 AM". | Get the latest status without waiting for the next automatic check. | Runs are tracked and the answer started at least one |
+| Cancel run | Asks you to confirm, then asks the run to stop. Anything it already did stays done, and a cancelled run can't be retried. | Stop a run you no longer need. | Runs are tracked, and the run is queued, running or waiting and can still be cancelled |
+| Retry | Resumes the same failed run, reusing the steps that already finished. It never starts a new run. If the run can't be resumed, the card says why, for example because the workflow changed after the run started. | Recover from a failure without asking the plan again. | Runs are tracked, the run failed and can still be resumed, and starting workflows from chat is still on |
+| Review and approve | Opens the run in Workflows, where the step's approval prompt and choices are shown. Nothing is approved from the chat. | Decide on the step the run is waiting for. | The run is waiting for your approval |
+| Reconnect Microsoft 365 | Opens the Microsoft 365 connection in your profile. | Let a run that's waiting for you to sign in continue. | The run is waiting for a Microsoft 365 sign-in |
+| Results posted below | Scrolls to the message the run posted in this chat. | Jump from the run to its results. | The run's results were posted to this chat and that message is loaded |
+| Running tag | Shows a small spinner beside the chat in the chat list, labelled with the workflow's name, for example "Running Weekly digest", or "Running 2 workflows" when there are several. | See which chats are waiting on a workflow, from any page. | Runs are tracked, a run started from that chat is still going or its results are being posted, and the chat has no unread reply |
 
 The answer itself lists what happened to each workflow: started, already started for
-this request, or not started with the reason. Results arrive where the workflow
-already sends them, such as its conversation or alerts, not in the chat answer.
-Stopping the plan doesn't stop a workflow it already started; cancel the run in
-Workflows.
+this request, or not started with the reason. Stopping the plan doesn't stop a
+workflow it already started; use **Cancel run** or cancel the run in Workflows.
+
+A run takes one action at a time. While its **Cancel run** or **Retry** is waiting
+on the server, that run's **Cancel run**, **Retry** and **Review and approve** stay
+in place but do nothing, on the card and on the run's note in the chat.
+
+Runs are tracked since **0.261.251**. While a tracked run is in flight, V2
+checks on it from any page, so the chat list and the bell stay current: first
+after 15 seconds, then less often, up to every 5 minutes. It pauses while the
+browser tab is hidden, unless desktop notifications are on, and stops checking
+once nothing is in flight.
+
+### Results posted to the chat
+
+Implemented in **0.261.227**, with V2's controls in **0.261.251** (Refs:
+microsoft/simplechat#1546). When **Use Workflow Results In Chat**
+(`enable_chat_workflow_results`) is also on, a run started from chat posts its
+result, or a short note when it failed, was cancelled or can't be shown, back
+into the chat that started it. The chat is marked unread, the bell gets one
+notification, and if you've turned on desktop notifications, one shows while
+you aren't looking at the page. The message starts with a line such as
+"Results from `Weekly digest` · you asked on Sun Jan 4, 2026, 9:30 PM EST". If
+the chat was deleted or shared before the run finished, a workflow notification
+opens the run instead. Without that setting, results arrive where the workflow
+already sends them, such as its conversation or alerts.
+
+{% include media.html src="reference/chat-controls-workflow-posted-result.png" alt="A workflow result posted into the chat that started it, with its Results from label and the Follow up and Open run buttons below it." title="Results posted to the chat" capture="Capture a workflow result posted into the chat that started it, showing its Results from label and the Follow up and Open run buttons. Redact the conversation title, workflow name and result content." %}
+
+| Control | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Follow up | Makes the run's result the source of your next question in this chat, then puts the cursor in the message box. | Ask about what the run found without opening a new chat. | A posted result or saved analysis, with `enable_chat_workflow_results` on and the result still available |
+| Retry workflow run | Resumes the same failed run, as the card's **Retry** does. It never starts a new run. | Recover from a failure from the note itself. | A note that the run failed, while runs are tracked and the run can still be resumed |
+| Open run | Opens the run in Workflows. | See the run's details, steps and full output. | Any posted message, with `allow_user_workflows` on |
+
+The chat's own **Retry** isn't offered on a posted message, and the server
+refuses Retry and Edit for one: run the workflow again from Workflows, or ask a
+new question instead.
 
 ## Workflow results in chat (V2 interface)
 

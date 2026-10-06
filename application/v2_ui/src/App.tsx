@@ -13,6 +13,8 @@ import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { startImageApprovalTracking } from './lib/imageProposalResume';
 import { useNotificationRuntime } from './lib/useNotificationRuntime';
 import { useWorkflowAlertRuntime } from './lib/useWorkflowAlertRuntime';
+import { useWorkflowRunTracker } from './lib/useWorkflowRunTracker';
+import { workflowRunTrackerShouldRun } from './lib/workflowRunTracker';
 import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
@@ -182,6 +184,9 @@ export function App() {
     useNotificationRuntime(Boolean(data) && !error);
     // Workflow alerts that ask to pop up. It listens to the bell's count rather than polling.
     useWorkflowAlertRuntime(Boolean(data) && !error);
+    // The saved workflows chats started: one tracker for the tab, for the run cards, the chat
+    // list's running tag and the results each run posts back to its chat.
+    useWorkflowRunTracker(Boolean(data) && !error && workflowRunTrackerShouldRun(data?.features));
 
     if (loading) {
         return <BootScreen />;
