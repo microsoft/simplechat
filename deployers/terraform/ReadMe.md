@@ -123,7 +123,7 @@ Offline coverage in [test_deployer_key_vault_secret_permissions.py](../../functi
 
 ## Video Indexer region and permissions
 
-Implemented in application version **0.261.260** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
+Implemented in application version **0.261.264** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
 
 Azure Video Indexer is not offered in every region. When `param_location` does not offer it, set `param_video_indexer_location` to a region that does; leave it blank to keep Video Indexer in `param_location`:
 

@@ -145,9 +145,15 @@ claims there is something to edit.
 | `enable_enhanced_citations_mount` | No control in either interface; forced off unless Enhanced Citations is on |
 | `enable_mixed_source_chat_search` | Staged rollout flag with no administrator control |
 | `enable_mixed_source_conversation_continuity` | Staged rollout flag gated behind the above |
+| `enable_tabular_search_shared_preflight` | Always on; `get_settings()` resets it to `True` on every read, and `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` is the only off switch |
+| `enable_tabular_analyze_durable_preflight` | Always on, forced the same way |
+| `enable_tabular_hierarchical_analysis` | Always on, forced the same way |
 
 The list is served on the settings GET as `suppressed_capabilities` and honoured
-by `buildCapabilityIndex`.
+by `buildCapabilityIndex`. Every `enable_*` key in
+`TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS` must be suppressed; see
+[V2 Admin Tabular Preflight Switch Fix](../fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md)
+(0.261.261).
 
 ### Enhanced Citations storage test
 

@@ -368,7 +368,7 @@ Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](
 
 ## Video Indexer region and permissions
 
-Implemented in application version **0.261.260** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
+Implemented in application version **0.261.264** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
 
 ### Choosing a Video Indexer region
 

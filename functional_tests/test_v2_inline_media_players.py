@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for V2 inline media players, image cards and agent-posted group messages.
-Version: 0.261.222
+Version: 0.261.262
 Implemented in: 0.261.222
 
 This test ensures that:
@@ -158,7 +158,8 @@ def test_markdown_renderer_wires_inline_media_safely():
     assert "a: ({ href, children, node, ...props }) =>" in markdown
     assert "const kind = inlineMediaKind(href);" in markdown
     assert "<a href={safeMarkdownHref(href)} {...props}>" in markdown
-    assert "img: ({ src, alt }) => <InlineImageCard src={src} alt={alt} />" in markdown
+    # Since 0.261.262 an image or clip in a gallery renders as a tile; every other image keeps its card.
+    assert "return tile === null ? <InlineImageCard src={src} alt={alt} /> : <MediaGalleryTile index={tile} />;" in markdown
     assert "from 'rehype-raw'" not in markdown, "raw HTML must stay off"
     assert "allowDangerousHtml" not in markdown and "urlTransform=" not in markdown, "keep react-markdown's default URL transform"
 

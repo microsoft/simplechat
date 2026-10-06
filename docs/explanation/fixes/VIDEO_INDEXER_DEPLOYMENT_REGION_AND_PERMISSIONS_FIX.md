@@ -1,16 +1,16 @@
-# Video Indexer Deployment Region and Permissions Fix (v0.261.260)
+# Video Indexer Deployment Region and Permissions Fix (v0.261.264)
 
 ## Overview
 
 The deployers can now place Azure Video Indexer in a supported region other than the application region, and they grant the App Service identity the role SimpleChat needs to request Video Indexer access tokens. The azd preprovision hook now stops before provisioning when Video Indexer is unavailable in the chosen region. Post-provision configuration no longer erases a manually configured Video Indexer account.
 
-Fixed in version: **0.261.260** (deployer version **1.0.33**)
+Fixed in version: **0.261.264** (deployer version **1.0.33**)
 
 Related issue: [#1666](https://github.com/microsoft/simplechat/issues/1666)
 
 Dependencies: Azure Developer CLI hooks, Bicep, Terraform with azapi 2.x, the Azure CLI deployer, and the Azure Video Indexer ARM API (`2025-04-01` in Azure Commercial, `2024-01-01` in Azure Government).
 
-The application version was updated in `application/single_app/config.py` from `0.261.259` to `0.261.260`, and the deployer version in `deployers/version.txt` from `1.0.32` to `1.0.33`.
+The application version was updated in `application/single_app/config.py` from `0.261.263` to `0.261.264`, and the deployer version in `deployers/version.txt` from `1.0.32` to `1.0.33`.
 
 ## Issue Description
 

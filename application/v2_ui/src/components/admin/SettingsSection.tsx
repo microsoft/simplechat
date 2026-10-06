@@ -102,6 +102,14 @@ export interface SettingsSectionProps {
      * settings while a search narrows `fields` to the matches.
      */
     hierarchyFields?: AdminField[];
+    /**
+     * Every declared field by key.
+     *
+     * A field saved at a nested path is found only through its declaration, so without
+     * this a gate stored that way -- the Web Search authentication type, say -- reads as
+     * unset and hides the fields that depend on it.
+     */
+    fieldsByKey?: Map<string, AdminField>;
     /** Force every group open, used while a search is filtering the page. */
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
@@ -283,6 +291,7 @@ export function SettingsSection({
     status: statusProp,
     icon,
     hierarchyFields,
+    fieldsByKey,
     renderField,
     renderCapability,
     forceExpanded,
@@ -297,8 +306,8 @@ export function SettingsSection({
     );
 
     const derivedStatus = useMemo(
-        () => computeSectionStatus(fields, settings, draft, statusRule),
-        [statusRule, fields, settings, draft],
+        () => computeSectionStatus(fields, settings, draft, statusRule, fieldsByKey),
+        [statusRule, fields, settings, draft, fieldsByKey],
     );
     const status = statusProp ?? derivedStatus;
 
@@ -308,16 +317,19 @@ export function SettingsSection({
     );
 
     const capabilityOn = capability?.key
-        ? asBoolean(readSectionValue(settings, draft, capability.key))
+        ? asBoolean(readSectionValue(settings, draft, capability.key, fieldsByKey))
         : true;
 
     // A section states each distinct prerequisite once, at the top, rather than repeating
     // it on every field that carries it.
-    const requirements = useMemo(() => collectRequirements(fields, settings, draft), [fields, settings, draft]);
+    const requirements = useMemo(
+        () => collectRequirements(fields, settings, draft, fieldsByKey),
+        [fields, settings, draft, fieldsByKey],
+    );
 
     const groups = useMemo(
-        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft))),
-        [bodyFields, settings, draft],
+        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft, fieldsByKey))),
+        [bodyFields, settings, draft, fieldsByKey],
     );
 
     const presentation = presentSectionStatus(status);
@@ -432,7 +444,7 @@ export function SettingsSection({
                     <RequirementNotice
                         key={requirement.key}
                         requirement={requirement}
-                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
+                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
                     />
                 ))}
 

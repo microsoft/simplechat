@@ -3,9 +3,9 @@
 """
 Validate and explain deployment prerequisites before `azd provision` or `azd up` continues.
 
-Version: 0.261.260
+Version: 0.261.264
 Implemented in: 0.237.018
-Enhanced in: 0.242.057, 0.261.260
+Enhanced in: 0.242.057, 0.261.264
 
 This script ensures users understand the prerequisites for reusing an existing VNet
 and for configuring private DNS zones when private networking is enabled. It also

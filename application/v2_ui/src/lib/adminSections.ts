@@ -12,6 +12,7 @@ import {
     evaluateDependency,
     evaluateSectionStatus,
     readFieldGroup,
+    readSettingValue,
     type AdminField,
     type AdminFieldDependency,
     type AdminFieldRequirement,
@@ -28,9 +29,19 @@ import type { Json } from './types';
  */
 export type SectionStatus = 'off' | 'blocked' | 'incomplete' | 'ready' | 'none';
 
-/** Read a field's current value, preferring an unsaved edit over the stored one. */
-export function readSectionValue(settings: Json, draft: Json, key: string): unknown {
-    return Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key];
+/**
+ * Read a field's current value, preferring an unsaved edit over the stored one.
+ *
+ * Given the field index, a value saved at a nested path is found where its field
+ * declares it, so a configured Web Search connection does not read as blank.
+ */
+export function readSectionValue(
+    settings: Json,
+    draft: Json,
+    key: string,
+    fieldsByKey?: Map<string, AdminField>,
+): unknown {
+    return readSettingValue(key, settings, draft, fieldsByKey);
 }
 
 /**
@@ -69,11 +80,16 @@ export function findCapabilityField(fields: AdminField[]): AdminField | undefine
  * Deduplicated by key, because a prerequisite usually applies to several fields and
  * stating it once at the top reads better than repeating it on each.
  */
-export function collectRequirements(fields: AdminField[], settings?: Json, draft: Json = {}): AdminFieldRequirement[] {
+export function collectRequirements(
+    fields: AdminField[],
+    settings?: Json,
+    draft: Json = {},
+    fieldsByKey?: Map<string, AdminField>,
+): AdminFieldRequirement[] {
     const seen = new Map<string, AdminFieldRequirement>();
     for (const field of fields) {
         if (settings && field.role !== 'capability') {
-            const read = (key: string) => readSectionValue(settings, draft, key);
+            const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
             if (!evaluateDependency(field.depends_on, read)) continue;
             if (field.type === 'switch' && field.key && !asBoolean(read(field.key) ?? field.default)) continue;
         }
@@ -96,11 +112,12 @@ export function deriveSectionStatus(
     fields: AdminField[],
     settings: Json,
     draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
 ): SectionStatus {
-    const read = (key: string) => readSectionValue(settings, draft, key);
+    const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
     const capability = findCapabilityField(fields);
 
-    const unmet = collectRequirements(fields, settings, draft).some(
+    const unmet = collectRequirements(fields, settings, draft, fieldsByKey).some(
         (requirement) => !asBoolean(read(requirement.key)),
     );
     if (unmet) {
@@ -146,12 +163,13 @@ export function computeSectionStatus(
     settings: Json,
     draft: Json,
     statusRule?: AdminSectionStatusRule,
+    fieldsByKey?: Map<string, AdminField>,
 ): SectionStatus {
     const declared = evaluateSectionStatus(statusRule, settings, draft);
     if (declared) {
         return DECLARED_STATUS_MAP[declared];
     }
-    return deriveSectionStatus(fields, settings, draft);
+    return deriveSectionStatus(fields, settings, draft, fieldsByKey);
 }
 
 /** How a field sits relative to the switch that governs it. */

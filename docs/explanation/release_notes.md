@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.260)**
+### **(v0.261.264)**
 
 #### Bug Fixes
 
@@ -12,6 +12,64 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Post-provision configuration writes the Video Indexer settings only when the deployment created the account, and records the account's own region. Previously, any provision without Video Indexer blanked the account name and ID and reset the location, which left **AI Video Intelligence** showing *Needs configuration*.
     *   Terraform now reads the Video Indexer identity from the azapi 2.x `output` object directly instead of passing it through `jsondecode()`.
     *   (Ref: #1666, `videoIndexer.bicep`, `setVideoIndexerPermissions.bicep`, `postconfig.py`, `validate_azd_prerequisites.py`, `main.tf`, `deploy-simplechat.ps1`, deployer version 1.0.33, [Video Indexer Deployment Region and Permissions Fix](fixes/VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md))
+
+### **(v0.261.263)**
+
+#### User Interface Enhancements
+
+*   **Search Result Cache Explained Under Azure AI Search**
+    *   V2 Admin Settings now shows the workspace search result cache in a **Search result cache** group under **Knowledge › Search Index › Azure AI Search**. The group explains what is cached, what forces a fresh search, and why the cache should stay on. Previously the fallback scan matched the word "search" and placed it under Web Search as a bare switch labelled with its key, `enable_search_result_caching`.
+    *   **Cache lifetime (seconds)** can now be changed, from 60 to 3,600 seconds with a default of 300. It appears only while caching is on. Caching stays on by default, and a value an administrator saved as off is kept.
+    *   (Ref: `admin_settings_fields.py`, `test_search_result_cache_admin_setting.py`, `test_v2_admin_search_result_cache.py`, [Search Result Cache Admin Setting Fix](fixes/SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md))
+
+### **(v0.261.262)**
+
+#### User Interface Enhancements
+
+*   **Media Galleries in V2 Replies**
+    *   Two or more images or clips in a row now show as a gallery of tiles, three to a row, each with its caption underneath, instead of one full-width card each. A short caption line above an image or clip becomes its caption. In a list, the clip and still at the end of each item sit side by side under the item's text. A single image keeps its full-width card, and recordings keep their player bar.
+    *   A clip tile shows its first frame and length, and plays where it is. **View larger** continues it in the viewer.
+    *   Grouping happens on the parsed markdown: raw HTML stays disabled and react-markdown's URL checks still apply to every image and link.
+    *   (Ref: `mediaGallery.ts`, `MediaGallery.tsx`, `MediaTiles.tsx`, `AssistantMarkdown.tsx`, [V2 Media Galleries and Viewer](features/V2_MEDIA_GALLERIES_AND_VIEWER.md))
+
+*   **Media Viewer**
+    *   Opening an image or clip shows it large, with **Previous** and **Next** buttons and the arrow keys stepping through the gallery, its position ("3 of 15"), View at actual size, Download and Open in a new tab. Focus returns to the tile when it closes.
+    *   (Ref: `MediaViewer.tsx`, `mediaDownload.ts`, `useMediaDownload.ts`)
+
+*   **Drawer Media Section Groups Images, Videos and Audio**
+    *   The Documents drawer now lists media under **Images**, **Videos** and **Audio** with counts. Clips show as tiles with their first frame instead of text rows, and images and clips open one viewer across all of them, with **Show in conversation** to scroll to the message.
+    *   Recordings play in the drawer, with play, stop, seek, volume, speed, Download and Show in conversation.
+    *   (Ref: `DrawerAssets.tsx`, `ConversationDrawer.tsx`, `InlineAudioPlayer.tsx`)
+
+*   **Download for Recordings, Clips and Images**
+    *   Recordings, clips and images can be saved from the player and the viewer, under the file name in their link. When a host does not let the page read its files, the file opens in a new tab instead, where the browser can save it. An expired link reports that it has expired.
+    *   (Ref: `mediaDownload.ts`, `InlineAudioPlayer.tsx`, `MediaViewer.tsx`)
+
+#### Bug Fixes
+
+*   **Escape in a Drawer Dialog No Longer Closes the Drawer**
+    *   Pressing Escape in a dialog opened from the conversation drawer, such as a document preview or the media viewer, also closed the drawer. Escape now closes only the dialog, and a second Escape closes the drawer.
+    *   (Ref: `ConversationDrawer.tsx`, `test_v2_media_galleries.py`)
+
+### **(v0.261.261)**
+
+#### Bug Fixes
+
+*   **Always-On Tabular Switches Removed From V2 Admin Settings**
+    *   V2 Admin Settings no longer shows an unlabelled **Tabular search shared preflight** switch under Workspaces › Files & Sharing › Shared Conversation File Approvals. It landed there only because its key contains the word "shared". It also no longer shows `enable_tabular_analyze_durable_preflight` or `enable_tabular_hierarchical_analysis` under Other capabilities.
+    *   All three flags send exhaustive row-by-row requests against CSV and XLSX files to a durable background job that covers every row, instead of a foreground answer that truncates. They are always on: settings loading resets them to on every time, so the switches reverted after every save. Behavior is unchanged, and the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable is still the emergency off switch.
+    *   The capability placement test now fails if any flag that settings loading resets is drawn as a switch, or if a guessed switch lands in the Workspaces group.
+    *   (Ref: `admin_settings_fields.SUPPRESSED_CAPABILITY_KEYS`, `TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS`, `test_v2_admin_capability_placement.py`, [V2 Admin Tabular Preflight Switch Fix](fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md))
+
+### **(v0.261.260)**
+
+#### Bug Fixes
+
+*   **V2 Web Search Test Uses the Saved Foundry Connection**
+    *   **Test web search** in V2 Admin Settings reported "Foundry Project Endpoint is required", "Foundry API Version is required" and "Foundry Agent ID is required" for a saved connection whose values were on screen. The Foundry connection is saved inside `web_search_agent`, but the test read each field as a top-level setting, so it only worked before the values were saved. It now reads the saved values, including a service principal's authentication type and masked client secret, which the server swaps for the stored secret.
+    *   The same fix shows **Managed Identity Type**, or the service principal fields, for the saved authentication type, and marks a saved connection as configured. Clearing a saved client secret now shows the removal warning and **Undo**.
+    *   The **Document action capabilities** card now shows the chat and workflow limits for Analyze, Comparison and Merge while that action is enabled. The section card used to hide them once the setting was saved.
+    *   (Ref: `adminFields.ts` `readSettingValue` and `buildConnectionTestPayload`, `adminSections.ts`, `ConnectionTest.tsx`, `SettingsSection.tsx`, `AdminSettingsPage.tsx`, `test_v2_admin_nested_setting_reads.py`, [V2 Admin Web Search Nested Settings Fix](fixes/V2_ADMIN_WEB_SEARCH_NESTED_SETTINGS_FIX.md))
 
 ### **(v0.261.259)**
 

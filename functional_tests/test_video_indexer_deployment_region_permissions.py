@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Video Indexer deployment region and permission fix.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.264
+Implemented in: 0.261.264
 
 This test ensures the deployers can place Azure Video Indexer in a supported region
 other than the application region, with a storage account in that region; grant the
@@ -267,7 +267,7 @@ def test_preflight_main_stops_before_provisioning():
 
 def test_version_includes_fix():
     """The application version includes this deployer fix."""
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.264")
 
 
 if __name__ == "__main__":

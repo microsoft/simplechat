@@ -107,6 +107,16 @@ In the classic interface, opening Admin Settings checks the three indexes in seq
 
 Connection and permission failures stay visible rather than being hidden as if the index were healthy. Configure either the direct Search endpoint and authentication method, or the APIM endpoint and subscription key. Public Azure uses the Search audience `https://search.azure.com`; government and custom-cloud audiences remain separate. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
 
+#### Search result cache
+
+Workspace document searches, the retrieval step behind grounded chat answers, agents, and workflows, are cached in the `search_cache` Cosmos DB container. When the same search runs again against the same documents, SimpleChat reuses the earlier results instead of embedding the query and running the semantic-ranked hybrid queries against each workspace index again. Repeated questions come back faster and cite the same sources, and fewer embedding and semantic ranker requests are billed or counted against quota. The cache does not need Redis, and it does not apply to web search.
+
+A cached result is reused only while the query, scope, selected documents, tag filters, embedding model, and the documents in scope, including their versions and content screening state, all still match. Adding, deleting, re-sharing, or re-versioning a document therefore forces a fresh search straight away. Before cached results are returned, each one is re-checked against the requesting user's access and the document's current availability, and if any no longer qualifies the search runs fresh.
+
+Caching is on by default and should stay on. Turn it off only while troubleshooting search relevance, when every search needs to run fresh. The cache lifetime bounds how long other changes can take to appear, such as a document that finishes processing after a search ran, or an edit made directly in Azure AI Search outside SimpleChat.
+
+Both settings are edited in the V2 admin settings, in the **Search result cache** group of this section. The classic admin page has no control for them.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -117,6 +127,8 @@ Connection and permission failures stay visible rather than being hidden as if t
 | Search Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_ai_search_key` |
 | Azure APIM AI Search Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_ai_search_endpoint` |
 | Azure APIM AI Search Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_ai_search_subscription_key` |
+| Cache workspace search results | Reuses a recent identical workspace search instead of embedding the query and querying the indexes again. Cached results are re-checked against the user's access before they are returned. | On | `enable_search_result_caching`; V2 admin only |
+| Cache lifetime (seconds) | How long cached results can be reused, from 60 to 3,600 seconds. Shown while caching is on. | 300 | `search_cache_ttl_seconds`; V2 admin only |
 
 ## Document Extraction {#extraction}
 
@@ -429,6 +441,7 @@ The Public Workspace Sync section belongs to the File Sync tab. Use it with the 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A synced file is not searchable | The source ran but extraction or indexing failed later. | Check sync state, extraction settings, and Azure AI Search before rerunning. |
+| A repeated question still returns the old sources after a change made directly in Azure AI Search | The search result cache is reusing results from before the change, which it cannot detect. | Wait for the cache lifetime to pass. To check the change sooner, rephrase the question, because different wording is a separate cache entry. |
 
 ## Related
 

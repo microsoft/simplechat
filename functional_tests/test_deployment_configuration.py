@@ -1,9 +1,9 @@
 # test_deployment_configuration.py
 """Postconfig environment, cache publication and create-only Search regressions.
 
-Version: 0.261.260
+Version: 0.261.264
 Implemented in: 0.261.028
-Video Indexer settings preservation and region coverage added in: 0.261.260
+Video Indexer settings preservation and region coverage added in: 0.261.264
 Uses the real settings store with fake services; never contacts Azure.
 """
 
@@ -366,7 +366,7 @@ def run_postconfig_entrypoint(monkeypatch, world, environment):
 
 
 def test_postconfig_preserves_manual_video_indexer_settings(monkeypatch, world):
-    """A provision without Video Indexer must not blank an administrator-configured account (0.261.260)."""
+    """A provision without Video Indexer must not blank an administrator-configured account (0.261.264)."""
     world.cosmos.document.update(MANUAL_VIDEO_INDEXER_SETTINGS)
     environment = {
         **POSTCONFIG_VIDEO_BASE_ENVIRONMENT,
