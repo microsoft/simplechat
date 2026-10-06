@@ -52,3 +52,6 @@ The result was a text-only assistant reply that said a map had been created even
 
 - Before: the workflow conversation and the created conversation both showed only text such as “Created map visualization.”
 - After: the workflow conversation stores the visualization citation payload, and the created conversation receives a mirrored assistant message that can render the created visualization.
+## Later changes
+
+- **0.261.253**: when the run also posted its own message into the created conversation, that message is hidden once the mirrored reply arrives, and the workflow conversation is hidden from the chat list after the first delivery. See [Workflow reply replaces the agent-posted message](WORKFLOW_REPLY_REPLACES_AGENT_POSTED_MESSAGE_FIX.md).
