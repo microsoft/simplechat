@@ -36,6 +36,7 @@ from functions_app_maintenance import (
 )
 from functions_debug import debug_print
 from functions_data_management import check_due_data_management_jobs_once
+from functions_documents import process_due_document_search_metadata_syncs
 from functions_file_sync import check_due_file_sync_sources_once
 from functions_keyvault_reminders import (
     KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
@@ -981,6 +982,36 @@ def run_data_management_scheduler_loop(app=None):
         time.sleep(60)
 
 
+def run_document_search_metadata_sync_loop():
+    """Retry search chunk metadata syncs that failed or never ran in their original process."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock('document_search_metadata_sync_scan', lease_seconds=600)
+            if lock_document:
+                summary = process_due_document_search_metadata_syncs()
+                if summary.get('due'):
+                    log_event(
+                        '[DOCUMENT_SEARCH_SYNC] Reconciled due search metadata syncs.',
+                        extra=summary,
+                        level=logging.INFO,
+                    )
+            else:
+                debug_print('Skipping search metadata sync reconciliation because another worker holds the lease.')
+        except Exception as exc:
+            log_event(
+                '[DOCUMENT_SEARCH_SYNC] Search metadata sync reconciliation failed.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(60)
+
+
 def run_content_screening_scheduler_loop(app=None):
     """Recover completion work even when enrollment of new scans is disabled."""
     while True:
@@ -1086,6 +1117,7 @@ def start_background_task_threads(app=None):
         ('Orchestration scheduler background task started.', lambda: run_orchestration_scheduler_loop(app=app)),
         ('Workflow chat delivery background task started.', lambda: run_workflow_chat_delivery_loop(app=app)),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
+        ('Document search metadata sync background task started.', run_document_search_metadata_sync_loop),
         ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
         ('Key Vault secret reminder background task started.', run_key_vault_secret_reminder_loop),

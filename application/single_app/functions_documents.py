@@ -8,6 +8,7 @@ import traceback
 import zipfile
 import hashlib
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from io import BytesIO
 from flask import make_response
@@ -75,9 +76,15 @@ from functions_data_management_search_write_fence import (
     hold_data_management_search_write_slot,
 )
 from functions_group_document_projection_fence import (
+    GROUP_DOCUMENT_PROJECTION_WRITER,
     GroupDocumentProjectionConflict,
     assert_group_document_source_writable,
     hold_group_document_projection,
+)
+from utils_cache import (
+    invalidate_group_search_cache,
+    invalidate_personal_search_cache,
+    invalidate_public_workspace_search_cache,
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
@@ -127,12 +134,22 @@ class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
 
 
+class DocumentSearchAclProjectionError(RuntimeError):
+    """Raised when a Search ACL update failed, so the access change was not saved."""
+
+
+class DocumentSearchSyncLeaseLostError(RuntimeError):
+    """Raised when another worker took over a document's search metadata sync lease."""
+
+
 class DocumentMutationPropagationError(RuntimeError):
     """The source changed, but a required downstream projection needs repair."""
 
-    def __init__(self, message, *, deleted_document_ids=()):
+    def __init__(self, message, *, deleted_document_ids=(), search_writes_frozen=False):
         super().__init__(message)
         self.deleted_document_ids = list(deleted_document_ids)
+        # True when the projection waits only on a Data Management migration's Search write freeze.
+        self.search_writes_frozen = bool(search_writes_frozen)
 
 
 class DocumentRevisionDeleteError(RuntimeError):
@@ -3542,6 +3559,15 @@ def calculate_processing_percentage(doc_metadata):
     return max(final_pct, current_pct)
 
 def update_document(**kwargs):
+    """Update a document and its derived search state.
+
+    Metadata mirrored on search chunks (title, authors, file name, classification, tags) is projected
+    by a durable background sync: the request is recorded before the save, the save carries the
+    request's token, and the save itself does no per-chunk work. Access-control changes are projected
+    to the chunks synchronously and fail closed. Non-strict calls return
+    {'updated': bool, 'search_sync': {...}}; strict calls return the saved document, or
+    (saved document, search_sync) when return_search_sync is set.
+    """
     # Screening state and every screening_* field, including the generated-content
     # exemption, are server-managed and set only when a version is created.
     if SCREENING_FIELD in kwargs or any(str(name).startswith("screening_") for name in kwargs):
@@ -3557,6 +3583,7 @@ def update_document(**kwargs):
     expected_etag = kwargs.pop('expected_etag', None)
     operation_guard = kwargs.pop('operation_guard', None)
     num_chunks_increment = kwargs.pop('num_chunks_increment', 0)
+    return_search_sync = kwargs.pop('return_search_sync', False)
     if operation_guard is not None:
         operation_guard()
 
@@ -3672,10 +3699,14 @@ def update_document(**kwargs):
             # start a new hold. Only the inspected source format of the file stays fixed.
             validate_screened_metadata_update(existing_document, kwargs)
         original_percentage = existing_document.get('percentage_complete', 0) # Store for comparison
+        # update_document only replaces top-level fields, so a shallow copy keeps the stored state.
+        original_document = dict(existing_document)
 
         # 2. Apply updates from kwargs
         update_occurred = False
-        updated_fields_requiring_chunk_sync = set() # Track fields needing propagation
+        metadata_fields_requiring_sync = set()
+        acl_changes = {}
+        document_search_acl_fields = get_document_search_acl_fields(group_id, public_workspace_id)
 
         if num_chunks_increment > 0:
             current_num_chunks = existing_document.get('num_chunks', 0)
@@ -3690,17 +3721,22 @@ def update_document(**kwargs):
         for key, value in kwargs.items():
             if strict and key in {'document_id', 'user_id', 'group_id', 'public_workspace_id'}:
                 continue
-            if value is not None and existing_document.get(key) != value:
+            previous_value = existing_document.get(key)
+            if value is not None and previous_value != value:
                 # Avoid overwriting num_chunks if it was just incremented
                 if key == 'num_chunks' and num_chunks_increment > 0:
                     continue # Skip direct assignment if increment was used
                 existing_document[key] = value
                 update_occurred = True
-                if key in ['title', 'authors', 'file_name', 'document_classification', 'tags']:
-                    updated_fields_requiring_chunk_sync.add(key)
-                # Propagate shared_group_ids to group chunks if changed
-                if is_group and key == 'shared_group_ids':
-                    updated_fields_requiring_chunk_sync.add('shared_group_ids')
+                if key in DOCUMENT_SEARCH_METADATA_FIELD_MAP:
+                    metadata_fields_requiring_sync.add(key)
+                # Project only real access changes; a missing list and an empty list grant the same
+                # access, so legacy normalization never waits on (or fails because of) Search.
+                if (
+                    key in document_search_acl_fields
+                    and _normalize_search_acl_entries(previous_value) != _normalize_search_acl_entries(value)
+                ):
+                    acl_changes[key] = (previous_value, value)
 
         # 3. If any update happened, handle timestamps and percentage
         if update_occurred:
@@ -3733,107 +3769,98 @@ def update_document(**kwargs):
                  existing_document['percentage_complete'] = new_percentage
 
         if strict:
+            # Retry the requested projections even when a previous attempt committed the source
+            # but did not finish downstream: a strict caller's projected fields are re-requested.
+            metadata_fields_requiring_sync.update(
+                field for field in DOCUMENT_SEARCH_METADATA_FIELD_MAP
+                if field in kwargs and kwargs[field] is not None
+            )
+
+        # A held screened document has no released chunks; publication rebuilds them from the document.
+        releases_chunks = marker is None or document_is_available(existing_document)
+
+        # 4. Project access-control changes that must reach the search chunks before they are saved,
+        # so the index never grants access that Cosmos does not record and a revocation is enforced first.
+        acl_changes_after_save = {}
+        if acl_changes:
+            if operation_guard is not None:
+                operation_guard()
+            acl_changes_after_save = _project_document_acl_before_save(
+                cosmos_container,
+                existing_document,
+                original_document,
+                acl_changes,
+                user_id,
+                group_id=group_id,
+                releases_chunks=releases_chunks,
+            )
+            add_file_task_to_file_processing_log(
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
+                content=f"Projected access changes for fields {sorted(acl_changes)} to search chunks before saving."
+            )
+
+        # 5. Durably request the chunk metadata projection alongside this save. A background worker
+        # merges it into the search chunks, so the save never waits on the document's chunk count.
+        search_sync = {'status': DOCUMENT_SEARCH_SYNC_STATUS_NOT_REQUIRED}
+        if metadata_fields_requiring_sync and releases_chunks:
+            sync_record = request_document_search_metadata_sync(
+                document_id,
+                metadata_fields_requiring_sync,
+                user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            ) or {}
+            existing_document[DOCUMENT_SEARCH_SYNC_TOKEN_FIELD] = sync_record.get('latest_request_token')
+            search_sync = {
+                'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+                'revision': int(sync_record.get('revision') or 0),
+                'fields': sorted(metadata_fields_requiring_sync),
+            }
+
+        # 6. Save the document. The sync request's token rides in this same save.
+        saved_document = None
+        if strict:
             if operation_guard is not None:
                 operation_guard()
             saved_document = _upsert_document_and_sync_access_index(
                 cosmos_container, existing_document, operation='document_updated', strict=True,
             )
-            # Retry the requested projections even when a previous attempt
-            # committed the source but failed downstream.
-            updated_fields_requiring_chunk_sync.update(
-                field for field in ("title", "authors", "file_name", "document_classification", "tags", "shared_group_ids")
-                if field in kwargs and kwargs[field] is not None
-            )
-
-        # 4. Propagate relevant changes to search index chunks
-        # This happens regardless of 'update_occurred' flag because the *intent* from kwargs might trigger it,
-        # even if the main doc update didn't happen (e.g., only percentage changed).
-        # However, it's better to only do this if the relevant fields *actually* changed.
-        # A held screened document has no released chunks; publication rebuilds them.
-        if (
-            (update_occurred or strict) and updated_fields_requiring_chunk_sync
-            and (marker is None or document_is_available(existing_document))
-        ):
-            try:
-                chunks_to_update = get_all_chunks(
-                    document_id,
-                    user_id,
-                    group_id=group_id,
-                    public_workspace_id=public_workspace_id
-                )
-                for chunk in chunks_to_update:
-                    if operation_guard is not None:
-                        operation_guard()
-                    if strict:
-                        current = cosmos_container.read_item(item=document_id, partition_key=document_id)
-                        if current.get("_etag") != saved_document.get("_etag"):
-                            raise DocumentMutationPropagationError("A newer document update must be projected before retrying.")
-                    chunk_updates = {}
-                    if 'title' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['title'] = existing_document.get('title')
-                    if 'authors' in updated_fields_requiring_chunk_sync:
-                         # Ensure authors is a list for the chunk metadata if needed
-                        chunk_updates['author'] = ensure_list(existing_document.get('authors'))
-                    if 'file_name' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['file_name'] = existing_document.get('file_name')
-                    if 'document_classification' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['document_classification'] = existing_document.get('document_classification')
-                    if 'tags' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['document_tags'] = existing_document.get('tags', [])
-
-                    if chunk_updates: # Only call update if there's something to change
-                        # Build the call parameters
-                        update_params = {
-                            'chunk_id': chunk['id'],
-                            'user_id': user_id,
-                            'document_id': document_id,
-                            'group_id': group_id,
-                            'public_workspace_id': public_workspace_id,
-                            **chunk_updates
-                        }
-
-                        # Only include shared_group_ids for group workspaces
-                        if is_group and 'shared_group_ids' in updated_fields_requiring_chunk_sync:
-                            update_params['shared_group_ids'] = existing_document.get('shared_group_ids')
-
-                        update_chunk_metadata(**update_params)
-                add_file_task_to_file_processing_log(
-                    document_id=document_id,
-                    user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-                    content=f"Propagated updates for fields {updated_fields_requiring_chunk_sync} to search chunks."
-                )
-            except Exception as chunk_sync_error:
-                if strict:
-                    raise DocumentMutationPropagationError("Document saved, but chunk metadata propagation failed.") from chunk_sync_error
-                # Log error but don't necessarily fail the whole document update
-                error_msg = f"Warning: Failed to sync metadata updates to search chunks for doc {document_id}: {chunk_sync_error}"
-                print(error_msg)
-                add_file_task_to_file_processing_log(
-                    document_id=document_id,
-                    user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-                    content=error_msg
-                )
-
-
-        # 5. Upsert the document if changes were made
-        if update_occurred and not strict:
+        elif update_occurred:
             if operation_guard is not None:
                 operation_guard()
             _upsert_document_and_sync_access_index(
                 cosmos_container, existing_document, operation='document_updated',
             )
+
+        if search_sync['status'] == DOCUMENT_SEARCH_SYNC_STATUS_PENDING:
+            schedule_document_search_metadata_sync(
+                document_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            add_file_task_to_file_processing_log(
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
+                content=f"Queued search chunk sync for fields {search_sync['fields']} at revision {search_sync['revision']}."
+            )
+
+        # 7. The group projection fence admits new access entries only once Cosmos records them.
+        if acl_changes_after_save:
+            _project_document_acl_after_save(
+                document_id,
+                acl_changes_after_save,
+                user_id,
+                group_id=group_id,
+                document_version=existing_document.get('version'),
+                releases_chunks=releases_chunks,
+            )
+
         if strict:
-            if 'tags' in kwargs:
-                if operation_guard is not None:
-                    operation_guard()
-                current = cosmos_container.read_item(item=document_id, partition_key=document_id)
-                if current.get("_etag") != saved_document.get("_etag"):
-                    raise DocumentMutationPropagationError("A newer document update must be projected before retrying.")
-                propagate_tags_to_blob_metadata(
-                    document_id, kwargs['tags'], user_id, group_id, public_workspace_id,
-                    strict=True, expected_etag=saved_document.get("_etag"),
-                )
+            if return_search_sync:
+                return saved_document, search_sync
             return saved_document
+        return {'updated': update_occurred, 'search_sync': search_sync}
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected
@@ -4571,6 +4598,1062 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
     except Exception as e:
         print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
         raise
+
+
+# Search chunk metadata and access-control synchronization.
+#
+# Document metadata (title, authors, file name, classification, tags) is mirrored onto every AI
+# Search chunk. Edits are projected by a background worker so a save never waits on a document's
+# chunk count: update_document() records a durable sync request in the settings container before
+# it saves the document, and the worker merges only the changed fields into each chunk in batches.
+# Access-control lists are different: they are projected synchronously, so the index never grants
+# access that Cosmos does not record.
+DOCUMENT_SEARCH_SYNC_RECORD_TYPE = 'document_search_metadata_sync'
+DOCUMENT_SEARCH_SYNC_SCHEMA_VERSION = 1
+# Each sync request gets a unique token, and the document save that goes with it stores the same
+# token. A worker treats the save as landed only when the tokens match, so a value left on the
+# document by an earlier request can never be mistaken for a newer one.
+DOCUMENT_SEARCH_SYNC_TOKEN_FIELD = 'search_metadata_sync_token'
+DOCUMENT_SEARCH_SYNC_STATUS_PENDING = 'pending'
+DOCUMENT_SEARCH_SYNC_STATUS_SYNCING = 'syncing'
+DOCUMENT_SEARCH_SYNC_STATUS_FAILED = 'failed'
+DOCUMENT_SEARCH_SYNC_STATUS_NOT_REQUIRED = 'not_required'
+DOCUMENT_SEARCH_SYNC_BATCH_SIZE = 500
+DOCUMENT_SEARCH_SYNC_MAX_BATCH_SIZE = 1000
+DOCUMENT_SEARCH_SYNC_MAX_BATCH_BYTES = 8 * 1024 * 1024
+DOCUMENT_SEARCH_SYNC_LEASE_SECONDS = 600
+DOCUMENT_SEARCH_SYNC_LEASE_WAIT_SECONDS = 20
+DOCUMENT_SEARCH_SYNC_LEASE_POLL_SECONDS = 2
+DOCUMENT_SEARCH_SYNC_PENDING_GRACE_SECONDS = 120
+DOCUMENT_SEARCH_SYNC_COMMIT_RECHECK_SECONDS = 60
+DOCUMENT_SEARCH_SYNC_UNCOMMITTED_INTENT_SECONDS = 600
+DOCUMENT_SEARCH_SYNC_MAX_PASSES = 5
+DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS = 8
+DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS = (60, 300, 900, 3600, 21600)
+# Search writes frozen by a Data Management migration are not failures, so they retry on a short
+# fixed delay instead of climbing the backoff ladder.
+DOCUMENT_SEARCH_SYNC_FROZEN_RETRY_SECONDS = 300
+DOCUMENT_SEARCH_SYNC_WORKER_COUNT = 2
+DOCUMENT_SEARCH_SYNC_RECONCILE_BATCH_SIZE = 25
+DOCUMENT_SEARCH_SYNC_RECONCILE_TIME_BUDGET_SECONDS = 240
+# Cosmos document field -> AI Search chunk field for metadata the background sync projects.
+DOCUMENT_SEARCH_METADATA_FIELD_MAP = {
+    'title': 'title',
+    'authors': 'author',
+    'file_name': 'file_name',
+    'document_classification': 'document_classification',
+    'tags': 'document_tags',
+}
+# Access lists a projection may carry. A projection never rewrites a key or scope field.
+DOCUMENT_SEARCH_ACL_INDEX_FIELDS = frozenset({'shared_user_ids', 'shared_group_ids'})
+# Cosmos system properties, and the claim the projection fence adds and removes around each fenced
+# Search write. Neither is a change to the document.
+DOCUMENT_SEARCH_ACL_REBASE_IGNORED_FIELDS = frozenset({
+    '_etag', '_ts', '_rid', '_self', '_attachments', GROUP_DOCUMENT_PROJECTION_WRITER,
+})
+DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS = 150
+DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE = (
+    "Document access was not changed because target Search writes are temporarily frozen. "
+    "Retry after the migration finishes."
+)
+DOCUMENT_SEARCH_ACL_FAILED_MESSAGE = (
+    "Document access was not changed because the search index could not be updated. Try again."
+)
+DOCUMENT_SEARCH_ACL_INCOMPLETE_MESSAGE = (
+    "The access change was saved, but the search index has not applied it yet. Try again to finish the update."
+)
+DOCUMENT_SEARCH_ACL_INCOMPLETE_DEFERRED_MESSAGE = (
+    "The access change was saved, but target Search writes are temporarily frozen. "
+    "Retry after the migration finishes to complete it."
+)
+DOCUMENT_SEARCH_ACL_CONFLICT_MESSAGE = (
+    "The document changed while its access was being updated. Refresh and try again."
+)
+
+_document_search_sync_executor = None
+_document_search_sync_lock = threading.Lock()
+_document_search_sync_queued_records = set()
+
+
+def _escape_search_filter_literal(value):
+    """Escape a value for an OData single-quoted string literal."""
+    return str(value or '').replace("'", "''")
+
+
+def _resolve_document_chunk_scope(user_id, group_id=None, public_workspace_id=None):
+    """Return the chunk field and value that scope a document's active search chunks."""
+    if public_workspace_id is not None:
+        return 'public_workspace_id', public_workspace_id
+    if group_id is not None:
+        return 'group_id', group_id
+    return 'user_id', user_id
+
+
+def get_document_search_acl_fields(group_id=None, public_workspace_id=None):
+    """Return the document fields that control search access for a workspace scope."""
+    if public_workspace_id is not None:
+        return ()
+    if group_id is not None:
+        return ('shared_group_ids',)
+    return ('shared_user_ids',)
+
+
+def _normalize_search_acl_entries(value):
+    """Return access entries in a comparable form; a missing list and an empty list are the same."""
+    if value is None:
+        return []
+    entries = value if isinstance(value, (list, tuple, set)) else [value]
+    return sorted({str(entry).strip() for entry in entries if str(entry or '').strip()})
+
+
+def _search_acl_grant_entries(value):
+    """Return the access entries that let a principal find the document in search.
+
+    Search matches only approved entries. An entry without a status is treated as approved, so
+    removing one is never mistaken for a change that revokes nothing.
+    """
+    return {
+        entry for entry in _normalize_search_acl_entries(value)
+        if ',' not in entry or entry.endswith(',approved')
+    }
+
+
+def iter_document_chunk_key_pages(
+    document_id,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    page_size=None,
+):
+    """Yield ordered pages of the active search chunk keys for one document.
+
+    Pages by key instead of $skip, so a document's chunk count is never capped and merges that run
+    between pages cannot move page boundaries. Only the key is selected, so chunk text and
+    embeddings are never downloaded. Archived revision chunks carry an archived scope value and are
+    excluded on purpose.
+    """
+    scope_field, scope_value = _resolve_document_chunk_scope(user_id, group_id, public_workspace_id)
+    if not document_id or not scope_value:
+        raise ValueError("A document id and workspace scope are required to list document chunks.")
+
+    if page_size is None:
+        page_size = DOCUMENT_SEARCH_SYNC_BATCH_SIZE
+    page_size = max(1, min(int(page_size), DOCUMENT_SEARCH_SYNC_MAX_BATCH_SIZE))
+    search_client = _get_search_client(group_id=group_id, public_workspace_id=public_workspace_id)
+    base_filter = (
+        f"document_id eq '{_escape_search_filter_literal(document_id)}' "
+        f"and {scope_field} eq '{_escape_search_filter_literal(scope_value)}'"
+    )
+    last_key = None
+    while True:
+        page_filter = base_filter
+        if last_key is not None:
+            page_filter = f"{base_filter} and id gt '{_escape_search_filter_literal(last_key)}'"
+        results = search_client.search(
+            search_text='*',
+            filter=page_filter,
+            select=['id'],
+            order_by=['id asc'],
+            top=page_size,
+        )
+        keys = [str(result.get('id')) for result in results if result.get('id')]
+        if not keys:
+            return
+        if last_key is not None and keys[0] <= last_key:
+            raise RuntimeError("Search chunk key paging did not advance.")
+        yield keys
+        if len(keys) < page_size:
+            return
+        last_key = keys[-1]
+
+
+def project_fields_to_document_chunks(
+    document_id,
+    field_values,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    batch_size=None,
+    before_batch=None,
+    document_version=None,
+):
+    """Merge index fields into every active chunk of one document and return the chunk count.
+
+    Each merge sends only the chunk key and the supplied fields, so embeddings and unrelated chunk
+    fields are never read or rewritten, and concurrent projections of other fields cannot be undone.
+    A projection carries either mirrored metadata or the workspace's access list, never both. A group
+    access list goes through the document's projection fence, which admits only entries the source
+    document records. Metadata merges carry no access or scope field, so they skip the fence and
+    never write to the document. Every merge holds the Data Management Search write slot. Raises
+    when any batch is not fully acknowledged. before_batch runs ahead of each merge, which lets a
+    caller confirm it still owns the work.
+    """
+    if not field_values:
+        return 0
+
+    field_names = set(field_values)
+    if field_names & DOCUMENT_SEARCH_ACL_INDEX_FIELDS:
+        if not field_names <= set(get_document_search_acl_fields(group_id, public_workspace_id)):
+            raise ValueError("An access projection may carry only the workspace's access list.")
+    elif not field_names <= set(DOCUMENT_SEARCH_METADATA_FIELD_MAP.values()):
+        raise ValueError("A metadata projection may carry only mirrored document metadata.")
+    fenced_group_id = group_id if 'shared_group_ids' in field_names else None
+
+    if batch_size is None:
+        batch_size = DOCUMENT_SEARCH_SYNC_BATCH_SIZE
+    action_bytes = len(json.dumps(field_values, default=str).encode('utf-8')) + len(str(document_id)) + 64
+    effective_batch_size = max(
+        1,
+        min(int(batch_size), DOCUMENT_SEARCH_SYNC_MAX_BATCH_SIZE, DOCUMENT_SEARCH_SYNC_MAX_BATCH_BYTES // action_bytes),
+    )
+    search_client = _get_search_client(group_id=group_id, public_workspace_id=public_workspace_id)
+    chunks_updated = 0
+    for chunk_keys in iter_document_chunk_key_pages(
+        document_id,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        page_size=effective_batch_size,
+    ):
+        if before_batch is not None:
+            before_batch()
+        _execute_document_search_write(
+            search_client,
+            "merge_documents",
+            documents=[{'id': chunk_key, **field_values} for chunk_key in chunk_keys],
+            group_id=fenced_group_id,
+            document_id=document_id,
+            document_version=document_version,
+        )
+        chunks_updated += len(chunk_keys)
+    return chunks_updated
+
+
+def project_document_acl_to_chunks(
+    document_id,
+    acl_fields,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    document_version=None,
+):
+    """Project access-control fields to every active chunk of a document.
+
+    Raises DocumentSearchAclProjectionDeferredError while target Search writes are frozen and
+    DocumentSearchAclProjectionError for any other failure. Both carry fixed messages that are safe
+    to show, so a caller never reports an access change that the search index does not enforce.
+    """
+    if not acl_fields:
+        return 0
+    try:
+        return project_fields_to_document_chunks(
+            document_id,
+            acl_fields,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            document_version=document_version,
+        )
+    except DataManagementSearchWritesFrozenError as exc:
+        raise DocumentSearchAclProjectionDeferredError(DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE) from exc
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Search access projection failed.",
+            extra={
+                'document_id': document_id,
+                'fields': sorted(acl_fields),
+                'group_id': group_id,
+                'public_workspace_id': public_workspace_id,
+                'error_type': type(exc).__name__,
+            },
+            level=logging.ERROR,
+        )
+        raise DocumentSearchAclProjectionError(DOCUMENT_SEARCH_ACL_FAILED_MESSAGE) from exc
+
+
+def _document_search_acl_incomplete_error(error):
+    """Return the error for a saved access change whose search projection has not finished."""
+    search_writes_frozen = isinstance(error, DocumentSearchAclProjectionDeferredError)
+    return DocumentMutationPropagationError(
+        DOCUMENT_SEARCH_ACL_INCOMPLETE_DEFERRED_MESSAGE if search_writes_frozen else DOCUMENT_SEARCH_ACL_INCOMPLETE_MESSAGE,
+        search_writes_frozen=search_writes_frozen,
+    )
+
+
+def describe_document_search_acl_error(error):
+    """Return (message, status_code, retry_after_seconds) for an access change Search could not apply.
+
+    Returns None for any other error. Every message is fixed, so no exception text reaches a client.
+    """
+    if isinstance(error, DocumentSearchAclProjectionDeferredError):
+        return DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE, 503, DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS
+    if isinstance(error, DocumentSearchAclProjectionError):
+        return DOCUMENT_SEARCH_ACL_FAILED_MESSAGE, 500, None
+    if isinstance(error, DocumentMutationPropagationError):
+        if error.search_writes_frozen:
+            return DOCUMENT_SEARCH_ACL_INCOMPLETE_DEFERRED_MESSAGE, 503, DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS
+        return DOCUMENT_SEARCH_ACL_INCOMPLETE_MESSAGE, 500, None
+    if isinstance(error, ScreeningConflictError):
+        return DOCUMENT_SEARCH_ACL_CONFLICT_MESSAGE, 409, None
+    return None
+
+
+def _document_search_acl_comparable_content(document_item):
+    """Return a document without Cosmos system properties or the projection fence's claim."""
+    return {
+        key: value for key, value in (document_item or {}).items()
+        if key not in DOCUMENT_SEARCH_ACL_REBASE_IGNORED_FIELDS
+    }
+
+
+def _rebase_document_after_fenced_acl_projection(
+    cosmos_container,
+    document_item,
+    original_document,
+    user_id,
+    group_id,
+):
+    """Adopt the etag a fenced access projection left on a document, or refuse a concurrent change.
+
+    The group projection fence claims and releases a marker on the source document, which changes
+    its etag, so the save that follows has to read the document again. When anything other than
+    Cosmos system properties and the fence's claim changed, another writer won: Search is projected
+    back to the access list Cosmos now records, and the update is refused with a conflict.
+    """
+    document_id = document_item['id']
+    current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+    if (
+        _document_search_acl_comparable_content(current_document)
+        == _document_search_acl_comparable_content(original_document)
+    ):
+        document_item['_etag'] = current_document.get('_etag')
+        return current_document
+
+    try:
+        project_document_acl_to_chunks(
+            document_id,
+            {'shared_group_ids': list(current_document.get('shared_group_ids') or [])},
+            user_id,
+            group_id=group_id,
+            document_version=current_document.get('version'),
+        )
+    except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError):
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Search access could not be restored after a concurrent document change.",
+            extra={'document_id': document_id, 'group_id': group_id},
+            level=logging.WARNING,
+        )
+    raise ScreeningConflictError()
+
+
+def _project_document_acl_before_save(
+    cosmos_container,
+    document_item,
+    original_document,
+    acl_changes,
+    user_id,
+    group_id=None,
+    releases_chunks=True,
+):
+    """Project the part of an access change that has to reach Search before Cosmos records it.
+
+    Search may only ever hold a subset of what Cosmos records, so removing search access is enforced
+    first and fails closed. A personal list has no projection fence, so its new value is projected
+    now. The group projection fence admits only entries the document already records, so a group
+    list projects its reduced form (the new list without anything it adds) now and the rest after
+    the save. Grants reach only released documents; a held document's chunks are rebuilt from the
+    document when it is published. Returns the access changes to project after the save.
+    """
+    after_save = {}
+    for field_name, (previous_value, new_value) in acl_changes.items():
+        new_entries = list(new_value or [])
+        previous_entries = set(_normalize_search_acl_entries(previous_value))
+        reduced_entries = [entry for entry in new_entries if str(entry).strip() in previous_entries]
+        revokes_access = bool(_search_acl_grant_entries(previous_value) - _search_acl_grant_entries(new_entries))
+        if field_name == 'shared_group_ids':
+            if revokes_access:
+                projected_chunks = project_document_acl_to_chunks(
+                    document_item['id'],
+                    {field_name: reduced_entries},
+                    user_id,
+                    group_id=group_id,
+                    document_version=document_item.get('version'),
+                )
+                if projected_chunks:
+                    _rebase_document_after_fenced_acl_projection(
+                        cosmos_container, document_item, original_document, user_id, group_id,
+                    )
+            if not revokes_access or (
+                _normalize_search_acl_entries(reduced_entries) != _normalize_search_acl_entries(new_entries)
+            ):
+                after_save[field_name] = (previous_value, new_entries)
+        elif releases_chunks:
+            project_document_acl_to_chunks(document_item['id'], {field_name: new_entries}, user_id)
+        elif revokes_access:
+            project_document_acl_to_chunks(document_item['id'], {field_name: reduced_entries}, user_id)
+    return after_save
+
+
+def _project_document_acl_after_save(
+    document_id,
+    acl_changes,
+    user_id,
+    group_id=None,
+    document_version=None,
+    releases_chunks=True,
+):
+    """Project the rest of a group access change once Cosmos records it.
+
+    The projection fence now admits the new entries. A grant that does not reach Search raises
+    DocumentMutationPropagationError so a retry can complete it; entries that grant nothing, such as
+    pending shares, are projected best effort.
+    """
+    for field_name, (previous_value, new_entries) in acl_changes.items():
+        grants_access = bool(_search_acl_grant_entries(new_entries) - _search_acl_grant_entries(previous_value))
+        if grants_access and not releases_chunks:
+            continue
+        try:
+            project_document_acl_to_chunks(
+                document_id,
+                {field_name: new_entries},
+                user_id,
+                group_id=group_id,
+                document_version=document_version,
+            )
+        except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError) as exc:
+            if grants_access:
+                raise _document_search_acl_incomplete_error(exc) from exc
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] An access change that grants no search access was not projected; it is saved.",
+                extra={'document_id': document_id, 'group_id': group_id, 'error_type': type(exc).__name__},
+                level=logging.WARNING,
+            )
+
+
+def reproject_document_search_acl(document_item, user_id, group_id=None):
+    """Project a document's recorded access list to its search chunks again.
+
+    Completes an access change that was saved before its search projection finished, such as an
+    approval whose projection failed. Grants reach only released documents; a held document's chunks
+    are rebuilt from the document when it is published. Raises DocumentMutationPropagationError, with
+    search_writes_frozen set while Search writes are frozen, when the projection fails.
+    """
+    acl_fields = get_document_search_acl_fields(group_id)
+    if not acl_fields or not document_is_available(document_item):
+        return 0
+    try:
+        return project_document_acl_to_chunks(
+            document_item['id'],
+            {field_name: list(document_item.get(field_name) or []) for field_name in acl_fields},
+            document_item.get('user_id') or user_id,
+            group_id=group_id,
+            document_version=document_item.get('version'),
+        )
+    except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError) as exc:
+        raise _document_search_acl_incomplete_error(exc) from exc
+
+
+def build_document_search_metadata_fields(document_item, fields=None):
+    """Return the AI Search chunk values for a document's projected metadata fields."""
+    requested_fields = DOCUMENT_SEARCH_METADATA_FIELD_MAP if fields is None else fields
+    field_values = {}
+    for document_field in requested_fields:
+        index_field = DOCUMENT_SEARCH_METADATA_FIELD_MAP.get(document_field)
+        if not index_field:
+            continue
+        value = document_item.get(document_field)
+        if document_field == 'authors':
+            value = ensure_list(value)
+        elif document_field == 'tags':
+            value = list(value or [])
+        elif document_field == 'file_name' and not value:
+            continue
+        field_values[index_field] = value
+    return field_values
+
+
+def summarize_document_search_sync(search_syncs):
+    """Summarize the search sync outcomes of several document saves for one receipt."""
+    pending_count = sum(
+        1 for search_sync in search_syncs
+        if isinstance(search_sync, dict) and search_sync.get('status') == DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+    )
+    if pending_count:
+        return {'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING, 'document_count': pending_count}
+    return {'status': DOCUMENT_SEARCH_SYNC_STATUS_NOT_REQUIRED}
+
+
+def _document_search_sync_now():
+    return datetime.now(timezone.utc)
+
+
+def _format_document_search_sync_time(value):
+    """Format a UTC timestamp at fixed width so stored values sort and compare as strings."""
+    return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f+00:00')
+
+
+def _parse_document_search_sync_time(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _get_document_search_sync_scope_name(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return 'public'
+    if group_id is not None:
+        return 'group'
+    return 'personal'
+
+
+def get_document_search_sync_record_id(document_id, group_id=None, public_workspace_id=None):
+    """Return the settings-container id of a document's search metadata sync record."""
+    scope_name = _get_document_search_sync_scope_name(group_id, public_workspace_id)
+    return f"{DOCUMENT_SEARCH_SYNC_RECORD_TYPE}:{scope_name}:{document_id}"
+
+
+def _document_search_sync_lease_is_active(record, now):
+    expires_at = _parse_document_search_sync_time(record.get('lease_expires_at'))
+    return bool(record.get('lease_token')) and expires_at is not None and expires_at > now
+
+
+def _document_search_sync_intent_is_stale(record, now):
+    requested_at = _parse_document_search_sync_time(record.get('requested_at'))
+    if requested_at is None:
+        return True
+    return (now - requested_at).total_seconds() >= DOCUMENT_SEARCH_SYNC_UNCOMMITTED_INTENT_SECONDS
+
+
+def _is_cosmos_write_conflict(exc):
+    return getattr(exc, 'status_code', None) in (409, 412)
+
+
+def _is_cosmos_not_found(exc):
+    return isinstance(exc, CosmosResourceNotFoundError) or getattr(exc, 'status_code', None) == 404
+
+
+def _read_document_search_sync_record(record_id):
+    try:
+        return cosmos_settings_container.read_item(item=record_id, partition_key=record_id)
+    except Exception as exc:
+        if _is_cosmos_not_found(exc):
+            return None
+        raise
+
+
+def _replace_document_search_sync_record(record):
+    return cosmos_settings_container.replace_item(
+        item=record['id'],
+        body=record,
+        etag=record.get('_etag'),
+        match_condition=MatchConditions.IfNotModified,
+    )
+
+
+def request_document_search_metadata_sync(document_id, changed_fields, user_id, group_id=None, public_workspace_id=None):
+    """Durably record that changed document metadata must be projected to its search chunks.
+
+    Called before the document itself is saved, so a crash between the two writes leaves a pending
+    request for the reconciler instead of silently dropping the projection. Every call stores a new
+    request token; the caller saves the same token on the document. Returns the record.
+    """
+    fields = sorted(set(changed_fields or []) & set(DOCUMENT_SEARCH_METADATA_FIELD_MAP))
+    if not fields:
+        return None
+
+    request_token = uuid.uuid4().hex
+    record_id = get_document_search_sync_record_id(document_id, group_id, public_workspace_id)
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        now = _document_search_sync_now()
+        now_text = _format_document_search_sync_time(now)
+        next_attempt_at = _format_document_search_sync_time(
+            now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_PENDING_GRACE_SECONDS)
+        )
+        record = _read_document_search_sync_record(record_id)
+        try:
+            if record is None:
+                return cosmos_settings_container.create_item(body={
+                    'id': record_id,
+                    'type': DOCUMENT_SEARCH_SYNC_RECORD_TYPE,
+                    'schema_version': DOCUMENT_SEARCH_SYNC_SCHEMA_VERSION,
+                    'document_id': document_id,
+                    'user_id': user_id,
+                    'group_id': group_id,
+                    'public_workspace_id': public_workspace_id,
+                    'revision': 1,
+                    'latest_request_token': request_token,
+                    'pending_fields': fields,
+                    'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+                    'requested_at': now_text,
+                    'updated_at': now_text,
+                    'next_attempt_at': next_attempt_at,
+                    'attempts': 0,
+                    'last_error_type': None,
+                    'lease_token': None,
+                    'lease_expires_at': None,
+                })
+
+            record['revision'] = int(record.get('revision') or 0) + 1
+            record['latest_request_token'] = request_token
+            record['pending_fields'] = sorted(set(record.get('pending_fields') or []) | set(fields))
+            record['requested_at'] = now_text
+            record['updated_at'] = now_text
+            record['attempts'] = 0
+            record['last_error_type'] = None
+            # A running worker picks up the new revision itself; otherwise the request waits briefly
+            # for the immediate in-process sync before the reconciler may claim it.
+            if not _document_search_sync_lease_is_active(record, now):
+                record['status'] = DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+                record['next_attempt_at'] = next_attempt_at
+            return _replace_document_search_sync_record(record)
+        except Exception as exc:
+            # A conflict means another writer changed the record; not-found means a worker finished
+            # and removed it after this read. Either way, re-read and try again.
+            if not (_is_cosmos_write_conflict(exc) or _is_cosmos_not_found(exc)):
+                raise
+    raise RuntimeError("Unable to record the document search metadata sync request.")
+
+
+def _get_document_search_sync_executor():
+    global _document_search_sync_executor
+    with _document_search_sync_lock:
+        if _document_search_sync_executor is None:
+            # A small dedicated pool keeps bulk tag operations from crowding out document uploads on
+            # the shared Flask executor and bounds this process's Search write pressure.
+            _document_search_sync_executor = ThreadPoolExecutor(
+                max_workers=DOCUMENT_SEARCH_SYNC_WORKER_COUNT,
+                thread_name_prefix='document-search-sync',
+            )
+        return _document_search_sync_executor
+
+
+def schedule_document_search_metadata_sync(document_id, group_id=None, public_workspace_id=None):
+    """Queue an immediate in-process sync. The reconciler retries anything that does not run here."""
+    record_id = get_document_search_sync_record_id(document_id, group_id, public_workspace_id)
+    with _document_search_sync_lock:
+        if record_id in _document_search_sync_queued_records:
+            return True
+        _document_search_sync_queued_records.add(record_id)
+    try:
+        _get_document_search_sync_executor().submit(_run_scheduled_document_search_metadata_sync, record_id)
+        return True
+    except Exception as exc:
+        with _document_search_sync_lock:
+            _document_search_sync_queued_records.discard(record_id)
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Unable to queue a search metadata sync; the reconciler will run it.",
+            extra={'record_id': record_id, 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return False
+
+
+def _run_scheduled_document_search_metadata_sync(record_id):
+    with _document_search_sync_lock:
+        _document_search_sync_queued_records.discard(record_id)
+    try:
+        run_document_search_metadata_sync(record_id, lease_wait_seconds=DOCUMENT_SEARCH_SYNC_LEASE_WAIT_SECONDS)
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Search metadata sync stopped unexpectedly; the reconciler will retry it.",
+            extra={'record_id': record_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+
+
+def _acquire_document_search_sync_lease(record_id, lease_wait_seconds=0):
+    """Lease a document's sync record, waiting up to lease_wait_seconds for a running sync."""
+    deadline = time.monotonic() + max(0, lease_wait_seconds)
+    conflicts = 0
+    while True:
+        record = _read_document_search_sync_record(record_id)
+        if record is None:
+            return None
+        now = _document_search_sync_now()
+        if not _document_search_sync_lease_is_active(record, now):
+            lease_expires_at = _format_document_search_sync_time(
+                now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_LEASE_SECONDS)
+            )
+            record.update({
+                'lease_token': uuid.uuid4().hex,
+                'lease_expires_at': lease_expires_at,
+                'next_attempt_at': lease_expires_at,
+                'status': DOCUMENT_SEARCH_SYNC_STATUS_SYNCING,
+                'updated_at': _format_document_search_sync_time(now),
+            })
+            try:
+                return _replace_document_search_sync_record(record)
+            except Exception as exc:
+                if not (_is_cosmos_write_conflict(exc) or _is_cosmos_not_found(exc)):
+                    raise
+                conflicts += 1
+                if conflicts >= DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS:
+                    return None
+                continue
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(DOCUMENT_SEARCH_SYNC_LEASE_POLL_SECONDS)
+
+
+def _renew_document_search_sync_lease(record_id, lease_token):
+    """Confirm this worker still holds the lease, extending it once half of it has elapsed."""
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None or record.get('lease_token') != lease_token:
+            raise DocumentSearchSyncLeaseLostError("The document search sync lease was lost.")
+        now = _document_search_sync_now()
+        expires_at = _parse_document_search_sync_time(record.get('lease_expires_at'))
+        if expires_at is not None and (expires_at - now).total_seconds() > DOCUMENT_SEARCH_SYNC_LEASE_SECONDS / 2:
+            return record
+        lease_expires_at = _format_document_search_sync_time(
+            now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_LEASE_SECONDS)
+        )
+        record.update({
+            'lease_expires_at': lease_expires_at,
+            'next_attempt_at': lease_expires_at,
+            'updated_at': _format_document_search_sync_time(now),
+        })
+        try:
+            return _replace_document_search_sync_record(record)
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                raise DocumentSearchSyncLeaseLostError("The document search sync lease was lost.") from exc
+            if not _is_cosmos_write_conflict(exc):
+                raise
+    raise DocumentSearchSyncLeaseLostError("The document search sync lease could not be renewed.")
+
+
+def _release_document_search_sync_lease(record_id, lease_token):
+    """Hand a still-pending record back to the reconciler without waiting for a retry delay."""
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None or record.get('lease_token') != lease_token:
+            return
+        now_text = _format_document_search_sync_time(_document_search_sync_now())
+        record.update({
+            'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+            'lease_token': None,
+            'lease_expires_at': None,
+            'next_attempt_at': now_text,
+            'updated_at': now_text,
+        })
+        try:
+            _replace_document_search_sync_record(record)
+            return
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return
+            if not _is_cosmos_write_conflict(exc):
+                raise
+
+
+def _record_document_search_sync_failure(record_id, lease_token, error):
+    """Release the lease and schedule a retry: a short fixed delay while Search writes are frozen,
+    otherwise an increasing backoff."""
+    search_writes_frozen = isinstance(error, DataManagementSearchWritesFrozenError)
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None or record.get('lease_token') != lease_token:
+            return None
+        now = _document_search_sync_now()
+        attempts = int(record.get('attempts') or 0)
+        if search_writes_frozen:
+            status = DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+            retry_delay_seconds = DOCUMENT_SEARCH_SYNC_FROZEN_RETRY_SECONDS
+        else:
+            attempts += 1
+            status = DOCUMENT_SEARCH_SYNC_STATUS_FAILED
+            retry_delays = DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS
+            retry_delay_seconds = retry_delays[min(attempts, len(retry_delays)) - 1]
+        record.update({
+            'status': status,
+            'attempts': attempts,
+            'last_error_type': type(error).__name__,
+            'last_failed_at': _format_document_search_sync_time(now),
+            'next_attempt_at': _format_document_search_sync_time(now + timedelta(seconds=retry_delay_seconds)),
+            'lease_token': None,
+            'lease_expires_at': None,
+            'updated_at': _format_document_search_sync_time(now),
+        })
+        try:
+            return _replace_document_search_sync_record(record)
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return None
+            if not _is_cosmos_write_conflict(exc):
+                raise
+    return None
+
+
+def _complete_document_search_sync_pass(record_id, lease_token, synced_revision, document_committed):
+    """Record the outcome of one projection pass.
+
+    Returns ('complete' | 'continue' | 'deferred' | 'lost', record). 'continue' means a newer edit
+    arrived during the pass and the worker keeps its lease to project it. 'deferred' means the
+    document write for this request has not landed yet, so the request is re-checked shortly.
+    """
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None:
+            return 'complete', None
+        if record.get('lease_token') != lease_token:
+            return 'lost', record
+        now = _document_search_sync_now()
+        try:
+            if int(record.get('revision') or 0) > synced_revision:
+                lease_expires_at = _format_document_search_sync_time(
+                    now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_LEASE_SECONDS)
+                )
+                record.update({
+                    'lease_expires_at': lease_expires_at,
+                    'next_attempt_at': lease_expires_at,
+                    'updated_at': _format_document_search_sync_time(now),
+                })
+                return 'continue', _replace_document_search_sync_record(record)
+            if not document_committed:
+                record.update({
+                    'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+                    'lease_token': None,
+                    'lease_expires_at': None,
+                    'next_attempt_at': _format_document_search_sync_time(
+                        now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_COMMIT_RECHECK_SECONDS)
+                    ),
+                    'updated_at': _format_document_search_sync_time(now),
+                })
+                return 'deferred', _replace_document_search_sync_record(record)
+            cosmos_settings_container.delete_item(
+                item=record_id,
+                partition_key=record_id,
+                etag=record.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+            return 'complete', None
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return 'complete', None
+            if not _is_cosmos_write_conflict(exc):
+                raise
+    raise RuntimeError("Unable to record the document search metadata sync result.")
+
+
+def _delete_document_search_sync_record(record_id):
+    try:
+        cosmos_settings_container.delete_item(item=record_id, partition_key=record_id)
+    except Exception as exc:
+        if not _is_cosmos_not_found(exc):
+            raise
+
+
+def _read_document_for_search_sync(record):
+    """Read the document a sync record targets, only while it still belongs to that scope."""
+    document_id = record.get('document_id')
+    group_id = record.get('group_id')
+    public_workspace_id = record.get('public_workspace_id')
+    container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    try:
+        document_item = container.read_item(item=document_id, partition_key=document_id)
+    except Exception as exc:
+        if _is_cosmos_not_found(exc):
+            return None
+        raise
+    if public_workspace_id is not None:
+        belongs_to_scope = document_item.get('public_workspace_id') == public_workspace_id
+    elif group_id is not None:
+        belongs_to_scope = document_item.get('group_id') == group_id
+    else:
+        belongs_to_scope = document_item.get('user_id') == record.get('user_id')
+    return document_item if belongs_to_scope else None
+
+
+def _approved_search_share_principals(entries):
+    """Return the users or groups whose approved share lets them find a document in search."""
+    principals = []
+    for entry in _normalize_search_acl_entries(entries):
+        principal, _separator, status = entry.partition(',')
+        if principal and status == 'approved':
+            principals.append(principal)
+    return principals
+
+
+def _invalidate_document_search_results_cache(document_item, group_id=None, public_workspace_id=None):
+    """Drop cached search results that can include a document once a sync has changed its chunks.
+
+    Routes clear the cache when a change is saved, but a search that ran while the sync was still
+    merging could otherwise keep serving the old values until its cache entry expires. Recipients of
+    approved shares cache their own results, so theirs are cleared too. Best effort.
+    """
+    try:
+        if public_workspace_id is not None:
+            invalidate_public_workspace_search_cache(public_workspace_id)
+        elif group_id is not None:
+            invalidate_group_search_cache(group_id)
+            for shared_group_id in _approved_search_share_principals(document_item.get('shared_group_ids')):
+                invalidate_group_search_cache(shared_group_id)
+        else:
+            owner_user_id = document_item.get('user_id')
+            if owner_user_id:
+                invalidate_personal_search_cache(owner_user_id)
+            for shared_user_id in _approved_search_share_principals(document_item.get('shared_user_ids')):
+                invalidate_personal_search_cache(shared_user_id)
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Cached search results were not cleared after a search metadata sync.",
+            extra={'document_id': document_item.get('id'), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+
+
+def run_document_search_metadata_sync(record_id, lease_wait_seconds=0):
+    """Project a document's pending metadata to all of its search chunks.
+
+    Serialized per document by a lease on the sync record. Every pass projects the latest saved value
+    of each pending field, so a retry also heals chunks a failed pass left behind. A held screened
+    document has no released chunks and publication rebuilds them from the document, so it has
+    nothing to sync. The worker never writes to the document. Failures are recorded on the record
+    with a retry delay. Returns a status summary.
+    """
+    record = _acquire_document_search_sync_lease(record_id, lease_wait_seconds)
+    if record is None:
+        return {'status': 'not_started', 'record_id': record_id}
+
+    lease_token = record.get('lease_token')
+    document_id = record.get('document_id')
+    group_id = record.get('group_id')
+    public_workspace_id = record.get('public_workspace_id')
+    chunks_updated = 0
+    for _pass in range(DOCUMENT_SEARCH_SYNC_MAX_PASSES):
+        revision = int(record.get('revision') or 0)
+        pending_fields = list(record.get('pending_fields') or [])
+        try:
+            document_item = _read_document_for_search_sync(record)
+            if document_item is None:
+                _delete_document_search_sync_record(record_id)
+                return {'status': 'document_missing', 'record_id': record_id}
+
+            chunks_updated = 0
+            if document_is_available(document_item):
+                # Personal chunks are scoped by the owner; group and public chunks by their workspace.
+                owner_user_id = document_item.get('user_id') or record.get('user_id')
+                chunks_updated = project_fields_to_document_chunks(
+                    document_id,
+                    build_document_search_metadata_fields(document_item, pending_fields),
+                    owner_user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    before_batch=lambda: _renew_document_search_sync_lease(record_id, lease_token),
+                )
+                if 'tags' in pending_fields:
+                    # Blob tag metadata is informational; this refresh is best effort and never fails the pass.
+                    propagate_tags_to_blob_metadata(
+                        document_id,
+                        document_item.get('tags') or [],
+                        owner_user_id,
+                        group_id,
+                        public_workspace_id,
+                    )
+                if chunks_updated:
+                    _invalidate_document_search_results_cache(
+                        document_item,
+                        group_id=group_id,
+                        public_workspace_id=public_workspace_id,
+                    )
+        except DocumentSearchSyncLeaseLostError:
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] Search metadata sync stopped after another worker took over.",
+                extra={'record_id': record_id, 'document_id': document_id},
+                level=logging.WARNING,
+            )
+            return {'status': 'lost', 'record_id': record_id}
+        except Exception as exc:
+            failure_record = _record_document_search_sync_failure(record_id, lease_token, exc)
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] Search metadata sync failed; it will be retried.",
+                extra={
+                    'record_id': record_id,
+                    'document_id': document_id,
+                    'fields': pending_fields,
+                    'attempts': (failure_record or {}).get('attempts'),
+                    'next_attempt_at': (failure_record or {}).get('next_attempt_at'),
+                    'error_type': type(exc).__name__,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return {'status': 'failed', 'record_id': record_id, 'error_type': type(exc).__name__}
+
+        now = _document_search_sync_now()
+        # Only the save that carries this request's token proves the projected values are current.
+        latest_request_token = record.get('latest_request_token')
+        document_committed = (
+            bool(latest_request_token)
+            and document_item.get(DOCUMENT_SEARCH_SYNC_TOKEN_FIELD) == latest_request_token
+        ) or _document_search_sync_intent_is_stale(record, now)
+        outcome, next_record = _complete_document_search_sync_pass(
+            record_id,
+            lease_token,
+            revision,
+            document_committed,
+        )
+        if outcome != 'continue':
+            return {'status': outcome, 'record_id': record_id, 'chunks_updated': chunks_updated}
+        record = next_record
+
+    _release_document_search_sync_lease(record_id, lease_token)
+    return {'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING, 'record_id': record_id, 'chunks_updated': chunks_updated}
+
+
+def process_due_document_search_metadata_syncs(max_records=None, time_budget_seconds=None):
+    """Run search metadata syncs that are due for a retry or were never picked up.
+
+    Used by the background reconciler. Covers syncs whose in-process run failed, never started
+    because the process restarted, or lost their lease when a worker stopped mid-sync.
+    """
+    if max_records is None:
+        max_records = DOCUMENT_SEARCH_SYNC_RECONCILE_BATCH_SIZE
+    if time_budget_seconds is None:
+        time_budget_seconds = DOCUMENT_SEARCH_SYNC_RECONCILE_TIME_BUDGET_SECONDS
+    started = time.monotonic()
+    due_records = list(cosmos_settings_container.query_items(
+        query=(
+            'SELECT TOP @limit c.id FROM c '
+            'WHERE c.type = @type AND c.next_attempt_at <= @now '
+            'ORDER BY c.next_attempt_at ASC'
+        ),
+        parameters=[
+            {'name': '@limit', 'value': int(max_records)},
+            {'name': '@type', 'value': DOCUMENT_SEARCH_SYNC_RECORD_TYPE},
+            {'name': '@now', 'value': _format_document_search_sync_time(_document_search_sync_now())},
+        ],
+        enable_cross_partition_query=True,
+    ))
+    summary = {'due': len(due_records), 'processed': 0, 'complete': 0, 'failed': 0}
+    for due_record in due_records:
+        if time.monotonic() - started >= time_budget_seconds:
+            break
+        try:
+            result = run_document_search_metadata_sync(due_record.get('id'))
+        except Exception as exc:
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] Search metadata reconciliation failed for a document.",
+                extra={'record_id': due_record.get('id'), 'error_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            summary['failed'] += 1
+            continue
+        summary['processed'] += 1
+        if result.get('status') == 'complete':
+            summary['complete'] += 1
+        elif result.get('status') == 'failed':
+            summary['failed'] += 1
+    return summary
 
 
 def get_pdf_page_count(pdf_path: str) -> int:
@@ -12355,27 +13438,20 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
                 operation='document_shared_with_user',
             )
 
-            # Update all chunks with the new shared_user_ids
+            # A pending share grants no search access yet, so projecting it is best effort. The
+            # approval projects the whole list again before it is saved.
             try:
-                chunks = get_all_chunks(document_id, owner_user_id)
-                for chunk in chunks:
-                    chunk_id = chunk.get('id')
-                    if chunk_id:
-                        try:
-                            update_chunk_metadata(
-                                chunk_id=chunk_id,
-                                user_id=owner_user_id,
-                                group_id=None,
-                                public_workspace_id=None,
-                                document_id=document_id,
-                                shared_user_ids=shared_user_ids
-                            )
-                        except Exception as chunk_e:
-                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
-                            # Continue with other chunks
+                project_fields_to_document_chunks(
+                    document_id,
+                    {'shared_user_ids': shared_user_ids},
+                    owner_user_id,
+                )
             except Exception as e:
-                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
-                # Don't fail the whole operation if chunk update fails
+                log_event(
+                    "[DOCUMENT_SEARCH_SYNC] Projecting a pending share to search chunks failed; the share is saved.",
+                    extra={'document_id': document_id, 'error_type': type(e).__name__},
+                    level=logging.WARNING,
+                )
 
             return True
 
@@ -12416,24 +13492,11 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
         if len(new_shared_user_ids) != len(shared_user_ids):
             # A revoked user must never retain search access after the API reports success.
             # Update every chunk projection before committing the authoritative Cosmos ACL.
-            chunks = get_all_chunks(document_id, actual_owner_id)
-            try:
-                for chunk in chunks:
-                    chunk_id = chunk.get('id')
-                    if not chunk_id:
-                        continue
-                    update_chunk_metadata(
-                        chunk_id=chunk_id,
-                        user_id=actual_owner_id,
-                        group_id=None,
-                        public_workspace_id=None,
-                        document_id=document_id,
-                        shared_user_ids=new_shared_user_ids
-                    )
-            except DataManagementSearchWritesFrozenError as exc:
-                raise DocumentSearchAclProjectionDeferredError(
-                    "Document access was not changed because target Search writes are temporarily frozen. Retry after the migration finishes."
-                ) from exc
+            project_document_acl_to_chunks(
+                document_id,
+                {'shared_user_ids': new_shared_user_ids},
+                actual_owner_id,
+            )
 
             document_item['shared_user_ids'] = new_shared_user_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -12447,7 +13510,7 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
 
     except CosmosResourceNotFoundError:
         return False
-    except DocumentSearchAclProjectionDeferredError:
+    except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError):
         raise
     except Exception as e:
         print(f"Error unsharing document {document_id}: {e}")
@@ -13212,146 +14275,68 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
         return stored_tag_def
 
 
-def propagate_tags_to_blob_metadata(
-    document_id, tags, user_id, group_id=None, public_workspace_id=None, *, strict=False, expected_etag=None,
-):
-    """
-    Update blob metadata with document tags when enhanced citations is enabled.
-    Tags are stored as a comma-separated string in blob metadata.
+def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, public_workspace_id=None):
+    """Mirror a document's tags into its source blob's metadata when enhanced citations is enabled.
 
-    Args:
-        document_id: Document ID
-        tags: Array of normalized tag names
-        user_id: User ID
-        group_id: Optional group ID
-        public_workspace_id: Optional public workspace ID
+    Tags are stored as a comma-separated string. The search metadata sync worker calls this after
+    it projects tags to the search chunks. Nothing reads these tags back, so the refresh is best
+    effort: it logs a failure and returns False instead of raising. The write is conditioned on the
+    blob ETag it just read, so it never overwrites the metadata of a concurrent blob replacement.
+    Returns True when the blob metadata was written.
     """
     try:
         settings = get_settings()
         if not settings.get('enable_enhanced_citations', False):
-            return
+            return False
 
-        is_group = group_id is not None
-        is_public_workspace = public_workspace_id is not None
-
-        # Read document from Cosmos DB to get file_name
-        if is_public_workspace:
+        if public_workspace_id is not None:
             cosmos_container = cosmos_public_documents_container
-        elif is_group:
+        elif group_id is not None:
             cosmos_container = cosmos_group_documents_container
         else:
             cosmos_container = cosmos_user_documents_container
 
         doc_item = cosmos_container.read_item(document_id, partition_key=document_id)
-        if strict and (
-            not expected_etag or doc_item.get("_etag") != expected_etag
-            or (group_id is not None and doc_item.get("group_id") != group_id)
+        if (
+            (group_id is not None and doc_item.get("group_id") != group_id)
             or (public_workspace_id is not None and doc_item.get("public_workspace_id") != public_workspace_id)
         ):
-            raise ScreeningConflictError()
+            return False
         if SCREENING_FIELD in doc_item:
             # A screened release pins its blob by ETag and content hash. Rewriting the blob's
             # metadata would make the released file unreadable, so tags stay in Cosmos and Search.
-            return
-        if strict and not _has_persisted_blob_reference(doc_item) and not doc_item.get("enhanced_citations"):
-            return
+            return False
+        if not _has_persisted_blob_reference(doc_item) and not doc_item.get("enhanced_citations"):
+            return False
         storage_account_container_name, blob_path = get_document_blob_storage_info(
             doc_item,
             user_id=user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
-        if not blob_path:
-            if strict:
-                raise FileNotFoundError("The document source is unavailable.")
-            print(f"Warning: No blob path found for document {document_id}, skipping blob metadata update")
-            return
-
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        if not blob_service_client:
-            if strict:
-                raise RuntimeError("Document source storage is unavailable.")
-            print(f"Warning: Blob service client not available, skipping blob metadata update")
-            return
+        if not blob_path or not blob_service_client:
+            return False
 
         blob_client = blob_service_client.get_blob_client(
             container=storage_account_container_name,
             blob=blob_path
         )
-
         if not blob_client.exists():
-            if strict:
-                raise FileNotFoundError("The document source is unavailable.")
-            print(f"Warning: Blob not found at {blob_path}, skipping metadata update")
-            return
+            return False
 
-        # Get existing metadata and update with tags
         properties = blob_client.get_blob_properties()
         existing_metadata = dict(properties.metadata) if properties.metadata else {}
         existing_metadata['document_tags'] = ','.join(tags) if tags else ''
-        if strict:
-            blob_client.set_blob_metadata(
-                metadata=existing_metadata, etag=properties.etag, match_condition=MatchConditions.IfNotModified,
-            )
-        else:
-            blob_client.set_blob_metadata(metadata=existing_metadata)
-
-        print(f"Successfully updated blob metadata tags for document {document_id} at {blob_path}")
+        blob_client.set_blob_metadata(
+            metadata=existing_metadata, etag=properties.etag, match_condition=MatchConditions.IfNotModified,
+        )
+        return True
 
     except Exception as e:
-        if strict:
-            log_event(
-                "[DOCUMENTS] Document tags were saved but blob metadata propagation failed.",
-                extra={"document_id": document_id, "exception_type": type(e).__name__},
-                level=logging.ERROR,
-            )
-            raise DocumentMutationPropagationError("Document tags were saved, but source metadata could not be updated.") from e
-        print(f"Warning: Failed to update blob metadata tags for document {document_id}: {e}")
-        # Non-fatal — tag propagation to chunks is the primary operation
-
-
-def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_workspace_id=None):
-    """
-    Update all chunks for a document with new tags.
-    This is called immediately after tag updates.
-
-    Args:
-        document_id: Document ID
-        tags: Array of normalized tag names
-        user_id: User ID
-        group_id: Optional group ID
-        public_workspace_id: Optional public workspace ID
-    """
-    try:
-        # Get all chunks for this document
-        chunks = get_all_chunks(document_id, user_id, group_id, public_workspace_id)
-
-        if not chunks:
-            print(f"No chunks found for document {document_id}")
-            return
-
-        # Update each chunk with new tags
-        chunk_count = 0
-        for chunk in chunks:
-            try:
-                update_chunk_metadata(
-                    chunk_id=chunk['id'],
-                    user_id=user_id,
-                    group_id=group_id,
-                    public_workspace_id=public_workspace_id,
-                    document_id=document_id,
-                    document_tags=tags
-                )
-                chunk_count += 1
-            except Exception as chunk_error:
-                print(f"Error updating chunk {chunk['id']} with tags: {chunk_error}")
-                # Continue with other chunks
-
-        print(f"Successfully propagated tags to {chunk_count} chunks for document {document_id}")
-
-        # Also update blob metadata with tags if enhanced citations is enabled
-        propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id, public_workspace_id)
-
-    except Exception as e:
-        print(f"Error propagating tags to chunks for document {document_id}: {e}")
-        raise
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Document tags were saved, but the source blob's tag metadata was not refreshed.",
+            extra={"document_id": document_id, "exception_type": type(e).__name__},
+            level=logging.WARNING,
+        )
+        return False
