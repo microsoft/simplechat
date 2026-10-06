@@ -1,6 +1,6 @@
 # V2 Media Galleries and Viewer
 
-Implemented in version: **0.261.260**
+Implemented in version: **0.261.262**
 
 ## Overview
 

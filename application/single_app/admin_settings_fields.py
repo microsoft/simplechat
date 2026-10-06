@@ -6328,6 +6328,38 @@ SUPPRESSED_CAPABILITY_KEYS = {
         "Staged rollout flag gated behind enable_mixed_source_chat_search, with no "
         "control in the server-rendered admin form."
     ),
+    # The three tabular durable-preflight switches below are always on by design.
+    # normalize_tabular_parity_durable_preflight_defaults() in functions_settings.py
+    # resets each one to True on every settings read and persists the correction, and
+    # _apply_tabular_parity_env_kill_switch() forces them off only while the
+    # SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is set.
+    # A switch would therefore revert in either direction. The word "shared" in the
+    # first key also filed it under Shared Conversation File Approvals, where it had
+    # nothing to do with the cards around it.
+    "enable_tabular_search_shared_preflight": (
+        "Always on. Routes an exhaustive row-by-row request against a CSV or XLSX file, "
+        "made from a regular chat message (Search), through the shared tabular planner, "
+        "so it can run as a durable background job over every row rather than a "
+        "bounded foreground answer that covers only the first few. get_settings() "
+        "resets it to True on every read, so a switch would revert; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is "
+        "the only way to turn it off."
+    ),
+    "enable_tabular_analyze_durable_preflight": (
+        "Always on. The Analyze counterpart of enable_tabular_search_shared_preflight: "
+        "an Analyze request against a single CSV or XLSX file goes through the same "
+        "shared planner and can run as a durable background job. get_settings() resets "
+        "it to True on every read; the SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT "
+        "environment variable is the only way to turn it off."
+    ),
+    "enable_tabular_hierarchical_analysis": (
+        "Always on. Lets the durable tabular job take exhaustive per-row and per-line "
+        "requests, including narrative ones that ask for written answers rather than a "
+        "CSV, JSON or XML export; without it they fall back to a bounded foreground "
+        "answer. get_settings() resets it to True on every read; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is the "
+        "only way to turn it off."
+    ),
 }
 
 

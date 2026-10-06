@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for V2 media galleries, the media viewer and the drawer's Media section.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.262
+Implemented in: 0.261.262
 
 This test ensures that:
   - runs of images and clips in a reply group into galleries the way agents actually write them,
@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.260"
+IMPLEMENTED_IN = "0.261.262"
 NEW_COMPONENTS = ("MediaGallery.tsx", "MediaTiles.tsx", "MediaViewer.tsx")
 MEDIA_ELEMENT = re.compile(r"<(a|audio|video)\b[^>]*?\b(href|src)=\{([^}]*)\}", re.S)
 IMAGE_ELEMENT = re.compile(r"<img\b[^>]*?\bsrc=\{([^}]*)\}", re.S)

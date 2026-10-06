@@ -2,7 +2,7 @@
 """
 Functional test for V2 TeX, Mermaid and SimpleChart rendering.
 
-Version: 0.261.260
+Version: 0.261.262
 Implemented in: 0.261.024
 
 Three kinds of block the application already produces were shown in the V2 chat as raw
@@ -386,7 +386,7 @@ def test_rich_fences_are_wired_into_the_renderer():
     # Pinned as the exact list rather than a membership check, so adding a plugin is a
     # deliberate, reviewable change. `rehypeRichBlockIndex` only stamps a number onto fences
     # that already render as a diagram or chart; it introduces no new markup.
-    # `rehypeMediaGallery` (0.261.260) only regroups the img and a elements markdown already
+    # `rehypeMediaGallery` (0.261.262) only regroups the img and a elements markdown already
     # produced into div/figure/figcaption wrappers: it parses no HTML, and react-markdown's URL
     # transform still runs on every image and link afterwards (test_v2_media_gallery_logic.mjs).
     assert (

@@ -1,8 +1,8 @@
 # test_v2_media_galleries.py
 """
 UI test for V2 media galleries, the media viewer and the drawer's Media section.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.262
+Implemented in: 0.261.262
 
 This test ensures that a run of images and clips in a reply is laid out three to a row with each
 caption under its tile while a recording keeps its own player; that an evidence list puts each
@@ -186,7 +186,7 @@ def mount(page, api, messages, mounts, drawer=None):
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.260', settings: {}, branding: { app_title: 'SimpleChat' }, features: {},
+                version: '0.261.262', settings: {}, branding: { app_title: 'SimpleChat' }, features: {},
                 user: { id: 'ui-user', display_name: 'Pat Reader' },
                 scope: { groups: [], public_workspaces: [] },
                 catalogs: { models: [], agents: [], prompts: [] },

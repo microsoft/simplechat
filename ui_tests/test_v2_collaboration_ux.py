@@ -1,7 +1,7 @@
 # test_v2_collaboration_ux.py
 """
 UI test for the V2 shared conversation experience.
-Version: 0.261.260
+Version: 0.261.262
 Implemented in: 0.261.255
 
 This test ensures that, in a shared conversation, a message names the people and the agent it

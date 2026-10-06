@@ -134,7 +134,7 @@ by the file extension, as the inline players are). Each file appears once. Code 
 spans, fully masked messages and messages replaced by a workflow reply are skipped, as is anything
 a person typed as plain text. An image whose signed link has expired shows as unavailable.
 
-Since 0.261.260 the section groups media into Images, Videos and Audio. Images and clips are tiles
+Since 0.261.262 the section groups media into Images, Videos and Audio. Images and clips are tiles
 that open one viewer, which steps through all of them and can scroll to an item's message.
 Recordings are players with Download. See
 [V2 Media Galleries and Viewer](V2_MEDIA_GALLERIES_AND_VIEWER.md).

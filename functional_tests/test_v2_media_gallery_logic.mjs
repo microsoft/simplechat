@@ -1,6 +1,6 @@
 // test_v2_media_gallery_logic.mjs
-// Version: 0.261.260
-// Implemented in: 0.261.260
+// Version: 0.261.262
+// Implemented in: 0.261.262
 // Runs the real V2 gallery plugin inside the real react-markdown pipeline (remark-gfm and
 // remark-breaks, as the chat renders replies) over the shapes agents actually answer with: a
 // caption line over each image or clip, one paragraph alternating caption and media, images on
