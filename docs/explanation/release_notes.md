@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.252)**
+
+#### Bug Fixes
+
+*   **Workflow Hand-Off Reports Re-Prove Their Lineage**
+    *   The workflow result reader now re-proves a chat hand-off's report with the shared node lineage authorizer before it describes or excerpts it, as the reader's general path does for each task row. Each consumed-input receipt must chain to a real parent result of the run, with matching hashes and references, so a report whose inputs don't check out is no longer posted to chat.
+    *   A malformed receipt or a damaged parent result is refused with `workflow_result_invalid`, and a missing parent with `workflow_result_not_found`, the same codes the general path uses. The check runs for descriptor-only reads, such as re-checking a stored chat context, as well as excerpt reads. It walks the saved workflow, so an edited or re-enabled workflow still fails closed before anything is read.
+    *   Hand-off stays off by default, behind **Hand Off Large Work From Chat**.
+    *   (Ref: #1549, #1543, follow-up to #1640, `functions_workflow_result_reader.py`, `authorize_workflow_node_result_read`, `test_workflow_handoff_result_reader.py`, [Workflow Hand-off Result Lineage Fix](fixes/WORKFLOW_HANDOFF_RESULT_LINEAGE_FIX.md))
+
+*   **Hand-Off Off-Golden Fixture Recaptured**
+    *   The fixture behind `test_orchestration_workflow_handoff_off_golden.py`, which checks that planning is unchanged when hand-off is unavailable, was captured on 0.261.233, before file merging (#1641) changed the planner's content, so 4 of its 10 cases failed on V2.
+    *   It's now recaptured on unmodified V2 at 0.261.248, taken unchanged from the Phase 7a branch's last commit, and the test passes 10 of 10. Planning itself didn't change.
+    *   (Ref: #1640, #1641, `test_orchestration_workflow_handoff_off_golden.py`, `test_support/orchestration_workflow_handoff_off_golden.json`, [Workflow Hand-off Result Lineage Fix](fixes/WORKFLOW_HANDOFF_RESULT_LINEAGE_FIX.md#recaptured-hand-off-off-golden))
+
 ### **(v0.261.250)**
 
 #### New Features
