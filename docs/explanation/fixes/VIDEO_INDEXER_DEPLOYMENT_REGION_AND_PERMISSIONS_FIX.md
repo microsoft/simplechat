@@ -6,6 +6,8 @@ The deployers can now place Azure Video Indexer in a supported region other than
 
 Fixed in version: **0.261.260** (deployer version **1.0.33**)
 
+Related issue: [#1666](https://github.com/microsoft/simplechat/issues/1666)
+
 Dependencies: Azure Developer CLI hooks, Bicep, Terraform with azapi 2.x, the Azure CLI deployer, and the Azure Video Indexer ARM API (`2025-04-01` in Azure Commercial, `2024-01-01` in Azure Government).
 
 The application version was updated in `application/single_app/config.py` from `0.261.259` to `0.261.260`, and the deployer version in `deployers/version.txt` from `1.0.32` to `1.0.33`.
@@ -37,6 +39,7 @@ Four gaps combined:
 - `deployers/azurecli/deploy-simplechat.ps1`
 - `deployers/version.txt` and `application/single_app/config.py`
 - `deployers/bicep/README.md`, `deployers/terraform/ReadMe.md`, `docs/deploy/manual/provision-azure-resources.md`, and `docs/admin/knowledge.md`
+- `docs/explanation/release_notes.md`
 - `functional_tests/test_video_indexer_deployment_region_permissions.py` (new) and `functional_tests/test_deployment_configuration.py`
 
 ### Code Changes
