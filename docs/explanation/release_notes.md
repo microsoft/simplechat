@@ -2,6 +2,35 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.262)**
+
+#### User Interface Enhancements
+
+*   **Media Galleries in V2 Replies**
+    *   Two or more images or clips in a row now show as a gallery of tiles, three to a row, each with its caption underneath, instead of one full-width card each. A short caption line above an image or clip becomes its caption. In a list, the clip and still at the end of each item sit side by side under the item's text. A single image keeps its full-width card, and recordings keep their player bar.
+    *   A clip tile shows its first frame and length, and plays where it is. **View larger** continues it in the viewer.
+    *   Grouping happens on the parsed markdown: raw HTML stays disabled and react-markdown's URL checks still apply to every image and link.
+    *   (Ref: `mediaGallery.ts`, `MediaGallery.tsx`, `MediaTiles.tsx`, `AssistantMarkdown.tsx`, [V2 Media Galleries and Viewer](features/V2_MEDIA_GALLERIES_AND_VIEWER.md))
+
+*   **Media Viewer**
+    *   Opening an image or clip shows it large, with **Previous** and **Next** buttons and the arrow keys stepping through the gallery, its position ("3 of 15"), View at actual size, Download and Open in a new tab. Focus returns to the tile when it closes.
+    *   (Ref: `MediaViewer.tsx`, `mediaDownload.ts`, `useMediaDownload.ts`)
+
+*   **Drawer Media Section Groups Images, Videos and Audio**
+    *   The Documents drawer now lists media under **Images**, **Videos** and **Audio** with counts. Clips show as tiles with their first frame instead of text rows, and images and clips open one viewer across all of them, with **Show in conversation** to scroll to the message.
+    *   Recordings play in the drawer, with play, stop, seek, volume, speed, Download and Show in conversation.
+    *   (Ref: `DrawerAssets.tsx`, `ConversationDrawer.tsx`, `InlineAudioPlayer.tsx`)
+
+*   **Download for Recordings, Clips and Images**
+    *   Recordings, clips and images can be saved from the player and the viewer, under the file name in their link. When a host does not let the page read its files, the file opens in a new tab instead, where the browser can save it. An expired link reports that it has expired.
+    *   (Ref: `mediaDownload.ts`, `InlineAudioPlayer.tsx`, `MediaViewer.tsx`)
+
+#### Bug Fixes
+
+*   **Escape in a Drawer Dialog No Longer Closes the Drawer**
+    *   Pressing Escape in a dialog opened from the conversation drawer, such as a document preview or the media viewer, also closed the drawer. Escape now closes only the dialog, and a second Escape closes the drawer.
+    *   (Ref: `ConversationDrawer.tsx`, `test_v2_media_galleries.py`)
+
 ### **(v0.261.261)**
 
 #### Bug Fixes
