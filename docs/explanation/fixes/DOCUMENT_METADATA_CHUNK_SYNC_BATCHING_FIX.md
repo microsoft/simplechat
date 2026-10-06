@@ -2,6 +2,8 @@
 
 Fixed/Implemented in version: **0.261.051**
 
+> **Superseded in 0.261.052.** The browser-driven continuation protocol described here (`chunk_sync_limit`, `chunk_sync_offset`, `chunk_sync_fields`, and `_metadata_chunk_sync`) was removed. Metadata saves now queue a durable background sync that merges changed fields into chunks in batches. See [Document Search Metadata Sync Fix](DOCUMENT_SEARCH_METADATA_SYNC_FIX.md).
+
 ## Issue Description
 
 Saving metadata for a large uploaded document could time out after users added or selected tags such as `bills`. The browser then attempted to parse the timeout response as JSON, which surfaced as an invalid JSON error instead of a useful completion path.
