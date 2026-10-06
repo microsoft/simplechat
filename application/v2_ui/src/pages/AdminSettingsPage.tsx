@@ -42,6 +42,7 @@ import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
+import { EnhancedExtractionEngine } from '../components/admin/EnhancedExtractionEngine';
 import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
@@ -73,6 +74,7 @@ import {
     UserAgreementPreview,
 } from '../components/admin/previews';
 import {
+    applyEnableEffect,
     asBoolean,
     asNumber,
     asString,
@@ -85,6 +87,7 @@ import {
     isRequirementSatisfied,
     isSectionVisible,
     readFieldValue,
+    readStoredFieldValue,
     type AdminField,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
@@ -95,6 +98,10 @@ import {
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
 import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
+import {
+    CONTENT_UNDERSTANDING_SUPPORTED_FLAG,
+    resolveEnhancedExtractionEngine,
+} from '../lib/enhancedExtraction';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
 import { modelConnectionsChanged, requestConnectionFocus } from '../stores/modelConnectionsStore';
@@ -493,11 +500,12 @@ export function AdminSettingsPage() {
                     settings,
                     draft,
                     sectionStatus[section.sectionId],
+                    fieldsByKey,
                 ),
             );
         }
         return statuses;
-    }, [sections, settings, draft, sectionStatus]);
+    }, [sections, settings, draft, sectionStatus, fieldsByKey]);
 
     /** The page index follows the same filters as the cards. */
     const indexEntries = useMemo<SettingsIndexEntry[]>(
@@ -588,6 +596,10 @@ export function AdminSettingsPage() {
      *
      * Custom Pages does not take full effect until the App Service restarts, so an
      * administrator has to be told before the toggle can be turned on.
+     *
+     * A switch may also declare `on_enable` companions. Turning Enhanced extraction on
+     * moves the extraction mode from Standard to Auto in the draft, so the administrator
+     * sees the mode that will be saved rather than learning about it afterwards.
      */
     const onSwitchChange = useCallback(
         (field: AdminField, next: boolean) => {
@@ -615,8 +627,11 @@ export function AdminSettingsPage() {
             }
 
             setValue(field.key, next);
+            if (field.on_enable) {
+                setDraft((current) => applyEnableEffect(current, settings, field, next, fieldsByKey));
+            }
         },
-        [settings, setValue],
+        [settings, setValue, fieldsByKey],
     );
 
     const discard = useCallback(() => {
@@ -828,7 +843,9 @@ export function AdminSettingsPage() {
                     value={value}
                     // The saved value, not the draft: only that says whether a credential
                     // exists, which is what tells an empty box apart from a pending delete.
-                    storedValue={field.key ? settings[field.key] : undefined}
+                    // Read from where the field is stored, which for the Web Search client
+                    // secret is inside `web_search_agent` rather than under its own key.
+                    storedValue={readStoredFieldValue(field, settings)}
                     error={error}
                     warning={warning}
                     disabled={saving}
@@ -890,6 +907,7 @@ export function AdminSettingsPage() {
                             field={field}
                             settings={settings}
                             draft={draft}
+                            fieldsByKey={fieldsByKey}
                             disabled={saving}
                         />
                     );
@@ -1070,6 +1088,32 @@ export function AdminSettingsPage() {
                     return (
                         <KeyVaultReminders key={key} label={field.label} help={field.help} />
                     );
+                case 'enhanced-extraction-engine': {
+                    // Read twice: once as the page stands, and once as saved, so the
+                    // notice can say when what it describes is not in force yet.
+                    const supported = Boolean(runtimeFlags[CONTENT_UNDERSTANDING_SUPPORTED_FLAG]);
+                    const reading = resolveEnhancedExtractionEngine(
+                        (settingKey) => readFieldValue(READ_ONLY_REF(settingKey), settings, draft),
+                        supported,
+                    );
+                    const saved = resolveEnhancedExtractionEngine(
+                        (settingKey) => readFieldValue(READ_ONLY_REF(settingKey), settings, {}),
+                        supported,
+                    );
+                    const pending =
+                        !asBoolean(settings['enable_enhanced_extraction']) ||
+                        saved.engine !== reading.engine ||
+                        saved.reason !== reading.reason;
+                    return (
+                        <EnhancedExtractionEngine
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            reading={reading}
+                            pending={pending}
+                        />
+                    );
+                }
                 case 'front-door-redirect-preview':
                     return (
                         <FrontDoorRedirectPreview
@@ -1370,6 +1414,7 @@ export function AdminSettingsPage() {
                                         icon={resolveAdminNavIcon(section.icon)}
                                         fields={section.fields}
                                         hierarchyFields={section.allFields}
+                                        fieldsByKey={fieldsByKey}
                                         settings={settings}
                                         draft={draft}
                                         // Sections that describe a status rule use it;
@@ -1380,6 +1425,7 @@ export function AdminSettingsPage() {
                                         renderField={renderField}
                                         renderCapability={renderField}
                                         appearance={agentSectionAppearances[section.sectionId]}
+                                        runtimeFlags={runtimeFlags}
                                         // While a search is filtering, a match inside a
                                         // collapsed group has to be shown or the card would
                                         // appear empty.

@@ -1,7 +1,7 @@
 # test_orchestration_single_contract.py
 """
 Functional tests for Gather / Reason / Render as the only chat orchestration contract.
-Version: 0.261.260
+Version: 0.261.266
 Implemented in: 0.261.139
 Per-source preparation guidance for mixed comparisons covered in: 0.261.191
 
@@ -108,7 +108,7 @@ def test_settings_defaults_no_longer_offer_the_toggle(modules):
     sanitize = source.split("def sanitize_settings_for_user(", 1)[1].split("\ndef ", 1)[0]
     assert TOGGLE not in defaults
     assert TOGGLE not in sanitize
-    # The tuple also retires the mixed-source switches removed in 0.261.260.
+    # The tuple also retires the mixed-source switches removed in 0.261.266.
     assert TOGGLE in settings.RETIRED_SETTING_KEYS
     # Loading and saving both retire the stored switch.
     assert source.count("normalize_retired_orchestration_settings(") == 3

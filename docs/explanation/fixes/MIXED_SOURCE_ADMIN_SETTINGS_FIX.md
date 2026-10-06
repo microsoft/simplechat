@@ -1,8 +1,8 @@
 # Mixed-Source Admin Settings Fix
 
-Fixed/Implemented in version: **0.261.260**
+Fixed/Implemented in version: **0.261.266**
 
-Related config.py update: `VERSION = "0.261.260"`
+Related config.py update: `VERSION = "0.261.266"`
 
 ## Header Information
 
@@ -50,7 +50,7 @@ them defaulted off, so:
 
 ### Version implemented
 
-0.261.260
+0.261.266
 
 ## Technical Details
 

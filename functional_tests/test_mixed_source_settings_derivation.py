@@ -2,8 +2,8 @@
 # test_mixed_source_settings_derivation.py
 """
 Functional test for the mixed-source admin settings clean-up.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.266
+Implemented in: 0.261.266
 
 The V2 admin page drew five mixed-source switches under Knowledge > Web & Research >
 Deep Research, labelled only with their key names, because nothing declared them and the
@@ -43,7 +43,7 @@ WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 ADMIN_ROUTE_FILE = APP_ROOT / "route_frontend_admin_settings.py"
 PANES_DIR = APP_ROOT / "templates" / "admin" / "_panes"
 
-IMPLEMENTED_VERSION = "0.261.260"
+IMPLEMENTED_VERSION = "0.261.266"
 KILL_SWITCH = "SIMPLECHAT_DISABLE_MIXED_SOURCE"
 DERIVED_KEYS = (
     "enable_mixed_source_chat_search",

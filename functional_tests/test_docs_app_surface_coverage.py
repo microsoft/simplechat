@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for documentation coverage of the application surface.
-Version: 0.261.260
+Version: 0.261.266
 Implemented in: 0.250.230
 
 This test ensures that every user-facing capability of SimpleChat has

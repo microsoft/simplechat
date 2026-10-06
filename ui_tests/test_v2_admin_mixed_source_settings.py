@@ -1,11 +1,11 @@
 # test_v2_admin_mixed_source_settings.py
 """
 Browser coverage for where V2 Admin Settings shows the mixed-source settings.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.266
+Implemented in: 0.261.266
 
 Exercise the built application with the real field schema and intercepted APIs.
-Before 0.261.260 the page filed five mixed-source switches under Knowledge > Web &
+Before 0.261.266 the page filed five mixed-source switches under Knowledge > Web &
 Research > Deep Research, labelled only with their key names, because nothing declared
 them and the fallback scan matched the word "source". Check that Deep Research and the
 rest of the page now show none of them, that the two real choices appear with their
@@ -38,7 +38,7 @@ MIXED_SOURCE_SECTIONS = {
     "knowledge": ("source-review-section",),
     "operations": ("application-insights-section",),
 }
-# A settings document after the 0.261.260 load: the derived behaviors follow Enhanced
+# A settings document after the 0.261.266 load: the derived behaviors follow Enhanced
 # Citations and Analyze All has been reset. All of them are enable_* booleans the
 # fallback scan would draw if they were not suppressed.
 STORED_MIXED_SOURCE_SETTINGS = {

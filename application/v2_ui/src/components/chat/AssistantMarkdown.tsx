@@ -1,6 +1,6 @@
 // AssistantMarkdown.tsx
 // Markdown rendering for assistant output: prose, citations, masks, maths, diagrams, charts,
-// image proposals, and inline audio, video and image cards.
+// image proposals, inline audio, video and image cards, and galleries of images and clips.
 //
 // Split out of MessageList so that "what a message looks like" is separable from "how the
 // thread is laid out". The renderer carries the whole substitution pipeline and the fence
@@ -35,8 +35,10 @@ import { InlineImageCard } from './InlineImageCard';
 import { InlineImageProposal } from './InlineImageProposal';
 import { InlineVideoCard } from './InlineVideoCard';
 import { MathDisplay, MathInline } from './MathBlock';
+import { MediaGallery, MediaGalleryTile } from './MediaGallery';
 import { MermaidDiagram } from './MermaidDiagram';
 import { inlineMediaKind, inlineMediaTitle, safeMarkdownHref, safeMediaUrl } from '../../lib/inlineMedia';
+import { readMediaGallery, readMediaTileIndex, rehypeMediaGallery } from '../../lib/mediaGallery';
 import {
     IMAGE_PROPOSAL_LANGUAGE,
     INLINE_CHART_LANGUAGE,
@@ -240,8 +242,12 @@ function Markdown({
 
             // A link to an audio or video file plays in place instead of navigating away;
             // every other link renders as before. `node` is the hast element, read for the
-            // link's plain text and kept off the DOM element.
+            // link's plain text and kept off the DOM element. A clip in a gallery is a tile.
             a: ({ href, children, node, ...props }) => {
+                const tile = readMediaTileIndex(node);
+                if (tile !== null) {
+                    return <MediaGalleryTile index={tile} />;
+                }
                 const kind = inlineMediaKind(href);
                 const source = safeMediaUrl(href);
                 if (kind && source) {
@@ -258,7 +264,27 @@ function Markdown({
                     </a>
                 );
             },
-            img: ({ src, alt }) => <InlineImageCard src={src} alt={alt} />,
+            img: ({ src, alt, node }) => {
+                const tile = readMediaTileIndex(node);
+                return tile === null ? <InlineImageCard src={src} alt={alt} /> : <MediaGalleryTile index={tile} />;
+            },
+
+            // A run of images and clips, which rehypeMediaGallery wrapped in a div of figures.
+            // Markdown produces no other div, but any other is rendered as it was.
+            div: ({ children, node, ...props }) => {
+                const items = readMediaGallery(node);
+                return items ? <MediaGallery items={items}>{children}</MediaGallery> : <div {...props}>{children}</div>;
+            },
+            figure: ({ children, node: _node, ...props }) => (
+                <figure {...props} className="m-0 flex min-w-0 flex-col gap-1.5">
+                    {children}
+                </figure>
+            ),
+            figcaption: ({ children }) => (
+                <figcaption className="text-xs leading-snug break-words text-text-2">
+                    {renderTokens(children)}
+                </figcaption>
+            ),
 
             // A diagram, chart or image proposal replaces the whole code block, so the
             // <pre> wrapper markdown puts around it is dropped: leaving it would box
@@ -360,7 +386,7 @@ function Markdown({
         >
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkBreaks]}
-                rehypePlugins={[rehypeRichBlockIndex, rehypeHighlightSubset]}
+                rehypePlugins={[rehypeRichBlockIndex, rehypeMediaGallery, rehypeHighlightSubset]}
                 components={components}
             >
                 {content}

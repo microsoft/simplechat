@@ -102,10 +102,25 @@ export interface SettingsSectionProps {
      * settings while a search narrows `fields` to the matches.
      */
     hierarchyFields?: AdminField[];
+    /**
+     * Every declared field by key.
+     *
+     * A field saved at a nested path is found only through its declaration, so without
+     * this a gate stored that way -- the Web Search authentication type, say -- reads as
+     * unset and hides the fields that depend on it.
+     */
+    fieldsByKey?: Map<string, AdminField>;
     /** Force every group open, used while a search is filtering the page. */
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * Server-resolved runtime flags, such as whether Content Understanding is offered in
+     * this cloud. A field gated on one has to be judged the way the page judged it;
+     * without the flags its condition reads as unmet and the field is dropped from the
+     * card even though the page decided to show it.
+     */
+    runtimeFlags?: Record<string, boolean>;
     children?: ReactNode;
 }
 
@@ -283,10 +298,12 @@ export function SettingsSection({
     status: statusProp,
     icon,
     hierarchyFields,
+    fieldsByKey,
     renderField,
     renderCapability,
     forceExpanded,
     appearance,
+    runtimeFlags,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -297,8 +314,8 @@ export function SettingsSection({
     );
 
     const derivedStatus = useMemo(
-        () => computeSectionStatus(fields, settings, draft, statusRule),
-        [statusRule, fields, settings, draft],
+        () => computeSectionStatus(fields, settings, draft, statusRule, fieldsByKey),
+        [statusRule, fields, settings, draft, fieldsByKey],
     );
     const status = statusProp ?? derivedStatus;
 
@@ -308,16 +325,21 @@ export function SettingsSection({
     );
 
     const capabilityOn = capability?.key
-        ? asBoolean(readSectionValue(settings, draft, capability.key))
+        ? asBoolean(readSectionValue(settings, draft, capability.key, fieldsByKey))
         : true;
 
     // A section states each distinct prerequisite once, at the top, rather than repeating
     // it on every field that carries it.
-    const requirements = useMemo(() => collectRequirements(fields, settings, draft), [fields, settings, draft]);
+    const requirements = useMemo(
+        () => collectRequirements(fields, settings, draft, fieldsByKey),
+        [fields, settings, draft, fieldsByKey],
+    );
 
     const groups = useMemo(
-        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft))),
-        [bodyFields, settings, draft],
+        () => groupFields(
+            bodyFields.filter((field) => isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)),
+        ),
+        [bodyFields, settings, draft, fieldsByKey, runtimeFlags],
     );
 
     const presentation = presentSectionStatus(status);
@@ -432,7 +454,7 @@ export function SettingsSection({
                     <RequirementNotice
                         key={requirement.key}
                         requirement={requirement}
-                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
+                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
                     />
                 ))}
 
@@ -446,7 +468,12 @@ export function SettingsSection({
                     <FieldGroup
                         key={group.id || '__ungrouped'}
                         group={group}
-                        startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
+                        startOpen={shouldGroupStartOpen(
+                            group,
+                            status,
+                            capabilityOn,
+                            (key) => readSectionValue(settings, draft, key, fieldsByKey),
+                        )}
                         forceExpanded={forceExpanded}
                         renderFields={renderFields}
                     />

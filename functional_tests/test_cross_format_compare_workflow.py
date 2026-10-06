@@ -2,8 +2,8 @@
 # test_cross_format_compare_workflow.py
 """
 Functional test for Phase 4 cross-format Compare.
-Version: 0.261.260
-Implemented in: 0.250.067; derived from Enhanced Citations in 0.261.260
+Version: 0.261.266
+Implemented in: 0.250.067; derived from Enhanced Citations in 0.261.266
 
 This test ensures #1059 retains one Source and ordered Targets, uses bounded
 native evidence, and preserves failed Targets during pairwise reduction.

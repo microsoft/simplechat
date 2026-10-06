@@ -2,8 +2,8 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.261.260
-Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062; generated-output Analyze durable routing added in 0.250.184; model endpoint context added in 0.250.185; shadow manifest retired in 0.261.260
+Version: 0.261.266
+Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062; generated-output Analyze durable routing added in 0.250.184; model endpoint context added in 0.250.185; shadow manifest retired in 0.261.266
 
 This test ensures tabular document actions reuse the shared tabular analysis
 path for Analyze and comparison workflows instead of relying only on the
@@ -61,7 +61,7 @@ def test_shared_tabular_document_action_helper_exists() -> None:
         "Expected workflow document actions to support the authorized Phase 1 source manifest."
     )
     assert 'is_mixed_source_manifest_enabled' not in workflow_runner_content, (
-        "The Phase 1 shadow manifest was retired in 0.261.260 and must not return."
+        "The Phase 1 shadow manifest was retired in 0.261.266 and must not return."
     )
     assert 'augment_tabular_invocations_with_related_document_evidence(' in workflow_runner_content, (
         "Expected the shared helper to reuse row-linked related-document augmentation for tabular workflows."

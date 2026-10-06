@@ -67,6 +67,6 @@ Version **0.250.070** completes the bounded backend contract for `enable_mixed_s
 
 Combined Analyze now reduces only when at least one source succeeds. Terminal coverage, cancellation, generated outputs, citations, and finalization reauthorization are preserved across narrative and table branches.
 
-## Settings Update (0.261.260)
+## Settings Update (0.261.266)
 
-`enable_mixed_source_analyze` has had no effect since 0.250.071 and is now removed from stored settings on load. `enable_mixed_source_analyze_all` keeps its default of off, is reset to off once by the 0.261.260 settings upgrade, and is no longer drawn in Admin Settings, because no chat or workflow screen offers an Analyze target of every document. See `docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.
+`enable_mixed_source_analyze` has had no effect since 0.250.071 and is now removed from stored settings on load. `enable_mixed_source_analyze_all` keeps its default of off, is reset to off once by the 0.261.266 settings upgrade, and is no longer drawn in Admin Settings, because no chat or workflow screen offers an Analyze target of every document. See `docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.

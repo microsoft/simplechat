@@ -167,6 +167,6 @@ Chat and Search remain relevance-bounded. Analyze and Compare behavior is otherw
 
 Version **0.250.070** adds manifest-aligned terminal coverage, standard/streaming failure parity, and reference deduplication under [#1061](https://github.com/microsoft/simplechat/issues/1061). When a mixed request still has successful table evidence, a narrative retrieval or quota failure becomes an explicit per-source omission instead of aborting the available native branch. Chat and Search remain relevance bounded; no full catalog enumeration was added to either mode.
 
-## Settings Update (0.261.260)
+## Settings Update (0.261.266)
 
 `enable_mixed_source_chat_search` is no longer a stored rollout switch. It follows `enable_enhanced_citations` on every settings load and save, because the native tabular branch needs the spreadsheet engine Enhanced Citations provides; without it, spreadsheets are indexed as text and the legacy path keeps serving them. The emergency rollback is the `SIMPLECHAT_DISABLE_MIXED_SOURCE` environment variable, applied at read time. `enable_mixed_source_relevance_candidates` is now an administrator switch under **Chat > Citations > Enhanced**, default on, and the Phase 1 shadow manifest (`enable_mixed_source_manifest`) is retired. See `docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.

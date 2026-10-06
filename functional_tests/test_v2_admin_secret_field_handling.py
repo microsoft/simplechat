@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for masking and restoring secrets on the V2 admin settings API.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.059
+Updated in: 0.261.260
 
 Admin Settings is the one surface that edits credentials, so it cannot use
 ``sanitize_settings_for_user``, which removes those keys entirely. The
@@ -332,11 +333,14 @@ def test_the_control_distinguishes_untouched_from_pending_delete():
         "credential:\n  " + "\n  ".join(missing)
     )
 
-    # The page must supply the stored value, or the control cannot make the call.
+    # The page must supply the stored value, or the control cannot make the call. It is
+    # read from where the field is stored: the Web Search client secret is saved inside
+    # `web_search_agent`, not under its own key.
     page = PAGE_MODULE.read_text(encoding="utf-8")
-    assert re.search(r"storedValue=\{field\.key \? settings\[field\.key\]", page), (
-        "AdminSettingsPage no longer passes the stored value to SecretField, so the "
-        "control cannot tell a configured credential from an unconfigured one."
+    assert re.search(r"storedValue=\{readStoredFieldValue\(field, settings\)\}", page), (
+        "AdminSettingsPage no longer passes the saved value to SecretField from the "
+        "field's storage path, so the control cannot tell a configured credential "
+        "from an unconfigured one."
     )
 
     print("  Untouched, replacing and pending-delete are distinguishable.")

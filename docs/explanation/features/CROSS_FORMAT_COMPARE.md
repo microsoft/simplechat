@@ -81,7 +81,7 @@ per-target text after restart, partial and failed targets, full-report retention
 cancellation, failed result guards, and zero managed uploads. The ordinary
 standalone Compare entry point retains its existing default and return shape.
 
-## Settings Update (0.261.260)
+## Settings Update (0.261.266)
 
 `enable_cross_format_compare` and `enable_cross_format_compare_one_to_many` are no
 longer default-off stored switches. Both follow `enable_enhanced_citations` on every

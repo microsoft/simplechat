@@ -2,8 +2,8 @@
 # test_mixed_source_conversation_continuity.py
 """
 Functional test for Phase 5 mixed-source conversation continuity.
-Version: 0.261.260
-Implemented in: 0.250.068; updated in 0.250.107; derived from Enhanced Citations in 0.261.260
+Version: 0.261.266
+Implemented in: 0.250.068; updated in 0.250.107; derived from Enhanced Citations in 0.261.266
 
 This test ensures #1060 preserves compact source continuity only as a
 reauthorization hint for #1055 and prerequisite phases #1056, #1057, #1058,

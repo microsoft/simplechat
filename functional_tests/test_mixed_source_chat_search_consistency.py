@@ -2,9 +2,9 @@
 # test_mixed_source_chat_search_consistency.py
 """
 Functional test for mixed-source Chat and Search consistency.
-Version: 0.261.260
+Version: 0.261.266
 Implemented in: 0.250.064; additive tabular evidence gating updated in 0.260.025;
-derived from Enhanced Citations in 0.261.260
+derived from Enhanced Citations in 0.261.266
 
 This test ensures Phase 2 of #1057 consumes the Phase 1 #1056 contracts for
 standard and streaming Chat plus workflow Search without implementing later
