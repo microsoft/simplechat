@@ -151,3 +151,34 @@ def test_catalog_read_failure_is_safe_and_explicit(catalog_api):
     failed = client.get("/api/admin/model-catalog", headers={"X-Test-Role": "admin"})
     assert failed.status_code == 503
     assert "Unable to load" in failed.json["error"]
+
+
+def test_admin_links_carry_connection_and_model_ids(catalog_api):
+    """Added in 0.261.253 so the V2 catalog can open the exact AI Connection and model."""
+    client, cosmos, _namespace = catalog_api
+    profile_id = get_effective_model_profiles({})[0]["id"]
+    cosmos.document["model_endpoints"] = [{
+        "id": "endpoint-primary",
+        "name": "Primary connection",
+        "enabled": True,
+        "models": [
+            {"id": "model-linked", "deploymentName": "prod-linked", "catalogProfileId": profile_id, "enabled": True},
+            # A model without an id still links; the browser falls back to its name.
+            {"deploymentName": "prod-unnamed", "catalogProfileId": profile_id, "enabled": False},
+        ],
+    }]
+
+    admin = client.get("/api/admin/model-catalog", headers={"X-Test-Role": "admin"})
+    assert admin.status_code == 200
+    linked = next(profile for profile in admin.json["profiles"] if profile["id"] == profile_id)["linked_models"]
+    assert [(item["connection_id"], item["model_id"], item["enabled"]) for item in linked] == [
+        ("endpoint-primary", "model-linked", True),
+        ("endpoint-primary", "", False),
+    ]
+    assert linked[0]["connection"] == "Primary connection"
+    assert linked[0]["model"] == "prod-linked"
+
+    choices = client.get("/api/models/catalog", headers={"X-Test-Role": "user"})
+    assert choices.status_code == 200
+    assert "endpoint-primary" not in choices.get_data(as_text=True)
+    assert all("linked_models" not in profile for profile in choices.json["profiles"])

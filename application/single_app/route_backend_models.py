@@ -100,9 +100,13 @@ def register_route_backend_models(bp):
                     ), None)
                     if profile is not None:
                         effective = apply_model_profile(model, endpoint, settings, profiles)
+                        # The ids let the admin catalog open the exact connection and model;
+                        # names alone can repeat across connections.
                         links[profile["id"]].append({
                             "connection": endpoint.get("name") or endpoint.get("id"),
+                            "connection_id": str(endpoint.get("id") or ""),
                             "model": model.get("displayName") or model.get("deploymentName") or model.get("modelName"),
+                            "model_id": str(model.get("id") or ""),
                             "enabled": bool(endpoint.get("enabled", True) and model.get("enabled", True)),
                             "capabilities": {key: value for key, value in effective.get("capabilities", {}).items()
                                              if type(value) is bool},

@@ -10,8 +10,12 @@ import {
     asBoolean,
     asString,
     evaluateDependency,
+    evaluateSectionStatus,
+    readFieldGroup,
     type AdminField,
+    type AdminFieldDependency,
     type AdminFieldRequirement,
+    type AdminSectionStatusRule,
     type RenderedFieldGroup,
 } from './adminFields';
 import type { Json } from './types';
@@ -121,6 +125,168 @@ export function deriveSectionStatus(
     return required.every((field) => hasValue(read(field.key as string)))
         ? 'ready'
         : 'incomplete';
+}
+
+/** A declared status uses different words for the same three states. */
+const DECLARED_STATUS_MAP: Record<'off' | 'unconfigured' | 'on', SectionStatus> = {
+    off: 'off',
+    unconfigured: 'incomplete',
+    on: 'ready',
+};
+
+/**
+ * The status a section card and the page index both show.
+ *
+ * A server-declared rule wins: it exists precisely for sections whose "configured" state
+ * the field metadata cannot express. Everything else is derived from the fields. One
+ * function serves both places, so the card chip and the index can never disagree.
+ */
+export function computeSectionStatus(
+    fields: AdminField[],
+    settings: Json,
+    draft: Json,
+    statusRule?: AdminSectionStatusRule,
+): SectionStatus {
+    const declared = evaluateSectionStatus(statusRule, settings, draft);
+    if (declared) {
+        return DECLARED_STATUS_MAP[declared];
+    }
+    return deriveSectionStatus(fields, settings, draft);
+}
+
+/** How a field sits relative to the switch that governs it. */
+export type FieldEmphasis = 'primary' | 'dependent';
+
+export interface FieldHierarchy {
+    /** Presentation by field key. A field missing from the map renders plainly. */
+    emphasis: ReadonlyMap<string, FieldEmphasis>;
+    /** Switches that another field in the section depends on. */
+    leads: ReadonlySet<string>;
+}
+
+/**
+ * Field types that can sit under a switch as one of its settings.
+ *
+ * Read-only mirrors, status readouts, and bespoke components are left out: a mirror
+ * reports a value configured elsewhere, and a component is a workbench of its own, so
+ * neither reads as a sub-setting of the switch above it.
+ */
+const NESTABLE_TYPES: ReadonlySet<AdminField['type']> = new Set<AdminField['type']>([
+    'switch',
+    'text',
+    'textarea',
+    'secret',
+    'select',
+    'number',
+    'color',
+    'range',
+    'string_list',
+    'checkbox_set',
+    'entry_list',
+    'id_list',
+    'link_list',
+    'group_picker',
+    'image',
+]);
+
+/** Every settings key a dependency tree reads, in any of its declared shapes. */
+export function dependencyKeys(dependency: AdminFieldDependency | undefined): string[] {
+    if (!dependency) {
+        return [];
+    }
+    if (Array.isArray(dependency)) {
+        return dependency.flatMap((condition) => dependencyKeys(condition));
+    }
+    if ('any_of' in dependency) {
+        return dependency.any_of.flatMap((child) => dependencyKeys(child));
+    }
+    if ('all_of' in dependency) {
+        return dependency.all_of.flatMap((child) => dependencyKeys(child));
+    }
+    return dependency.key ? [dependency.key] : [];
+}
+
+function isEditableSwitch(field: AdminField): boolean {
+    return field.type === 'switch' && Boolean(field.key) && !field.readonly;
+}
+
+function groupIdOf(field: AdminField): string {
+    return readFieldGroup(field.group)?.id ?? '';
+}
+
+/**
+ * Work out which switch leads a section and which settings belong to it.
+ *
+ * The Agents cards were the first to show this by hand: Enable Agents stands out as the
+ * switch the card is about, and Workspace Mode and its global-agent option sit indented
+ * beneath it. The schema already says the same thing through `depends_on`, so the
+ * relationship is read from there instead of being declared again for every section.
+ *
+ * - A *lead* is an editable switch that a later field in the section depends on.
+ * - The *primary* field is the section's capability toggle, or failing that, its first
+ *   field when that field is an ungrouped lead.
+ * - A *dependent* is an editable field that depends on a lead, or on another member of the
+ *   lead's run, and follows it without interruption inside the same group. The run ends
+ *   at the first field that does not, so a setting further down the card is never drawn
+ *   as nested under a switch it merely shares a condition with.
+ *
+ * Nesting is one level deep. Order, visibility, and saving are untouched.
+ */
+export function deriveFieldHierarchy(fields: AdminField[]): FieldHierarchy {
+    const emphasis = new Map<string, FieldEmphasis>();
+    const leads = new Set<string>();
+
+    fields.forEach((field, index) => {
+        if (!isEditableSwitch(field)) {
+            return;
+        }
+        const key = field.key as string;
+        const governs = fields
+            .slice(index + 1)
+            .some((later) => dependencyKeys(later.depends_on).includes(key));
+        if (governs) {
+            leads.add(key);
+        }
+    });
+
+    const capability = findCapabilityField(fields);
+    // A leading switch inside a group is a mode for that group (APIM routing, say), not
+    // the switch the card is about, so only an ungrouped one is promoted.
+    const first = fields[0];
+    const primary = capability?.key && isEditableSwitch(capability)
+        ? capability
+        : first?.key && leads.has(first.key) && !groupIdOf(first)
+            ? first
+            : undefined;
+    if (primary?.key) {
+        emphasis.set(primary.key, 'primary');
+    }
+
+    let run: { group: string; members: Set<string> } | null = null;
+    for (const field of fields) {
+        const key = field.key;
+        const nestable = Boolean(key) && !field.readonly && NESTABLE_TYPES.has(field.type);
+        const continuesRun = Boolean(
+            run &&
+            nestable &&
+            groupIdOf(field) === run.group &&
+            dependencyKeys(field.depends_on).some((dependency) => run?.members.has(dependency)),
+        );
+
+        if (continuesRun && run && key) {
+            if (emphasis.get(key) !== 'primary') {
+                emphasis.set(key, 'dependent');
+            }
+            run.members.add(key);
+            continue;
+        }
+
+        run = key && leads.has(key)
+            ? { group: groupIdOf(field), members: new Set([key]) }
+            : null;
+    }
+
+    return { emphasis, leads };
 }
 
 /**

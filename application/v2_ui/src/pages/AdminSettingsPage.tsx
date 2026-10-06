@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Loader2, Network, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -64,7 +64,9 @@ import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
+import { SettingsIndex, type SettingsIndexEntry } from '../components/admin/SettingsIndex';
 import { agentSectionAppearances } from '../components/admin/agentSectionAppearance';
+import { ALL_SETTINGS_ICON, resolveAdminNavIcon } from '../components/admin/adminSectionIcons';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -92,9 +94,11 @@ import {
     type BrandingUploadResponse,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
+import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
-import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
+import { modelConnectionsChanged, requestConnectionFocus } from '../stores/modelConnectionsStore';
+import type { CatalogConnectionTarget } from '../lib/modelCatalog';
 import type { AdminNavGroup, Json } from '../lib/types';
 
 /** One fallback row: an `enable_*` key with no declared field. */
@@ -115,7 +119,12 @@ interface RenderedSection {
     groupId: string;
     groupLabel: string;
     tabLabel: string;
+    /** The Bootstrap icon name the navigation declares for the section. */
+    icon?: string;
+    /** The fields to draw. A search narrows these to the matches. */
     fields: AdminField[];
+    /** Every visible field, which status and field nesting are read from. */
+    allFields: AdminField[];
     capabilities: CapabilityRow[];
 }
 
@@ -236,6 +245,8 @@ export function AdminSettingsPage() {
     const [pendingScroll, setPendingScroll] = useState<string | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
+    /** The pane the cards scroll inside; the page index watches it to mark the current section. */
+    const scrollRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (!isAdmin) {
@@ -408,7 +419,9 @@ export function AdminSettingsPage() {
                         groupId: group.id,
                         groupLabel: group.label,
                         tabLabel: tab.label,
+                        icon: section.icon,
                         fields,
+                        allFields: fields,
                         capabilities,
                     });
                 }
@@ -424,6 +437,7 @@ export function AdminSettingsPage() {
                 groupLabel: capabilities[0]?.groupLabel ?? 'Other',
                 tabLabel: capabilities[0]?.tabLabel ?? '',
                 fields: [],
+                allFields: [],
                 capabilities,
             });
         }
@@ -462,6 +476,44 @@ export function AdminSettingsPage() {
     }, [sections, query, activeGroup]);
 
     const settingCount = declaredKeys.size + capabilityRows.length;
+
+    /**
+     * Each section's status, read from the whole section rather than a search's matches.
+     *
+     * The card chip and the page index both show this, so they cannot disagree, and
+     * narrowing the page with a search does not change what a section reports.
+     */
+    const statusBySection = useMemo(() => {
+        const statuses = new Map<string, SectionStatus>();
+        for (const section of sections) {
+            statuses.set(
+                section.sectionId,
+                computeSectionStatus(
+                    section.allFields,
+                    settings,
+                    draft,
+                    sectionStatus[section.sectionId],
+                ),
+            );
+        }
+        return statuses;
+    }, [sections, settings, draft, sectionStatus]);
+
+    /** The page index follows the same filters as the cards. */
+    const indexEntries = useMemo<SettingsIndexEntry[]>(
+        () =>
+            visibleSections.map((section) => ({
+                sectionId: section.sectionId,
+                label: section.label,
+                groupId: section.groupId,
+                groupLabel: section.groupLabel,
+                Icon:
+                    agentSectionAppearances[section.sectionId]?.Icon ??
+                    resolveAdminNavIcon(section.icon),
+                status: statusBySection.get(section.sectionId) ?? 'none',
+            })),
+        [visibleSections, statusBySection],
+    );
 
     /**
      * App role requirements, for the roster that mirrors them into Security.
@@ -657,26 +709,58 @@ export function AdminSettingsPage() {
     /**
      * Move the page to a section, from a cross-reference elsewhere on it.
      *
-     * The role catalog links to settings that live in other groups, so clearing the
-     * filters is part of the jump: with a group selected or a search active, the target
-     * section may not be on screen to scroll to. The scroll itself is deferred to an
-     * effect, because the element only exists once that filter change has rendered.
+     * The target has to be on screen to scroll to, so a filter that hides it is changed: a
+     * search that leaves it out is cleared, and a different category switches to the
+     * target's own. Filters that already show it are left alone, so a jump within the
+     * current category keeps the administrator where they were. The scroll is deferred to
+     * an effect, because the element only exists once that filter change has rendered.
      */
     const goToSection = useCallback((sectionId: string) => {
-        setQuery('');
-        setActiveGroup(null);
+        const shown = visibleSections.some((section) => section.sectionId === sectionId);
+        if (!shown) {
+            const target = sections.find((section) => section.sectionId === sectionId);
+            const nextGroup = !target ? null : activeGroup && target.groupId !== activeGroup ? target.groupId : activeGroup;
+            if (nextGroup !== activeGroup && delegationDirty) {
+                // Changing category would unmount the delegation manager and its edits.
+                toast.error('Save or cancel Call agent changes before changing settings categories.');
+                return;
+            }
+            setQuery('');
+            setActiveGroup(nextGroup);
+        }
         setPendingScroll(sectionId);
-    }, []);
+    }, [visibleSections, sections, activeGroup, delegationDirty]);
 
     useEffect(() => {
         if (!pendingScroll) {
             return;
         }
-        document
-            .getElementById(`admin-section-${pendingScroll}`)
-            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Cards carry their section id as their own id; the heading takes focus so a
+        // keyboard or screen reader user lands where the page now shows.
+        const target = document.getElementById(pendingScroll);
+        if (target) {
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+            document.getElementById(`${pendingScroll}-title`)?.focus({ preventScroll: true });
+        }
         setPendingScroll(null);
     }, [pendingScroll]);
+
+    /**
+     * Go from the Model Catalog to AI Connections, opening one connection when named.
+     *
+     * The connection list opens the editor itself once it holds the row; this only leaves
+     * the request and brings the section into view.
+     */
+    const openConnection = useCallback(
+        (target?: CatalogConnectionTarget) => {
+            if (target) {
+                requestConnectionFocus(target);
+            }
+            goToSection('multi-endpoint-configuration');
+        },
+        [goToSection],
+    );
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
@@ -816,7 +900,13 @@ export function AdminSettingsPage() {
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
                 case 'model-catalog-manager':
-                    return <ModelCatalogManager key={key} />;
+                    return (
+                        <ModelCatalogManager
+                            key={key}
+                            help={field.help}
+                            onOpenConnection={openConnection}
+                        />
+                    );
                 case 'model-picker':
                     return (
                         <ModelPicker
@@ -1026,11 +1116,15 @@ export function AdminSettingsPage() {
             return (
                 <div key={key}>
                     {control}
-                    <div className="mb-3 rounded-lg border border-edge bg-surface-1 p-3">
-                        <span className="mb-1.5 block text-xs font-medium text-text-3">
+                    {/* A row of its own, so on a wide card the preview sits under the editor in
+                        the control column instead of spanning the label column as well. */}
+                    <div className="admin-field pb-3" data-field-width="full">
+                        <div className="admin-field-heading text-xs font-medium text-text-3">
                             Preview
-                        </span>
-                        <AdminMarkdown content={asString(value)} align={align} />
+                        </div>
+                        <div className="admin-field-control min-w-0 rounded-lg border border-edge bg-surface-1 p-3">
+                            <AdminMarkdown content={asString(value)} align={align} />
+                        </div>
                     </div>
                 </div>
             );
@@ -1066,6 +1160,18 @@ export function AdminSettingsPage() {
     const showDelegationManager = !loading && Boolean(data) && !error &&
         (activeGroup === 'agents-actions' ||
             (activeGroup === null && /call agent|delegation/i.test(query)));
+
+    // The index needs at least two sections to be worth the width it takes.
+    const showIndex = !loading && !error && indexEntries.length > 1;
+
+    const categories: { id: string | null; label: string; Icon: LucideIcon }[] = [
+        { id: null, label: 'All settings', Icon: ALL_SETTINGS_ICON },
+        ...(data?.admin_nav ?? []).map((group) => ({
+            id: group.id,
+            label: group.label,
+            Icon: resolveAdminNavIcon(group.icon),
+        })),
+    ];
 
     return (
         <>
@@ -1121,176 +1227,221 @@ export function AdminSettingsPage() {
             </div>
 
             <div className="flex min-h-0 flex-1">
-                <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block">
-                    <button
-                        type="button"
-                        disabled={delegationDirty}
-                        onClick={() => setActiveGroup(null)}
-                        className={clsx(
-                            'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                            activeGroup === null
-                                ? 'bg-accent-soft font-medium text-accent'
-                                : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
-                        )}
-                    >
-                        All settings
-                    </button>
-                    {(data?.admin_nav ?? []).map((group) => (
-                        <button
-                            key={group.id}
-                            type="button"
-                            disabled={delegationDirty}
-                            onClick={() => setActiveGroup(group.id)}
-                            className={clsx(
-                                'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                                activeGroup === group.id
-                                    ? 'bg-accent-soft font-medium text-accent'
-                                    : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
-                            )}
-                        >
-                            {group.label}
-                        </button>
-                    ))}
+                <aside
+                    aria-label="Settings categories"
+                    className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block"
+                >
+                    <div className="space-y-0.5">
+                        {categories.map((category) => {
+                            const active = activeGroup === category.id;
+                            return (
+                                <button
+                                    key={category.id ?? '__all'}
+                                    type="button"
+                                    disabled={delegationDirty}
+                                    aria-pressed={active}
+                                    onClick={() => setActiveGroup(category.id)}
+                                    className={clsx(
+                                        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
+                                        'disabled:cursor-not-allowed disabled:opacity-60',
+                                        active
+                                            ? 'bg-accent-soft font-semibold text-accent'
+                                            : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+                                    )}
+                                >
+                                    <category.Icon
+                                        size={16}
+                                        aria-hidden="true"
+                                        className={clsx('shrink-0', active ? 'text-accent' : 'text-text-3')}
+                                    />
+                                    <span className="min-w-0 flex-1">{category.label}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </aside>
 
                 <div className="flex min-w-0 flex-1 flex-col">
-                    <div className="shrink-0 border-b border-edge p-4">
-                        <div className="mx-auto mb-3 max-w-2xl lg:hidden">
-                            <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
-                            <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
-                                onChange={(event) => setActiveGroup(event.target.value || null)}
-                                className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
-                                <option value="">All settings</option>
-                                {(data?.admin_nav ?? []).map((group) => (
-                                    <option key={group.id} value={group.id}>{group.label}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="relative mx-auto max-w-2xl">
-                            <Search
-                                size={16}
-                                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
-                            />
-                            <input
-                                ref={searchRef}
-                                type="search"
-                                value={query}
-                                onChange={(event) => setQuery(event.target.value)}
-                                placeholder="Search every setting…  (press / to focus)"
-                                aria-label="Search settings"
-                                disabled={delegationDirty}
-                                className={clsx(
-                                    'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
-                                    'text-sm text-text-1 placeholder:text-text-3',
-                                    'focus:border-accent focus:outline-none',
-                                )}
-                            />
+                    <div className="shrink-0 border-b border-edge px-4 py-3 lg:px-6">
+                        <div className="mx-auto w-full max-w-[112rem]">
+                            <div className="mb-3 max-w-md lg:hidden">
+                                <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
+                                <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
+                                    onChange={(event) => setActiveGroup(event.target.value || null)}
+                                    className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
+                                    <option value="">All settings</option>
+                                    {(data?.admin_nav ?? []).map((group) => (
+                                        <option key={group.id} value={group.id}>{group.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="relative max-w-2xl">
+                                <Search
+                                    size={16}
+                                    className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
+                                />
+                                <input
+                                    ref={searchRef}
+                                    type="search"
+                                    value={query}
+                                    onChange={(event) => setQuery(event.target.value)}
+                                    placeholder="Search every setting…  (press / to focus)"
+                                    aria-label="Search settings"
+                                    disabled={delegationDirty}
+                                    className={clsx(
+                                        'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
+                                        'text-sm text-text-1 placeholder:text-text-3',
+                                        'focus:border-accent focus:outline-none',
+                                    )}
+                                />
+                            </div>
                         </div>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                        <div className="mx-auto max-w-3xl space-y-4">
-                            {error && (
-                                <GlassPanel
-                                    elevation="flat"
-                                    className="flex items-start gap-2 p-3 text-sm text-danger"
-                                >
-                                    <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-                                    {error}
-                                </GlassPanel>
-                            )}
+                    <div
+                        ref={scrollRef}
+                        data-testid="admin-settings-scroll"
+                        className="@container min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6"
+                    >
+                        <div className="mx-auto grid w-full max-w-[112rem] items-start gap-6 @min-[76rem]:grid-cols-[minmax(0,1fr)_15rem]">
+                            <div data-testid="admin-settings-content" className="min-w-0 space-y-4">
+                                {error && (
+                                    <GlassPanel
+                                        elevation="flat"
+                                        className="flex items-start gap-2 p-3 text-sm text-danger"
+                                    >
+                                        <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+                                        {error}
+                                    </GlassPanel>
+                                )}
 
-                            {loading && (
-                                <div className="space-y-3">
-                                    {Array.from({ length: 5 }).map((_, index) => (
-                                        <Skeleton key={index} className="h-24 w-full" />
-                                    ))}
-                                </div>
-                            )}
+                                {loading && (
+                                    <div className="space-y-3">
+                                        {Array.from({ length: 5 }).map((_, index) => (
+                                            <Skeleton key={index} className="h-24 w-full" />
+                                        ))}
+                                    </div>
+                                )}
 
-                            {showDelegationManager ? (
-                                <GlassPanel elevation="flat" className="space-y-3 p-4">
-                                    <h2 className="text-base font-semibold text-text-1">Global agent delegation</h2>
-                                    <AgentDelegationManager scope={GLOBAL_DELEGATION_SCOPE}
-                                        allowManage={isAdmin} onDirtyChange={setDelegationDirty} />
-                                    {delegationDirty ? <p className="text-xs text-warn">Save or cancel Call agent changes before changing settings categories.</p> : null}
-                                    <p className="text-xs text-text-3">These resources save separately from settings. Full global agent and other connector management remains on the <a href="/admin/settings" className="text-accent underline">classic admin page</a>.</p>
-                                </GlassPanel>
-                            ) : null}
-
-                            {!loading && !showDelegationManager && visibleSections.length === 0 && (
-                                <p className="py-12 text-center text-sm text-text-3">
-                                    No settings match “{query}”.
-                                </p>
-                            )}
-
-                            {visibleSections.map((section) => (
-                                <SettingsSection
-                                    key={section.sectionId}
-                                    sectionId={section.sectionId}
-                                    label={section.label}
-                                    groupLabel={section.groupLabel}
-                                    tabLabel={section.tabLabel}
-                                    fields={section.fields}
-                                    settings={settings}
-                                    draft={draft}
-                                    // Sections that describe a status rule use it;
-                                    // the rest have their status derived from which
-                                    // of their required fields are filled.
-                                    statusRule={sectionStatus[section.sectionId]}
-                                    renderField={renderField}
-                                    renderCapability={renderField}
-                                    appearance={agentSectionAppearances[section.sectionId]}
-                                    // While a search is filtering, a match inside a
-                                    // collapsed group has to be shown or the card would
-                                    // appear empty.
-                                    forceExpanded={Boolean(query.trim())}
-                                >
-                                    {section.capabilities.length ? (
-                                        <div className="divide-y divide-edge">
-                                            {section.capabilities.map((row) => (
-                                                <div key={row.key} className="py-1">
-                                                    <Toggle
-                                                        label={row.label}
-                                                        description={row.key}
-                                                        checked={asBoolean(
-                                                            Object.prototype.hasOwnProperty.call(
-                                                                draft,
-                                                                row.key,
-                                                            )
-                                                                ? draft[row.key]
-                                                                : settings[row.key],
-                                                        )}
-                                                        disabled={saving}
-                                                        onChange={(next) =>
-                                                            setValue(row.key, next)
-                                                        }
-                                                    />
-                                                </div>
-                                            ))}
+                                {showDelegationManager ? (
+                                    <GlassPanel
+                                        edge
+                                        role="region"
+                                        aria-labelledby="global-agent-delegation-title"
+                                        className="admin-settings-distinct border-edge-strong"
+                                    >
+                                        <div className="flex items-start gap-3 rounded-t-2xl border-b border-edge-strong bg-surface-2 p-4 sm:px-5">
+                                            <span
+                                                aria-hidden="true"
+                                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-edge-strong bg-surface-solid text-text-2"
+                                            >
+                                                <Network size={20} />
+                                            </span>
+                                            <div className="min-w-0">
+                                                <h2 id="global-agent-delegation-title" className="text-lg leading-snug font-semibold text-text-1">
+                                                    Global agent delegation
+                                                </h2>
+                                                <p className="mt-1 text-xs text-text-3">Agents &amp; Actions · Call agent</p>
+                                            </div>
                                         </div>
-                                    ) : null}
-                                </SettingsSection>
-                            ))}
+                                        <div className="space-y-3 p-4 sm:p-5">
+                                            <AgentDelegationManager scope={GLOBAL_DELEGATION_SCOPE}
+                                                allowManage={isAdmin} onDirtyChange={setDelegationDirty} />
+                                            {delegationDirty ? <p className="text-xs text-warn">Save or cancel Call agent changes before changing settings categories.</p> : null}
+                                            <p className="text-xs text-text-3">These resources save separately from settings. Full global agent and other connector management remains on the <a href="/admin/settings" className="text-accent underline">classic admin page</a>.</p>
+                                        </div>
+                                    </GlassPanel>
+                                ) : null}
 
-                            {!loading && activeGroupUsesFallback && (
-                                <p className="pb-6 text-center text-xs text-text-3">
-                                    Settings in this group that need more than a switch —
-                                    endpoints, keys, prompts and connection tests — are still on
-                                    the{' '}
-                                    <a href="/admin/settings" className="text-accent underline">
-                                        classic admin page
-                                    </a>
-                                    .
-                                </p>
-                            )}
+                                {!loading && !showDelegationManager && visibleSections.length === 0 && (
+                                    <p className="py-12 text-center text-sm text-text-3">
+                                        No settings match “{query}”.
+                                    </p>
+                                )}
 
-                            <SaveBar
-                                dirtyCount={dirtyKeys.length}
-                                saving={saving}
-                                onSave={() => void save()}
-                                onDiscard={discard}
-                            />
+                                {visibleSections.map((section) => (
+                                    <SettingsSection
+                                        key={section.sectionId}
+                                        sectionId={section.sectionId}
+                                        label={section.label}
+                                        groupLabel={section.groupLabel}
+                                        tabLabel={section.tabLabel}
+                                        icon={resolveAdminNavIcon(section.icon)}
+                                        fields={section.fields}
+                                        hierarchyFields={section.allFields}
+                                        settings={settings}
+                                        draft={draft}
+                                        // Sections that describe a status rule use it;
+                                        // the rest have their status derived from which
+                                        // of their required fields are filled.
+                                        statusRule={sectionStatus[section.sectionId]}
+                                        status={statusBySection.get(section.sectionId)}
+                                        renderField={renderField}
+                                        renderCapability={renderField}
+                                        appearance={agentSectionAppearances[section.sectionId]}
+                                        // While a search is filtering, a match inside a
+                                        // collapsed group has to be shown or the card would
+                                        // appear empty.
+                                        forceExpanded={Boolean(query.trim())}
+                                    >
+                                        {section.capabilities.length ? (
+                                            <div className="admin-switch-grid" data-testid="admin-switch-grid">
+                                                {section.capabilities.map((row) => (
+                                                    <div key={row.key} className="py-1">
+                                                        <Toggle
+                                                            label={row.label}
+                                                            description={row.key}
+                                                            labelClassName="font-semibold"
+                                                            descriptionClassName="font-mono text-xs"
+                                                            checked={asBoolean(
+                                                                Object.prototype.hasOwnProperty.call(
+                                                                    draft,
+                                                                    row.key,
+                                                                )
+                                                                    ? draft[row.key]
+                                                                    : settings[row.key],
+                                                            )}
+                                                            disabled={saving}
+                                                            onChange={(next) =>
+                                                                setValue(row.key, next)
+                                                            }
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : null}
+                                    </SettingsSection>
+                                ))}
+
+                                {!loading && activeGroupUsesFallback && (
+                                    <p className="pb-6 text-center text-xs text-text-3">
+                                        Settings in this group that need more than a switch —
+                                        endpoints, keys, prompts and connection tests — are still on
+                                        the{' '}
+                                        <a href="/admin/settings" className="text-accent underline">
+                                            classic admin page
+                                        </a>
+                                        .
+                                    </p>
+                                )}
+
+                                <SaveBar
+                                    dirtyCount={dirtyKeys.length}
+                                    saving={saving}
+                                    onSave={() => void save()}
+                                    onDiscard={discard}
+                                />
+                            </div>
+
+                            {showIndex ? (
+                                <SettingsIndex
+                                    className="hidden @min-[76rem]:block"
+                                    entries={indexEntries}
+                                    grouped={activeGroup === null || Boolean(query.trim())}
+                                    scrollRoot={scrollRef}
+                                    onJump={setPendingScroll}
+                                />
+                            ) : null}
                         </div>
                     </div>
                 </div>

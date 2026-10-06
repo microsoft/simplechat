@@ -48,6 +48,31 @@ V2 version/update display was implemented in **0.261.126**, and since
 There is no manual refresh button, automatic installation, or upgrade triggered
 by saving settings.
 
+## Reading V2 Admin Settings
+
+V2 Admin Settings uses the full width of the screen. Every section is a card with
+an icon, a title, and its place in the navigation. A section that can be switched
+off or left incomplete also shows its status: **Configured**, **Needs
+configuration**, **Off**, or **Prerequisite missing**.
+
+Inside a card, the switch the section depends on is highlighted, and the settings
+that only apply while a switch is on sit indented beneath it. On a wide screen each
+setting's label and description sit on the left with its control on the right, and
+switches that stand on their own pair up in two columns, so a section takes less
+scrolling to review. At narrower widths or larger text sizes the same settings stack
+in a single column.
+
+When there is room, an **On this page** list sits beside the cards. It lists the
+sections in the current category, or in the search results, with each section's
+status and a count of the sections that need attention, and it highlights the
+section you are reading. Select an entry to jump to that section.
+
+Links from one setting to another, such as **Go to setting** in App Role
+Requirements, scroll to their target. When a search or a different category hides
+the target, the page clears the search or switches to the target's category first.
+
+This layout was implemented in **0.261.253**.
+
 ## Settings groups
 
 | Group | What it controls | Tabs | Link |

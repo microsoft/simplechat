@@ -1,8 +1,9 @@
 # test_v2_admin_agents_visual_hierarchy.py
 """
-Browser coverage for the scoped V2 Agents settings presentation.
-Version: 0.261.093
+Browser coverage for the V2 Agents settings presentation.
+Version: 0.261.253
 Implemented in: 0.261.093
+Presentation extended to every section, with derived emphasis: 0.261.253
 
 Exercise the built application and real field schema with intercepted APIs. Check
 visual hierarchy, contrast, keyboard disclosure, responsiveness, dependency
@@ -95,24 +96,21 @@ _CONTRAST = """
 def test_agent_sections_have_distinct_headers_and_readable_controls(agents_ui, theme):
     agents_ui.open(theme=theme)
     page = agents_ui.page
-    expect(page.locator(".admin-settings-distinct")).to_have_count(4)
+    # Every section is drawn the distinct way now, Built-in Actions included.
+    section_ids = (*AGENT_SECTION_IDS, "core-plugin-toggles")
+    expect(page.locator(".admin-settings-distinct")).to_have_count(len(section_ids))
     field_size = page.get_by_text("Enable Agents", exact=True).evaluate(
         "element => parseFloat(getComputedStyle(element).fontSize)"
     )
-    for section_id in AGENT_SECTION_IDS:
+    for section_id in section_ids:
         section = page.locator(f"#{section_id}")
         expect(section).to_have_attribute("role", "region")
         heading = section.get_by_role("heading", level=2)
         assert heading.evaluate("element => parseFloat(getComputedStyle(element).fontSize)") > field_size
         expect(section.locator(":scope > div").first.locator('[aria-hidden="true"] svg')).to_have_count(1)
 
-    other = page.locator("#core-plugin-toggles")
-    expect(other).not_to_have_class(re.compile("admin-settings-distinct"))
-    assert other.get_by_role("heading", level=2).evaluate(
-        "element => parseFloat(getComputedStyle(element).fontSize)"
-    ) == field_size
-
     runtime = page.get_by_role("region", name="Agent Runtime", exact=True)
+    # Derived from depends_on: the same cues the Agents cards were first drawn with.
     expect(runtime.locator('[data-setting-emphasis="primary"]')).to_contain_text("Enable Agents")
     expect(runtime.locator('[data-setting-emphasis="dependent"]')).to_have_count(2)
     expect(runtime.get_by_text("Configured", exact=True)).to_have_count(0)
@@ -246,7 +244,7 @@ def test_agent_cards_wrap_at_narrow_widths_and_large_text(agents_ui, theme, widt
     for label in ("Hero", "Guidance", "Promoted agents"):
         _catalog_group(page, label).click()
     agents_ui.capture(f"responsive-{theme}-{width}-{font_size}")
-    for section_id in AGENT_SECTION_IDS:
+    for section_id in (*AGENT_SECTION_IDS, "core-plugin-toggles"):
         section = page.locator(f"#{section_id}")
         overflow = section.evaluate("element => element.scrollWidth - element.clientWidth")
         assert overflow <= 1, f"{section_id} overflows by {overflow}px at {width}px/{font_size}"

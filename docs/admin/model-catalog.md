@@ -5,7 +5,7 @@ description: "Describe model strengths, manage shared profiles, and influence pe
 section: "Administration"
 audience: admin
 admin_tab: model-catalog
-version: "0.261.126"
+version: "0.261.253"
 ---
 
 # Model Catalog
@@ -24,6 +24,35 @@ capability, origin, favorites, global connection availability, or archived statu
 The detail panel explains task suitability, limitations, technical evidence,
 and the global models using that profile. Personal and group connections remain
 managed in their own workspaces; the catalog does not expose their deployment lists.
+
+## Find and inspect a profile in V2
+
+V2 lays the catalog out as a workbench. Search and the filters sit across the top:
+**Origin**, **Task strength**, **Publisher**, **Capability**, **Connections**, and
+**Status**, with **Favorites only** beside the search. **Clear filters** resets the
+filters and keeps the search text.
+
+Each profile in the list is one line: its name, its publisher, and the number of
+global AI Connection models that use it. The list and the selected profile scroll
+separately, so a long catalog does not push AI Connections further down the page.
+
+The selected profile shows its publisher, origin, evidence source, and lifecycle
+stage, its **Favorite** and **Priority** preferences, and four tabs:
+
+| Tab | What it shows |
+| --- | --- |
+| Overview | Strengths, limitations, and a rating for every task: Strong, Suitable, Unsuitable, or Unknown. |
+| Capabilities | Which inputs, outputs, and features are supported, unsupported, or unknown, with documented token limits and lifecycle. |
+| Connections | The global models that use the profile, whether each is enabled, and the capabilities each model ends up with. |
+| Evidence | Where the ratings come from, the profile ID, its HTTPS sources, and its aliases. |
+
+Select the connected-model count on a row to open that profile's **Connections**
+tab. **Open in AI Connections** opens the model's connection editor with that model
+outlined, which is where its **Catalog profile** association is changed. When a
+settings search had hidden AI Connections, the search is cleared first.
+
+The classic interface keeps its existing catalog layout. The V2 workbench was
+implemented in **0.261.253**.
 
 ## Favorites and priority
 

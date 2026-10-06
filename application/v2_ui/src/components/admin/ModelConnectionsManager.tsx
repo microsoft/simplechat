@@ -11,7 +11,7 @@
 // connection looked identical to a saved one. Here each connection saves on its own, and
 // the editor says which state it is in.
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     AlertCircle,
@@ -351,6 +351,7 @@ function ConnectionEditor({
     onClose,
     onSaved,
     onReloadEndpoint,
+    focusModel,
 }: {
     initial: ModelConnection;
     customApiTypes: CustomApiTypeDescriptor[];
@@ -363,7 +364,16 @@ function ConnectionEditor({
      * conflicts, so it stays undefined and the reload affordance never appears.
      */
     onReloadEndpoint?: (id: string) => Promise<ModelConnection | null>;
+    /** The model the Model Catalog linked here from, scrolled to and outlined on open. */
+    focusModel?: { id?: string; name?: string } | null;
 }) {
+    const focusRowRef = useRef<HTMLLIElement | null>(null);
+    useEffect(() => {
+        if (focusModel) {
+            focusRowRef.current?.scrollIntoView({ block: 'center' });
+        }
+        // Only on open: the outline stays, but later edits must not pull the view back.
+    }, []);
     // The baseline the editor saves against. It starts as the row that opened the editor and is
     // replaced only when a conflict reload pulls the latest revision, so the user's field edits in
     // `draft` are preserved across a reload while the conditional-write token refreshes.
@@ -1197,10 +1207,22 @@ function ConnectionEditor({
                 <ul className="space-y-2">
                     {models.map((model, index) => {
                         const key = String(model.id ?? index);
+                        // The catalog names a model by id where it has one, and otherwise by
+                        // the same display-name precedence the catalog's links use.
+                        const linkedFromCatalog = Boolean(focusModel) && (
+                            focusModel?.id
+                                ? String(model.id ?? '') === focusModel.id
+                                : (model.displayName || model.deploymentName || model.modelName) === focusModel?.name
+                        );
                         return (
                             <li
                                 key={key}
-                                className="rounded-lg border border-edge bg-surface-1 p-3"
+                                ref={linkedFromCatalog ? focusRowRef : undefined}
+                                data-testid={linkedFromCatalog ? 'connection-model-linked' : undefined}
+                                className={clsx(
+                                    'rounded-lg border border-edge bg-surface-1 p-3',
+                                    linkedFromCatalog && 'ring-2 ring-accent/60',
+                                )}
                             >
                                 <div className="flex items-start gap-2">
                                     <label className="flex flex-1 items-center gap-2">
@@ -1417,6 +1439,11 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
     // list would keep reading as empty at the exact moment it stopped being so.
     const connectionsRevision = useModelConnectionsStore((state) => state.revision);
 
+    // The Model Catalog asks for a connection to be opened by leaving a request in the store.
+    // Only the global list answers it, and only once its rows have loaded.
+    const focusRequest = useModelConnectionsStore((state) => state.focusRequest);
+    const [focusModel, setFocusModel] = useState<{ id?: string; name?: string } | null>(null);
+
     const load = useCallback(async (signal?: AbortSignal) => {
         try {
             const response = await adapter.list(signal);
@@ -1451,6 +1478,25 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
         void load(controller.signal);
         return () => controller.abort();
     }, [load, connectionsRevision]);
+
+    useEffect(() => {
+        if (!focusRequest || adapter.scope.kind !== 'admin' || loading) {
+            return;
+        }
+        useModelConnectionsStore.getState().clearFocus();
+        if (loadFailed) {
+            // The list's own load error is already on screen with a retry.
+            return;
+        }
+        const connection = connections.find((item) => item.id === focusRequest.connectionId);
+        if (!connection) {
+            setError('That connection no longer exists. Reload the Model Catalog to refresh its links.');
+            return;
+        }
+        setQuery('');
+        setFocusModel({ id: focusRequest.modelId, name: focusRequest.modelName });
+        setEditing(connection);
+    }, [focusRequest, adapter, loading, loadFailed, connections]);
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -1719,8 +1765,15 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
                     customApiTypes={customApiTypes}
                     adapter={adapter}
                     onReloadEndpoint={adapter.reload}
-                    onClose={() => setEditing(null)}
-                    onSaved={onSaved}
+                    onClose={() => {
+                        setEditing(null);
+                        setFocusModel(null);
+                    }}
+                    onSaved={(saved, created) => {
+                        setFocusModel(null);
+                        onSaved(saved, created);
+                    }}
+                    focusModel={focusModel}
                 />
             ) : null}
 
