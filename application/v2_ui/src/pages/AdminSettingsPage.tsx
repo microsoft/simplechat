@@ -40,15 +40,19 @@ import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
+import { ControlCenterAccessMatrix } from '../components/admin/ControlCenterAccessMatrix';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { EndpointLinks } from '../components/admin/EndpointLinks';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
 import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { FileProcessingLogCleanup } from '../components/admin/FileProcessingLogCleanup';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
+import { LoggingTimerStatus } from '../components/admin/LoggingTimerStatus';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelCatalogManager } from '../components/admin/ModelCatalogManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
@@ -59,6 +63,10 @@ import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { OrchestrationPlannerModelPicker } from '../components/admin/OrchestrationPlannerModelPicker';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
+import { RefreshScheduleStatus } from '../components/admin/RefreshScheduleStatus';
+import { RelatedSectionLink } from '../components/admin/RelatedSectionLink';
+import { RestartStatus } from '../components/admin/RestartStatus';
+import { SectionGuide, hasSectionGuide } from '../components/admin/guides/sectionGuides';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -86,6 +94,7 @@ import {
     isSectionVisible,
     readFieldValue,
     type AdminField,
+    type AdminSectionGuide,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
     type AdminUpdateStatusResponse,
@@ -93,6 +102,7 @@ import {
     type BrandingAssets,
     type BrandingUploadResponse,
 } from '../lib/adminFields';
+import { CONTROL_CENTER_ACCESS_KEYS, findNavLocation } from '../lib/adminOperations';
 import { toast } from '../stores/toastStore';
 import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
@@ -243,6 +253,7 @@ export function AdminSettingsPage() {
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
     const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+    const [openGuide, setOpenGuide] = useState<AdminSectionGuide | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
     /** The pane the cards scroll inside; the page index watches it to mark the current section. */
@@ -336,6 +347,20 @@ export function AdminSettingsPage() {
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
     const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
     const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
+
+    /**
+     * The in-app guide a section's header offers, if the UI has one by that id.
+     *
+     * A guide the server names but this build cannot draw is left off rather than shown as
+     * a button that opens nothing.
+     */
+    const guideFor = useCallback(
+        (sectionId: string): AdminSectionGuide | undefined => {
+            const guide = data?.section_guides?.[sectionId];
+            return guide && hasSectionGuide(guide.id) ? guide : undefined;
+        },
+        [data],
+    );
 
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
@@ -455,7 +480,9 @@ export function AdminSettingsPage() {
                 }
 
                 const location =
-                    `${section.label} ${section.tabLabel} ${section.groupLabel}`.toLowerCase();
+                    `${section.label} ${section.tabLabel} ${section.groupLabel} ${
+                        guideFor(section.sectionId)?.label ?? ''
+                    }`.toLowerCase();
                 if (location.includes(needle)) {
                     return section;
                 }
@@ -473,7 +500,7 @@ export function AdminSettingsPage() {
                     : null;
             })
             .filter((section): section is RenderedSection => section !== null);
-    }, [sections, query, activeGroup]);
+    }, [sections, query, activeGroup, guideFor]);
 
     const settingCount = declaredKeys.size + capabilityRows.length;
 
@@ -705,6 +732,35 @@ export function AdminSettingsPage() {
     /** Read another field's current value, preferring an unsaved edit. */
     const readSibling = (key: string, fallback = '') =>
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
+
+    /**
+     * A switch's value, saved or with unsaved edits applied, falling back to its declared
+     * default. Swagger has no seeded default, so without the declared one a fresh
+     * deployment would read as off while the app treats it as on.
+     */
+    const readSwitch = (key: string, includeDraft: boolean) =>
+        asBoolean(
+            readFieldValue(fieldsByKey.get(key) ?? READ_ONLY_REF(key), settings, includeDraft ? draft : {}),
+        );
+
+    /** A link from a setting to the section its effect shows up in. */
+    const renderRelatedSection = (field: AdminField) => {
+        const related = field.related_section;
+        if (!related || !data) {
+            return null;
+        }
+        const shownHere =
+            !related.classic_only && sections.some((section) => section.sectionId === related.section_id);
+        return (
+            <div className={clsx('pb-2', field.type === 'switch' && 'ml-14')}>
+                <RelatedSectionLink
+                    label={related.label}
+                    location={findNavLocation(data.admin_nav, related.section_id)}
+                    onNavigate={shownHere ? () => goToSection(related.section_id) : undefined}
+                />
+            </div>
+        );
+    };
 
     /**
      * Move the page to a section, from a cross-reference elsewhere on it.
@@ -1079,6 +1135,81 @@ export function AdminSettingsPage() {
                             help={field.help}
                         />
                     );
+                case 'control-center-refresh-schedule':
+                    return (
+                        <RefreshScheduleStatus
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                        />
+                    );
+                case 'control-center-access-matrix': {
+                    const accessKeys = Object.values(CONTROL_CENTER_ACCESS_KEYS);
+                    return (
+                        <ControlCenterAccessMatrix
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            requireAdminRole={readSwitch(CONTROL_CENTER_ACCESS_KEYS.requireAdminRole, true)}
+                            allowDashboardReader={readSwitch(
+                                CONTROL_CENTER_ACCESS_KEYS.allowDashboardReader,
+                                true,
+                            )}
+                            unsaved={accessKeys.some(
+                                (accessKey) => readSwitch(accessKey, true) !== readSwitch(accessKey, false),
+                            )}
+                        />
+                    );
+                }
+                case 'restart-status':
+                    // Compared against how the running process started, which no save changes.
+                    return field.watches && field.runtime_flag ? (
+                        <RestartStatus
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            saved={readSwitch(field.watches, false)}
+                            draft={readSwitch(field.watches, true)}
+                            running={Boolean(runtimeFlags[field.runtime_flag])}
+                            available={
+                                field.runtime_requires ? Boolean(runtimeFlags[field.runtime_requires]) : true
+                            }
+                        />
+                    ) : null;
+                case 'logging-timer-status':
+                    return field.timer_keys ? (
+                        <LoggingTimerStatus
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            keys={field.timer_keys}
+                            settings={settings}
+                            draft={draft}
+                        />
+                    ) : null;
+                case 'file-processing-log-cleanup':
+                    return (
+                        <FileProcessingLogCleanup
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            disabled={saving}
+                        />
+                    );
+                case 'endpoint-links':
+                    return (
+                        <EndpointLinks
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            endpoints={field.endpoints ?? []}
+                            isSavedOn={(gateKey) => readSwitch(gateKey, false)}
+                            isDraftOn={(gateKey) => readSwitch(gateKey, true)}
+                            runtimeFlags={runtimeFlags}
+                        />
+                    );
                 default:
                     return null;
             }
@@ -1131,7 +1262,12 @@ export function AdminSettingsPage() {
             );
         }
 
-        return <div key={key}>{control}</div>;
+        return (
+            <div key={key}>
+                {control}
+                {renderRelatedSection(field)}
+            </div>
+        );
     };
 
     if (!isAdmin) {
@@ -1360,7 +1496,9 @@ export function AdminSettingsPage() {
                                     </p>
                                 )}
 
-                                {visibleSections.map((section) => (
+                                {visibleSections.map((section) => {
+                                    const guide = guideFor(section.sectionId);
+                                    return (
                                     <SettingsSection
                                         key={section.sectionId}
                                         sectionId={section.sectionId}
@@ -1380,6 +1518,11 @@ export function AdminSettingsPage() {
                                         renderField={renderField}
                                         renderCapability={renderField}
                                         appearance={agentSectionAppearances[section.sectionId]}
+                                        guide={
+                                            guide
+                                                ? { label: guide.label, onOpen: () => setOpenGuide(guide) }
+                                                : undefined
+                                        }
                                         // While a search is filtering, a match inside a
                                         // collapsed group has to be shown or the card would
                                         // appear empty.
@@ -1412,7 +1555,8 @@ export function AdminSettingsPage() {
                                             </div>
                                         ) : null}
                                     </SettingsSection>
-                                ))}
+                                    );
+                                })}
 
                                 {!loading && activeGroupUsesFallback && (
                                     <p className="pb-6 text-center text-xs text-text-3">
@@ -1447,6 +1591,15 @@ export function AdminSettingsPage() {
                     </div>
                 </div>
             </div>
+
+            {openGuide ? (
+                <SectionGuide
+                    guide={openGuide}
+                    // Saved settings, not the draft: a guide describes what is live.
+                    context={{ settings, runtimeFlags }}
+                    onClose={() => setOpenGuide(null)}
+                />
+            ) : null}
 
             {pendingAck?.requires_acknowledgement ? (
                 <AdminModal

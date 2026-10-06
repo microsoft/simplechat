@@ -1,9 +1,10 @@
 # test_admin_update_banner_version_comparison.py
 """
 Functional coverage for shared classic/V2 admin release status.
-Version: 0.261.133
+Version: 0.261.260
 Implemented in: 0.261.126
 Non-blocking V2 release check: 0.261.133
+Settings payload adds section guides and runtime flags: 0.261.260
 
 Execute the production checker, parser and comparator with HTTP/storage boundaries
 mocked. AST loading avoids initializing Azure clients; these are behavior tests,
@@ -212,9 +213,10 @@ class UpdateStatusTests(unittest.TestCase):
             'VERSION': CURRENT, 'ADMIN_NAV': [], 'jsonify': lambda value: value,
             '_redact_admin_settings_for_v2': lambda settings: {'secret': 'REDACTED'},
             'get_admin_settings_fields': dict, 'get_admin_section_status': dict,
+            'get_admin_section_guides': dict,
             'get_app_role_requirements': list, '_build_branding_assets': lambda settings: {},
             '_build_status_readouts': dict, '_build_endpoint_readouts': lambda settings: {},
-            '_build_model_catalog': lambda settings: [], 'is_mcp_ui_enabled': lambda: False,
+            '_build_model_catalog': lambda settings: [], '_build_runtime_flags': dict,
             'get_suppressed_capability_keys': list, 'logging': logging, 'log_event': self.log,
         })
         # An empty cache would force a GitHub request if the GET still ran the check.

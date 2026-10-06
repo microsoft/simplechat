@@ -1,8 +1,9 @@
 # test_app_settings_auxiliary_writers.py
 """
 Functional tests for auxiliary app-settings writers.
-Version: 0.261.213
+Version: 0.261.260
 Implemented in: 0.261.025
+Logging timers checked through the shared UTC helpers: 0.261.260
 
 Execute isolated production functions through AST extraction, without importing
 application configuration or contacting Redis, Cosmos DB, or other cloud services.
@@ -27,6 +28,14 @@ APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 
 from functions_action_manifest import resolve_action_type  # noqa: E402
+from functions_logging_timers import LOGGING_TIMERS, is_logging_turnoff_due  # noqa: E402
+
+# The logging timer rules are pure and shared by every writer, so the isolated
+# checker runs against the real ones rather than doubles.
+LOGGING_TIMER_HELPERS = {
+    "LOGGING_TIMERS": LOGGING_TIMERS,
+    "is_logging_turnoff_due": is_logging_turnoff_due,
+}
 
 WRITER_FILES = (
     "background_tasks.py",
@@ -167,7 +176,9 @@ def test_logging_expiration_uses_guarded_deltas(logging_type, available, conflic
         expected_keys.extend([enabled_key, timer_key, expiry_key])
     store = SettingsStore(settings, available=available, conflict=conflict)
     original = deepcopy(store.snapshot)
-    check = load_function("background_tasks.py", "check_logging_timers_once", store)
+    check = load_function(
+        "background_tasks.py", "check_logging_timers_once", store, **LOGGING_TIMER_HELPERS,
+    )
 
     assert check() is (available and not conflict)
     assert_delta(store, expected_keys, etag='"original"')
@@ -182,7 +193,9 @@ def test_logging_expiration_does_not_write_before_expiry():
         "debug_logging_timer_enabled": True,
         "debug_logging_turnoff_time": (datetime.now() + timedelta(days=1)).isoformat(),
     })
-    check = load_function("background_tasks.py", "check_logging_timers_once", store)
+    check = load_function(
+        "background_tasks.py", "check_logging_timers_once", store, **LOGGING_TIMER_HELPERS,
+    )
     check()
     assert store.calls == []
 

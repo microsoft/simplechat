@@ -2,22 +2,22 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center auto-refresh scheduling.
-Version: 0.250.102
+Version: 0.261.260
 Implemented in: 0.241.026
-Updated in: 0.250.102
+Updated in: 0.261.260 (schedule helpers moved to functions_control_center_schedule.py)
 
 This test validates the enabled 02:00 Eastern default, timezone normalization,
 DST-aware UTC next-run timestamps, and scheduler/admin/status integration.
 """
 
 import importlib.util
-import re
 import sys
 import types
 from datetime import datetime, timezone
 from pathlib import Path
 
 from test_support.templates import read_admin_settings_template
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -29,7 +29,6 @@ ADMIN_SETTINGS_ROUTE_FILE = APP_DIR / "route_frontend_admin_settings.py"
 CONTROL_CENTER_ROUTE_FILE = APP_DIR / "route_backend_control_center.py"
 ADMIN_TEMPLATE_FILE = APP_DIR / "templates" / "admin_settings.html"
 CONTROL_CENTER_JS_FILE = APP_DIR / "static" / "js" / "control-center.js"
-CONFIG_FILE = APP_DIR / "config.py"
 
 
 def load_control_center_module():
@@ -53,6 +52,12 @@ def load_control_center_module():
         original_modules[module_name] = sys.modules.get(module_name)
         sys.modules[module_name] = module
 
+    # The schedule rules live in functions_control_center_schedule, which
+    # functions_control_center re-exports, so the app directory has to be importable.
+    added_app_dir = str(APP_DIR) not in sys.path
+    if added_app_dir:
+        sys.path.insert(0, str(APP_DIR))
+
     try:
         spec = importlib.util.spec_from_file_location(
             "control_center_schedule_under_test",
@@ -62,6 +67,8 @@ def load_control_center_module():
         spec.loader.exec_module(module)
         return module
     finally:
+        if added_app_dir:
+            sys.path.remove(str(APP_DIR))
         for module_name, original_module in original_modules.items():
             if original_module is None:
                 sys.modules.pop(module_name, None)
@@ -220,12 +227,8 @@ def test_integration_wiring():
 
 
 def test_version():
-    """Validate the application version for this update."""
-    config_source = CONFIG_FILE.read_text(encoding="utf-8")
-    version_match = re.search(r'VERSION = "([^"]+)"', config_source)
-    if not version_match:
-        raise AssertionError("Could not find VERSION in config.py")
-    assert version_match.group(1) == "0.250.102"
+    """Validate the application version is at least the schedule's latest update."""
+    assert_app_version_at_least("0.250.102")
 
 
 def run_all_tests():

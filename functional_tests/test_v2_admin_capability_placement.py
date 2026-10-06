@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
+Operations described in full: 0.261.260
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -27,9 +28,10 @@ without opening the page:
 Declaring a field is what takes a key out of that scan. This test holds three
 invariants so the misfiling cannot come back:
 
-  1. The Appearance, Chat and Security groups are fully described by the schema, so
-     they must receive *no* guessed rows at all. A new undeclared key that lands in
-     any of them fails here, and the fix is to declare it in its real section.
+  1. The Appearance, Chat, Security, Agents & Actions and Operations groups are
+     fully described by the schema, so they must receive *no* guessed rows at all. A
+     new undeclared key that lands in any of them fails here, and the fix is to
+     declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
@@ -68,7 +70,13 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
+FULLY_DESCRIBED_GROUP_IDS = (
+    APPEARANCE_GROUP_ID,
+    "chat",
+    "security",
+    "agents-actions",
+    "operations",
+)
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -111,6 +119,9 @@ RELOCATED_CAPABILITIES = {
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
     "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
+    # Operations. The token "logging" filed Application Insights under Debug
+    # Logging, so the Application Insights section rendered empty and was skipped.
+    "enable_appinsights_global_logging": ("application-insights-section", "logging"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an
@@ -128,6 +139,9 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
 RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD = {
     "enable_app_maintenance": "cosmos-maintenance-section",
     "enable_startup_app_maintenance": "cosmos-maintenance-section",
+    # Drawn by the fallback scan as an unexplained "Dai debug" switch under Debug
+    # Logging. V1 only reads it, so it stays there, declared and explained.
+    "enable_dai_debug": "debug-logging-section",
 }
 
 # The rules the ported heuristic depends on. If the renderer stops doing any of

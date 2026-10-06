@@ -160,7 +160,7 @@ export interface AdminField {
     fallback_when_empty?: boolean;
     item_fields?: AdminField[];
     /** Text fields only: the input type the browser should use. */
-    input_type?: 'text' | 'email' | 'url';
+    input_type?: 'text' | 'email' | 'url' | 'time' | 'timezone';
     /** String list fields only: per-item character cap. */
     max_item_length?: number;
     /** Optional sub-heading grouping consecutive fields inside one section. */
@@ -262,6 +262,70 @@ export interface AdminField {
      */
     scale?: number;
     requires_acknowledgement?: AdminFieldAcknowledgement;
+    /**
+     * `restart-status` components only: the setting whose saved value is compared
+     * with the running process, the runtime flag reporting that process, and an
+     * optional flag that must hold for the setting to be able to take effect at all.
+     */
+    watches?: string;
+    runtime_flag?: string;
+    runtime_requires?: string;
+    /** `logging-timer-status` components only: where one log's timer is stored. */
+    timer_keys?: AdminLoggingTimerKeys;
+    /** `endpoint-links` components only: the addresses to list. */
+    endpoints?: AdminEndpointLink[];
+    /** Another section this setting acts on, offered as a link beneath it. */
+    related_section?: AdminRelatedSection;
+}
+
+/** Mirrors one entry of `LOGGING_TIMERS` in `functions_logging_timers.py`. */
+export interface AdminLoggingTimerKeys {
+    enabled_key: string;
+    timer_key: string;
+    value_key: string;
+    unit_key: string;
+    turnoff_key: string;
+}
+
+/** Who an endpoint answers. */
+export type AdminEndpointAccess = 'protected' | 'public' | 'signed_in';
+
+/**
+ * One address an `endpoint-links` component lists.
+ *
+ * An endpoint is live when its `gate_key` setting is saved on, or when the
+ * `runtime_flag` the server reports is true -- Swagger, for instance, is registered at
+ * startup and is not live merely because the setting says so.
+ */
+export interface AdminEndpointLink {
+    path: string;
+    label: string;
+    gate_key?: string;
+    runtime_flag?: string;
+    access: AdminEndpointAccess;
+    /** What the endpoint answers with, in a sentence. */
+    returns?: string;
+}
+
+/** A section a field relates to, which may live on the classic page only. */
+export interface AdminRelatedSection {
+    section_id: string;
+    label: string;
+    /**
+     * The related content is only drawn by the server-rendered page, so the link goes there
+     * even when V2 shows a card for the same section.
+     */
+    classic_only?: boolean;
+}
+
+/** Mirrors one `ADMIN_SECTION_GUIDES` entry. */
+export interface AdminSectionGuide {
+    /** Which guide component to open. */
+    id: string;
+    /** The header button's label. */
+    label: string;
+    /** The matching page on the documentation site. */
+    docs_url?: string;
 }
 
 /** Section id -> ordered fields. Section ids come from `admin_settings_nav.py`. */
@@ -305,13 +369,19 @@ export interface AdminSettingsResponse {
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
     section_status: AdminSectionStatusSchema;
+    /** In-app guides a section header offers, keyed by section id. */
+    section_guides?: Record<string, AdminSectionGuide>;
     app_role_requirements: AppRoleRequirement[];
     branding_assets: BrandingAssets;
     /**
-     * Server-resolved flags a navigation section may be conditional on.
+     * Server-resolved flags a navigation section may be conditional on, and which
+     * describe how the running process was started.
      *
      * `mcp_ui_enabled` comes from an App Service application setting rather than
-     * the settings document, so it cannot be read from `settings`.
+     * the settings document, so it cannot be read from `settings`. The Operations
+     * flags -- `appinsights_connection_configured`, `appinsights_global_logging_active`
+     * and `swagger_routes_registered` -- report what the process is doing, which
+     * differs from the saved settings until the App Service restarts.
      */
     runtime_flags?: Record<string, boolean>;
     /**
@@ -821,6 +891,8 @@ export function fieldSearchText(field: AdminField): string {
         field.help ?? '',
         field.notice ?? '',
         field.component ?? '',
+        // An endpoint list is found by the addresses it lists, not only by its label.
+        ...(field.endpoints ?? []).map((endpoint) => `${endpoint.path} ${endpoint.label}`),
     ]
         .join(' ')
         .toLowerCase();
