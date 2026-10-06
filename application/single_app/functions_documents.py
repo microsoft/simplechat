@@ -3308,6 +3308,19 @@ def update_document(**kwargs):
     group_id = kwargs.get('group_id')
     public_workspace_id = kwargs.get('public_workspace_id')
     num_chunks_increment = kwargs.pop('num_chunks_increment', 0)
+    chunk_sync_limit = kwargs.pop('chunk_sync_limit', None)
+    chunk_sync_offset = max(int(kwargs.pop('chunk_sync_offset', 0) or 0), 0)
+    requested_chunk_sync_fields = set(kwargs.pop('chunk_sync_fields', []) or [])
+    supported_chunk_sync_fields = {'title', 'authors', 'file_name', 'document_classification', 'tags', 'shared_group_ids'}
+    requested_chunk_sync_fields = requested_chunk_sync_fields.intersection(supported_chunk_sync_fields)
+    chunk_sync_result = {
+        'required': False,
+        'complete': True,
+        'fields': [],
+        'total': 0,
+        'processed': 0,
+        'next_offset': None,
+    }
 
     if not document_id or not user_id:
         # Cannot proceed without these identifiers
@@ -3460,11 +3473,13 @@ def update_document(**kwargs):
             else:
                  existing_document['percentage_complete'] = new_percentage
 
+        updated_fields_requiring_chunk_sync.update(requested_chunk_sync_fields)
+
         # 4. Propagate relevant changes to search index chunks
         # This happens regardless of 'update_occurred' flag because the *intent* from kwargs might trigger it,
         # even if the main doc update didn't happen (e.g., only percentage changed).
         # However, it's better to only do this if the relevant fields *actually* changed.
-        if update_occurred and updated_fields_requiring_chunk_sync:
+        if updated_fields_requiring_chunk_sync:
             try:
                 chunks_to_update = get_all_chunks(
                     document_id,
@@ -3472,7 +3487,18 @@ def update_document(**kwargs):
                     group_id=group_id,
                     public_workspace_id=public_workspace_id
                 )
-                for chunk in chunks_to_update:
+                total_chunks = len(chunks_to_update)
+                chunk_sync_result['required'] = total_chunks > 0
+                chunk_sync_result['fields'] = sorted(updated_fields_requiring_chunk_sync)
+                chunk_sync_result['total'] = total_chunks
+
+                if chunk_sync_limit is None:
+                    chunk_sync_end = total_chunks
+                else:
+                    chunk_sync_limit = max(int(chunk_sync_limit), 1)
+                    chunk_sync_end = min(total_chunks, chunk_sync_offset + chunk_sync_limit)
+
+                for chunk in chunks_to_update[chunk_sync_offset:chunk_sync_end]:
                     chunk_updates = {}
                     if 'title' in updated_fields_requiring_chunk_sync:
                         chunk_updates['title'] = existing_document.get('title')
@@ -3502,10 +3528,15 @@ def update_document(**kwargs):
                             update_params['shared_group_ids'] = existing_document.get('shared_group_ids')
 
                         update_chunk_metadata(**update_params)
+                        chunk_sync_result['processed'] += 1
+
+                if chunk_sync_end < total_chunks:
+                    chunk_sync_result['complete'] = False
+                    chunk_sync_result['next_offset'] = chunk_sync_end
                 add_file_task_to_file_processing_log(
                     document_id=document_id,
                     user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-                    content=f"Propagated updates for fields {updated_fields_requiring_chunk_sync} to search chunks."
+                    content=f"Propagated updates for fields {updated_fields_requiring_chunk_sync} to {chunk_sync_result['processed']} of {total_chunks} search chunks."
                 )
             except Exception as chunk_sync_error:
                 # Log error but don't necessarily fail the whole document update
@@ -3525,6 +3556,8 @@ def update_document(**kwargs):
                 existing_document,
                 operation='document_updated',
             )
+
+        return {'updated': update_occurred, 'chunk_sync': chunk_sync_result}
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected

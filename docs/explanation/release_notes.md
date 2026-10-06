@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.051)**
+
+#### Bug Fixes
+
+*   **Large Document Metadata Saves Continue Across Batches**
+    *   Saving tags or other metadata for large uploaded documents now synchronizes search chunk metadata in bounded batches instead of holding one long request until every chunk is updated.
+    *   The workspace metadata dialog continues the save through short JSON PATCH requests until the chunk sync is complete, avoiding timeout HTML responses that previously appeared in the browser as invalid JSON errors.
+    *   Tag saves no longer run duplicate full-document search chunk propagation, while blob metadata tag updates are still preserved.
+    *   (Ref: document metadata updates, tag propagation, `functions_documents.py`, `route_backend_documents.py`, `workspace-documents.js`, [Document Metadata Chunk Sync Batching Fix](fixes/DOCUMENT_METADATA_CHUNK_SYNC_BATCHING_FIX.md))
+
 ### **(v0.261.050)**
 
 #### Bug Fixes
