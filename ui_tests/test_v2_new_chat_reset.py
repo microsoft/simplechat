@@ -1,7 +1,7 @@
 # test_v2_new_chat_reset.py
 """
 Browser regressions for starting a new chat in V2 while the open conversation is busy.
-Version: 0.261.254
+Version: 0.261.256
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
@@ -11,7 +11,7 @@ conversation could take the new chat over, a conversation still loading left its
 placeholders in the new chat, and Home's Start chatting reopened whichever conversation
 was last open (issue #1617).
 
-Since 0.261.254 a planning turn's bubble says "Planning" rather than "Thinking", and a running
+Since 0.261.256 a planning turn's bubble says "Planning" rather than "Thinking", and a running
 plan shows its progress only on the plan card, so those are what the orchestration checks look
 for. A chat reply still says "Thinking".
 

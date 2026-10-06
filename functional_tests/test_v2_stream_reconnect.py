@@ -2,7 +2,7 @@
 """
 Functional test for V2 chat stream reconnection.
 
-Version: 0.261.254
+Version: 0.261.256
 Implemented in: 0.261.017
 
 A chat answer is generated on the server and written into a stream session that outlives
