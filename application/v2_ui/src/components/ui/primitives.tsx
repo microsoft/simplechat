@@ -103,12 +103,18 @@ export function Toggle({
     label,
     description,
     disabled = false,
+    labelClassName,
+    descriptionClassName,
 }: {
     checked: boolean;
     onChange: (next: boolean) => void;
     label: string;
     description?: string;
     disabled?: boolean;
+    /** Replaces the label's default weight, for surfaces that need a stronger label. */
+    labelClassName?: string;
+    /** Replaces the description's default size. */
+    descriptionClassName?: string;
 }) {
     return (
         <label
@@ -144,9 +150,16 @@ export function Toggle({
                 />
             </span>
             <span className="min-w-0">
-                <span className="block text-sm font-medium text-text-1">{label}</span>
+                <span className={clsx('block text-sm text-text-1', labelClassName ?? 'font-medium')}>
+                    {label}
+                </span>
                 {description ? (
-                    <span className="mt-0.5 block text-xs leading-relaxed text-text-3">
+                    <span
+                        className={clsx(
+                            'mt-0.5 block leading-relaxed text-text-3',
+                            descriptionClassName ?? 'text-xs',
+                        )}
+                    >
                         {description}
                     </span>
                 ) : null}

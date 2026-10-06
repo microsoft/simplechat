@@ -24,7 +24,7 @@ import {
 import { Toggle } from '../ui/primitives';
 
 const inputClass = clsx(
-    'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2',
+    'min-h-10 w-full rounded-lg border border-edge bg-surface-1 px-3 py-2',
     'text-sm text-text-1 placeholder:text-text-3',
     'focus:border-accent focus:outline-none',
     'disabled:cursor-not-allowed disabled:opacity-60',
@@ -62,7 +62,22 @@ export function FieldNotice({ field }: { field: AdminField }) {
     );
 }
 
-/** Label, help text, control and error, laid out consistently for every field type. */
+/**
+ * How much of the control column a field's input may take on a wide card.
+ *
+ * A number box stretched across 700px reads as a text field, and a URL squeezed into a
+ * select-sized box hides its end, so each control asks for the width its content needs.
+ * Stacked layouts ignore this; every control spans the card there.
+ */
+export type FieldWidth = 'compact' | 'standard' | 'wide' | 'full';
+
+/**
+ * Label, help text, control and error, laid out consistently for every field type.
+ *
+ * On a narrow card the parts stack: label, control, help. On a wide one the label and
+ * help take a left column and the control a right one, so a section reads as a list of
+ * settings instead of a column of full-width inputs (see `.admin-field` in theme.css).
+ */
 export function FieldShell({
     field,
     error,
@@ -70,6 +85,7 @@ export function FieldShell({
     htmlFor,
     children,
     trailing,
+    width = 'wide',
 }: {
     field: AdminField;
     error?: string;
@@ -77,43 +93,46 @@ export function FieldShell({
     htmlFor?: string;
     children: ReactNode;
     trailing?: ReactNode;
+    width?: FieldWidth;
 }) {
     return (
-        <div className="py-3">
-            <div className="admin-field-heading mb-1.5 flex items-baseline justify-between gap-3">
+        <div className="admin-field py-3" data-field-width={width}>
+            <div className="admin-field-heading flex items-baseline justify-between gap-3">
                 <label
                     htmlFor={htmlFor}
-                    className="text-sm font-medium text-text-1"
+                    className="text-sm font-semibold text-text-1"
                 >
                     {field.label}
                 </label>
                 {trailing}
             </div>
 
-            {children}
-
             {field.help ? (
-                <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
+                <p className="admin-field-help text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
             ) : null}
 
-            <FieldNotice field={field} />
+            <div className="admin-field-control min-w-0">
+                {children}
 
-            {warning ? (
-                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
-                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
-                    {warning}
-                </p>
-            ) : null}
+                <FieldNotice field={field} />
 
-            {error ? (
-                <p
-                    role="alert"
-                    className="mt-1.5 flex items-start gap-1.5 text-xs text-danger"
-                >
-                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
-                    {error}
-                </p>
-            ) : null}
+                {warning ? (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
+                        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                        {warning}
+                    </p>
+                ) : null}
+
+                {error ? (
+                    <p
+                        role="alert"
+                        className="mt-1.5 flex items-start gap-1.5 text-xs text-danger"
+                    >
+                        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                        {error}
+                    </p>
+                ) : null}
+            </div>
         </div>
     );
 }
@@ -339,6 +358,7 @@ function TextAreaControl({ field, value, error, warning, disabled, onChange }: F
             error={error}
             warning={warning}
             htmlFor={id}
+            width="full"
             trailing={
                 field.word_limit ? (
                     <span
@@ -373,7 +393,7 @@ function TextAreaControl({ field, value, error, warning, disabled, onChange }: F
 function SelectControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
     const id = `admin-field-${field.key}`;
     return (
-        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
             <select
                 id={id}
                 className={clsx(inputClass, 'appearance-none pr-8')}
@@ -393,13 +413,15 @@ function SelectControl({ field, value, error, warning, disabled, onChange }: Fie
 
 function SwitchControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
     return (
-        <div className="py-1">
+        <div className="admin-switch-row py-1">
             <Toggle
                 label={field.label}
                 description={field.help}
                 checked={asBoolean(value)}
                 disabled={disabled}
                 onChange={(next) => onChange(next)}
+                labelClassName="font-semibold"
+                descriptionClassName="max-w-[72ch] text-[0.8125rem]"
             />
             {/* Indented to the switch's text column so a notice reads as part of the row
                 rather than as a page-level banner. */}
@@ -425,7 +447,7 @@ function ColorControl({ field, value, error, warning, disabled, onChange }: Fiel
     const current = asString(value, asString(field.default, '#000000'));
 
     return (
-        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
             <div className="admin-color-controls flex items-center gap-2">
                 <input
                     id={id}
@@ -498,7 +520,7 @@ function RangeControl({ field, value, error, warning, disabled, onChange }: Fiel
 function NumberControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
     const id = `admin-field-${field.key}`;
     return (
-        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="compact">
             <input
                 id={id}
                 type="number"
@@ -534,7 +556,7 @@ function CheckboxSetControl({
     };
 
     return (
-        <FieldShell field={field} error={error} warning={warning}>
+        <FieldShell field={field} error={error} warning={warning} width="full">
             <div className="grid gap-1.5 sm:grid-cols-2">
                 {options.map((option) => {
                     const id = `admin-field-${field.key}-${option.value}`;
@@ -594,26 +616,28 @@ function StatusControl({ field, value }: FieldControlProps) {
     const text = readStatusMessage(value);
 
     return (
-        <div className="py-3">
-            <div className="mb-1.5 text-sm font-medium text-text-1">{field.label}</div>
-            <div
-                className={clsx(
-                    'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
-                    tone === 'ok' && 'border-ok/40 bg-ok/5 text-text-2',
-                    tone === 'warn' && 'border-warn/40 bg-warn/5 text-warn',
-                    tone === 'unknown' && 'border-edge bg-surface-1 text-text-3',
-                )}
-            >
-                {tone === 'ok' ? (
-                    <CheckCircle2 size={13} className="mt-0.5 shrink-0" />
-                ) : (
-                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
-                )}
-                <span>{text || 'Not checked yet.'}</span>
-            </div>
+        <div className="admin-field py-3" data-field-width="wide">
+            <div className="admin-field-heading text-sm font-semibold text-text-1">{field.label}</div>
             {field.help ? (
-                <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
+                <p className="admin-field-help text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
             ) : null}
+            <div className="admin-field-control min-w-0">
+                <div
+                    className={clsx(
+                        'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+                        tone === 'ok' && 'border-ok/40 bg-ok/5 text-text-2',
+                        tone === 'warn' && 'border-warn/40 bg-warn/5 text-warn',
+                        tone === 'unknown' && 'border-edge bg-surface-1 text-text-3',
+                    )}
+                >
+                    {tone === 'ok' ? (
+                        <CheckCircle2 size={13} className="mt-0.5 shrink-0" />
+                    ) : (
+                        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    )}
+                    <span>{text || 'Not checked yet.'}</span>
+                </div>
+            </div>
         </div>
     );
 }
@@ -630,27 +654,33 @@ function StatusControl({ field, value }: FieldControlProps) {
 function MirrorControl({ field, value }: FieldControlProps) {
     const on = asBoolean(value);
     return (
-        <div className="flex items-start justify-between gap-3 py-3">
-            <div className="min-w-0">
-                <p className="text-sm font-medium text-text-1">{field.label}</p>
-                {field.help ? (
-                    <p className="mt-1 text-xs leading-relaxed text-text-3">{field.help}</p>
-                ) : null}
-                {field.managed_by ? (
-                    <p className="mt-1 flex items-center gap-1.5 text-xs text-text-3">
-                        <Lock size={12} className="shrink-0" aria-hidden="true" />
-                        Configured in {field.managed_by}
-                    </p>
-                ) : null}
+        <div className="admin-field admin-field-inline py-3" data-field-width="compact">
+            <div className="admin-field-heading">
+                <p className="text-sm font-semibold text-text-1">{field.label}</p>
             </div>
-            <span
-                className={clsx(
-                    'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
-                    on ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-text-3',
-                )}
-            >
-                {on ? 'On' : 'Off'}
-            </span>
+            {field.help || field.managed_by ? (
+                <div className="admin-field-help">
+                    {field.help ? (
+                        <p className="text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
+                    ) : null}
+                    {field.managed_by ? (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs text-text-3">
+                            <Lock size={12} className="shrink-0" aria-hidden="true" />
+                            Configured in {field.managed_by}
+                        </p>
+                    ) : null}
+                </div>
+            ) : null}
+            <div className="admin-field-control">
+                <span
+                    className={clsx(
+                        'inline-block shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
+                        on ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-text-3',
+                    )}
+                >
+                    {on ? 'On' : 'Off'}
+                </span>
+            </div>
         </div>
     );
 }

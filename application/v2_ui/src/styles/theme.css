@@ -350,6 +350,113 @@ html[data-font-size='xl'] {
         border-color: color-mix(in srgb, var(--text-3) 85%, transparent);
     }
 
+    /*
+     * One setting: label, help, and control.
+     *
+     * Stacked on a narrow card -- label, control, help, which is the order the page has
+     * always used. Once the card is wide enough, the label and its help take a left column
+     * and the control a right one, so a section reads as a list of settings rather than a
+     * column of inputs stretched across the screen. Container queries resolve against the
+     * card, so a larger text size moves a card back to stacked on its own.
+     */
+    .admin-field {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            'heading'
+            'control'
+            'help';
+        row-gap: 0.375rem;
+    }
+
+    .admin-field > .admin-field-heading {
+        grid-area: heading;
+    }
+
+    .admin-field > .admin-field-help {
+        grid-area: help;
+        max-width: 72ch;
+    }
+
+    .admin-field > .admin-field-control {
+        grid-area: control;
+    }
+
+    /* A short readout, such as an On/Off chip, stays beside its label when stacked. */
+    .admin-field.admin-field-inline {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            'heading control'
+            'help help';
+        column-gap: 0.75rem;
+    }
+
+    /* Independent switches, one per row until the card can hold two side by side. */
+    .admin-switch-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-switch-grid > * + * {
+        border-top: 1px solid var(--edge-strong);
+    }
+
+    @container (min-width: 50rem) {
+        .admin-field,
+        .admin-field.admin-field-inline {
+            grid-template-columns: minmax(13rem, 26rem) minmax(18rem, 1fr);
+            grid-template-rows: auto 1fr;
+            grid-template-areas:
+                'heading control'
+                'help control';
+            column-gap: 2rem;
+            row-gap: 0.25rem;
+            align-items: start;
+        }
+
+        /* Lines the label up with the text inside a 40px control. */
+        .admin-field > .admin-field-heading {
+            padding-top: 0.625rem;
+        }
+
+        .admin-field.admin-field-inline > .admin-field-heading {
+            padding-top: 0;
+        }
+
+        /* A nested row starts further in, so its label column gives up the indent and
+           its control lines up with the rows that are not nested. */
+        [data-setting-emphasis='dependent'] .admin-field {
+            grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
+        }
+
+        .admin-field[data-field-width='compact'] > .admin-field-control {
+            max-width: 12rem;
+        }
+
+        .admin-field[data-field-width='standard'] > .admin-field-control {
+            max-width: 26rem;
+        }
+
+        .admin-field[data-field-width='wide'] > .admin-field-control {
+            max-width: 42rem;
+        }
+    }
+
+    @container (min-width: 64rem) {
+        .admin-switch-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            column-gap: 2.5rem;
+        }
+
+        .admin-switch-grid > * + * {
+            border-top: 0;
+        }
+
+        .admin-switch-grid > :nth-child(n + 3) {
+            border-top: 1px solid var(--edge-strong);
+        }
+    }
+
     /* Relative to the card, not the viewport, so text scaling also triggers wrapping. */
     @container (max-width: 16rem) {
         .admin-settings-distinct .admin-section-body {

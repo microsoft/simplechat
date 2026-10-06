@@ -1,10 +1,11 @@
 # test_model_catalog_management.py
 """
 Classic and real React V2 catalog workflows on Azure Playwright or local Chromium.
-Version: 0.261.139
+Version: 0.261.258
 Implemented in: 0.261.126
 Orchestrate model picker under Manual controls, Auto by default, since: 0.261.137
 Single orchestration contract updated in: 0.261.139
+V2 catalog drawn natively, with sentence-case capability labels: 0.261.258
 
 API fixtures use the real pure profile validator/transform. They do not establish
 tenant authentication, Cosmos availability, or live provider readiness.
@@ -82,17 +83,25 @@ def mount_catalog(page, flavor):
     expect(page.locator("#mount-a").get_by_label("Search profiles")).to_be_visible()
 
 
+# The classic module labels capabilities by splitting the key; V2 writes them as sentences.
+CAPABILITY_LABELS = {
+    "classic": ("processes Text", "generates Text"),
+    "v2": ("Processes text", "Generates text"),
+}
+
+
 @pytest.mark.parametrize("flavor", ["classic", "v2"])
 def test_catalog_custom_profile_preferences_and_archive(catalog_page, flavor):
     page, _settings = catalog_page
     mount_catalog(page, flavor)
     root = page.locator("#mount-a")
+    processes_text, generates_text = CAPABILITY_LABELS[flavor]
     root.get_by_role("button", name="Add custom profile", exact=True).click()
     root.get_by_label("Name", exact=True).fill("Internal summary model")
     root.get_by_label("What this model is good at", exact=True).fill("Summarizes internal text.")
     root.get_by_label("Summarization", exact=True).select_option("strong")
-    root.get_by_label("processes Text", exact=True).select_option("true")
-    root.get_by_label("generates Text", exact=True).select_option("true")
+    root.get_by_label(processes_text, exact=True).select_option("true")
+    root.get_by_label(generates_text, exact=True).select_option("true")
     root.get_by_role("button", name="Save profile", exact=True).click()
     expect(root.get_by_text("Catalog saved.", exact=True)).to_be_visible()
     root.get_by_role("button", name="Internal summary model", exact=True).click()
@@ -128,9 +137,10 @@ def test_invalid_profile_preserves_form_and_mobile_layout(catalog_page, flavor):
     assert width
 
 
-def test_conflict_keeps_unsaved_profile(catalog_page):
+@pytest.mark.parametrize("flavor", ["classic", "v2"])
+def test_conflict_keeps_unsaved_profile(catalog_page, flavor):
     page, _settings = catalog_page
-    mount_catalog(page, "classic")
+    mount_catalog(page, flavor)
     root = page.locator("#mount-a")
     root.get_by_role("button", name="Add custom profile", exact=True).click()
     root.get_by_label("Name", exact=True).fill("Keep my draft")

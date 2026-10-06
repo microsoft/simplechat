@@ -36,10 +36,12 @@ Agents and actions can call tools, inspect documents, and automate work. Expose 
 
 ### Reading the V2 settings cards
 
-In V2, neutral header bands and larger titles separate the runtime, workspace
-permissions, catalog presentation, and template approval settings. Person and
-group icons help distinguish the similarly named permission controls, while the
-accent-backed **Enable Agents** row identifies the runtime's main switch.
+Every V2 settings card now uses the presentation these cards introduced; see
+[Reading V2 Admin Settings]({{ '/admin/' | relative_url }}#reading-v2-admin-settings).
+On this page, person and group icons help distinguish the similarly named
+permission controls, and the accent-backed **Enable Agents** row identifies the
+runtime's main switch, with **Workspace Mode** and its global-agent option indented
+beneath it.
 
 **Hero**, **Guidance**, and **Promoted agents** remain independently expandable.
 Their headers show setting counts while collapsed, and search reveals matching
@@ -47,8 +49,8 @@ fields inside them. At narrow widths or larger text sizes, controls wrap within
 their card. Use the existing save bar to save or discard edits; the visual
 treatment does not change defaults, permissions, or when settings take effect.
 
-This presentation was implemented in **0.261.093**, tracked in
-`application/single_app/config.py`.
+This presentation was implemented in **0.261.093** and extended to every V2 section
+in **0.261.258**, tracked in `application/single_app/config.py`.
 
 ### Agent Runtime {#agents-config}
 

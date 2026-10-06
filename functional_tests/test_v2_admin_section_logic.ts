@@ -1,9 +1,10 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.093
+// Version: 0.261.258
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
+// Every-section presentation and schema-derived hierarchy added in: 0.261.258
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -29,7 +30,15 @@ import {
 } from '../application/v2_ui/src/components/admin/SettingsSection';
 import { agentSectionAppearances } from '../application/v2_ui/src/components/admin/agentSectionAppearance';
 import {
+    ADMIN_NAV_ICONS,
+    FALLBACK_SECTION_ICON,
+    resolveAdminNavIcon,
+} from '../application/v2_ui/src/components/admin/adminSectionIcons';
+import {
     collectRequirements,
+    computeSectionStatus,
+    dependencyKeys,
+    deriveFieldHierarchy,
     deriveSectionStatus,
     findCapabilityField,
     hasValue,
@@ -338,15 +347,141 @@ check('dependency evaluation agrees with the server rules', () => {
     assert.equal(evaluateDependency({ key: 'missing', equals: false }, read), true);
 });
 
-check('distinct presentation is limited to the four Agents sections', () => {
-    assert.deepEqual(Object.keys(agentSectionAppearances), [
-        'agents-config',
-        'agent-toggles-card',
-        'agents-page-customization-card',
-        'agent-template-approvals-section',
-    ]);
-    for (const id of ['core-plugin-toggles', 'inbound-mcp-configuration', 'unknown-section']) {
-        assert.equal(agentSectionAppearances[id], undefined);
+/** The Agent Runtime fields, shaped as `admin_settings_fields.py` declares them. */
+const AGENT_RUNTIME_FIELDS: AdminField[] = [
+    { key: 'enable_semantic_kernel', type: 'switch', label: 'Enable Agents' },
+    {
+        key: 'per_user_semantic_kernel',
+        type: 'switch',
+        label: 'Workspace Mode',
+        depends_on: { key: 'enable_semantic_kernel', equals: true },
+    },
+    {
+        key: 'merge_global_semantic_kernel_with_workspace',
+        type: 'switch',
+        label: 'Add Global Agents and Actions to Workspaces',
+        depends_on: [
+            { key: 'enable_semantic_kernel', equals: true },
+            { key: 'per_user_semantic_kernel', equals: true },
+        ],
+    },
+    {
+        key: 'enable_multi_agent_orchestration',
+        type: 'switch',
+        label: 'Multi-Agent Orchestration',
+        readonly: true,
+        depends_on: { key: 'enable_semantic_kernel', equals: true },
+    },
+    {
+        type: 'component',
+        component: 'agent-orchestration',
+        label: 'Orchestration',
+        depends_on: { key: 'enable_semantic_kernel', equals: true },
+    },
+];
+
+function emphasisOf(fields: AdminField[]): Record<string, string> {
+    return Object.fromEntries(deriveFieldHierarchy(fields).emphasis);
+}
+
+check('every navigation icon name resolves, and an unknown one falls back', () => {
+    for (const [name, icon] of Object.entries(ADMIN_NAV_ICONS)) {
+        assert.ok(name.startsWith('bi-'), `${name} is not a Bootstrap icon name`);
+        assert.equal(resolveAdminNavIcon(name), icon);
+    }
+    assert.equal(resolveAdminNavIcon(undefined), FALLBACK_SECTION_ICON);
+    assert.equal(resolveAdminNavIcon('bi-not-a-real-icon'), FALLBACK_SECTION_ICON);
+});
+
+check('the derived hierarchy reproduces the Agent Runtime presentation', () => {
+    // These are exactly the cues the Agents cards were first drawn with by hand.
+    assert.deepEqual(emphasisOf(AGENT_RUNTIME_FIELDS), {
+        enable_semantic_kernel: 'primary',
+        per_user_semantic_kernel: 'dependent',
+        merge_global_semantic_kernel_with_workspace: 'dependent',
+    });
+    assert.deepEqual(
+        [...deriveFieldHierarchy(AGENT_RUNTIME_FIELDS).leads].sort(),
+        ['enable_semantic_kernel', 'per_user_semantic_kernel'],
+    );
+});
+
+check('a leading switch nests the settings that only exist while it is on', () => {
+    const fields: AdminField[] = [
+        { key: 'enable_ai_notice', type: 'switch', label: 'Show notice' },
+        { key: 'ai_notice_message', type: 'textarea', label: 'Text', depends_on: { key: 'enable_ai_notice', equals: true } },
+        { key: 'ai_notice_frequency', type: 'select', label: 'Frequency', depends_on: { key: 'enable_ai_notice', equals: true } },
+    ];
+    assert.deepEqual(emphasisOf(fields), {
+        enable_ai_notice: 'primary',
+        ai_notice_message: 'dependent',
+        ai_notice_frequency: 'dependent',
+    });
+});
+
+check('a switch leading only its own group is nested under, never promoted', () => {
+    // Azure AI Search: routing through APIM is a mode of the connection group, and both
+    // branches -- shown while it is on and while it is off -- belong to it.
+    const connection = { id: 'connection', label: 'Connection', variant: 'connection' as const };
+    const fields: AdminField[] = [
+        { key: 'enable_ai_search_apim', type: 'switch', label: 'Route through APIM', group: connection },
+        { key: 'apim_endpoint', type: 'text', label: 'APIM endpoint', group: connection, depends_on: { key: 'enable_ai_search_apim', equals: true } },
+        { key: 'search_endpoint', type: 'text', label: 'Endpoint', group: connection, depends_on: { key: 'enable_ai_search_apim', equals: false } },
+    ];
+    assert.deepEqual(emphasisOf(fields), {
+        apim_endpoint: 'dependent',
+        search_endpoint: 'dependent',
+    });
+});
+
+check('a capability nests its ungrouped settings but not its groups', () => {
+    const notice = { id: 'notice', label: 'User notice' };
+    const fields: AdminField[] = [
+        capability('enable_web_search'),
+        { key: 'web_search_max_results', type: 'number', label: 'Results', depends_on: { key: 'enable_web_search', equals: true } },
+        { key: 'web_search_endpoint', ...required('web_search_endpoint'), depends_on: { key: 'enable_web_search', equals: true } },
+        { key: 'enable_notice', type: 'switch', label: 'Notice', group: notice, depends_on: { key: 'enable_web_search', equals: true } },
+        {
+            key: 'notice_text',
+            type: 'textarea',
+            label: 'Notice text',
+            group: notice,
+            depends_on: { all_of: [{ key: 'enable_web_search', equals: true }, { key: 'enable_notice', equals: true }] },
+        },
+    ];
+    assert.deepEqual(emphasisOf(fields), {
+        enable_web_search: 'primary',
+        web_search_max_results: 'dependent',
+        notice_text: 'dependent',
+    });
+});
+
+check('mirrors, components, readouts, and interrupted runs never nest', () => {
+    const fields: AdminField[] = [
+        { key: 'enable_thing', type: 'switch', label: 'Thing' },
+        { key: 'thing_mirror', type: 'switch', label: 'Mirror', readonly: true, depends_on: { key: 'enable_thing', equals: true } },
+        { key: 'thing_mode', type: 'select', label: 'Mode', depends_on: { key: 'enable_thing', equals: true } },
+        { type: 'status', label: 'Readout', status_source: 'thing', depends_on: { key: 'enable_thing', equals: true } },
+    ];
+    // The mirror right under the lead interrupts the run, so the select below it is not
+    // drawn as nested even though it shares the condition.
+    assert.deepEqual(emphasisOf(fields), { enable_thing: 'primary' });
+    assert.deepEqual(dependencyKeys({ any_of: [{ key: 'a' }, [{ key: 'b' }, { flag: 'c' }]] } as never), ['a', 'b']);
+});
+
+check('a declared status rule wins over the derived one', () => {
+    const fields = [capability('enable_thing'), required('thing_endpoint')];
+    const rule = { enabled_key: 'enable_declared' };
+    assert.equal(computeSectionStatus(fields, { enable_thing: true }, {}, rule), 'off');
+    assert.equal(computeSectionStatus(fields, { enable_thing: true }, {}), 'incomplete');
+    assert.equal(computeSectionStatus(fields, { enable_thing: true, enable_declared: true }, {}, rule), 'ready');
+});
+
+check('only the workspace-permission cues remain declared by hand', () => {
+    assert.deepEqual(Object.keys(agentSectionAppearances), ['agent-toggles-card']);
+    for (const field of Object.values(agentSectionAppearances['agent-toggles-card']?.fields ?? {})) {
+        assert.equal(field?.emphasis, undefined, 'emphasis is derived from the schema now');
+        assert.ok(field?.Icon, 'each permission keeps its person or group cue');
     }
 });
 
@@ -376,47 +511,74 @@ function renderSection(
     }));
 }
 
-check('presentation keeps rendering order, capability callbacks, and visibility intact', () => {
-    const fields: AdminField[] = [
-        capability('enable_semantic_kernel'),
-        { key: 'per_user_semantic_kernel', type: 'switch', label: 'Workspace Mode' },
-        {
-            key: 'merge_global_semantic_kernel_with_workspace',
-            type: 'switch',
-            label: 'Include global agents',
-            depends_on: { key: 'per_user_semantic_kernel', equals: true },
-        },
-    ];
+check('every section renders as a labelled region with its derived emphasis', () => {
     const values = { enable_semantic_kernel: true, per_user_semantic_kernel: false };
-    const plainCalls: string[] = [];
-    const distinctCalls: string[] = [];
-    const plain = renderSection(undefined, fields, values, plainCalls);
-    const distinct = renderSection(
-        agentSectionAppearances['agents-config'], fields, values, distinctCalls,
-    );
+    const calls: string[] = [];
+    const markup = renderSection(undefined, AGENT_RUNTIME_FIELDS, values, calls);
 
-    assert.deepEqual(distinctCalls, plainCalls);
-    assert.deepEqual(distinctCalls, [
-        'capability:enable_semantic_kernel',
+    // Merge-global hides while Workspace Mode is off; order and visibility are unchanged.
+    assert.deepEqual(calls, [
+        'field:enable_semantic_kernel',
         'field:per_user_semantic_kernel',
+        'field:enable_multi_agent_orchestration',
+        'field:undefined',
     ]);
-    assert.doesNotMatch(plain, /admin-settings-distinct|role="region"/);
-    assert.match(distinct, /role="region" aria-labelledby="agents-config-title"/);
-    assert.match(distinct, /data-setting-emphasis="primary"/);
-    assert.match(distinct, /data-setting-emphasis="dependent"/);
-    assert.equal(distinct.includes('Configured'), plain.includes('Configured'));
-    assert.doesNotMatch(distinct, /Include global agents/);
+    assert.match(markup, /class="[^"]*admin-settings-distinct/);
+    assert.match(markup, /role="region" aria-labelledby="agents-config-title"/);
+    assert.match(markup, /id="agents-config-title" tabindex="-1"/);
+    assert.match(markup, /data-setting-emphasis="primary"/);
+    assert.match(markup, /data-setting-emphasis="dependent"/);
+    assert.doesNotMatch(markup, /Add Global Agents/);
+    assert.doesNotMatch(markup, /admin-switch-grid/, 'a lead and its nested switch keep their own rows');
 });
 
 check('runtime emphasis does not turn an ordinary switch into a capability status', () => {
-    const fields = [{ key: 'enable_semantic_kernel', type: 'switch', label: 'Enable Agents' }];
     const calls: string[] = [];
-    const markup = renderSection(
-        agentSectionAppearances['agents-config'], fields, { enable_semantic_kernel: true }, calls,
-    );
-    assert.deepEqual(calls, ['field:enable_semantic_kernel']);
+    const markup = renderSection(undefined, AGENT_RUNTIME_FIELDS, { enable_semantic_kernel: true }, calls);
     assert.match(markup, /data-setting-emphasis="primary"/);
     assert.doesNotMatch(markup, /Configured|Needs configuration/);
+});
+
+check('independent switches flow into one grid; an override can drop an emphasis', () => {
+    const fields: AdminField[] = [
+        { key: 'allow_a', type: 'switch', label: 'Allow A' },
+        { key: 'allow_b', type: 'switch', label: 'Allow B' },
+        { key: 'allow_c', type: 'switch', label: 'Allow C' },
+        { key: 'name', type: 'text', label: 'Name' },
+        { key: 'allow_d', type: 'switch', label: 'Allow D' },
+    ];
+    const calls: string[] = [];
+    const markup = renderSection(undefined, fields, {}, calls);
+    assert.equal(markup.match(/class="admin-switch-grid"/g)?.length, 1, 'a lone switch after the text field stays on its own row');
+    assert.match(markup, /admin-switch-grid"[^>]*><span>Allow A<\/span><span>Allow B<\/span><span>Allow C<\/span><\/div>/);
+    assert.deepEqual(calls, ['field:allow_a', 'field:allow_b', 'field:allow_c', 'field:name', 'field:allow_d']);
+
+    const overridden = renderSection(
+        { fields: { enable_semantic_kernel: { emphasis: 'none' } } },
+        AGENT_RUNTIME_FIELDS,
+        { enable_semantic_kernel: true, per_user_semantic_kernel: true },
+        [],
+    );
+    assert.doesNotMatch(overridden, /data-setting-emphasis="primary"/);
+    assert.match(overridden, /data-setting-emphasis="dependent"/);
+});
+
+check('a precomputed status is shown in place of a derived one', () => {
+    const fields = [capability('enable_thing'), required('thing_endpoint')];
+    const markup = renderToStaticMarkup(createElement(SettingsSection, {
+        sectionId: 'thing-section',
+        label: 'Thing',
+        groupLabel: 'Group',
+        tabLabel: '',
+        fields,
+        settings: { enable_thing: false },
+        draft: {},
+        status: 'ready',
+        renderField: () => null,
+        renderCapability: () => null,
+    }));
+    assert.match(markup, /Configured/);
+    assert.doesNotMatch(markup, />Off</);
 });
 
 check('distinct subsection presentation preserves collapsed defaults and counts', () => {
@@ -425,9 +587,7 @@ check('distinct subsection presentation preserves collapsed defaults and counts'
         { key: 'agents_page_subtitle', type: 'text', label: 'Hero Subtitle', group: 'Hero' },
     ];
     const calls: string[] = [];
-    const markup = renderSection(
-        agentSectionAppearances['agents-page-customization-card'], fields, {}, calls,
-    );
+    const markup = renderSection(undefined, fields, {}, calls);
     assert.match(markup, /aria-expanded="false"/);
     assert.match(markup, /2 settings/);
     assert.doesNotMatch(markup, /Hero Title|Hero Subtitle/);
