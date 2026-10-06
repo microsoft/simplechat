@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.260)**
+
+#### Bug Fixes
+
+*   **V2 Web Search Test Uses the Saved Foundry Connection**
+    *   **Test web search** in V2 Admin Settings reported "Foundry Project Endpoint is required", "Foundry API Version is required" and "Foundry Agent ID is required" for a saved connection whose values were on screen. The Foundry connection is saved inside `web_search_agent`, but the test read each field as a top-level setting, so it only worked before the values were saved. It now reads the saved values, including a service principal's authentication type and masked client secret, which the server swaps for the stored secret.
+    *   The same fix shows **Managed Identity Type**, or the service principal fields, for the saved authentication type, and marks a saved connection as configured. Clearing a saved client secret now shows the removal warning and **Undo**.
+    *   The **Document action capabilities** card now shows the chat and workflow limits for Analyze, Comparison and Merge while that action is enabled. The section card used to hide them once the setting was saved.
+    *   (Ref: `adminFields.ts` `readSettingValue` and `buildConnectionTestPayload`, `adminSections.ts`, `ConnectionTest.tsx`, `SettingsSection.tsx`, `AdminSettingsPage.tsx`, `test_v2_admin_nested_setting_reads.py`, [V2 Admin Web Search Nested Settings Fix](fixes/V2_ADMIN_WEB_SEARCH_NESTED_SETTINGS_FIX.md))
+
 ### **(v0.261.259)**
 
 #### Bug Fixes
