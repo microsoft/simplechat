@@ -32,6 +32,7 @@ import { OrchestrationRunView } from '../../../application/v2_ui/src/components/
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
 import { OrchestrationPlanEditorHost } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanEditor';
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
+import { ConversationDrawer } from '../../../application/v2_ui/src/components/chat/ConversationDrawer';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
 import { ParticipantsPanel } from '../../../application/v2_ui/src/components/chat/ParticipantsPanel';
@@ -159,6 +160,7 @@ type ComponentName =
     | 'OrchestrationRunView'
     | 'OrchestrationMapView'
     | 'MessageList'
+    | 'ConversationDrawer'
     | 'Composer'
     | 'PromptExperience'
     | 'ChatExperience'
@@ -180,6 +182,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationRunView,
     OrchestrationMapView,
     MessageList,
+    ConversationDrawer,
     Composer,
     PromptExperience,
     ChatExperience,

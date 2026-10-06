@@ -55,7 +55,16 @@ import {
     isReferenceImageFileName,
 } from '../../lib/imageReferences';
 import { uploadDocument, type ChatUploadResponse } from '../../lib/endpoints';
-import { findMentionAtCaret, replaceMention, type MentionMatch, type MentionSuggestion } from '../../lib/mentions';
+import {
+    addComposerMention,
+    composerMentionFromSuggestion,
+    findMentionAtCaret,
+    removeComposerMention,
+    removeMentionQuery,
+    type ComposerMention,
+    type MentionMatch,
+    type MentionSuggestion,
+} from '../../lib/mentions';
 import { attachedPromptContent, attachedPromptIsEdited } from '../../lib/promptRequest';
 import { filterPromptsForSlash, readSlashQuery, type SlashQuery } from '../../lib/promptSlash';
 import type { PromptResolutionContext } from '../../lib/promptVariables';
@@ -74,6 +83,7 @@ import { ContextChips } from './ContextChips';
 import { ContextMenu, useContextSuggestions, type ContextSearchScope } from './ContextMenu';
 import { DocumentPickerPopover } from './DocumentPickerPopover';
 import { MentionMenu, useMentionSuggestions } from './MentionMenu';
+import { ComposerMentionChips } from './MentionPills';
 import { PromptSlashMenu } from './PromptSlashMenu';
 
 export interface ComposerEditorProps {
@@ -476,15 +486,34 @@ export function ComposerEditor({
         setSlash(null);
         focusAt(caret);
     };
+    /**
+     * Turn the `@query` being typed into a chip above the message box.
+     *
+     * The text is taken out rather than completed, so the message reads as written and the
+     * chips say who it is for. They are put back in front of the message when it is sent.
+     */
     const applyMention = (suggestion: MentionSuggestion) => {
         if (!mention) {
             return;
         }
-        const next = replaceMention(draft.text, mention, suggestion.mention_text);
-        applyText(next.value);
+        const next = removeMentionQuery(draft.text, mention);
+        const chip = composerMentionFromSuggestion(suggestion);
+        onChange((current) => ({
+            ...current,
+            text: next.value,
+            contextItems: reconcileContextItems(next.value, current.contextItems),
+            mentions: addComposerMention(current.mentions ?? [], chip),
+        }));
         setMention(null);
         onMentionSelected?.(suggestion);
         focusAt(next.caretIndex);
+    };
+    const removeMentionChip = (chip: ComposerMention) => {
+        onChange((current) => ({
+            ...current,
+            mentions: removeComposerMention(current.mentions ?? [], chip.key),
+        }));
+        focusAt();
     };
     const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (event.nativeEvent.isComposing) {
@@ -854,6 +883,8 @@ export function ComposerEditor({
                     onClose={() => setPickerOpen(false)} placement={menuPlacement}
                     imagesOnly={referenceUploadsOnly} />
             )}
+            <ComposerMentionChips mentions={draft.mentions ?? []} disabled={disabled}
+                onRemove={(chip) => !disabled && removeMentionChip(chip)} />
             <ContextChips items={draft.contextItems}
                 onRemove={(item) => !disabled && removeContextChip(item)}
                 onRemoveAll={(items) => !disabled && removeContextChips(items)}

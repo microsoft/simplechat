@@ -3,6 +3,7 @@
 import json
 import threading
 import time
+import uuid
 
 from content_screening.access import build_available_document_response, public_history_messages
 from content_screening.contracts import ScreeningError
@@ -54,6 +55,13 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_conversation_cache import bump_conversation_cache_version
+from functions_collaboration_ai_activity import describe_ai_activity_step
+from functions_collaboration_generated_documents import (
+    authorize_generated_document_download,
+    can_download_generated_document,
+    collect_generated_documents,
+)
+from functions_documents import build_document_download_response
 from functions_saved_analysis import sanitize_saved_analysis_messages
 from functions_chat_stream_events import (
     USER_MESSAGE_PERSISTED_EVENT_TYPE,
@@ -345,6 +353,83 @@ def _build_collaboration_event(conversation_id, event_type, payload):
         'occurred_at': utc_now_iso(),
         'payload': payload,
     }
+
+
+AI_ACTIVITY_STEP_MAX_LENGTH = 140
+AI_ACTIVITY_NAME_MAX_LENGTH = 120
+
+
+def _describe_collaboration_ai_target(invocation_target, agent_info):
+    """Return the display name and kind of what an AI request asked, for its activity line."""
+    target = invocation_target if isinstance(invocation_target, dict) else {}
+    name = str(target.get('display_name') or '').strip()
+    target_type = str(target.get('target_type') or '').strip().lower()
+    if not name and isinstance(agent_info, dict):
+        name = str(agent_info.get('display_name') or agent_info.get('name') or '').strip()
+        target_type = target_type or 'agent'
+    if target_type not in ('agent', 'model', 'image'):
+        target_type = 'model'
+    return (name or 'Assistant')[:AI_ACTIVITY_NAME_MAX_LENGTH], target_type
+
+
+class CollaborationAiActivity:
+    """Tell every participant that an AI request is running, what it is doing, and when it ends.
+
+    One instance covers one request. ``started`` and ``finished`` bracket the run, and
+    ``step`` repeats the run's latest progress step in plain words
+    (``describe_ai_activity_step``), never a thought's technical text or detail. Publishing never
+    raises: an activity line is advisory and must not break the answer it describes.
+    """
+
+    def __init__(self, conversation_id, display_name, target_type, requested_by, request_message_id, publish=None):
+        self.conversation_id = conversation_id
+        self.run_id = uuid.uuid4().hex
+        self.display_name = display_name
+        self.target_type = target_type
+        self.requested_by = {
+            'user_id': str((requested_by or {}).get('user_id') or '').strip(),
+            'display_name': str((requested_by or {}).get('display_name') or '').strip(),
+        }
+        self.request_message_id = str(request_message_id or '').strip()
+        self.status = 'failed'
+        self._publish = publish or COLLABORATION_EVENT_REGISTRY.publish
+        self._last_step = ''
+        self._finished = False
+
+    def _emit(self, event_type, run_payload):
+        try:
+            self._publish(
+                self.conversation_id,
+                _build_collaboration_event(self.conversation_id, event_type, {'run': run_payload}),
+            )
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION] Could not publish {event_type} for {self.conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+
+    def started(self):
+        self._emit('collaboration.ai.started', {
+            'run_id': self.run_id,
+            'display_name': self.display_name,
+            'target_type': self.target_type,
+            'requested_by': self.requested_by,
+            'request_message_id': self.request_message_id,
+            'started_at': utc_now_iso(),
+        })
+
+    def step(self, content):
+        step = ' '.join(str(content or '').split())[:AI_ACTIVITY_STEP_MAX_LENGTH]
+        if not step or step == self._last_step or self._finished:
+            return
+        self._last_step = step
+        self._emit('collaboration.ai.progress', {'run_id': self.run_id, 'step': step})
+
+    def finished(self):
+        if self._finished:
+            return
+        self._finished = True
+        self._emit('collaboration.ai.finished', {'run_id': self.run_id, 'status': self.status})
 
 
 def _hydrate_collaboration_stream_actions(payload, viewer_user_id, conversation_id):
@@ -1735,6 +1820,116 @@ def register_route_backend_collaboration(bp):
             )
             return jsonify({'error': 'Failed to load collaborative conversation messages'}), 500
 
+    @bp.route('/api/collaboration/conversations/<conversation_id>/generated-documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_collaboration_generated_documents_api(conversation_id):
+        """List the documents agents generated in this conversation, and which the reader may download."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_view_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+                allow_pending=False,
+            )
+            settings = get_settings()
+            documents = []
+            for document in collect_generated_documents(list_collaboration_messages(conversation_id)):
+                documents.append({
+                    'document_id': document['document_id'],
+                    'file_name': document['file_name'],
+                    'workspace_scope': document['workspace_scope'],
+                    'preview': document['preview'],
+                    'message_id': document['message_id'],
+                    'created_at': document['created_at'],
+                    'can_download': can_download_generated_document(
+                        current_user['user_id'], document, settings=settings,
+                    ),
+                })
+            return jsonify({'documents': documents}), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative conversation not found'}), 404
+        except PermissionError as exc:
+            log_event(
+                f'[COLLABORATION] Permission denied while listing generated documents for {conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'You do not have access to this conversation'}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION] Failed to list generated documents for {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to list generated documents'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/generated-documents/<document_id>/download',
+        methods=['GET'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def download_collaboration_generated_document_api(conversation_id, document_id):
+        """Download a document an agent generated in this conversation, under its workspace's rules."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_view_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+                allow_pending=False,
+            )
+            # Only a document this conversation produced can be fetched through it.
+            document = next(
+                (
+                    candidate
+                    for candidate in collect_generated_documents(list_collaboration_messages(conversation_id))
+                    if candidate['document_id'] == document_id
+                ),
+                None,
+            )
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+            try:
+                document_record, group_id = authorize_generated_document_download(
+                    current_user['user_id'], document,
+                )
+            except LookupError:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            return build_document_download_response(
+                document_record,
+                user_id=current_user['user_id'],
+                group_id=group_id,
+            )
+        except FileNotFoundError:
+            return jsonify({'error': 'This document is not available yet.'}), 404
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative conversation not found'}), 404
+        except PermissionError as exc:
+            log_event(
+                f'[COLLABORATION] Permission denied while downloading a generated document for {conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'You do not have permission to download this document'}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION] Failed to download generated document for {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
+
     @bp.route('/api/collaboration/conversations/<conversation_id>/messages/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -2688,6 +2883,16 @@ def register_route_backend_collaboration(bp):
             stream_request_payload['m365_collaboration_message_id'] = user_message_doc['id']
             pending_cards = {}
             pending_request_id = None
+            target_name, target_type = _describe_collaboration_ai_target(
+                invocation_target, data.get('agent_info'),
+            )
+            ai_activity = CollaborationAiActivity(
+                conversation_id,
+                target_name,
+                target_type,
+                requested_by=current_user,
+                request_message_id=serialized_user_message.get('id'),
+            )
 
             def collaboration_stream_error(error_message, **extra_fields):
                 """Serialize a stream error that stays attributed to this shared conversation.
@@ -2709,6 +2914,7 @@ def register_route_backend_collaboration(bp):
                 )
 
             def generate_stream():
+                ai_activity.started()
                 try:
                     yield build_user_message_persisted_stream_event(
                         conversation_id,
@@ -2766,6 +2972,8 @@ def register_route_backend_collaboration(bp):
                                 stream_payload = json.loads(json_text)
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
+
+                            ai_activity.step(describe_ai_activity_step(stream_payload))
 
                             if stream_payload.get('type') == 'm365_pending_action' or 'm365_pending_actions' in stream_payload:
                                 stream_payload = _hydrate_collaboration_stream_actions(
@@ -2827,6 +3035,7 @@ def register_route_backend_collaboration(bp):
 
                             source_message_id = str(stream_payload.get('message_id') or '').strip()
                             if stream_payload.get('cancelled') or stream_payload.get('canceled'):
+                                ai_activity.status = 'cancelled'
                                 if not source_message_id:
                                     transformed_payload = {
                                         **stream_payload,
@@ -2916,6 +3125,8 @@ def register_route_backend_collaboration(bp):
                                     },
                                 ),
                             )
+                            if ai_activity.status != 'cancelled':
+                                ai_activity.status = 'completed'
                             serialized_assistant_message = hydrate_m365_pending_action_cards(
                                 [serialized_assistant_message], current_user['user_id'], conversation_id,
                             )[0]
@@ -2975,6 +3186,10 @@ def register_route_backend_collaboration(bp):
                         exceptionTraceback=True,
                     )
                     yield collaboration_stream_error('Failed to stream collaborative AI response')
+                finally:
+                    # Also reached when the requester disconnects: nothing more will arrive
+                    # through this request, so its activity line must not outlive it.
+                    ai_activity.finished()
 
             return Response(stream_with_context(generate_stream()), mimetype='text/event-stream')
         except CosmosResourceNotFoundError:

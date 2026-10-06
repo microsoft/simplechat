@@ -947,6 +947,27 @@ either way. Workspace members who can't open your workflow see only **Created
 by a workflow**. See
 [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
 
+## Read results in a conversation the workflow creates
+
+An agent workflow can create a conversation as part of its work through the
+Simple Chat action, for example a group conversation for a response team.
+Starting in **0.261.253**, that conversation is where people read the result:
+
+- When the run finishes, its full reply is posted there with everything it found,
+  including maps and the sources its tools returned.
+- If the agent also posted its own message there during the run, such as an
+  opening briefing, that message is hidden once the reply arrives. The
+  conversation doesn't show the same findings twice, once as if the person the
+  workflow runs as had written them. The message is still stored.
+- The workflow's own conversation, **Workflow: *name***, is hidden from the chat
+  list the first time a run delivers its result this way. It still records every
+  run. Open it from the workflow alert's **Show more** links, or with the eye icon
+  that shows hidden conversations in the classic chat list. If you show it again,
+  later runs leave it visible.
+
+A workflow that doesn't create a conversation keeps its results in its own
+conversation, as before.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

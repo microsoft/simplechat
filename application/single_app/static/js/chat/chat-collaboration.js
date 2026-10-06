@@ -1015,6 +1015,12 @@ async function loadConversationMessages(conversationId) {
             .map(message => String(message.id))
     );
     messages.forEach(message => {
+        // A workflow run's own post is replaced by its mirrored reply, which says the same.
+        // It stays cached so a reply that quotes it still resolves.
+        if (message?.metadata?.superseded_by_workflow_reply) {
+            cacheCollaborationMessage(message);
+            return;
+        }
         const decoratedMessage = decorateReplyMessage(message);
         if (decoratedMessage.role === 'assistant' && generatedImageProposalMessages.has(decoratedMessage.id)) {
             decoratedMessage.generated_image_proposals = generatedImageProposalMessages.get(decoratedMessage.id);
