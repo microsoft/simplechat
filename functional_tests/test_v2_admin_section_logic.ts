@@ -1,11 +1,13 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.260
+// Version: 0.261.266
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
 // Every-section presentation and schema-derived hierarchy added in: 0.261.258
-// Anchored panels and collapsed-group summaries added in: 0.261.260
+// Values saved at a nested path covered in: 0.261.260
+// Enhanced extraction engine, open_until_set and on_enable coverage added in: 0.261.265
+// Anchored panels and collapsed-group summaries added in: 0.261.266
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -29,6 +31,7 @@ import {
     SettingsSection,
     type SettingsSectionProps,
 } from '../application/v2_ui/src/components/admin/SettingsSection';
+import { EnhancedExtractionEngine } from '../application/v2_ui/src/components/admin/EnhancedExtractionEngine';
 import { agentSectionAppearances } from '../application/v2_ui/src/components/admin/agentSectionAppearance';
 import {
     ADMIN_NAV_ICONS,
@@ -48,12 +51,16 @@ import {
     shouldGroupStartOpen,
 } from '../application/v2_ui/src/lib/adminSections';
 import {
+    applyEnableEffect,
+    buildFieldIndex,
     groupFields,
     evaluateDependency,
+    SECRET_PLACEHOLDER,
     type AdminField,
     type AdminFieldDependency,
     type RenderedFieldGroup,
 } from '../application/v2_ui/src/lib/adminFields';
+import { resolveEnhancedExtractionEngine } from '../application/v2_ui/src/lib/enhancedExtraction';
 
 const checks: [string, () => void][] = [];
 function check(name: string, fn: () => void) {
@@ -815,6 +822,404 @@ check('a panel whose switch a search filtered out falls back to the card body', 
     assert.doesNotMatch(markup, /data-anchored-to/);
     assert.match(markup, /Personal workspaces · Access/);
     assert.match(markup, /Group workspaces · Access/);
+});
+
+/**
+ * A connection saved inside a container, declared the way Web Search's is.
+ *
+ * The draft is keyed flat, but the saved values live under `nested_agent`, so a reader
+ * that treats each key as a top-level setting finds nothing once the values are saved.
+ */
+const NESTED_SETTINGS = {
+    enable_nested: true,
+    nested_agent: {
+        connection: {
+            endpoint: 'https://example.invalid',
+            authentication_type: 'managed_identity',
+            enabled: true,
+        },
+    },
+};
+
+check('a required value saved inside a container reads as configured', () => {
+    const fields = [
+        capability('enable_nested'),
+        required('nested_endpoint', { paths: ['nested_agent.connection.endpoint'] }),
+    ];
+    const fieldsByKey = buildFieldIndex({ 'nested-section': fields });
+
+    assert.equal(deriveSectionStatus(fields, NESTED_SETTINGS, {}, fieldsByKey), 'ready');
+    assert.equal(computeSectionStatus(fields, NESTED_SETTINGS, {}, undefined, fieldsByKey), 'ready');
+    // An unsaved edit still decides the status before the save lands.
+    assert.equal(
+        deriveSectionStatus(fields, NESTED_SETTINGS, { nested_endpoint: '' }, fieldsByKey),
+        'incomplete',
+    );
+});
+
+check('the shell shows a field gated on a value saved inside a container', () => {
+    // Both nested descriptors: `paths`, as the Web Search connection declares, and
+    // `settings_path`, as the document action limits declare.
+    const fields: AdminField[] = [
+        capability('enable_nested'),
+        {
+            key: 'nested_auth_type',
+            type: 'select',
+            label: 'Authentication Type',
+            paths: ['nested_agent.connection.authentication_type'],
+        },
+        {
+            key: 'nested_identity_type',
+            type: 'select',
+            label: 'Managed Identity Type',
+            paths: ['nested_agent.connection.managed_identity_type'],
+            depends_on: { key: 'nested_auth_type', equals: 'managed_identity' },
+        },
+        {
+            key: 'nested_enabled',
+            type: 'switch',
+            label: 'Enabled',
+            settings_path: ['nested_agent', 'connection', 'enabled'],
+        },
+        {
+            key: 'nested_limit',
+            type: 'number',
+            label: 'Limit',
+            settings_path: ['nested_agent', 'connection', 'limit'],
+            depends_on: { key: 'nested_enabled', equals: true },
+        },
+    ];
+    const calls: string[] = [];
+    renderToStaticMarkup(createElement(SettingsSection, {
+        sectionId: 'nested-section',
+        label: 'Nested',
+        groupLabel: 'Group',
+        tabLabel: '',
+        fields,
+        settings: NESTED_SETTINGS,
+        draft: {},
+        fieldsByKey: buildFieldIndex({ 'nested-section': fields }),
+        renderField: (field) => {
+            calls.push(`field:${field.key}`);
+            return createElement('span', { key: field.key }, field.label);
+        },
+        renderCapability: () => null,
+    }));
+
+    assert.ok(
+        calls.includes('field:nested_identity_type'),
+        'the identity type is hidden although the authentication type it depends on is saved',
+    );
+    assert.ok(
+        calls.includes('field:nested_limit'),
+        'the limit is hidden although the flag it depends on is saved',
+    );
+});
+
+// --- Enhanced Extraction ------------------------------------------------------------
+//
+// Enhanced extraction and the Content Understanding connection behind it are one card,
+// led by the switch. These checks hold the three decisions that make that card read as
+// one capability: an optional connection opens while it is blank, the engine in force is
+// named, and turning the switch on brings the extraction mode with it.
+
+const MODE_KEY = 'document_intelligence_pdf_image_extraction_mode';
+const CU_ENDPOINT = 'azure_content_understanding_endpoint';
+const CU_AUTH = 'azure_content_understanding_authentication_type';
+const CU_KEY = 'azure_content_understanding_key';
+const CU_FLAG = { flag: 'content_understanding_supported', equals: true } as const;
+const ENHANCED_ON = { key: 'enable_enhanced_extraction', equals: true } as const;
+
+const ENHANCED_SWITCH: AdminField = {
+    key: 'enable_enhanced_extraction',
+    type: 'switch',
+    label: 'Enable Enhanced extraction',
+    default: false,
+    role: 'capability',
+    on_enable: { set: { [MODE_KEY]: 'auto' }, when: { key: MODE_KEY, equals: 'read' } },
+};
+
+const MODE_FIELD: AdminField = {
+    key: MODE_KEY,
+    type: 'select',
+    label: 'PDF and Image Extraction Mode',
+    default: 'read',
+    options: [
+        { value: 'read', label: 'Standard' },
+        { value: 'layout', label: 'Enhanced' },
+        { value: 'auto', label: 'Auto' },
+    ],
+    depends_on: ENHANCED_ON,
+};
+
+const CU_GROUP = {
+    id: 'content-understanding',
+    label: 'Content Understanding connection',
+    variant: 'connection' as const,
+};
+
+/** The shape of the declared section, down to the gates each field carries. */
+const ENHANCED_EXTRACTION_FIELDS: AdminField[] = [
+    ENHANCED_SWITCH,
+    MODE_FIELD,
+    {
+        type: 'component',
+        component: 'enhanced-extraction-engine',
+        label: 'Extraction engine',
+        depends_on: ENHANCED_ON,
+    },
+    {
+        key: CU_ENDPOINT,
+        type: 'text',
+        label: 'Foundry Endpoint',
+        group: { ...CU_GROUP, open_until_set: CU_ENDPOINT },
+        depends_on: [ENHANCED_ON, CU_FLAG],
+    },
+    {
+        key: CU_AUTH,
+        type: 'select',
+        label: 'Authentication Type',
+        group: CU_GROUP,
+        depends_on: [ENHANCED_ON, CU_FLAG],
+    },
+    {
+        key: 'azure_content_understanding_analyzer_id',
+        type: 'text',
+        label: 'Document Analyzer',
+        group: { id: 'analyzers', label: 'Content Understanding analyzers', variant: 'advanced' },
+        depends_on: [ENHANCED_ON, CU_FLAG],
+    },
+];
+
+function renderEnhancedExtraction(
+    settings: Record<string, unknown>,
+    runtimeFlags: Record<string, boolean> | undefined,
+    calls: string[],
+) {
+    return renderToStaticMarkup(createElement(SettingsSection, {
+        sectionId: 'enhanced-extraction-section',
+        label: 'Enhanced Extraction',
+        groupLabel: 'Knowledge',
+        tabLabel: 'Document Extraction',
+        fields: ENHANCED_EXTRACTION_FIELDS,
+        settings,
+        draft: {},
+        runtimeFlags,
+        renderField: (field) => {
+            calls.push(`field:${field.key ?? field.component}`);
+            return createElement('span', { key: field.key ?? field.component }, field.label);
+        },
+        renderCapability: (field) => {
+            calls.push(`capability:${field.key}`);
+            return createElement('span', { key: field.key }, field.label);
+        },
+    }));
+}
+
+check('an optional connection opens while the key it waits on is blank', () => {
+    const group: RenderedFieldGroup = {
+        ...renderedGroup('content-understanding', 'connection'),
+        openUntilSet: CU_ENDPOINT,
+    };
+    const read = (values: Record<string, unknown>) => (key: string) => values[key];
+
+    // Enhanced works without Content Understanding, so the section is ready rather than
+    // incomplete; the group still opens because connecting it is the likely next step.
+    assert.equal(shouldGroupStartOpen(group, 'ready', true, read({ [CU_ENDPOINT]: '' })), true);
+    assert.equal(
+        shouldGroupStartOpen(group, 'ready', true, read({ [CU_ENDPOINT]: 'https://cu.example.invalid' })),
+        false,
+        'a connected service reads as a summary',
+    );
+    assert.equal(shouldGroupStartOpen(group, 'off', false, read({})), false, 'not while the switch is off');
+    assert.equal(shouldGroupStartOpen(group, 'ready', true), false, 'no reader, no guess');
+    assert.equal(
+        shouldGroupStartOpen({ ...group, collapsed: true }, 'ready', true, read({})),
+        false,
+        'a group the schema asks to keep closed stays closed',
+    );
+});
+
+check('open_until_set survives when the field declaring it is not the first one shown', () => {
+    const fields: AdminField[] = [
+        { key: CU_AUTH, type: 'select', label: 'Authentication Type', group: CU_GROUP },
+        { key: CU_ENDPOINT, type: 'text', label: 'Foundry Endpoint', group: { ...CU_GROUP, open_until_set: CU_ENDPOINT } },
+    ];
+    assert.equal(groupFields(fields)[0].openUntilSet, CU_ENDPOINT);
+});
+
+check('the engine is Content Understanding only where it can actually run', () => {
+    const read = (values: Record<string, unknown>) => (key: string) => values[key];
+    const endpoint = 'https://cu.example.invalid/';
+
+    assert.deepEqual(
+        resolveEnhancedExtractionEngine(read({ [CU_ENDPOINT]: endpoint, [CU_KEY]: 'k' }), false),
+        { engine: 'document_intelligence', reason: 'unsupported_cloud' },
+        'a cloud without the service never uses it, however it is configured',
+    );
+    assert.deepEqual(
+        resolveEnhancedExtractionEngine(read({}), true),
+        { engine: 'document_intelligence', reason: 'missing_endpoint' },
+    );
+    assert.equal(
+        resolveEnhancedExtractionEngine(read({ [CU_ENDPOINT]: ' // ' }), true).reason,
+        'missing_endpoint',
+        'slashes alone are trimmed to nothing on the server too',
+    );
+    assert.equal(
+        resolveEnhancedExtractionEngine(read({ [CU_ENDPOINT]: endpoint, [CU_AUTH]: 'key', [CU_KEY]: '' }), true).reason,
+        'missing_key',
+    );
+    assert.equal(
+        resolveEnhancedExtractionEngine(read({ [CU_ENDPOINT]: endpoint, [CU_AUTH]: 'key', [CU_KEY]: SECRET_PLACEHOLDER }), true).engine,
+        'content_understanding',
+        'a stored key arrives as the placeholder and still counts',
+    );
+    assert.equal(
+        resolveEnhancedExtractionEngine(read({ [CU_ENDPOINT]: endpoint, [CU_AUTH]: 'managed_identity' }), true).engine,
+        'content_understanding',
+    );
+    assert.equal(
+        resolveEnhancedExtractionEngine(read({ [CU_ENDPOINT]: endpoint, [CU_AUTH]: 'something-else' }), true).reason,
+        'missing_key',
+        'the server treats an unrecognised authentication type as key authentication',
+    );
+});
+
+check('turning Enhanced on moves Standard to Auto, and turning it back off takes that back', () => {
+    const index = new Map<string, AdminField>([
+        ['enable_enhanced_extraction', ENHANCED_SWITCH],
+        [MODE_KEY, MODE_FIELD],
+    ]);
+    const saved = { enable_enhanced_extraction: false, [MODE_KEY]: 'read' };
+
+    const on = applyEnableEffect({ enable_enhanced_extraction: true }, saved, ENHANCED_SWITCH, true, index);
+    assert.equal(on[MODE_KEY], 'auto');
+
+    const off = applyEnableEffect({ ...on, enable_enhanced_extraction: false }, saved, ENHANCED_SWITCH, false, index);
+    assert.equal(Object.prototype.hasOwnProperty.call(off, MODE_KEY), false, 'the draft only keeps what was chosen');
+
+    const chosen = applyEnableEffect(
+        { enable_enhanced_extraction: true, [MODE_KEY]: 'layout' }, saved, ENHANCED_SWITCH, true, index,
+    );
+    assert.equal(chosen[MODE_KEY], 'layout', 'an edit already made wins');
+
+    const keptOff = applyEnableEffect(
+        { enable_enhanced_extraction: false, [MODE_KEY]: 'layout' }, saved, ENHANCED_SWITCH, false, index,
+    );
+    assert.equal(keptOff[MODE_KEY], 'layout', 'switching off only takes back the value it set');
+
+    const enhancedSaved = { enable_enhanced_extraction: false, [MODE_KEY]: 'layout' };
+    const kept = applyEnableEffect({ enable_enhanced_extraction: true }, enhancedSaved, ENHANCED_SWITCH, true, index);
+    assert.equal(Object.prototype.hasOwnProperty.call(kept, MODE_KEY), false, 'a stored Enhanced or Auto choice returns as it was');
+
+    const alreadyOn = applyEnableEffect(
+        { enable_enhanced_extraction: true }, { enable_enhanced_extraction: true, [MODE_KEY]: 'read' }, ENHANCED_SWITCH, true, index,
+    );
+    assert.equal(Object.prototype.hasOwnProperty.call(alreadyOn, MODE_KEY), false, 'only a transition counts, as on the server');
+
+    const fresh = applyEnableEffect({ enable_enhanced_extraction: true }, {}, ENHANCED_SWITCH, true, index);
+    assert.equal(fresh[MODE_KEY], 'auto', 'a never-saved mode reads as its declared default');
+
+    const plain: AdminField = { key: 'enable_other', type: 'switch', label: 'Other' };
+    const untouched = { enable_other: true };
+    assert.equal(applyEnableEffect(untouched, {}, plain, true, index), untouched, 'no effect, no new draft');
+});
+
+check('the engine notice names the engine and says when it is not in force yet', () => {
+    const connected = renderToStaticMarkup(createElement(EnhancedExtractionEngine, {
+        label: 'Extraction engine',
+        reading: { engine: 'content_understanding', reason: null },
+    }));
+    assert.match(connected, /data-engine="content_understanding"/);
+    assert.match(connected, /role="status"/);
+    assert.match(connected, /Azure AI Content Understanding/);
+    assert.match(connected, /descriptions of figures and charts/);
+    assert.doesNotMatch(connected, /Takes effect when you save/);
+
+    const fallback = renderToStaticMarkup(createElement(EnhancedExtractionEngine, {
+        label: 'Extraction engine',
+        reading: { engine: 'document_intelligence', reason: 'missing_endpoint' },
+        pending: true,
+    }));
+    assert.match(fallback, /data-engine="document_intelligence"/);
+    assert.match(fallback, /Document Intelligence Layout/);
+    assert.match(fallback, /Add a Foundry endpoint/);
+    assert.match(fallback, /Takes effect when you save/);
+
+    const keyless = renderToStaticMarkup(createElement(EnhancedExtractionEngine, {
+        label: 'Extraction engine',
+        reading: { engine: 'document_intelligence', reason: 'missing_key' },
+    }));
+    assert.match(keyless, /an endpoint but no key/);
+
+    const sovereign = renderToStaticMarkup(createElement(EnhancedExtractionEngine, {
+        label: 'Extraction engine',
+        reading: { engine: 'document_intelligence', reason: 'unsupported_cloud' },
+    }));
+    assert.match(sovereign, /not offered in this Azure cloud/);
+    assert.match(sovereign, /nothing more to configure/);
+});
+
+check('with Enhanced off the card is the switch and nothing that depends on it', () => {
+    const calls: string[] = [];
+    const markup = renderEnhancedExtraction(
+        { enable_enhanced_extraction: false, [MODE_KEY]: 'read', [CU_ENDPOINT]: '' },
+        { content_understanding_supported: true },
+        calls,
+    );
+    assert.deepEqual(calls, ['capability:enable_enhanced_extraction']);
+    assert.match(markup, />Off</);
+    assert.doesNotMatch(markup, /Content Understanding connection|aria-expanded/);
+});
+
+check('with Enhanced on and nothing connected, the Content Understanding connection is open', () => {
+    const calls: string[] = [];
+    const markup = renderEnhancedExtraction(
+        { enable_enhanced_extraction: true, [MODE_KEY]: 'auto', [CU_ENDPOINT]: '' },
+        { content_understanding_supported: true },
+        calls,
+    );
+    assert.deepEqual(calls, [
+        'capability:enable_enhanced_extraction',
+        `field:${MODE_KEY}`,
+        'field:enhanced-extraction-engine',
+        `field:${CU_ENDPOINT}`,
+        `field:${CU_AUTH}`,
+    ], 'the connection renders; the analyzers stay folded away');
+    assert.match(markup, /aria-expanded="true"[^>]*>[\s\S]*?Content Understanding connection/);
+    assert.match(markup, /aria-expanded="false"[^>]*>[\s\S]*?Content Understanding analyzers/);
+    assert.match(markup, /Configured/, 'Layout is a working setup, so the chip does not cry wolf');
+});
+
+check('a connected Content Understanding folds into a summary', () => {
+    const calls: string[] = [];
+    const markup = renderEnhancedExtraction(
+        { enable_enhanced_extraction: true, [MODE_KEY]: 'auto', [CU_ENDPOINT]: 'https://cu.example.invalid' },
+        { content_understanding_supported: true },
+        calls,
+    );
+    assert.doesNotMatch(markup, /aria-expanded="true"/);
+    assert.deepEqual(calls, [
+        'capability:enable_enhanced_extraction',
+        `field:${MODE_KEY}`,
+        'field:enhanced-extraction-engine',
+    ]);
+});
+
+check('runtime flags reach the card, so a cloud without the service never shows it', () => {
+    const settings = { enable_enhanced_extraction: true, [MODE_KEY]: 'auto', [CU_ENDPOINT]: '' };
+
+    const sovereign = renderEnhancedExtraction(settings, { content_understanding_supported: false }, []);
+    assert.doesNotMatch(sovereign, /Content Understanding connection|Content Understanding analyzers/);
+
+    // Without the flags every flag-gated field reads as unmet and is dropped, which is
+    // why the page has to hand them to the card rather than only filtering itself.
+    const unflagged = renderEnhancedExtraction(settings, undefined, []);
+    assert.doesNotMatch(unflagged, /Content Understanding connection/);
+
+    const supported = renderEnhancedExtraction(settings, { content_understanding_supported: true }, []);
+    assert.match(supported, /Content Understanding connection/);
 });
 
 let passed = 0;

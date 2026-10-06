@@ -599,10 +599,6 @@ admin_sections:
   label: Content Screening
   tab: content-screening
   group: security
-- id: content-understanding-section
-  label: Content Understanding
-  tab: extraction
-  group: knowledge
 - id: control-center-auto-refresh-section
   label: Automatic Data Refresh
   tab: control-center-config
@@ -719,6 +715,10 @@ admin_sections:
   label: Enhanced
   tab: citation
   group: chat
+- id: enhanced-extraction-section
+  label: Enhanced Extraction
+  tab: extraction
+  group: knowledge
 - id: external-links-section
   label: External Links
   tab: custom-pages

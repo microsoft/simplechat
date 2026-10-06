@@ -89,7 +89,11 @@ chunking is unchanged.
 
 ## Configuration
 
-All settings live in **Admin Settings → Extract**.
+All settings live in **Admin Settings → Extract**. In the V2 admin surface they are split
+between **Document Intelligence**, which holds the connection, and **Enhanced Extraction**,
+which is led by the Enhanced switch and holds everything below it in this table except the
+Office image settings (see
+[V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md](V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md)).
 
 | Setting | Key | Default |
 | --- | --- | --- |
@@ -122,9 +126,10 @@ rather than silently downgrading to Standard.
 ### Enabling Enhanced extraction
 
 1. Turn on **Enable Enhanced extraction**. The mode selector defaults to **Auto**.
-2. In Azure commercial clouds, the **Azure AI Content Understanding** block appears. In Azure
-   Government and custom clouds, a notice explains that Enhanced uses Document Intelligence Layout
-   and there is nothing more to configure.
+2. In Azure commercial clouds, the **Azure AI Content Understanding** block appears; in V2 it
+   is the **Content Understanding connection** group, open while no endpoint is set. In Azure
+   Government and custom clouds, a notice explains that Enhanced uses Document Intelligence
+   Layout and there is nothing more to configure.
 3. Create a **Microsoft Foundry** resource in a supported region: East US, East US 2, West US,
    West US 3, South Central US, North Europe, West Europe, Sweden Central, UK South, Australia East,
    Japan East, or Southeast Asia.

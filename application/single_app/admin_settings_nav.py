@@ -278,11 +278,15 @@ ADMIN_NAV = [
                 "icon": "bi-file-earmark-text",
                 "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
-                    # These two cards have always existed in the extraction pane but
-                    # were absent from this list, so neither interface could
-                    # navigate to them. Their ids are the ones already in the
-                    # markup, so the server-rendered sidebar resolves them as-is.
-                    {"id": "content-understanding-section", "label": "Content Understanding", "icon": "bi-stars"},
+                    # Enhanced extraction and the Content Understanding connection
+                    # that backs it are one section, led by the switch. Content
+                    # Understanding used to be a section of its own, which let it be
+                    # configured while Enhanced was off and it could never run.
+                    {"id": "enhanced-extraction-section", "label": "Enhanced Extraction", "icon": "bi-stars"},
+                    # This card has always existed in the extraction pane but was
+                    # absent from this list, so neither interface could navigate to
+                    # it. Its id is the one already in the markup, so the
+                    # server-rendered sidebar resolves it as-is.
                     {"id": "office-embedded-image-section", "label": "Images Inside Office Files", "icon": "bi-images"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
                     # The upload ceiling belongs with the extraction pipeline it

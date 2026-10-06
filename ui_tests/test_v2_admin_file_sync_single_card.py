@@ -1,8 +1,8 @@
 # test_v2_admin_file_sync_single_card.py
 """
 Browser coverage for the single V2 File Sync card.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.266
+Implemented in: 0.261.266
 
 Exercise the built application with the real File Sync field schema and
 intercepted APIs. File Sync used to be five cards. Check that it is now one; that

@@ -71,7 +71,7 @@ without being promoted to the section's primary switch.
 
 ### Anchored panels and collapsed summaries
 
-Since 0.261.260 a group can name an `anchor` switch, and `placeAnchoredGroups` draws it
+Since 0.261.266 a group can name an `anchor` switch, and `placeAnchoredGroups` draws it
 as a panel inside that switch's row instead of at the foot of the card. File Sync uses
 this so each workspace type's Access rules sit beneath its own switch. A closed group
 holding a single choice list says how many options are selected ("3 selected") rather

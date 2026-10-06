@@ -107,6 +107,16 @@ In the classic interface, opening Admin Settings checks the three indexes in seq
 
 Connection and permission failures stay visible rather than being hidden as if the index were healthy. Configure either the direct Search endpoint and authentication method, or the APIM endpoint and subscription key. Public Azure uses the Search audience `https://search.azure.com`; government and custom-cloud audiences remain separate. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
 
+#### Search result cache
+
+Workspace document searches, the retrieval step behind grounded chat answers, agents, and workflows, are cached in the `search_cache` Cosmos DB container. When the same search runs again against the same documents, SimpleChat reuses the earlier results instead of embedding the query and running the semantic-ranked hybrid queries against each workspace index again. Repeated questions come back faster and cite the same sources, and fewer embedding and semantic ranker requests are billed or counted against quota. The cache does not need Redis, and it does not apply to web search.
+
+A cached result is reused only while the query, scope, selected documents, tag filters, embedding model, and the documents in scope, including their versions and content screening state, all still match. Adding, deleting, re-sharing, or re-versioning a document therefore forces a fresh search straight away. Before cached results are returned, each one is re-checked against the requesting user's access and the document's current availability, and if any no longer qualifies the search runs fresh.
+
+Caching is on by default and should stay on. Turn it off only while troubleshooting search relevance, when every search needs to run fresh. The cache lifetime bounds how long other changes can take to appear, such as a document that finishes processing after a search ran, or an edit made directly in Azure AI Search outside SimpleChat.
+
+Both settings are edited in the V2 admin settings, in the **Search result cache** group of this section. The classic admin page has no control for them.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -117,6 +127,8 @@ Connection and permission failures stay visible rather than being hidden as if t
 | Search Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_ai_search_key` |
 | Azure APIM AI Search Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_ai_search_endpoint` |
 | Azure APIM AI Search Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_ai_search_subscription_key` |
+| Cache workspace search results | Reuses a recent identical workspace search instead of embedding the query and querying the indexes again. Cached results are re-checked against the user's access before they are returned. | On | `enable_search_result_caching`; V2 admin only |
+| Cache lifetime (seconds) | How long cached results can be reused, from 60 to 3,600 seconds. Shown while caching is on. | 300 | `search_cache_ttl_seconds`; V2 admin only |
 
 ## Document Extraction {#extraction}
 
@@ -128,31 +140,53 @@ Screening requires Enhanced Citations and is configured in Security so the polic
 
 ### Document Intelligence {#document-intelligence-section}
 
-Document Intelligence reads PDFs and images. Nothing else in this tab produces searchable
-text without it, so the tab leads with the connection: endpoint, authentication and a
-connection test, either directly or through API Management. Only the path in use is shown.
+Document Intelligence reads PDFs and images, and nothing else in this tab produces
+searchable text without it: Standard extraction is its Read model, and Enhanced extraction
+falls back to its Layout model. The section is the connection alone -- endpoint,
+authentication and a connection test, either directly or through API Management. Only the
+path in use is shown.
 
-Extraction behaviour follows. Standard uses Document Intelligence Read and is the fastest
-and cheapest path for plain text. Enhanced captures tables, page structure, forms and
-checkbox states, at roughly six times the cost per thousand pages. Auto inspects the
-opening pages of a PDF and picks: if it finds tables, selection marks or figures the whole
-document uses Enhanced, otherwise it finishes with Standard. Images always use Enhanced
-under Auto.
+### Enhanced Extraction {#enhanced-extraction-section}
 
-Formula extraction is a separately billed Document Intelligence add-on that captures
-equations as LaTeX instead of approximate OCR text. It applies to the Layout model only,
-so it has no effect while extraction is set to Standard.
+Enhanced extraction is for documents where structure matters: tables, page layout, forms,
+checkbox states and, with Content Understanding, figures and charts. The section is led by
+its switch, and every setting that only takes effect while Enhanced is on sits beneath it
+and is hidden while it is off -- the Content Understanding connection included, since
+Content Understanding is never called while Enhanced is off. With the switch off, every
+PDF and image uses Standard extraction.
 
-### Content Understanding {#content-understanding-section}
+The extraction mode decides what new uploads use. Standard uses Document Intelligence Read
+and is the fastest and cheapest path for plain text. Enhanced captures tables, page
+structure, forms and checkbox states, at roughly six times the cost per thousand pages.
+Auto inspects the opening pages of a PDF and picks: if it finds tables, selection marks or
+figures the whole document uses Enhanced, otherwise it finishes with Standard. Images
+always use Enhanced under Auto. Turning Enhanced on moves the mode from Standard to Auto,
+because Enhanced with the mode left on Standard would change nothing for new uploads. With
+Standard selected deliberately, people can still extract a document again as Enhanced from
+its workspace.
+
+Formula extraction is a separately billed add-on to the Document Intelligence Layout model
+that captures equations as LaTeX instead of approximate OCR text. It applies wherever
+Layout runs -- Auto's page sampling, and Enhanced extraction without Content
+Understanding -- so it has no effect on Standard extraction or on documents Content
+Understanding extracts.
+
+The section also names the engine Enhanced extraction will use with the settings on
+screen: Azure AI Content Understanding, or Document Intelligence Layout together with the
+reason Content Understanding is not in use. It judges configuration rather than
+connectivity; the connection test is what confirms the service answers.
+
+#### Content Understanding connection {#content-understanding-section}
 
 Azure AI Content Understanding is what backs Enhanced extraction where it is available. It
 returns tables, page structure, checkbox states and generated descriptions of figures and
-charts. Leave the endpoint blank and Enhanced falls back to Document Intelligence Layout,
-which still captures tables, structure, forms and checkbox states but not figure
+charts. It is optional: leave the endpoint blank and Enhanced uses Document Intelligence
+Layout, which still captures tables, structure, forms and checkbox states but not figure
 descriptions.
 
-Content Understanding is not offered in every Azure cloud. Where it is unavailable the tab
-says so and Enhanced uses the Layout fallback with nothing further to configure.
+Content Understanding is not offered in every Azure cloud. Where it is unavailable its
+connection is not shown, the section says Enhanced uses Document Intelligence Layout, and
+there is nothing further to configure.
 
 ### Images Inside Office Files {#office-embedded-image-section}
 
@@ -261,10 +295,10 @@ already captures the surrounding structure.
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |
 | Plan multiple web search queries | Narrows the admin list shown for plan multiple web search queries. | On | `deep_research_enable_query_planning` |
 | Save research ledger artifacts | Narrows the admin list shown for save research ledger artifacts. | On | `deep_research_enable_ledger_artifact` |
-| Enable Enhanced extraction | Enables the enhanced extraction path for richer PDF and image structure when the required services are configured. | Off | `enable_enhanced_extraction`; capability toggle |
+| Enable Enhanced extraction | Leads the Enhanced Extraction section. While it is off every PDF and image uses Standard extraction, and the extraction mode, formula extraction and Content Understanding connection are hidden because none of them can take effect. Turning it on moves a Standard mode to Auto. | Off | `enable_enhanced_extraction`; capability toggle |
 | PDF and Image Extraction Mode | Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected. | read | `document_intelligence_pdf_image_extraction_mode` |
 | Auto Sample Pages | Auto samples this many first PDF pages with Document Intelligence Layout. If it detects tables, selection marks, or figures, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mo | Not specified in defaults | `document_intelligence_auto_sample_pages` |
-| Extract mathematical formulas | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
+| Extract mathematical formulas | Captures equations as LaTeX through a billed add-on to the Document Intelligence Layout model, so it adds per-page cost wherever Layout runs: Auto's page sampling, and Enhanced extraction without Content Understanding. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
 | Foundry Endpoint | Your Microsoft Foundry resource endpoint, without a trailing path. | Empty | `azure_content_understanding_endpoint` |
 | Authentication Type | Managed identity requires the Cognitive Services User role on the Foundry resource. | key | `azure_content_understanding_authentication_type` |
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |
@@ -309,7 +343,10 @@ The endpoint comes first because the account details are read against it: use
 `https://api.videoindexer.ai` for Azure Public and `https://api.videoindexer.ai.azure.us`
 for Azure Government, and another value only for a non-standard deployment. The account id,
 name, location, resource group and subscription follow, and the indexing timeout bounds how
-long one file may take.
+long one file may take. All five account fields are required: the name, resource group and
+subscription identify the account when SimpleChat requests an access token, and the location
+and account id address its API. Video Indexer is not offered in every region, so the account
+can sit in a different region from SimpleChat; enter the account's own region as the location.
 
 ### AI Voice Conversations {#ai-voice-chat-section}
 
@@ -460,6 +497,7 @@ are stored in Key Vault; otherwise they are stored with the source itself.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A synced file is not searchable | The source ran but extraction or indexing failed later. | Check sync state, extraction settings, and Azure AI Search before rerunning. |
+| A repeated question still returns the old sources after a change made directly in Azure AI Search | The search result cache is reusing results from before the change, which it cannot detect. | Wait for the cache lifetime to pass. To check the change sooner, rephrase the question, because different wording is a separate cache entry. |
 
 ## Related
 

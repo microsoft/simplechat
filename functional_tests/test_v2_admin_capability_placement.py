@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.265
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -24,17 +24,22 @@ without opening the page:
   - ``enable_text_plugin`` matched "text" in ``home-page-text-section`` and
     appeared under Appearance > Branding.
 
-Declaring a field is what takes a key out of that scan. This test holds three
+Declaring a field is what takes a key out of that scan. This test holds four
 invariants so the misfiling cannot come back:
 
-  1. The Appearance, Chat and Security groups are fully described by the schema, so
-     they must receive *no* guessed rows at all. A new undeclared key that lands in
-     any of them fails here, and the fix is to declare it in its real section.
+  1. The Appearance, Chat, Security, Agents & Actions and Workspaces groups are fully
+     described by the schema, so they must receive *no* guessed rows at all. A new
+     undeclared key that lands in any of them fails here, and the fix is to declare
+     it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
      derived from ``enable_enhanced_citations`` and rewritten by ``get_settings``
      on every read, so a switch would appear to save and then revert.
+  4. Every ``enable_*`` flag that ``get_settings`` forces back to its default on
+     every read stays suppressed. Those flags are listed in
+     ``TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS``, and new ones added there
+     are covered automatically.
 
 Security was described later and had misfilings of its own. The clearest was
 ``enable_app_maintenance`` and ``enable_startup_app_maintenance``, which matched
@@ -45,8 +50,25 @@ are Cosmos maintenance switches and are now declared under
 "storage" in ``data-management-storage-section`` and appeared under Backup &
 Recovery, while ``enable_key_vault_secret_expiration_reminders`` matched nothing at
 all and fell into "Other capabilities".
+
+``enable_tabular_search_shared_preflight`` matched "shared" in
+``shared-conversation-file-approvals-section`` and appeared under Workspaces > Files
+& Sharing as an unlabelled switch. It is not an administrator setting at all:
+``normalize_tabular_parity_durable_preflight_defaults`` resets it to True on every
+settings read, and the ``SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT``
+environment variable is the only way to turn it off. A switch for it, or for
+``enable_tabular_analyze_durable_preflight`` or ``enable_tabular_hierarchical_analysis``
+(which are forced the same way and were filed under "Other capabilities"), saved and
+then reverted, so all three are suppressed.
+
+``enable_search_result_caching`` matched "search" in both ``web-search-section``
+and ``azure-ai-search-section``. Web Search comes first in navigation order, so the
+tie put a workspace-index cache under the setting that reaches the public internet,
+as a bare switch with no description. It is now declared under
+``azure-ai-search-section``, with its cache lifetime beside it.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -68,7 +90,13 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
+FULLY_DESCRIBED_GROUP_IDS = (
+    APPEARANCE_GROUP_ID,
+    "chat",
+    "security",
+    "agents-actions",
+    "workspaces",
+)
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -110,7 +138,9 @@ RELOCATED_CAPABILITIES = {
     # Local completion sounds belong with notifications, not Azure Speech.
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
-    "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
+    # Leads the section that holds everything it governs, Content Understanding
+    # included, rather than sitting in a collapsed group of Document Intelligence.
+    "enable_enhanced_extraction": ("enhanced-extraction-section", "extraction"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an
@@ -120,14 +150,25 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_enhanced_citations_mount",
     "enable_mixed_source_chat_search",
     "enable_mixed_source_conversation_continuity",
+    # Forced to True by get_settings() on every read; the environment kill switch
+    # is the only way to turn them off.
+    "enable_tabular_search_shared_preflight",
+    "enable_tabular_analyze_durable_preflight",
+    "enable_tabular_hierarchical_analysis",
 )
 
-# Relocations with no server-rendered counterpart to check against. Both are
+# The map in functions_settings.py of flags get_settings() resets to their active
+# default on every read. Every enable_* key in it must be suppressed.
+FORCED_TABULAR_PARITY_DEFAULTS = "TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS"
+
+# Relocations with no server-rendered counterpart to check against. All are
 # documented in ``V2_ONLY_FIELDS``, which is what the section assertion below reads
 # instead of a pane.
 RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD = {
     "enable_app_maintenance": "cosmos-maintenance-section",
     "enable_startup_app_maintenance": "cosmos-maintenance-section",
+    # Guessed into Web Search, which wins the tie on "search" by navigation order.
+    "enable_search_result_caching": "azure-ai-search-section",
 }
 
 # The rules the ported heuristic depends on. If the renderer stops doing any of
@@ -160,6 +201,30 @@ def read_capability_keys():
     keys = sorted({match.group("key") for match in DEFAULT_SETTING_RE.finditer(source)})
     assert keys, "No enable_* defaults were found; the extraction likely broke."
     return keys
+
+
+def read_forced_tabular_parity_capability_keys():
+    """Return the ``enable_*`` keys ``get_settings`` forces back to their default.
+
+    ``normalize_tabular_parity_durable_preflight_defaults`` resets every key in
+    ``TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS`` on each settings read, so none
+    of them can be changed from the admin page. The map is read out of the source
+    for the same reason ``read_capability_keys`` reads the defaults that way.
+    """
+    tree = ast.parse(SETTINGS_MODULE.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == FORCED_TABULAR_PARITY_DEFAULTS
+        ):
+            forced_defaults = ast.literal_eval(node.value)
+            return sorted(key for key in forced_defaults if key.startswith("enable_"))
+    raise AssertionError(
+        f"{FORCED_TABULAR_PARITY_DEFAULTS} was not found in {SETTINGS_MODULE.name}; "
+        "the extraction likely broke."
+    )
 
 
 def build_sections():
@@ -338,6 +403,53 @@ def test_suppressed_capabilities_are_real_settings_keys():
     return True
 
 
+def test_forced_tabular_parity_flags_are_suppressed():
+    """A flag ``get_settings`` resets on every read cannot be an admin switch."""
+    print("\nTesting that forced tabular parity flags are suppressed...")
+
+    assert_app_version_at_least("0.261.261")
+
+    forced_keys = read_forced_tabular_parity_capability_keys()
+    assert forced_keys, (
+        f"No enable_* keys were found in {FORCED_TABULAR_PARITY_DEFAULTS}; "
+        "the extraction likely broke."
+    )
+
+    suppressed = fields_module.SUPPRESSED_CAPABILITY_KEYS
+    # A read-only mirror reports a value without offering to change it, so it is
+    # allowed; only a declaration that would save the value is not.
+    editable = {
+        field["key"]
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key") and not field.get("readonly")
+    }
+
+    problems = []
+    for key in forced_keys:
+        if key not in suppressed:
+            problems.append(
+                f"{key}: not suppressed, so the fallback scan draws a switch that "
+                "reverts on the next settings read"
+            )
+        elif not str(suppressed[key] or "").strip():
+            problems.append(f"{key}: suppressed with no reason recorded")
+        if key in editable:
+            problems.append(
+                f"{key}: declared as an editable field, but get_settings() "
+                "overwrites it on every read"
+            )
+
+    assert not problems, (
+        "These flags are reset to their active default by "
+        "normalize_tabular_parity_durable_preflight_defaults() on every settings "
+        "read. Suppress each one, with its reason, in "
+        "admin_settings_fields.SUPPRESSED_CAPABILITY_KEYS:\n  " + "\n  ".join(problems)
+    )
+
+    print(f"  All {len(forced_keys)} forced tabular parity flag(s) are suppressed.")
+    return True
+
+
 def test_relocated_capabilities_are_declared_where_they_belong():
     """Undeclaring one of these silently returns it to the group it was guessed into."""
     print("\nTesting the relocated capability declarations...")
@@ -436,6 +548,7 @@ if __name__ == "__main__":
         test_described_groups_receive_no_guessed_capabilities,
         test_non_editable_capabilities_are_suppressed_not_declared,
         test_suppressed_capabilities_are_real_settings_keys,
+        test_forced_tabular_parity_flags_are_suppressed,
         test_relocated_capabilities_are_declared_where_they_belong,
         test_v2_only_relocations_are_documented,
         test_relocated_capabilities_exist_in_their_v1_panes,

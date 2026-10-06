@@ -21,7 +21,7 @@ File Sync is now one card, read from the top down:
   panels shared by every workspace type. Closed, Source types reports how many types
   are selected rather than "1 setting".
 
-## Implemented in version: **0.261.260**
+## Implemented in version: **0.261.266**
 
 The application version is maintained in `application/single_app/config.py`.
 

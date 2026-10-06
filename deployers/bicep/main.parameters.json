@@ -130,6 +130,9 @@
     },
     "deployVideoIndexerService": {
       "value": "${DEPLOY_VIDEO_INDEXER_SERVICE}"
+    },
+    "videoIndexerLocation": {
+      "value": "${VIDEO_INDEXER_LOCATION}"
     }
   }
 }

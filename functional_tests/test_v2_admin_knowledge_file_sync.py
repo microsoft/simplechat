@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Knowledge group's File Sync tab in the V2 admin UI.
-Version: 0.261.260
+Version: 0.261.266
 Implemented in: 0.261.084
-Consolidated into one card in: 0.261.260
+Consolidated into one card in: 0.261.266
 
 File Sync is the first section to declare a prerequisite owned by another group.
 It needs Redis Cache, which lives under Scale, and the server-rendered card says
@@ -132,7 +132,7 @@ def test_the_tab_is_one_card():
     """Five cards for one capability is what this layout replaces."""
     print("Testing the File Sync tab against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.266")
 
     nav_sections = tuple(
         section["id"]

@@ -32,6 +32,11 @@ and then scrolled past everything depending on the connection before reaching it
 `office-embedded-image-section` existed in the markup but were absent from `ADMIN_NAV`, so
 neither interface could navigate to them and neither was documented.
 
+> **Later change (0.261.265):** Content Understanding is no longer a section of its own. It
+> is the connection group of the **Enhanced Extraction** section, which is led by the
+> Enhanced switch and hides everything it governs while it is off. See
+> [V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md](V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md).
+
 **The completion chime was filed under AI Voice.** `enable_chat_completion_audio_cues` plays
 a bundled local sound; its own help text says it does not require Azure Speech Service, yet
 it was the first control in the AI Voice Conversations card, above the Speech resource
@@ -138,7 +143,13 @@ that the two interfaces order or group them identically. The intentional differe
   `get_source_review_config` rewrites any other value on read.
 - The Video Indexer cloud selector not reproduced. It has no stored setting of its own,
   existing only to compute `video_indexer_endpoint`, which V2 edits directly.
-- File Sync drawn as one card (since 0.261.260): the workspace types nest under Enable
+- The search result cache is V2-only. Added in **0.261.263**, `enable_search_result_caching`
+  and `search_cache_ttl_seconds` form a **Search result cache** group after the Azure AI
+  Search connection, with an explanation of what is cached, what forces a fresh search, and
+  why to leave it on. The classic page dropped its short-lived control, which never saved,
+  in late 2025. Until the switch was declared, the fallback scan matched "search" and filed
+  it under Web Search as a bare toggle. Both keys are recorded in `V2_ONLY_FIELDS`.
+- File Sync drawn as one card (since 0.261.266): the workspace types nest under Enable
   File Sync, each with its Access rules in a panel beneath it, and Visible Source Types
   is a "Source types" panel. The V1 pane keeps its own layout.
 
@@ -154,6 +165,8 @@ that the two interfaces order or group them identically. The intentional differe
 | `test_v2_admin_knowledge_extraction.py` | Parity, connection-first ordering, chunk size storage |
 | `test_v2_admin_knowledge_audio_video.py` | Parity, audio cue relocation, shared Speech disclosure |
 | `test_v2_admin_knowledge_file_sync.py` | Parity, single card, nested workspace types, anchored Access panels, Redis prerequisite, GB/bytes conversion, assignments |
+| `test_search_result_cache_admin_setting.py` | Search result cache placement, defaults against the runtime, lifetime bounds, V2-only record |
+| `ui_tests/test_v2_admin_search_result_cache.py` | The cache group renders under Azure AI Search, hides its lifetime while off, and saves through the normalizer |
 | `test_model_vision_capability_resolution.py` | Three-tier resolution and its precedence |
 
 ## Known limitations
