@@ -1,12 +1,13 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.230
+Version: 0.261.268
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
 The real document definitions receive the server-only document provenance helpers they import: 0.261.194
 Screened metadata edits apply directly and never rewrite the pinned release blob: 0.261.230
+Metadata edits record a durable search sync; chunks and blob tags update in the background: 0.261.268
 
 Real Flask routes, management/access/policy modules, conditional document writes,
 revision deletion and canonical downloads run against isolated storage, queues,
@@ -45,6 +46,7 @@ from test_group_document_read_apis import (
     get,
 )
 from test_support.agent_delegation import APP_ROOT, execute_functions
+from test_support.document_search_sync import install_fake_search, run_document_search_syncs
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -242,14 +244,10 @@ def management(environment):
             patch.setattr(module, "cosmos_groups_container", env.group_container)
     clients = {"storage_account_office_docs_client": env.blobs}
     patch.setattr(env.config, "CLIENTS", clients, raising=False)
-    env.chunk_writes = []
     env.deleted_chunks = []
     env.visibility = []
     env.index_updates = Mock(return_value={"success": True})
     env.index_deletes = Mock(return_value={"success": True})
-
-    def chunk_update(**kwargs):
-        env.chunk_writes.append(deepcopy(kwargs))
 
     def prepare_delete(document_item, actor_id):
         marker = {**document_item[SCREENING_FIELD], "state": "deleting"}
@@ -286,7 +284,6 @@ def management(environment):
         "add_file_task_to_file_processing_log": Mock(),
         "calculate_processing_percentage": lambda item: item.get("percentage_complete", 0),
         "get_all_chunks": lambda document_id, user_id, group_id=None, public_workspace_id=None: [{"id": f"{document_id}-chunk"}],
-        "update_chunk_metadata": chunk_update,
         "sync_document_access_index_for_document_fail_open": env.index_updates,
         "delete_document_access_index_for_document_fail_open": env.index_deletes,
         "delete_document_chunks": lambda document_id, **kwargs: env.deleted_chunks.append((document_id, kwargs)),
@@ -318,6 +315,13 @@ def management(environment):
         "build_document_download_response", "build_documents_zip_download_response",
         "allowed_file", "ensure_list", "_update_document_for_job",
     }, namespace)
+    # Metadata edits record a durable search sync request; the sync worker merges the latest values
+    # into an in-memory index with one chunk per document. Tests run queued syncs explicitly.
+    env.search_index = install_fake_search(namespace)
+    for record in env.source.records.values():
+        env.search_index.add_chunk({"id": f"{record['id']}_001", "document_id": record["id"], "group_id": record["group_id"]})
+    env.search_sync_records = namespace["cosmos_settings_container"].sync_records
+    env.run_search_syncs = partial(run_document_search_syncs, namespace)
     for name in (
         "update_document", "create_document", "delete_document_revision", "allowed_file",
         "build_document_download_response", "build_documents_zip_download_response",
@@ -393,7 +397,10 @@ def test_successful_operations_use_the_path_not_active_preferences(management, o
     assert env.source.records["document-b"] == before_other
     env.user_settings.assert_not_called()
     assert all(kwargs.get("group_id") == "group-a" for _key, _function, kwargs in env.queue.jobs)
-    assert all(write.get("group_id") == "group-a" for write in env.chunk_writes)
+    assert all(record["group_id"] == "group-a" for record in env.search_sync_records())
+    env.run_search_syncs()
+    merged = {payload["id"] for batch in env.search_index.merge_batches for payload in batch}
+    assert all(env.search_index.chunks[chunk_id]["group_id"] == "group-a" for chunk_id in merged)
 
 
 @pytest.mark.parametrize("operation", OPERATIONS)
@@ -438,10 +445,21 @@ def test_metadata_receipt_preserves_omitted_fields_and_source_identity(managemen
     assert body == {
         "message": "Group document metadata updated.", "document_id": "document-a", "group_id": "group-a",
         "updated_fields": ["authors", "title"], "status": "updated",
+        "search_sync": {"status": "pending", "revision": 1, "fields": ["authors", "title"]},
     }
     for field in ("user_id", "group_id", "id", "abstract", "tags", "keywords", "document_classification"):
         assert stored[field] == before[field]
     assert stored["title"] == "Renamed" and stored["authors"] == ["Writer"]
+    # The request is recorded for this group's document, and its token rides in the same save.
+    [record] = env.search_sync_records()
+    assert record["id"] == "document_search_metadata_sync:group:document-a"
+    assert (record["group_id"], record["pending_fields"]) == ("group-a", ["authors", "title"])
+    assert stored["search_metadata_sync_token"] == record["latest_request_token"]
+    assert env.search_index.merge_batches == []
+    [result] = env.run_search_syncs()
+    assert result["status"] == "complete"
+    assert env.search_index.merge_batches == [[{"id": "document-a_001", "author": ["Writer"], "title": "Renamed"}]]
+    assert env.search_sync_records() == []
 
 
 @pytest.mark.parametrize("payload", [
@@ -456,7 +474,7 @@ def test_metadata_validates_the_whole_payload_before_side_effects(management, pa
     env = management
     response = env.client.patch(f"{ROOT}/document-a", json=payload)
     assert response.status_code == 400
-    assert env.source.writes == [] and env.chunk_writes == []
+    assert env.source.writes == [] and env.search_sync_records() == []
     assert env.group_container.writes == [] and env.blobs.metadata_writes == []
     env.index_updates.assert_not_called()
 
@@ -480,7 +498,8 @@ def test_failed_source_cas_never_changes_projections_or_resurrects(management, r
     # tag's definition unused, which is a valid state; nothing else changes.
     assert [(operation, item) for operation, item, _body in env.group_container.writes] == [("patch", "group-a")]
     assert set(env.groups["group-a"]["tag_definitions"]) == {"unused", "reference", "new-tag"}
-    assert env.chunk_writes == [] and env.blobs.metadata_writes == []
+    # The stale write is refused before any search sync request is recorded.
+    assert env.search_sync_records() == [] and env.blobs.metadata_writes == []
     env.index_updates.assert_not_called()
     if race == "changed":
         assert env.source.records["document-a"]["title"] == "Concurrent winner"
@@ -488,40 +507,62 @@ def test_failed_source_cas_never_changes_projections_or_resurrects(management, r
         assert "document-a" not in env.source.records
 
 
-def test_chunk_failure_is_explicit_after_the_source_cas_and_retry_repairs(management):
+def test_search_failure_after_the_source_cas_is_retried_durably(management):
     env = management
-    calls = []
-
-    def fail_chunk(**kwargs):
-        calls.append(deepcopy(env.source.records["document-a"]))
-        raise StoreFailure()
-
-    env.document_helpers["update_chunk_metadata"] = fail_chunk
-    failed = env.client.patch(f"{ROOT}/document-a", json={"title": "Saved title"})
-    assert failed.status_code == 500
-    assert failed.get_json()["error"] == "document_propagation_incomplete"
-    assert failed.get_json()["repair_required"] is True
-    assert calls[0]["title"] == "Saved title"
-    assert "PRIVATE-PROVIDER" not in failed.get_data(as_text=True)
-    repaired = Mock()
-    env.document_helpers["update_chunk_metadata"] = repaired
-    retried = env.client.patch(f"{ROOT}/document-a", json={"title": "Saved title"})
-    assert retried.status_code == 200
-    repaired.assert_called_once()
+    env.search_index.merge_error = StoreFailure()
+    response = env.client.patch(f"{ROOT}/document-a", json={"title": "Saved title"})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["status"] == "updated"
+    assert response.get_json()["search_sync"]["status"] == "pending"
+    assert env.source.records["document-a"]["title"] == "Saved title"
+    [failed] = env.run_search_syncs()
+    assert failed["status"] == "failed"
+    [record] = env.search_sync_records()
+    assert (record["status"], record["attempts"], record["last_error_type"]) == ("failed", 1, "StoreFailure")
+    assert "PRIVATE-PROVIDER" not in json.dumps(record)
+    env.search_index.merge_error = None
+    [healed] = env.run_search_syncs()
+    assert healed["status"] == "complete"
+    assert env.search_index.chunks["document-a_001"]["title"] == "Saved title"
+    assert env.search_sync_records() == []
 
 
-@pytest.mark.parametrize("failure", ["index", "blob"])
-def test_required_projection_failure_never_returns_an_updated_receipt(management, failure):
+def test_access_index_failure_never_returns_an_updated_receipt_and_still_syncs_search(management):
     env = management
-    if failure == "index":
-        env.index_updates.return_value = {"success": False}
-    else:
-        env.blobs.metadata_failure = StoreFailure()
+    env.index_updates.return_value = {"success": False}
     response = env.client.patch(f"{ROOT}/document-a", json={"tags": ["changed"]})
     assert response.status_code == 500
     assert response.get_json()["error"] == "document_propagation_incomplete"
     assert "status" not in response.get_json()
     assert env.source.records["document-a"]["tags"] == ["changed"]
+    # The request was recorded before the save landed, so the reconciler still projects the tags.
+    [result] = env.run_search_syncs()
+    assert result["status"] == "complete"
+    assert env.search_index.chunks["document-a_001"]["document_tags"] == ["changed"]
+
+
+@pytest.mark.parametrize("blob_fails", [False, True])
+def test_blob_tag_refresh_is_conditional_and_never_fails_the_save_or_the_sync(management, blob_fails):
+    env = management
+    if blob_fails:
+        env.blobs.metadata_failure = StoreFailure()
+    response = env.client.patch(f"{ROOT}/document-a", json={"tags": ["changed"]})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["status"] == "updated"
+    # Blob tag metadata is refreshed by the sync worker, never inside the request.
+    assert env.blobs.metadata_writes == []
+    [result] = env.run_search_syncs()
+    assert result["status"] == "complete"
+    assert env.search_index.chunks["document-a_001"]["document_tags"] == ["changed"]
+    assert env.search_sync_records() == []
+    if blob_fails:
+        assert env.blobs.metadata_writes == []
+        assert "PRIVATE-PROVIDER" not in json.dumps([(call.args, call.kwargs) for call in env.logs.call_args_list], default=str)
+    else:
+        # The fake store refuses any metadata write that is not conditioned on the blob ETag.
+        assert env.blobs.metadata_writes == [
+            (("group-documents", "group-a/document-a.pdf"), {"keep": "value", "document_tags": "changed"}),
+        ]
 
 
 def test_screened_metadata_edit_applies_directly_and_keeps_the_release(management):
@@ -549,11 +590,15 @@ def test_screened_tag_edit_updates_chunks_but_never_the_pinned_release_blob(mana
     response = env.client.patch(f"{ROOT}/document-a", json={"tags": ["reviewed"]})
     assert response.status_code == 200, response.get_json()
     assert response.get_json()["status"] == "updated"
+    assert response.get_json()["search_sync"]["status"] == "pending"
     current = env.source.records["document-a"]
     assert current["tags"] == ["reviewed"]
     assert current["content_screening"] == marker
-    assert [write.get("document_tags") for write in env.chunk_writes] == [["reviewed"]]
+    [result] = env.run_search_syncs()
+    assert result["status"] == "complete"
+    assert [[payload.get("document_tags") for payload in batch] for batch in env.search_index.merge_batches] == [[["reviewed"]]]
     assert env.blobs.metadata_writes == []
+    assert env.source.records["document-a"]["content_screening"] == marker
 
 
 def test_incoming_download_uses_source_bytes_with_same_name_in_recipient(management):
@@ -753,7 +798,7 @@ def test_a_lost_vocabulary_patch_refuses_the_metadata_save_and_writes_no_documen
     assert response.status_code == 409
     assert response.get_json() == {**VOCABULARY_CONFLICT, "document_id": "document-a", "group_id": "group-a"}
     assert env.source.writes == [] and env.source.records["document-a"] == before
-    assert env.chunk_writes == [] and env.blobs.metadata_writes == []
+    assert env.search_sync_records() == [] and env.blobs.metadata_writes == []
     assert "brand-new" not in env.groups["group-a"]["tag_definitions"]
 
 
@@ -777,7 +822,7 @@ def test_a_lost_vocabulary_patch_refuses_the_whole_tagging_batch_and_writes_no_d
     assert response.get_json() == {**VOCABULARY_CONFLICT, "group_id": "group-a"}
     assert [attempt[0] for attempt in env.group_container.attempts] == ["patch"]
     assert env.source.writes == [] and env.source.records == before
-    assert env.chunk_writes == [] and env.blobs.metadata_writes == []
+    assert env.search_sync_records() == [] and env.blobs.metadata_writes == []
     assert "new-tag" not in env.groups["group-a"]["tag_definitions"]
 
 
@@ -1105,7 +1150,7 @@ def test_selected_revision_becoming_historical_is_not_retargeted(management):
 
 
 @pytest.mark.parametrize("race", ["change", "delete"])
-def test_storage_cas_rejection_after_the_final_read_has_no_projection_effects(management, race):
+def test_storage_cas_rejection_after_the_final_read_never_projects_the_rejected_values(management, race):
     env = management
 
     def reject(operation, item, body):
@@ -1118,20 +1163,36 @@ def test_storage_cas_rejection_after_the_final_read_has_no_projection_effects(ma
     env.source.before_write = reject
     response = env.client.patch(f"{ROOT}/document-a", json={"title": "Rejected writer", "tags": ["new-tag"]})
     assert response.status_code in {404, 409}
-    assert env.source.writes == [] and env.chunk_writes == [] and env.blobs.metadata_writes == []
+    assert env.source.writes == [] and env.blobs.metadata_writes == []
+    assert env.search_index.merge_batches == []
     env.index_updates.assert_not_called()
+    # The sync request is recorded before the save, so it outlives the rejected save. Its token never
+    # lands on a document, and the worker only ever projects values Cosmos actually holds.
+    [record] = env.search_sync_records()
+    [result] = env.run_search_syncs()
+    projected = json.dumps(env.search_index.merge_batches)
+    assert "Rejected writer" not in projected and "new-tag" not in projected
+    if race == "change":
+        assert env.source.records["document-a"].get("search_metadata_sync_token") != record["latest_request_token"]
+        assert result["status"] == "deferred"
+        assert env.search_index.chunks["document-a_001"]["title"] == "document-a"
+    else:
+        assert result["status"] == "document_missing"
+        assert env.search_sync_records() == []
 
 
 def test_tag_finalization_conflict_retains_successes_and_both_vocabularies(management):
     env = management
+    schedule_sync = env.document_helpers["schedule_document_search_metadata_sync"]
 
-    def concurrent_group_edit(**kwargs):
+    def concurrent_group_edit(*args, **kwargs):
         env.group_container.change(
             "group-a", users=[{"userId": "new-member"}],
             tag_definitions={**env.groups["group-a"]["tag_definitions"], "parallel": {"color": "#fff"}},
         )
+        return schedule_sync(*args, **kwargs)
 
-    env.document_helpers["update_chunk_metadata"] = concurrent_group_edit
+    env.document_helpers["schedule_document_search_metadata_sync"] = concurrent_group_edit
     response = env.client.patch(f"{ROOT}/tags/reference", json={"new_name": "renamed"})
     body = response.get_json()
     assert response.status_code == 207
