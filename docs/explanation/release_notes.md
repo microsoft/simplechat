@@ -13,7 +13,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Control Center Access shows who can open the dashboard and the management features under the switches as they stand, unsaved changes included, with role values to copy.
     *   Health Check and API Documentation list each endpoint as a full, copyable address for the deployment, with its sign-in requirement and whether it answers now. Application Insights global logging and Swagger say when a restart is still needed, and Application Insights reports whether its connection string is set.
     *   File Process Logging can delete stored logs by age or all at once, after a confirmation that states exactly what will be removed.
-    *   **Document Access Index diagnostics** (`enable_dai_debug`) can now be switched on from Debug Logging, with a link to the DAI Metrics card it affects. Before, it could only be set directly in Cosmos DB.
+    *   **Document Access Index diagnostics** (`enable_dai_debug`) can now be switched on from Debug Logging, with a description and a link to the DAI Metrics card it affects. The classic page has no control for it, and V2 previously showed it only as an unexplained "Dai debug" switch.
     *   (Ref: `admin_settings_fields.py`, `functions_logging_timers.py`, `functions_control_center_schedule.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminOperations.ts`, `test_v2_admin_operations_settings.py`, [V2 Admin Operations Settings](features/V2_ADMIN_OPERATIONS_SETTINGS.md))
 
 *   **In-App Setup Guides for Operations**
