@@ -223,7 +223,8 @@ class RunHarness(Harness):
     """The bell harness's network stubs, with the run status, run links and run action routes."""
 
     def __init__(self, page, stylesheets):
-        super().__init__(page, stylesheets, {CHAT: CHAT_TITLE, OTHER: OTHER_TITLE})
+        # Stream numbers start above the seeded chat's ids, so a question sent here and its reply never reuse them.
+        super().__init__(page, stylesheets, {CHAT: CHAT_TITLE, OTHER: OTHER_TITLE}, streams=100)
         self.messages_by_chat = {CHAT: answer_messages(), OTHER: []}
         self.link_items = [{"step_id": STEP, "name": NAME, "state": "running", "reason": None,
                             "workflow_id": WORKFLOW, "workflow_run_id": RUN}]
@@ -248,8 +249,6 @@ class RunHarness(Harness):
         self.held_links = []
         self.hold_messages = False
         self.held_messages = []
-        # Above the seeded chat's ids, so a question sent here and its reply never reuse them.
-        self.streams = 100
 
     # Routes -----------------------------------------------------------------------------------
 
