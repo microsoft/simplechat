@@ -1854,7 +1854,11 @@ def register_route_backend_collaboration(bp):
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            log_event(
+                f'[COLLABORATION] Permission denied while listing generated documents for {conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'You do not have access to this conversation'}), 403
         except Exception as exc:
             log_event(
                 f'[COLLABORATION] Failed to list generated documents for {conversation_id}: {exc}',
@@ -1911,7 +1915,11 @@ def register_route_backend_collaboration(bp):
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            log_event(
+                f'[COLLABORATION] Permission denied while downloading a generated document for {conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'You do not have permission to download this document'}), 403
         except Exception as exc:
             log_event(
                 f'[COLLABORATION] Failed to download generated document for {conversation_id}: {exc}',

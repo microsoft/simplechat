@@ -461,7 +461,7 @@ export const collaborationGeneratedDocumentUrl = (conversationId: string, docume
 /**
  * Fetch a generated document's file, for saving or previewing.
  *
- * Rejects with the server's own explanation, such as downloads being disabled for the group,
+ * Rejects with the server's error message, such as the reader not being allowed to download it,
  * so the reader learns why rather than receiving a broken file.
  */
 export async function fetchCollaborationGeneratedDocument(

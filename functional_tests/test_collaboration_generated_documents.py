@@ -9,7 +9,8 @@ This test ensures that only upload citations that really created a document are 
 masked message's documents are not, and that a download follows the workspace's own rules: a
 document-managing role and downloads allowed for a group document, ownership and personal
 downloads allowed for a personal one. It also checks that both routes require an accepted
-participant and that the download route only serves a document the conversation produced.
+participant, that the download route only serves a document the conversation produced, and that
+neither route returns exception text to the browser (CodeQL py/stack-trace-exposure).
 """
 
 import ast
@@ -245,8 +246,7 @@ def group_download_roles_of_group_route():
     raise AssertionError("GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES not found")
 
 
-def test_routes_require_an_accepted_participant():
-    print("Testing the routes...")
+def generated_document_route_functions():
     with open(os.path.join(APP_DIR, "route_backend_collaboration.py"), "r", encoding="utf-8") as handle:
         module_ast = ast.parse(handle.read())
     functions = {
@@ -257,6 +257,12 @@ def test_routes_require_an_accepted_participant():
         }
     }
     assert len(functions) == 2, sorted(functions)
+    return functions
+
+
+def test_routes_require_an_accepted_participant():
+    print("Testing the routes...")
+    functions = generated_document_route_functions()
     for name, node in functions.items():
         decorators = [ast.unparse(decorator) for decorator in node.decorator_list]
         assert decorators[1:] == ["swagger_route(security=get_auth_security())", "login_required", "user_required"], (
@@ -276,6 +282,26 @@ def test_routes_require_an_accepted_participant():
     print("  ok  accepted participants only, scoped to the conversation")
 
 
+def test_routes_never_return_exception_text():
+    print("Testing that refusals and failures keep exception details in the server log...")
+    for name, node in generated_document_route_functions().items():
+        caught = {
+            handler.name for handler in ast.walk(node)
+            if isinstance(handler, ast.ExceptHandler) and handler.name
+        }
+        assert caught, name
+        responses = [
+            call for call in ast.walk(node)
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "jsonify"
+        ]
+        assert responses, name
+        for call in responses:
+            names = {child.id for child in ast.walk(call) if isinstance(child, ast.Name)}
+            assert not names & caught, (name, ast.unparse(call))
+            assert "format_exc" not in ast.unparse(call), (name, ast.unparse(call))
+    print("  ok  every error response is a fixed message")
+
+
 if __name__ == "__main__":
     assert_app_version_at_least(IMPLEMENTED_IN_VERSION)
     tests = [
@@ -283,6 +309,7 @@ if __name__ == "__main__":
         test_documents_are_listed_once_and_masked_messages_hidden,
         test_downloads_follow_the_workspace_rules,
         test_routes_require_an_accepted_participant,
+        test_routes_never_return_exception_text,
     ]
     for test in tests:
         test()
