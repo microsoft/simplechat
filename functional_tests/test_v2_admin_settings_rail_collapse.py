@@ -2,8 +2,8 @@
 # test_v2_admin_settings_rail_collapse.py
 """
 Functional test for the collapsible V2 Admin Settings categories rail.
-Version: 0.261.266
-Implemented in: 0.261.266
+Version: 0.261.267
+Implemented in: 0.261.267
 
 The workspace section rail collapses to icons and remembers that per user. The Admin
 Settings categories rail now does the same, under its own preference, so making room for
@@ -45,7 +45,7 @@ def _categories_rail(page):
 
 def test_version_is_at_least_the_implementing_release():
     print("Testing the application version...")
-    assert_app_version_at_least("0.261.266")
+    assert_app_version_at_least("0.261.267")
     print("  ok  the version includes the collapsible admin rail")
     return True
 

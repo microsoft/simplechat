@@ -14,7 +14,7 @@ categories rail is sized in `rem`, so it grows with the text size and reaches 44
 the largest size. Collapsing it returns that room to the cards, and on mid-sized screens
 can make room for the index, whose container query responds to the wider pane on its own.
 
-## Implemented in version: **0.261.266**
+## Implemented in version: **0.261.267**
 
 The application version is maintained in `application/single_app/config.py`.
 

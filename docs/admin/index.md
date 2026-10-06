@@ -88,7 +88,7 @@ workspace section rail and the main navigation, so collapsing one leaves the oth
 alone. On narrower windows the page offers a category drop-down instead of the list,
 whichever way the list was left.
 
-The collapsible category list was added in **0.261.266**.
+The collapsible category list was added in **0.261.267**.
 
 ## Settings groups
 

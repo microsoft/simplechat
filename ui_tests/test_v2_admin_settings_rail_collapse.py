@@ -1,8 +1,8 @@
 # test_v2_admin_settings_rail_collapse.py
 """
 Browser coverage for the collapsible V2 Admin Settings categories rail.
-Version: 0.261.266
-Implemented in: 0.261.266
+Version: 0.261.267
+Implemented in: 0.261.267
 
 Exercise the built application with the real field schema and intercepted APIs. Check
 that the categories rail collapses to icons that keep their names, hands its width to the
