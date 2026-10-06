@@ -1,9 +1,9 @@
 # test_v2_notifications_bell.py
 """
 Browser regressions for the V2 notification bell, its panel and desktop notifications.
-Version: 0.261.239
+Version: 0.261.249
 Implemented in: 0.261.195
-Notices about a chat-started run's results, and workflow-activity links, open the run in V2: 0.261.239
+Notices about a chat-started run's results, and workflow-activity links, open the run in V2: 0.261.249
 
 Exercises the real rail, bell, panel, chat page, preferences tab, stores and notification
 runtime, bundled by fixtures/notification_bell. Only HTTP answers and the browser APIs a

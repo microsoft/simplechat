@@ -1,8 +1,8 @@
 # test_v2_workflow_run_tracker_spa.py
 """
 UI test for the V2 app-shell workflow run tracker in the real production SPA.
-Version: 0.261.239
-Implemented in: 0.261.239
+Version: 0.261.249
+Implemented in: 0.261.249
 
 This test ensures that the one run tracker the V2 app shell owns starts and stops at the right
 moments in the real built SPA, served from `application/single_app/static/v2` with every server
@@ -60,7 +60,7 @@ from ui_tests.test_v2_workflow_run_card import delivered, status_row  # noqa: E4
 
 pytestmark = pytest.mark.ui
 
-IMPLEMENTED_IN = "0.261.239"
+IMPLEMENTED_IN = "0.261.249"
 STATUS_PATH = "/api/v2/orchestration/workflow-runs/status"
 BOOTSTRAP_PATH = "/api/v2/bootstrap"
 CHAT_PATH = f"/chat?conversationId={SPA_CHAT_ID}"

@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.227**.
 
-V2 experience (6b-2) implemented in version: **0.261.239**.
+V2 experience (6b-2) implemented in version: **0.261.249**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -22,7 +22,7 @@ Workflows later to see what the run produced. With **Use Workflow Results In
 Chat** on, the server posts that run's terminal outcome back into the same
 private chat that asked for it, even if the run finishes hours later.
 
-The delivery is server-side. 6b-1 shipped no V2 run-card UI. 6b-2 (0.261.239)
+The delivery is server-side. 6b-1 shipped no V2 run-card UI. 6b-2 (0.261.249)
 polls the status route documented below and renders the run card, Retry and
 Open run; see [V2 experience (6b-2)](#v2-experience-6b-2).
 
@@ -311,7 +311,7 @@ Notice titles and messages are fixed:
 Undeliverable and expired notices link to
 `/workflow-activity?workflowId=...&runId=...&scope=personal` and carry metadata
 `{workflow_id, run_id, workflow_scope: 'personal', delivery_status}`. Since
-6b-2 (0.261.239), the V2 bell labels the type **Workflow results** and opens the
+6b-2 (0.261.249), the V2 bell labels the type **Workflow results** and opens the
 run on V2's Workflows page; see [Run links](#run-links).
 
 ### Message shape and placement
@@ -697,7 +697,7 @@ and route responses as the live truth.
 
 ## V2 experience (6b-2)
 
-Implemented in version: **0.261.239** (#1546 part 6b-2).
+Implemented in version: **0.261.249** (#1546 part 6b-2).
 
 6b-1 posts the result on the server. 6b-2 shows it in V2 while the user is
 working, so they don't have to open Workflows to find out whether the run they
@@ -1070,7 +1070,7 @@ All paths are under `application\v2_ui\src\` except `config.py`.
 | `lib\notificationLinks.ts` | `v2WorkflowRunPath` returns the run link, and workflow notices open their run in V2. |
 | `lib\workflowAlertNotices.ts` | A workflow alert's **Open run** uses the scoped run link. |
 | `lib\notifications.ts` | Labels `workflow_chat_delivery` notices **Workflow results** in the bell. |
-| `config.py` | Tracks version `0.261.239`. |
+| `config.py` | Tracks version `0.261.249`. |
 
 ## Usage
 
@@ -1227,7 +1227,7 @@ The implementation differs from the approved plan in these documented ways:
   `/workflow-activity?workflowId=...&runId=...&scope=personal` path.
 - The V2 bell showed the generic `Notification` label for
   `workflow_chat_delivery` until 6b-2 added the **Workflow results** case in
-  0.261.239.
+  0.261.249.
 
 ## Related
 

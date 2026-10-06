@@ -19,7 +19,7 @@ Open and Dismiss up front, with everything else under Show more, since version: 
 
 Hanging from the bell rather than **My Workspace** since version: **0.261.236** (#1642).
 
-**Open run** in Open workflow's place, for an alert that names its run, since version: **0.261.239**
+**Open run** in Open workflow's place, for an alert that names its run, since version: **0.261.249**
 (Phase 6b-2, #1546).
 
 Dependencies:
@@ -207,7 +207,7 @@ button under a dozen chips and links:
   lives in and opens the run that raised the alert:
   `/workspace/workflows?workflow_id=<id>&run_id=<id>`, or
   `/groups/<group id>/workflows?workflow_id=<id>&run_id=<id>` for a group workflow.
-  Until 0.261.239 this button was labeled **Open workflow**; the address is unchanged.
+  Until 0.261.249 this button was labeled **Open workflow**; the address is unchanged.
   It works when that list is already open, too. The workflows section acts on each
   navigation that names a workflow once, so choosing Open run again, even for
   the same run, opens the run again. Anything else that later changes the list, such
@@ -245,7 +245,7 @@ keyboard user doesn't lose their place.
 
 ### Hooks for later phases
 
-- **Open run** (filled in by Phase 6b-2, 0.261.239). `workflowAlertOpenRunPath` calls
+- **Open run** (filled in by Phase 6b-2, 0.261.249). `workflowAlertOpenRunPath` calls
   `v2WorkflowRunPath(scope, workflowId, runId)` from `lib/notificationLinks.ts`. There's
   no separate run page: it returns the run's address in its workflow's run history, the
   same address Open workflow named before. It returns `null` when the alert names no run
