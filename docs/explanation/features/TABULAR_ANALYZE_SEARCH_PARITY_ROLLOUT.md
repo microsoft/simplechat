@@ -39,7 +39,7 @@ All Phase 8 rollout controls are backend-only and are removed by `sanitize_setti
 
 > **Update (0.250.186):** `tabular_request_planner_mode` now defaults to `active` and both `enable_tabular_search_shared_preflight` and `enable_tabular_analyze_durable_preflight` default to `True`. Bounded foreground synthesis for exhaustive row-by-row tabular requests is no longer the default behavior. There is intentionally no admin UI toggle for this; use the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable for emergency rollback (see below).
 
-> **Update (0.261.260):** V2 Admin Settings had been drawing switches for these flags through its `enable_*` fallback scan, and those switches reverted on the next settings read. They are now listed in `SUPPRESSED_CAPABILITY_KEYS`, so neither admin interface offers a toggle. See [V2 Admin Tabular Preflight Switch Fix](../fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md).
+> **Update (0.261.261):** V2 Admin Settings had been drawing switches for these flags through its `enable_*` fallback scan, and those switches reverted on the next settings read. They are now listed in `SUPPRESSED_CAPABILITY_KEYS`, so neither admin interface offers a toggle. See [V2 Admin Tabular Preflight Switch Fix](../fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md).
 
 ## Usage Instructions
 

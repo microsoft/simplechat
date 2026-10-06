@@ -53,7 +53,7 @@ A switch therefore reverted in either direction. The classic admin page has neve
 control for these flags, and the rollout documentation says there is intentionally no
 admin toggle.
 
-## Fixed in version: **0.261.260**
+## Fixed in version: **0.261.261**
 
 The application version is maintained in `application/single_app/config.py`.
 

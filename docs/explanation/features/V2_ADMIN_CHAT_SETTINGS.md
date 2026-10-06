@@ -153,7 +153,7 @@ The list is served on the settings GET as `suppressed_capabilities` and honoured
 by `buildCapabilityIndex`. Every `enable_*` key in
 `TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS` must be suppressed; see
 [V2 Admin Tabular Preflight Switch Fix](../fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md)
-(0.261.260).
+(0.261.261).
 
 ### Enhanced Citations storage test
 

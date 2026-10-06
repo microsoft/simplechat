@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.260
+Version: 0.261.261
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -397,7 +397,7 @@ def test_forced_tabular_parity_flags_are_suppressed():
     """A flag ``get_settings`` resets on every read cannot be an admin switch."""
     print("\nTesting that forced tabular parity flags are suppressed...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.261")
 
     forced_keys = read_forced_tabular_parity_capability_keys()
     assert forced_keys, (
