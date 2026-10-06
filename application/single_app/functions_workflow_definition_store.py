@@ -17,7 +17,7 @@ WORKFLOW_RUNTIME_FIELDS = frozenset({
     "status", "last_run_started_at", "last_run_at", "last_run_status", "last_run_error",
     "last_run_response_preview", "last_run_trigger_source", "run_count", "active_run_id",
     "cancellation_requested_at", "cancellation_requested_by", "next_run_at", "conversation_id", "last_run_id",
-    "active_runtime_version", "deleting",
+    "active_runtime_version", "deleting", "one_time_status",
 })
 
 

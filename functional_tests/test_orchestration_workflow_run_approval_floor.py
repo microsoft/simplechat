@@ -109,10 +109,12 @@ def test_version_includes_the_approval_floor():
 # ---------------------------------------------------------------------------
 
 def test_only_starting_a_saved_workflow_sets_an_approval_floor(registry):
+    # Handing work off to a one-time workflow has the same manual floor.
+    floored = {WORKFLOW_RUN, "workflow_handoff"}
     floors = registry.approval_floor_capability_ids()
-    assert floors == frozenset({WORKFLOW_RUN})
+    assert floors == frozenset(floored)
     for descriptor in registry.CAPABILITY_REGISTRY:
-        expected = registry.APPROVAL_FLOOR_MANUAL if descriptor["id"] == WORKFLOW_RUN else None
+        expected = registry.APPROVAL_FLOOR_MANUAL if descriptor["id"] in floored else None
         assert descriptor.get("approval_floor") == expected, descriptor["id"]
     assert registry.get_capability(WORKFLOW_RUN)["approval_floor"] == "manual"
 

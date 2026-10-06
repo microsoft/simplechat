@@ -28,6 +28,12 @@ CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT = 3600
 CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN = 60
 CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX = 86400
 CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_SETTING = "chat_orchestration_min_workflow_interval_seconds"
+# Each accepted hand-off creates a one-time workflow and queues a durable run, so a rolling 24-hour
+# limit per user bounds how much background work chat can start, separately from the cap above.
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT = 5
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN = 1
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX = 100
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_SETTING = "chat_orchestration_max_workflow_handoffs_per_day"
 
 
 class WorkflowLoopInputError(ValueError):
@@ -204,6 +210,39 @@ def get_chat_orchestration_max_workflows_per_user(settings=None):
         )
     return validate_chat_orchestration_max_workflows_per_user(
         settings.get(CHAT_ORCHESTRATION_MAX_WORKFLOWS_SETTING, CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT)
+    )
+
+
+def validate_chat_orchestration_max_workflow_handoffs_per_day(value):
+    """Validate how many hand-offs one user may start from chat in a rolling 24 hours."""
+    candidate = _whole_number(value)
+    if (
+        candidate is None
+        or not CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN <= candidate <= CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Hand-Offs From Chat Per User Per Day must be a whole number from 1 to 100.",
+            code="chat_orchestration_handoff_limit_invalid",
+        )
+    return candidate
+
+
+def get_chat_orchestration_max_workflow_handoffs_per_day(settings=None):
+    """Read the rolling 24-hour hand-off limit; a corrupt stored value fails closed."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The daily limit on hand-offs from chat is temporarily unavailable.",
+            code="chat_orchestration_handoff_limit_unavailable",
+        )
+    return validate_chat_orchestration_max_workflow_handoffs_per_day(
+        settings.get(
+            CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_SETTING, CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+        )
     )
 
 

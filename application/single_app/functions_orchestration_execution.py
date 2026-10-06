@@ -153,8 +153,8 @@ from functions_orchestration_models import (
     resolve_orchestration_model,
 )
 from functions_orchestration_registry import (
-    CAPABILITY_WORKFLOW_RESULTS, CapabilityResolutionError, resolve_admitted_export_catalog,
-    resolve_available_capability_ids,
+    CAPABILITY_WORKFLOW_HANDOFF, CAPABILITY_WORKFLOW_RESULTS, CapabilityResolutionError,
+    resolve_admitted_export_catalog, resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef, TaskResult
 from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations
@@ -1210,6 +1210,12 @@ class HarnessExecution:
             for step in self.record["plan"].get("steps") or []
         )
 
+    def _mentions_workflow_handoff(self):
+        plan = self.record["plan"]
+        return bool(plan.get("workflow_handoff_notes")) or any(
+            step.get("capability_id") == CAPABILITY_WORKFLOW_HANDOFF for step in plan.get("steps") or []
+        )
+
     def _workflow_result_lineage(self, record_state):
         """The workflow result contexts the answer read, re-authorized now; [] when it read none."""
         if not self._reads_workflow_results():
@@ -1339,6 +1345,15 @@ class HarnessExecution:
         )
         if workflow_runs:
             content.append(workflow_runs)
+        if self._mentions_workflow_handoff():
+            # Imported here, like the run step's module. Deterministic, model-free: the hand-off the
+            # plan prepared or left out, at every status, as its card says. Its note also keeps a
+            # hand-off-only plan from the "content is prepared" fallback.
+            from functions_orchestration_workflow_handoffs import workflow_handoff_note
+
+            workflow_handoff = workflow_handoff_note(self.record["plan"], current.get("execution_steps") or [])
+            if workflow_handoff:
+                content.append(workflow_handoff)
         # Only a reply that carries the composed answer names the results it read; any other reply
         # keeps just the fixed lines about results that were not read.
         workflow_result_reads = error is None and bool(prepared)

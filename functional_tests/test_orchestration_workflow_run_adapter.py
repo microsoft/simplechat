@@ -4,6 +4,7 @@
 Functional test for the chat orchestration workflow_run step adapter.
 Version: 0.261.212
 Implemented in: 0.261.212
+One-time hand-off refusal: 0.261.250
 
 This test ensures that a plan's workflow_run step starts the requester's saved durable workflow
 through the durable queue at most once. The request id comes from the plan's first attempt and
@@ -14,8 +15,9 @@ queued, so a later active run never hides it.
 
 Every refusal maps to a closed reason and no exception text: settings, role, a shared chat, a
 missing, foreign, deleting, not durable or Microsoft 365-waiting workflow, runtime conflicts,
-a tombstoned request, lost access and an unrunnable definition. Storage outages fail the step
-retryably. The run records who asked in chat_invocation and leaves mcp_invocation to MCP. The
+a tombstoned request, lost access and an unrunnable definition. A hand-off's one-time workflow
+is refused with its own closed reason, even after its owner edits it in Workflows, while a run the
+plan already started is still linked and a paused workflow still starts. Storage outages fail the step retryably. The run records who asked in chat_invocation and leaves mcp_invocation to MCP. The
 step's workflow and run ids stay on the server, its retained result carries only the name and
 status, and the adapter runs on a plain thread with no Flask context.
 """
@@ -702,6 +704,76 @@ def test_a_workflow_without_durable_execution_is_not_started(adapter, world, cha
     digest, _service = _call(module, planning)
     _unavailable(digest, planning, "workflow_not_durable")
     assert world.queued == []
+
+
+def _handoff_origin(**changes):
+    """The origin a hand-off accept writes on its one-time workflow."""
+    return {
+        "source": "orchestration", "conversation_id": CONVERSATION, "orchestration_run_id": "run-0",
+        "proposal_id": "6f8f57d4-3b0e-5f5c-9a59-0d2c1f2a9e11", "created_at": "2026-01-01T00:00:00+00:00",
+        "edited": False, "one_time": True, **changes,
+    }
+
+
+def test_a_one_time_handoff_workflow_is_never_started_again_from_chat(adapter, world, chat, planning):
+    """A hand-off's workflow ran its one run; chat refuses it with a closed reason, Workflows still runs it."""
+    module, logs = adapter
+    world.definitions.patch(OWNER, DIGEST_ID, origin=_handoff_origin())
+    result, service = _call(module, planning)
+    _unavailable(result, planning, "workflow_one_time")
+    if service.persisted[0]["outputs"] != _retained(module, "unavailable", reason="workflow_one_time"):
+        raise AssertionError(f"Unexpected retained result: {service.persisted[0]['outputs']!r}")
+    if world.queued != []:
+        raise AssertionError(f"A one-time workflow was queued: {world.queued!r}")
+    _no_run_started(world)
+    text = module.WORKFLOW_RUN_REASON_TEXT["workflow_one_time"]
+    if text != "It was created for a single run. Open it in Workflows to run it again.":
+        raise AssertionError(f"The one-time reason text changed: {text!r}")
+    _assert_logs_carry_codes_only(logs, planning)
+
+
+@pytest.mark.parametrize("origin", [
+    None,
+    _handoff_origin(one_time=False),
+    _handoff_origin(one_time="true"),
+    _handoff_origin(one_time=1),
+    {key: value for key, value in _handoff_origin().items() if key != "one_time"},
+], ids=["no_origin", "false", "string", "number", "proposal_origin"])
+def test_only_a_one_time_origin_is_refused_and_a_paused_workflow_still_starts(adapter, world, chat, planning, origin):
+    module, _logs = adapter
+    world.definitions.patch(OWNER, DIGEST_ID, origin=origin, is_enabled=False)
+    result, _service = _call(module, planning)
+    if result["workflow_run"] != _sidecar(planning, "queued"):
+        raise AssertionError(f"Unexpected outcome: {result['workflow_run']!r}")
+    if len(world.queued) != 1:
+        raise AssertionError(f"Expected one queued run, found {len(world.queued)}.")
+
+
+def test_a_run_this_plan_started_is_linked_even_when_its_workflow_is_one_time(adapter, world, chat, planning):
+    module, _logs = adapter
+    _call(module, planning)
+    world.definitions.patch(OWNER, DIGEST_ID, origin=_handoff_origin())
+    linked, _service = _call(module, planning, run_id="run-2", root="run-1")
+    if linked["workflow_run"] != _sidecar(planning, "already_started", orchestration_run_id="run-2"):
+        raise AssertionError(f"Unexpected link: {linked['workflow_run']!r}")
+    if len(world.queued) != 1:
+        raise AssertionError(f"Expected one queued run, found {len(world.queued)}.")
+
+
+def test_an_edited_one_time_workflow_is_still_refused(adapter, world, chat, planning):
+    """Editing a hand-off's workflow in Workflows marks it edited and keeps it one-time, so chat still refuses it."""
+    module, _logs = adapter
+    definitions = importlib.import_module("functions_workflow_definitions")
+    stored = {**world.definitions.get(OWNER, DIGEST_ID), "origin": _handoff_origin()}
+    saved = definitions.apply_workflow_origin({**stored, "name": "Renamed digest"}, stored)
+    if saved["origin"] != _handoff_origin(edited=True):
+        raise AssertionError(f"An editor save changed the one-time origin: {saved['origin']!r}")
+    world.definitions.patch(OWNER, DIGEST_ID, origin=saved["origin"])
+    result, _service = _call(module, planning)
+    if result["workflow_run"] != _sidecar(planning, "unavailable", reason="workflow_one_time"):
+        raise AssertionError(f"Unexpected outcome: {result['workflow_run']!r}")
+    if world.queued != [] or world.runs.items != {} or world.controls.items != {}:
+        raise AssertionError("An edited one-time workflow was started from chat.")
 
 
 @pytest.mark.parametrize("change", [{"tasks": ["not a task"]}, {"definition_version": 4}, {"definition_version": "1"}])

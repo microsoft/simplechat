@@ -22,7 +22,7 @@ from functions_generated_export_registry import (
 )
 from functions_orchestration_output_store import OrchestrationOutputStore, OutputError
 from functions_orchestration_registry import (
-    CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
+    CAPABILITY_WORKFLOW_HANDOFF, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
 )
 from functions_orchestration_rendering import OrchestrationRenderingService
 from functions_orchestration_result_contracts import (
@@ -120,9 +120,11 @@ def discover_result_aliases(runs, results):
         if any(task.producer.capability_id == CAPABILITY_WORKFLOW_RESULTS for task in parsed):
             continue
         for task in parsed:
-            if task.producer.capability_id in (CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN):
-                # A workflow proposal is reviewed on its own card, and a started workflow is
-                # followed through its run link; a later plan never reads either.
+            if task.producer.capability_id in (
+                CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_HANDOFF,
+            ):
+                # A workflow proposal or hand-off is reviewed on its own card, and a started
+                # workflow is followed through its run link; a later plan never reads any of them.
                 continue
             for reference in task.outputs:
                 if reference.completeness.status != "complete":

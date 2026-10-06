@@ -6,6 +6,7 @@ Version: 0.261.227
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
 Workflow run status coverage: 0.261.227
+Workflow hand-off coverage: 0.261.250
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external
@@ -296,6 +297,33 @@ def test_workflow_run_status_requires_a_signed_in_user_session() -> None:
         raise AssertionError("Status route must not accept bearer tokens.")
 
 
+def test_workflow_handoff_routes_require_a_signed_in_user_session() -> None:
+    """The hand-off card's reads and decisions are never public or bearer-only.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    prefix = "/api/v2/orchestration/runs/<run_id>/workflow-handoffs"
+    expected = {
+        prefix: "orchestration_workflow_handoffs",
+        f"{prefix}/<handoff_id>/accept": "orchestration_accept_workflow_handoff",
+        f"{prefix}/<handoff_id>/deny": "orchestration_deny_workflow_handoff",
+        f"{prefix}/<handoff_id>/draft": "orchestration_workflow_handoff_draft",
+    }
+    matches = [route for route in iter_route_functions() if route.path.startswith(prefix)]
+    found = {route.path: route.function_name for route in matches}
+    if len(matches) != len(expected) or found != expected:
+        raise AssertionError(f"Unexpected hand-off routes: {sorted(found.items())}.")
+    required = {"login_required", "user_required", "enabled_required", "workflow_user_required"}
+    for route in matches:
+        if expected_policy(route.path) != "session_user_401_or_redirect":
+            raise AssertionError(f"{route.function_name} policy changed: {expected_policy(route.path)}.")
+        if not required <= set(route.decorator_names):
+            missing = sorted(required - set(route.decorator_names))
+            raise AssertionError(f"{route.function_name} is missing guards: {missing}.")
+        if "accesstoken_required" in route.decorator_names:
+            raise AssertionError(f"{route.function_name} must not accept bearer tokens.")
+
+
 if __name__ == "__main__":
     tests = [
         test_every_route_has_unauthenticated_access_policy,
@@ -304,6 +332,7 @@ if __name__ == "__main__":
         test_sensitive_admin_routes_have_admin_or_specialized_route_decorator,
         test_workflow_result_context_requires_a_signed_in_user_session,
         test_workflow_run_status_requires_a_signed_in_user_session,
+        test_workflow_handoff_routes_require_a_signed_in_user_session,
     ]
     results = []
     for test in tests:

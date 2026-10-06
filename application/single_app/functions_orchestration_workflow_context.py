@@ -1,20 +1,23 @@
 # functions_orchestration_workflow_context.py
-"""Planning context for workflow proposals, runs and results from chat orchestration.
+"""Planning context for workflow proposals, runs, results and hand-offs from chat orchestration.
 
-Version: 0.261.217
+Version: 0.261.250
 
 Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability), start
-one the user already has (the ``workflow_run`` capability) and read the stored result of one of
-the user's finished workflow runs (the ``workflow_results`` capability). The planner writes a
-workflow blueprint, or names the workflow to start or read, by request-local handles such as
-``agent-mail-helper-3f2a1c``. This module builds those handles from what the requesting user may
-use and keeps the map from each handle to its stored record on the server. The planner sees names,
-kinds and limits as bounded data, never record ids, task instructions or credentials.
+one the user already has (the ``workflow_run`` capability), read the stored result of one of
+the user's finished workflow runs (the ``workflow_results`` capability) and hand work too large
+for a chat plan off to a one-time workflow (the ``workflow_handoff`` capability). The planner
+writes a workflow blueprint, or names the workflow to start or read, by request-local handles
+such as ``agent-mail-helper-3f2a1c``. This module builds those handles from what the requesting
+user may use and keeps the map from each handle to its stored record on the server. The planner
+sees names, kinds and limits as bounded data, never record ids, task instructions or credentials.
 
 Everything here reads and never writes. Nothing is read unless at least one of the three
 capabilities is configured, the user may use personal workflows, and the conversation is private
 to the requester. They are independent: with only proposals on, a request plans exactly as it
 did before workflow runs existed, and with all of them off it plans as it did before any existed.
+A hand-off needs all three plus its own setting, and its part of the context is self-contained:
+with hand-off off, the context is exactly what it was before hand-offs existed.
 """
 
 import hashlib
@@ -38,14 +41,17 @@ from functions_msgraph_operations import get_msgraph_enabled_function_names, res
 from functions_orchestration_memory import conversation_is_private
 # One definition of each: the step schema, the deliverables and this module read the same values.
 from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_HANDOFF as WORKFLOW_HANDOFF_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_PROPOSE as WORKFLOW_PROPOSE_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_RESULTS as WORKFLOW_RESULTS_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_RUN as WORKFLOW_RUN_CAPABILITY_ID,
+    WORKFLOW_HANDOFF_SETTING,
     WORKFLOW_PROPOSAL_MAX_TASKS as WORKFLOW_BLUEPRINT_MAX_TASKS,
     WORKFLOW_PROPOSALS_SETTING,
     WORKFLOW_RESULTS_SETTING,
     WORKFLOW_RUNS_SETTING,
     WORKFLOW_TASK_ACTION_KINDS as WORKFLOW_ACTION_KINDS,
+    WORKSPACE_SCOPE_SETTINGS,
 )
 from functions_workflow_limits import (
     get_chat_orchestration_max_workflows_per_user,
@@ -64,6 +70,7 @@ WORKFLOW_REASON_DISABLED = 'workflow_proposals_disabled'
 WORKFLOW_RUNS_REASON_DISABLED = 'workflow_runs_disabled'
 WORKFLOW_RESULTS_REASON_DISABLED = 'workflow_results_disabled'
 WORKFLOW_RESULTS_REASON_NO_WORKFLOWS = 'workflow_results_no_workflows'
+WORKFLOW_HANDOFF_REASON_DISABLED = 'workflow_handoff_disabled'
 WORKFLOW_REASON_ROLE_REQUIRED = 'workflow_role_required'
 WORKFLOW_REASON_SHARED_CONVERSATION = 'workflow_shared_conversation'
 WORKFLOW_REASON_QUOTA_REACHED = 'workflow_quota_reached'
@@ -99,7 +106,9 @@ WORKFLOW_SEND_FUNCTIONS = frozenset({'send_mail', 'create_calendar_invite'})
 
 WORKFLOW_SCOPE_TYPES = ('personal', 'group', 'public')
 
-_HANDLE_PREFIXES = {'agents': 'agent', 'documents': 'doc', 'sources': 'source', 'workflows': 'workflow'}
+_HANDLE_PREFIXES = {
+    'agents': 'agent', 'documents': 'doc', 'sources': 'source', 'workflows': 'workflow', 'scopes': 'scope',
+}
 _HANDLE_RE = re.compile(r'^[a-z][a-z0-9_-]{0,63}$')
 # Control, zero-width, line/paragraph separator and bidirectional formatting characters.
 _TEXT_NOISE = re.compile('[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]')
@@ -332,13 +341,65 @@ def workflow_results_gate(settings, user_roles):
     return None
 
 
+def workflow_handoff_configured(settings):
+    """Whether an administrator turned on handing large work off to a one-time workflow.
+
+    A hand-off creates a workflow, starts its one run and posts that run's result back into the
+    chat, so proposals, runs and results must be on as well. Only real booleans ``True`` count.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    return (
+        settings.get(WORKFLOW_HANDOFF_SETTING) is True and workflow_proposals_configured(settings)
+        and workflow_runs_configured(settings) and workflow_results_configured(settings)
+    )
+
+
+def workflow_handoff_settings_gate(settings):
+    """Return None when the deployment lets a plan hand work off to a one-time workflow, else a closed reason.
+
+    Settings and the capability allowlist only; ``workflow_handoff_gate`` adds the caller's roles.
+    With results in chat off, the run's summary could never be posted back, so that has its own
+    reason.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    if (
+        settings.get(WORKFLOW_HANDOFF_SETTING) is not True or not workflow_proposals_configured(settings)
+        or not workflow_runs_configured(settings) or not settings.get('allow_user_workflows')
+    ):
+        return WORKFLOW_HANDOFF_REASON_DISABLED
+    if not workflow_results_configured(settings):
+        return WORKFLOW_RESULTS_REASON_DISABLED
+    # Imported here because the registry's workflow capability gates import this module.
+    from functions_orchestration_registry import capability_allowlisted
+    if not capability_allowlisted(settings, WORKFLOW_HANDOFF_CAPABILITY_ID):
+        return WORKFLOW_HANDOFF_REASON_DISABLED
+    return None
+
+
+def workflow_handoff_gate(settings, user_roles):
+    """Return None when this user may be offered a hand-off, else a closed reason.
+
+    The role check is the one that decides whether chat answers from a finished run's result, so
+    a hand-off is never offered to a user whose run's summary could not be posted back.
+    """
+    reason = workflow_handoff_settings_gate(settings)
+    if reason:
+        return reason
+    # Settings initialize application storage, so they are imported only once a gate is reached.
+    from functions_settings import is_chat_workflow_results_enabled_for_user
+    roles = list(user_roles) if isinstance(user_roles, (list, tuple, set)) else []
+    if not is_chat_workflow_results_enabled_for_user(settings, user_roles=roles):
+        return WORKFLOW_REASON_ROLE_REQUIRED
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Default readers (lazy: each one needs initialized application storage)
 # ---------------------------------------------------------------------------
 
 _AGENT_FIELDS = (
     'c.id, c.name, c.display_name, c.description, c.is_enabled, c.actions_to_load, '
-    'c.other_settings.action_capabilities AS action_capabilities'
+    'c.other_settings.action_capabilities AS action_capabilities, c.agent_type'
 )
 
 
@@ -392,7 +453,8 @@ def _read_workflows(user_id):
     return list(cosmos_personal_workflows_container.query_items(
         query=(
             f'SELECT TOP {WORKFLOW_SCAN_LIMIT} c.id, c.name, c.description, c.trigger_type, c.schedule, '
-            'c.is_enabled, c.durable_execution, c.deleting, c.updated_at, c.created_at, c.file_sync '
+            'c.is_enabled, c.durable_execution, c.deleting, c.updated_at, c.created_at, c.file_sync, '
+            'c.origin.one_time AS one_time '
             'FROM c WHERE c.user_id = @user_id'
         ),
         parameters=[{'name': '@user_id', 'value': user_id}],
@@ -415,6 +477,40 @@ def _default_model_valid(settings):
     return bool(_build_default_model_summary(settings).get('valid'))
 
 
+def _read_scope(scope_type, scope_id, user_id):
+    """Return the stored name of a group or public workspace a hand-off may search.
+
+    The checks a run's workspace query repeats before it searches: membership and status for a
+    group, status for a public workspace. A public workspace must also be one the user keeps
+    visible, so a hand-off never searches a workspace the user did not choose. The user's
+    settings are read from a snapshot, which never writes. Raises ``PermissionError`` or
+    ``LookupError`` for a workspace that cannot be offered.
+    """
+    from functions_workflow_loop_inputs import _default_authorize_scope
+    if scope_type == 'group':
+        _default_authorize_scope({'scope_type': 'group', 'scope_id': scope_id}, actor_user_id=user_id)
+        from functions_group import find_group_by_id
+        record = find_group_by_id(scope_id)
+    elif scope_type == 'public':
+        from functions_public_workspaces import (
+            find_public_workspace_by_id,
+            visible_public_workspace_ids_from_user_settings,
+        )
+        from functions_settings import read_user_settings_snapshot
+        visible = visible_public_workspace_ids_from_user_settings(
+            read_user_settings_snapshot(user_id), list_public_workspaces=lambda: [{'id': scope_id}],
+        )
+        if scope_id not in (visible or ()):
+            raise PermissionError('The public workspace is not visible to this user.')
+        _default_authorize_scope({'scope_type': 'public', 'scope_id': scope_id}, actor_user_id=user_id)
+        record = find_public_workspace_by_id(scope_id)
+    else:
+        raise LookupError('Only group and public workspaces are read.')
+    if not isinstance(record, dict):
+        raise LookupError('The workspace was not found.')
+    return str(record.get('name') or '')
+
+
 _DEFAULT_READERS = {
     'personal_agents': _read_personal_agents,
     'global_agents': _read_global_agents,
@@ -425,6 +521,7 @@ _DEFAULT_READERS = {
     'quota_count': _count_quota,
     'max_tasks': _max_tasks,
     'default_model': _default_model_valid,
+    'scope': _read_scope,
 }
 
 
@@ -793,15 +890,20 @@ def _workflow_entries(user_id, readers, taken, *, rank_for_runs=False, request_t
         workflow_id = _record_id(workflow.get('id'))
         name = clean_catalog_text(workflow.get('name'), NAME_MAX_LENGTH) or 'Workflow'
         trigger_type = str(workflow.get('trigger_type') or 'manual').strip().lower()
+        entry = {
+            'handle': workflow_handle('workflows', workflow_id, name, taken),
+            'name': name,
+            'description': clean_catalog_text(workflow.get('description'), WORKFLOW_DESCRIPTION_MAX_LENGTH),
+            'trigger_summary': _trigger_summary(trigger_type, workflow.get('schedule')),
+            'enabled': workflow.get('is_enabled') is True,
+            'durable': workflow.get('durable_execution') is True,
+        }
+        # A hand-off's workflow already ran its one run. Absent rather than False for every other
+        # workflow, so the catalog of a user with no hand-offs is unchanged.
+        if workflow.get('one_time') is True:
+            entry['one_time'] = True
         entries.append({
-            'entry': {
-                'handle': workflow_handle('workflows', workflow_id, name, taken),
-                'name': name,
-                'description': clean_catalog_text(workflow.get('description'), WORKFLOW_DESCRIPTION_MAX_LENGTH),
-                'trigger_summary': _trigger_summary(trigger_type, workflow.get('schedule')),
-                'enabled': workflow.get('is_enabled') is True,
-                'durable': workflow.get('durable_execution') is True,
-            },
+            'entry': entry,
             'record': {'id': workflow_id},
             'snapshot': {
                 'name': name,
@@ -839,7 +941,7 @@ def _log_context(message, level, **fields):
 
 
 def build_workflow_planning_context(settings, *, user_id, user_info, conversation, time_zone=None, now=None,
-                                    documents=(), readers=None, request_text=None):
+                                    documents=(), readers=None, request_text=None, scope_seeds=None):
     """Build the server-only context the planner needs to propose or start a workflow this turn.
 
     Returns ``{'conversation_private', 'quota_reached'}`` and nothing else when neither workflow
@@ -870,10 +972,40 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
     always carries ``time_zone`` and ``request_local_time``: a results step names the local day a
     run finished on.
 
+    When handing work off to a one-time workflow is open to the user, the context also carries a
+    self-contained ``workflow_handoff`` marker: its own catalog and handle map of the documents
+    named this turn, the workspaces this chat searches (from ``scope_seeds``: the composer's
+    ``doc_scope``, ``active_group_ids`` and ``active_public_workspace_ids``) and the agents a task
+    may run as, plus its limits. It does not depend on the proposal cap or catalogs, and a failed
+    read leaves it off. With hand-offs off, the context is exactly what it was before them.
+
     ``readers`` replaces the storage reads, for tests.
     """
     settings = settings if isinstance(settings, dict) else {}
     user_info = user_info if isinstance(user_info, dict) else {}
+    readers = _readers(readers)
+    handoff = (
+        bool(user_id)
+        and conversation_is_private(conversation, user_id) is True
+        and workflow_handoff_gate(settings, user_info.get('roles')) is None
+    )
+    if handoff:
+        readers = _shared_agent_readers(readers)
+    context = _planning_context(
+        settings, user_id=user_id, user_info=user_info, conversation=conversation, time_zone=time_zone,
+        now=now, documents=documents, readers=readers, request_text=request_text,
+    )
+    if not handoff or context.get('conversation_private') is not True:
+        return context
+    return _with_handoff_marker(
+        context, settings=settings, user_id=user_id, readers=readers, documents=documents,
+        scope_seeds=scope_seeds, conversation=conversation, time_zone=time_zone, now=now,
+    )
+
+
+def _planning_context(settings, *, user_id, user_info, conversation, time_zone, now, documents, readers,
+                      request_text):
+    """The proposal, run and results planning context: exactly what it was before hand-offs existed."""
     private = conversation_is_private(conversation, user_id)
     context = {'conversation_private': private, 'quota_reached': None}
     if not user_id or not private:
@@ -884,7 +1016,6 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
     if not proposals and not runs and not results:
         return context
 
-    readers = _readers(readers)
     # Starting a workflow and reading its results both name a workflow the user already has.
     names_workflows = runs or results
     if proposals:
@@ -1018,6 +1149,183 @@ def _proposal_planning_context(settings, context, *, user_id, user_info, time_zo
         duration_ms=int((time.monotonic() - started) * 1000),
     )
     return context
+
+
+# ---------------------------------------------------------------------------
+# Hand-offs to a one-time workflow
+# ---------------------------------------------------------------------------
+
+def _scope_entries(user_id, settings, readers, scope_seeds, conversation, taken):
+    """The workspaces a hand-off's workspace query may search: the ones this turn's chat searches.
+
+    The composer's document scope with the group and public workspaces it sent, each workspace
+    kind turned on, each workspace rechecked now and, in a scope-locked conversation, only the
+    workspaces the lock allows. A workspace that fails a check is left out.
+    """
+    from functions_orchestration_context import conversation_workspace_lock
+    from functions_workflow_handoff_builder import HANDOFF_MAX_SCOPES, HANDOFF_SCOPE_LABELS
+
+    seeds = scope_seeds if isinstance(scope_seeds, dict) else {}
+    doc_scope = str(seeds.get('doc_scope') or 'all').strip().lower()
+    if doc_scope != 'all' and doc_scope not in WORKFLOW_SCOPE_TYPES:
+        return []
+    candidates = [('personal', user_id)] if doc_scope in ('all', 'personal') else []
+    for scope_type, key in (('group', 'active_group_ids'), ('public', 'active_public_workspace_ids')):
+        values = seeds.get(key) if doc_scope in ('all', scope_type) else None
+        for value in values if isinstance(values, (list, tuple)) else ():
+            scope_id = _record_id(value)
+            if scope_id:
+                candidates.append((scope_type, scope_id))
+    lock = conversation_workspace_lock(conversation)
+    entries = []
+    seen = set()
+    for scope_type, scope_id in candidates:
+        if (scope_type, scope_id) in seen or not settings.get(WORKSPACE_SCOPE_SETTINGS[scope_type], False):
+            continue
+        seen.add((scope_type, scope_id))
+        if lock is not None and not any(
+            isinstance(item, dict) and item.get('scope') == scope_type and item.get('id') == scope_id
+            for item in lock
+        ):
+            continue
+        stored_name = ''
+        if scope_type != 'personal':
+            try:
+                stored_name = readers['scope'](scope_type, scope_id, user_id)
+            except Exception:
+                # No longer a member, the workspace is locked or gone, or it could not be read.
+                continue
+        name = clean_catalog_text(stored_name, NAME_MAX_LENGTH) or HANDOFF_SCOPE_LABELS[scope_type]
+        entries.append({
+            'entry': {
+                'handle': workflow_handle('scopes', f'{scope_type}:{scope_id}', name, taken),
+                'name': name,
+                'scope': scope_type,
+            },
+            'record': {'scope_type': scope_type, 'scope_id': scope_id, 'name': name},
+        })
+        if len(entries) >= HANDOFF_MAX_SCOPES:
+            break
+    return entries
+
+
+def _shared_agent_readers(readers):
+    """Readers that read the agents and their actions once per context, for a context that lists them twice.
+
+    The proposal catalog and the hand-off part each list the agents. Each caller gets its own
+    copy of the stored records, and a failed read is not remembered, so it is tried again.
+    """
+    stored = {}
+
+    def shared(name):
+        reader = readers[name]
+
+        def call(*args):
+            key = (name, *args)
+            if key not in stored:
+                stored[key] = list(reader(*args) or ())
+            return deepcopy(stored[key])
+        return call
+
+    return {**readers, **{name: shared(name) for name in ('personal_agents', 'global_agents', 'actions')}}
+
+
+def _handoff_agent_entries(user_id, settings, readers, taken):
+    """The agents a hand-off task may name, each marked with whether a hand-off can run it.
+
+    The proposal catalog's agents, listed again from the same reads so the hand-off part stands
+    alone. A hand-off runs without Microsoft 365 and without Run as, so an agent that needs
+    either, or that is not a local agent, is marked ``local: False``; a blueprint that names one
+    is refused.
+    """
+    stored = {}
+
+    def remembered(is_global, agents):
+        agents = [agent for agent in agents or () if isinstance(agent, dict)]
+        for agent in agents:
+            stored.setdefault((is_global, _record_id(agent.get('id'))), agent)
+        return agents
+
+    agent_readers = {
+        **readers,
+        'personal_agents': lambda owner_id: remembered(False, readers['personal_agents'](owner_id)),
+        'global_agents': lambda: remembered(True, readers['global_agents']()),
+    }
+    items = []
+    for item in _agent_entries(user_id, settings, agent_readers, taken):
+        record = item['record']
+        agent = stored.get((record['is_global'], record['id'])) or {}
+        local = str(agent.get('agent_type') or 'local') == 'local' and not item['capabilities']['needs_run_as']
+        items.append({
+            'entry': {
+                'handle': item['entry']['handle'],
+                'name': item['entry']['name'],
+                'description': item['entry']['description'],
+                'local': local,
+            },
+            'record': deepcopy(record),
+        })
+    return items
+
+
+def _bounded_handoff_catalog(groups):
+    """Drop the least useful hand-off entries until its planner-facing catalog fits the character budget."""
+    def catalog():
+        return {kind: [item['entry'] for item in items] for kind, items in groups.items()}
+
+    for kind, floor in (('agents', 0), ('scopes', 1), ('documents', 0)):
+        while len(groups[kind]) > floor and _catalog_size(catalog()) > CATALOG_MAX_CHARACTERS:
+            groups[kind].pop()
+    return catalog()
+
+
+def _with_handoff_marker(context, *, settings, user_id, readers, documents, scope_seeds, conversation,
+                         time_zone=None, now=None):
+    """Add the self-contained part a hand-off needs: its documents, workspaces, agents and limits.
+
+    The documents the user named this turn, the workspaces this chat searches and the agents a
+    task may run as, each under a handle issued for the hand-off alone. The proposal and workflow
+    catalogs, and their handles, are left exactly as they are. A failed read returns ``context``
+    unchanged, without the marker, so a hand-off fails closed.
+    """
+    from functions_workflow_handoff_builder import HANDOFF_MAX_DOCUMENTS, handoff_effective_loop_limit
+
+    started = time.monotonic()
+    taken = set()
+    try:
+        max_loop_items = handoff_effective_loop_limit(settings)
+        groups = {
+            'documents': _document_entries(user_id, documents, taken)[:HANDOFF_MAX_DOCUMENTS],
+            'scopes': _scope_entries(user_id, settings, readers, scope_seeds, conversation, taken),
+            'agents': _handoff_agent_entries(user_id, settings, readers, taken),
+        }
+    except Exception as exc:
+        _log_context(
+            'The hand-off planning context could not be read; handing work off is unavailable for this turn.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return context
+    # _bounded_handoff_catalog trims ``groups`` in place, so the handle map matches the catalog.
+    catalog = _bounded_handoff_catalog(groups)
+    zone = resolve_turn_time_zone(time_zone, context.get('time_zone'))
+    marker = {
+        'ready': True,
+        'max_loop_items': max_loop_items,
+        'documents_max': HANDOFF_MAX_DOCUMENTS,
+        'time_zone': zone,
+        'request_local_time': request_local_time_line(zone, now),
+        'catalog': catalog,
+        'handles': {
+            kind: {item['entry']['handle']: item['record'] for item in items} for kind, items in groups.items()
+        },
+        'agent_local': {item['entry']['handle']: item['entry']['local'] for item in groups['agents']},
+    }
+    _log_context(
+        'Workflow hand-off planning context built.', logging.INFO,
+        document_count=len(catalog['documents']), scope_count=len(catalog['scopes']),
+        agent_count=len(catalog['agents']), duration_ms=int((time.monotonic() - started) * 1000),
+    )
+    return {**context, 'workflow_handoff': marker}
 
 
 def workflow_planning_ready(context):
@@ -1177,6 +1485,65 @@ def workflow_results_projection(context):
         'time_zone': context.get('time_zone') or WORKFLOW_DEFAULT_TIME_ZONE,
         'request_local_time': context.get('request_local_time') or '',
         'catalog': {'workflows': context['catalog']['workflows']},
+    })
+
+
+def workflow_handoff_ready(context):
+    """Whether a stored planning context can support handing work off to a one-time workflow in this turn.
+
+    The hand-off part is self-contained under ``workflow_handoff``: it does not depend on the
+    proposal catalogs, so a user at the proposal cap can still hand work off.
+    """
+    if not isinstance(context, dict) or context.get('conversation_private') is not True:
+        return False
+    marker = context.get('workflow_handoff')
+    return (
+        isinstance(marker, dict) and marker.get('ready') is True
+        and isinstance(marker.get('catalog'), dict) and isinstance(marker.get('handles'), dict)
+    )
+
+
+def workflow_handoff_unavailable_reason(settings, request_context):
+    """Return None when this request may hand work off to a one-time workflow, else a closed reason. Never raises.
+
+    Like ``workflow_run_unavailable_reason``, with the hand-off gate: proposals, runs and results
+    must all be open to the user as well.
+    """
+    try:
+        request_context = request_context if isinstance(request_context, dict) else {}
+        reason = workflow_handoff_gate(settings, request_context.get('user_roles'))
+        if reason is not None:
+            return reason
+        planning = request_context.get('workflow_planning')
+        if not isinstance(planning, dict):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        if planning.get('conversation_private') is not True:
+            return WORKFLOW_REASON_SHARED_CONVERSATION
+        if not workflow_handoff_ready(planning):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        return None
+    except Exception as exc:
+        _log_context(
+            'Workflow hand-off access could not be checked; handing work off is unavailable for this request.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+
+
+def workflow_handoff_projection(context):
+    """What the planner may see to hand work off: the hand-off's limits, the time and its handle-only catalog.
+
+    Handles, names, workspace kinds and whether a hand-off can run each agent; never an id.
+    """
+    if not workflow_handoff_ready(context):
+        return None
+    marker = context['workflow_handoff']
+    return deepcopy({
+        'time_zone': marker.get('time_zone') or WORKFLOW_DEFAULT_TIME_ZONE,
+        'request_local_time': marker.get('request_local_time') or '',
+        'max_loop_items': marker.get('max_loop_items'),
+        'documents_max': marker.get('documents_max'),
+        'catalog': marker['catalog'],
     })
 
 

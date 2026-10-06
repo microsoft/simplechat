@@ -64,8 +64,9 @@ from functions_orchestration_context import (
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_MERGE, CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE,
-    CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN, DEPENDENCY_PLAN_CONTRACT_VERSION,
-    admitted_export_pairs, external_effect_capability_ids, get_capability, resolve_available_capability_ids,
+    CAPABILITY_WORKFLOW_HANDOFF, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
+    DEPENDENCY_PLAN_CONTRACT_VERSION, admitted_export_pairs, external_effect_capability_ids, get_capability,
+    resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
     InputBinding, PartialInputNotAcceptedError, ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest,
@@ -612,6 +613,9 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
     if step.get('capability_id') == CAPABILITY_WORKFLOW_RESULTS and isinstance(result.get('workflow_results'), dict):
         # Server-only: the result read's lineage and reply descriptor; public_step_record drops it.
         record['workflow_results'] = deepcopy(result['workflow_results'])
+    if step.get('capability_id') == CAPABILITY_WORKFLOW_HANDOFF and isinstance(result.get('workflow_handoff'), dict):
+        # Server-only: the blueprint, handles and selections the hand-off routes read; public_step_record drops it.
+        record['workflow_handoff'] = deepcopy(result['workflow_handoff'])
     return record
 
 
@@ -695,6 +699,35 @@ def _restore_workflow_results(step, context, status, result, *, user_id):
         return result
     sidecar = rebuilt.get('workflow_results') if isinstance(rebuilt, dict) else None
     return {**result, 'workflow_results': sidecar} if isinstance(sidecar, dict) else result
+
+
+def _restore_workflow_handoff(step, context, status, result, *, settings, user_id):
+    """Describe again a completed hand-off whose step result came back without its sidecar.
+
+    A retained, recovered or reused result is rebuilt from the task result alone, which carries
+    the card but never the blueprint's handles or the captured selections. The rebuild dry-runs
+    the blueprint again and writes nothing.
+    """
+    if (
+        step.get('capability_id') != CAPABILITY_WORKFLOW_HANDOFF or status != STEP_STATUS_COMPLETED
+        or not isinstance(result, dict) or result.get('task_result') is None
+        or isinstance(result.get('workflow_handoff'), dict)
+    ):
+        return result
+    try:
+        from functions_orchestration_workflow_handoffs import rebuild_workflow_handoff
+
+        sidecar = rebuild_workflow_handoff(
+            step, context, settings=settings, user_id=user_id, task=result['task_result'],
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} A recovered workflow hand-off could not be described.',
+            level=logging.WARNING,
+            extra={**_step_log_context(context, step), 'error_type': type(exc).__name__},
+        )
+        return result
+    return {**result, 'workflow_handoff': sidecar} if isinstance(sidecar, dict) else result
 
 
 def _persist(persist, record_type, record):
@@ -1554,6 +1587,7 @@ def _execute_dependency_plan(
         result = _restore_workflow_proposal(step, context, status, result, settings=settings, user_id=user_id)
         result = _restore_workflow_run(step, context, status, result, user_id=user_id)
         result = _restore_workflow_results(step, context, status, result, user_id=user_id)
+        result = _restore_workflow_handoff(step, context, status, result, settings=settings, user_id=user_id)
         record = _step_record(context, step, index, status, result, started_at, completed_at, elapsed)
         record.update({
             'checkpoint_available': checkpoints is not None

@@ -155,6 +155,7 @@ REASON_DEFINITION_CHANGED = 'workflow_definition_changed'
 REASON_RUN_TOMBSTONED = 'workflow_run_tombstoned'
 REASON_ACCESS_LOST = 'workflow_access_lost'
 REASON_NOT_STARTED = 'workflow_run_not_started'
+REASON_ONE_TIME = 'workflow_one_time'
 
 # Application-owned text for each reason. It never repeats a handle, a name or an error.
 WORKFLOW_RUN_REASON_TEXT = {
@@ -186,6 +187,7 @@ WORKFLOW_RUN_REASON_TEXT = {
     REASON_RUN_TOMBSTONED: "The workflow couldn't be started. Ask again in a new message.",
     REASON_ACCESS_LOST: 'You no longer have access to start this workflow.',
     REASON_NOT_STARTED: "The workflow couldn't be started. Open it in Workflows to run it.",
+    REASON_ONE_TIME: 'It was created for a single run. Open it in Workflows to run it again.',
 }
 # The workflow runtime's conflict codes. Any other code, including one added later, reads as
 # not started; the runtime's code and message are never shown.
@@ -594,6 +596,36 @@ def _started_status(run):
     return WORKFLOW_RUN_STATUS_QUEUED
 
 
+def chat_delivery_seed_for(settings, *, user_roles, time_zone, model_selection, run_id=None):
+    """Return the record that has a started run's result posted back to its chat, or None.
+
+    Shared by a plan's ``workflow_run`` step and a hand-off's accept, so both record delivery the
+    same way. ``model_selection`` is the normalized turn selection captured on the server. The
+    cheap settings check comes first, so a deployment with Use Workflow Results In Chat off never
+    reaches the role-aware gate. A failure here only means the run is not delivered: it never
+    fails the start.
+    """
+    if not isinstance(settings, dict) or not settings.get('enable_chat_workflow_results'):
+        return None
+    try:
+        # Settings initialize application storage, so they are imported only once a gate is reached.
+        from functions_settings import is_chat_workflow_results_enabled_for_user
+
+        if not is_chat_workflow_results_enabled_for_user(settings, user_roles=user_roles):
+            return None
+        return build_chat_delivery_seed(
+            time_zone=time_zone,
+            model_selection=model_selection,
+            requester_roles=normalize_requester_roles(user_roles),
+        )
+    except Exception as exc:
+        _log(
+            'Chat delivery was not recorded for a started workflow run.', logging.WARNING,
+            run_id=run_id, error_type=type(exc).__name__,
+        )
+        return None
+
+
 def _chat_delivery_seed(settings, context, planning):
     """Return the record that has the run's result posted back to this chat, or None.
 
@@ -604,21 +636,12 @@ def _chat_delivery_seed(settings, context, planning):
     if not isinstance(settings, dict) or not settings.get('enable_chat_workflow_results'):
         return None
     try:
-        # Settings initialize application storage, so they are imported only once a gate is reached.
-        from functions_settings import is_chat_workflow_results_enabled_for_user
-
         user_roles = getattr(context, 'user_roles', None)
-        if not is_chat_workflow_results_enabled_for_user(settings, user_roles=user_roles):
-            return None
         time_zone = getattr(context, 'time_zone', None)
         if not time_zone and isinstance(planning, dict):
             time_zone = planning.get('time_zone')
-        return build_chat_delivery_seed(
-            time_zone=time_zone,
-            model_selection=normalize_model_selection(
-                getattr(context, 'seeds', None), getattr(context, 'active_group_ids', None),
-            ),
-            requester_roles=normalize_requester_roles(user_roles),
+        model_selection = normalize_model_selection(
+            getattr(context, 'seeds', None), getattr(context, 'active_group_ids', None),
         )
     except Exception as exc:
         _log(
@@ -626,6 +649,10 @@ def _chat_delivery_seed(settings, context, planning):
             run_id=getattr(context, 'run_id', None), error_type=type(exc).__name__,
         )
         return None
+    return chat_delivery_seed_for(
+        settings, user_roles=user_roles, time_zone=time_zone, model_selection=model_selection,
+        run_id=getattr(context, 'run_id', None),
+    )
 
 
 def _start(step, context, *, settings, user_id, recheck, requested_at):
@@ -692,6 +719,10 @@ def _start(step, context, *, settings, user_id, recheck, requested_at):
         return unavailable(reason, workflow_id)
     if workflow.get('durable_execution') is not True:
         return unavailable(RULE_NOT_DURABLE, workflow_id)
+    # A hand-off's workflow is made for its one run; the user can still run it again from Workflows.
+    origin = workflow.get('origin')
+    if isinstance(origin, dict) and origin.get('one_time') is True:
+        return unavailable(REASON_ONE_TIME, workflow_id)
     if workflow.get('status') in M365_ACTIVE_STATES:
         return unavailable(REASON_WAITING_FOR_MICROSOFT_365, workflow_id)
     chat_delivery = _chat_delivery_seed(settings, context, planning)
@@ -1002,6 +1033,7 @@ __all__ = [
     'WORKFLOW_RUN_TRIGGER_SOURCE',
     'WORKFLOW_RUN_VERSION',
     'adapter_workflow_run',
+    'chat_delivery_seed_for',
     'drop_workflow_runs',
     'prepare_workflow_run_arguments',
     'rebuild_workflow_run',
