@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.264)**
+
+#### Bug Fixes
+
+*   **Video Indexer Deploys Outside the App Region and Works Without Manual Role Grants**
+    *   Azure Video Indexer is not offered in every region. The azd, Terraform, and Azure CLI deployers now accept a separate Video Indexer region (`VIDEO_INDEXER_LOCATION`, `param_video_indexer_location`, `$param_VideoIndexerLocation`) and pair it with a storage account in that region. Previously, enabling Video Indexer in a region such as North Central US failed the whole deployment. The azd preprovision hook now stops before provisioning and lists the supported regions.
+    *   Deployer-created Video Indexer accounts now grant the App Service identity **Video Indexer Account Contributor** (**Contributor** in Azure Government and custom clouds), so video processing works without adding a role by hand.
+    *   Post-provision configuration writes the Video Indexer settings only when the deployment created the account, and records the account's own region. Previously, any provision without Video Indexer blanked the account name and ID and reset the location, which left **AI Video Intelligence** showing *Needs configuration*.
+    *   Terraform now reads the Video Indexer identity from the azapi 2.x `output` object directly instead of passing it through `jsondecode()`.
+    *   (Ref: #1666, `videoIndexer.bicep`, `setVideoIndexerPermissions.bicep`, `postconfig.py`, `validate_azd_prerequisites.py`, `main.tf`, `deploy-simplechat.ps1`, deployer version 1.0.33, [Video Indexer Deployment Region and Permissions Fix](fixes/VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md))
+
 ### **(v0.261.263)**
 
 #### User Interface Enhancements
