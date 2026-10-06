@@ -46,6 +46,7 @@ from functions_orchestration_registry import (
     CAPABILITY_RENDER_FILE,
     CAPABILITY_TABULAR_INSPECT,
     CAPABILITY_TABULAR_MERGE,
+    CAPABILITY_WORKFLOW_HANDOFF,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
@@ -477,6 +478,21 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 f'{WORKFLOW_RESULTS_UNAVAILABLE_REASONS[_workflow_results_reason(unavailable)]} '
                 'When the user asks what a saved workflow found, say why in the answer.'
             )
+    # Handing work off is described only when this request offers it; otherwise the planner is told
+    # exactly what it was before.
+    if CAPABILITY_WORKFLOW_HANDOFF in available:
+        facts.append(
+            'workflow_handoff hands work that is too big for one chat plan to a one-time workflow. The '
+            'user reviews its hand-off card after approving the plan, and nothing is created or run until '
+            'the user approves that card; the run\'s summary is posted back into this conversation when it '
+            'finishes. The server adds a note about the hand-off to the reply, so never say that the work '
+            'was done, started or scheduled.'
+        )
+        recipes.append({'for': 'Work too big for one chat plan', 'steps': (
+            'one workflow_handoff step with no depends_on, no inputs and no deliverable. When the request '
+            'is only the hand-off, declare no deliverables and no final_response; otherwise the compose '
+            'final_response answers only what the other steps can answer now.'
+        )})
     truth.update({'unavailable_reasons': unavailable_reasons, 'facts': facts, 'recipes': recipes})
     return truth
 

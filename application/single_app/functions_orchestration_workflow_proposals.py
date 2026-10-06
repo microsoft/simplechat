@@ -39,7 +39,7 @@ from azure.cosmos import exceptions
 import functions_personal_workflows
 from functions_appinsights import log_event, workflow_log_context
 from functions_m365_workflow_binding import M365_WAITING_STATES, workflow_saved_by_run_as
-from functions_orchestration_registry import CAPABILITY_WORKFLOW_PROPOSE
+from functions_orchestration_registry import CAPABILITY_WORKFLOW_HANDOFF, CAPABILITY_WORKFLOW_PROPOSE
 from functions_orchestration_result_contracts import canonical_digest
 from functions_orchestration_runs import (
     WORKFLOW_PROPOSAL_DECISIONS_FIELD,
@@ -135,6 +135,7 @@ ERROR_MESSAGES = {
     'proposal_accepted': 'This workflow proposal was already accepted.',
     'proposal_busy': 'This workflow proposal is being updated. Try again in a moment.',
     'workflow_deleted': 'The workflow from this proposal was deleted. Choose Create again to create it again.',
+    'proposal_kind_mismatch': 'This is a workflow hand-off, not a workflow proposal.',
     SERVICE_UNAVAILABLE_CODE: 'Workflow proposals are unavailable right now. Try again later.',
 }
 _ERROR_STATUS = {
@@ -150,6 +151,7 @@ _ERROR_STATUS = {
     'proposal_accepted': 409,
     'proposal_busy': 409,
     'workflow_deleted': 409,
+    'proposal_kind_mismatch': 409,
     SERVICE_UNAVAILABLE_CODE: 503,
 }
 
@@ -413,6 +415,32 @@ def _resolve_proposals(run, user_id):
     return proposals
 
 
+def _is_handoff_id(run, value):
+    """Whether ``value`` names a workflow hand-off in ``run``: a hand-off card, not a proposal."""
+    # Imported here so loading the proposal decisions never loads the hand-off step module.
+    from functions_orchestration_workflow_handoffs import workflow_handoff_id
+
+    plan = run.get('plan') if isinstance(run.get('plan'), dict) else {}
+    for step in plan.get('steps') or ():
+        if not isinstance(step, dict) or step.get('capability_id') != CAPABILITY_WORKFLOW_HANDOFF:
+            continue
+        step_id = step.get('step_id')
+        if not isinstance(step_id, str) or not step_id or step.get('enabled', True) is False:
+            continue
+        entry = _execution_entry(run, step_id) or {}
+        sidecar = entry.get('workflow_handoff') if isinstance(entry.get('workflow_handoff'), dict) else {}
+        inherited = run.get('inherited_checkpoints') if isinstance(run.get('inherited_checkpoints'), dict) else {}
+        reference = inherited.get(step_id) if isinstance(inherited.get(step_id), dict) else {}
+        provenance = reference.get('provenance') if isinstance(reference.get('provenance'), dict) else {}
+        candidates = (
+            run.get('id'), sidecar.get('origin_run_id'), entry.get('reused_from_run_id'), provenance.get('run_id'),
+        )
+        for producer_id in candidates:
+            if isinstance(producer_id, str) and producer_id and workflow_handoff_id(producer_id, step_id) == value:
+                return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
@@ -430,6 +458,8 @@ def _read_workflow(user_id, proposal_id):
     if (
         not isinstance(record, dict) or record.get('id') != workflow_id or record.get('user_id') != user_id
         or origin.get('proposal_id') != proposal_id or record.get('deleting') or record.get('status') == 'deleting'
+        # A one-time hand-off workflow is never a proposal's workflow.
+        or origin.get('one_time') is True
     ):
         return None
     return record
@@ -635,6 +665,8 @@ def _open_proposal(run, conversation, proposal_id, *, identity, settings, respon
         None,
     )
     if proposal is None:
+        if _is_handoff_id(run, proposal_id):
+            raise ProposalError('proposal_kind_mismatch')
         raise ProposalError('proposal_not_found')
     if response_removed is not None and response_removed():
         raise ProposalError('proposal_unavailable')

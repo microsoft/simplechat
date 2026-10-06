@@ -61,6 +61,7 @@ from functions_orchestration_registry import (
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_TABULAR_INSPECT,
     CAPABILITY_TABULAR_MERGE,
+    CAPABILITY_WORKFLOW_HANDOFF,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
@@ -207,6 +208,13 @@ WORKFLOW_RUN_INVALID_CODE = 'workflow_run_invalid'
 # the per-plan limit, reads a workflow this plan also starts, or is read by anything but an answer
 # step. The planner repairs it once, then drops the steps that still fail.
 WORKFLOW_RESULTS_INVALID_CODE = 'workflow_results_invalid'
+# A workflow_handoff step whose blueprint breaks a hand-off rule, is not static, is read by another
+# step, or shares a plan with a workflow proposal or run. The planner repairs it once, then drops it.
+WORKFLOW_HANDOFF_INVALID_CODE = 'workflow_handoff_invalid'
+# A plan over the step budget or the document limit while hand-off is available to the user. The
+# planner repairs it once, by reducing the plan or by handing the work off. Without hand-off, the
+# same plans keep their existing codes.
+PLAN_BUDGET_EXCEEDED_CODE = 'plan_budget_exceeded'
 
 
 class PlanValidationError(ValueError):
@@ -741,6 +749,55 @@ def _reject_workflow_results_consumers(steps, final_response):
         )
 
 
+def _reject_workflow_handoff_consumers(steps, final_response):
+    """A hand-off is reviewed on its own card and runs later, so no step and no answer may read it."""
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_HANDOFF}
+    if not producers:
+        return
+    named = set()
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named.update(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+    if isinstance(final_response, dict):
+        named.add(final_response.get('step_id'))
+    if named & producers:
+        raise PlanValidationError(
+            'A workflow_handoff step only prepares the hand-off card; the work runs after the user '
+            'approves it. Remove every dependency on it, every input bound to its output, and any '
+            'final_response that selects it.',
+            code=WORKFLOW_HANDOFF_INVALID_CODE, rule='workflow_handoff_consumed',
+        )
+
+
+def _reject_mixed_workflow_handoff(raw_steps):
+    """A hand-off plan hands the whole job to one workflow, so it neither proposes nor starts another.
+
+    Read from the planner's steps before any step is checked, so this is the first rule a mixed
+    plan is told about.
+    """
+    capabilities = {
+        raw['capability_id'] for raw in raw_steps
+        if isinstance(raw, dict) and isinstance(raw.get('capability_id'), str)
+    }
+    if CAPABILITY_WORKFLOW_HANDOFF in capabilities and capabilities & {
+        CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
+    }:
+        raise PlanValidationError(
+            'A plan with a workflow_handoff step hands the whole request to that workflow. Remove '
+            'every workflow_propose and workflow_run step, or remove the workflow_handoff step.',
+            code=WORKFLOW_HANDOFF_INVALID_CODE, rule='workflow_handoff_exclusive',
+        )
+
+
+def _offers_handoff(available_capability_ids):
+    """Whether a request offered hand-off to its planner. Reads a concrete collection only."""
+    if not isinstance(available_capability_ids, (list, tuple, set, frozenset)):
+        return False
+    return CAPABILITY_WORKFLOW_HANDOFF in available_capability_ids
+
+
 _REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
 
 
@@ -798,7 +855,9 @@ def validate_dependency_plan(
     ``functions_orchestration_deliverables.compile_deliverables``. ``workflow_planning`` is the
     request's server-only workflow planning context; with it, a proposal's blueprint is also
     checked against the handles, limits and agents offered with the request, and a workflow_run
-    step must name a durable workflow the request offered.
+    step must name a durable workflow the request offered. A plan over the step budget or the
+    document limit fails with ``plan_budget_exceeded`` instead of its usual code only when
+    ``available_capability_ids`` offered ``workflow_handoff``, so the planner can hand the work off.
     """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
@@ -808,7 +867,15 @@ def validate_dependency_plan(
         max_steps = 8
     raw_steps = plan.get('steps')
     if type(raw_steps) is not list or not raw_steps or len(raw_steps) > max_steps:
+        if type(raw_steps) is list and raw_steps and _offers_handoff(available_capability_ids):
+            raise PlanValidationError(
+                'The complete plan exceeds the available step budget. Reduce the plan, or hand the '
+                'work off with one workflow_handoff step.',
+                code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_step_budget',
+            )
         raise PlanValidationError('The complete plan exceeds the available step budget.', code='result_step_limit')
+    # A plan over a budget names hand-off as a way out only when the request offered it.
+    handoff_offered = _offers_handoff(available_capability_ids)
     if available_capability_ids is None:
         available_capability_ids = resolve_available_capability_ids(
             settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
@@ -816,6 +883,8 @@ def validate_dependency_plan(
             export_catalog=export_catalog,
         )
     available = set(available_capability_ids)
+    if CAPABILITY_WORKFLOW_HANDOFF in available:
+        _reject_mixed_workflow_handoff(raw_steps)
     accepted = []
     counts = {}
     # Workflows earlier run steps of this plan start; each may be started once.
@@ -897,6 +966,13 @@ def validate_dependency_plan(
                 arguments = prepare_workflow_proposal_arguments(
                     raw, arguments, settings=settings, workflow_planning=workflow_planning,
                 )
+            if capability_id == CAPABILITY_WORKFLOW_HANDOFF:
+                # Loaded only when a plan hands work off; the draft service is not needed otherwise.
+                from functions_orchestration_workflow_handoffs import prepare_workflow_handoff_arguments
+
+                arguments = prepare_workflow_handoff_arguments(
+                    raw, arguments, settings=settings, workflow_planning=workflow_planning,
+                )
             if any(isinstance(value, str) and not value.strip() for value in arguments.values()):
                 raise PlanValidationError('String arguments must not be empty or whitespace.')
             for name, rule in capability['inputs']['properties'].items():
@@ -914,6 +990,12 @@ def validate_dependency_plan(
                     if len(set(arguments[name])) != len(arguments[name]):
                         raise PlanValidationError('Document selections must not contain duplicates.')
                     if limit and len(arguments[name]) > limit:
+                        if handoff_offered:
+                            raise PlanValidationError(
+                                'The complete source selection exceeds the document limit. Reduce the '
+                                'plan, or hand the work off with one workflow_handoff step.',
+                                code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_document_budget',
+                            )
                         raise PlanValidationError('The complete source selection exceeds the document limit.')
                     if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
                         raise PlanValidationError('A required source is unavailable.')
@@ -1024,6 +1106,7 @@ def validate_dependency_plan(
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
         _reject_workflow_run_consumers(accepted, plan.get('final_response'))
         _reject_workflow_results_consumers(accepted, plan.get('final_response'))
+        _reject_workflow_handoff_consumers(accepted, plan.get('final_response'))
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)

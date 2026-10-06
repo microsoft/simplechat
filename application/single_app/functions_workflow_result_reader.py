@@ -10,8 +10,8 @@ tasks used are provenance and are never re-checked. Follow up also asks for
 bounded excerpts; those carry only a task label, a kind and text, never store
 references or identifiers.
 
-Structured (v3) runs are closed for now: their outputs need an exact node,
-execution and attempt selector.
+Structured (v3) runs are closed, except a one-time chat hand-off's single
+report output, read through its exact node selectors.
 """
 
 import hashlib
@@ -20,6 +20,7 @@ import logging
 import math
 import re
 import unicodedata
+import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -30,12 +31,16 @@ from content_screening.contracts import ScreeningError
 
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_appinsights import log_event
+from functions_workflow_handoff_builder import HANDOFF_REPORT_NODE_ID, HANDOFF_REPORT_OUTPUT
+from functions_workflow_node_results import load_node_result, result_selectors
 from functions_workflow_result_masking import WORKFLOW_RESULT_VERSION
 from functions_workflow_result_store import (
     MAX_PAGE_BYTES,
     AnalysisWorkUnitConflictError,
     WorkflowResultStorageUnavailableError,
+    load_workflow_node_result,
     load_workflow_task_result,
+    read_workflow_node_result_page,
     read_workflow_task_result_page,
 )
 from functions_workflow_results import (
@@ -63,6 +68,8 @@ TASK_LABEL_MAX_CHARS = 120
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_DRAFT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:simplechat:workflow-drafts")
+_HANDOFF_TRIGGER_SOURCE = "chat_orchestration"
 _OUTPUT_KINDS = {"text": "text", "records": "records", "json": "json", "documents": "document_results"}
 _RECORD_KINDS = frozenset({"records", "document_results"})
 _JSON_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
@@ -347,6 +354,91 @@ def _is_structured(workflow, run):
         or runtime.get("schema_version") == 2
         or "workflow_outputs" in run
     )
+
+
+def _handoff_workflow_id(user_id, handoff_id):
+    # orchestration_workflow_id in functions_workflow_drafts, which imports config, so the reader can't.
+    user_id, handoff_id = str(user_id or "").strip(), str(handoff_id or "").strip()
+    if not user_id or not handoff_id:
+        return None
+    return str(uuid.uuid5(_DRAFT_NAMESPACE, f"orchestration-workflow:{user_id}:{handoff_id}"))
+
+
+def _handoff_receipt(workflow, run, workflow_id, user_id):
+    """Return the single report receipt of a one-time chat hand-off run, or ``None``."""
+    origin, invocation, outputs = workflow.get("origin"), run.get("chat_invocation"), run.get("workflow_outputs")
+    if (
+        run.get("trigger_source") != _HANDOFF_TRIGGER_SOURCE or not isinstance(origin, Mapping)
+        or origin.get("one_time") is not True or not isinstance(invocation, Mapping)
+        or not isinstance(outputs, list) or len(outputs) != 1 or not isinstance(outputs[0], Mapping)
+    ):
+        return None
+    handoff_id, receipt = invocation.get("handoff_id"), outputs[0]
+    producer, reference = receipt.get("producer"), receipt.get("result_ref")
+    if (
+        not isinstance(handoff_id, str) or not handoff_id or origin.get("proposal_id") != handoff_id
+        or workflow_id != _handoff_workflow_id(user_id, handoff_id)
+        or receipt.get("input_name") != HANDOFF_REPORT_OUTPUT or receipt.get("output_name") != "text"
+        or not isinstance(producer, Mapping) or producer.get("node_id") != HANDOFF_REPORT_NODE_ID
+        or not isinstance(producer.get("task_id"), str) or not isinstance(receipt.get("output_ref"), Mapping)
+        or not isinstance(reference, Mapping) or not isinstance(reference.get("sha256"), str)
+        or not _SHA256.fullmatch(reference["sha256"])
+    ):
+        return None
+    return receipt
+
+
+def _read_handoff_result(workflow, run, workflow_id, run_id, receipt, *, expected_sha256,
+                         include_excerpts, budget, load_result, read_page):
+    """Describe (or excerpt) a hand-off's report, the workflow's one output, by its exact selectors."""
+    status = run.get("status")
+    if status not in READABLE_RUN_STATUSES:
+        raise _closed(
+            "workflow_result_not_finished" if status in UNFINISHED_RUN_STATUSES else "workflow_result_in_progress",
+            "run",
+        )
+    allow_partial = status == "completed_partial"
+    producer, task_id = receipt["producer"], receipt["producer"]["task_id"]
+    digest = workflow_result_digest(workflow_id, run_id, status, [{
+        "task_id": task_id, "workflow_result": {"authoritative_output": "text", "result_ref": receipt["result_ref"]},
+    }])
+    if expected_sha256 is not None and expected_sha256 != digest:
+        raise _closed("workflow_result_changed", "digest")
+    loader = _ManifestMemo(load_result or load_workflow_node_result)
+    manifest = _guarded("manifest", lambda: load_node_result(
+        workflow, run_id, producer, receipt["result_ref"], load_result=loader,
+    ))
+    outputs = manifest.get("outputs") if isinstance(manifest, Mapping) else None
+    text = outputs.get("text") if isinstance(outputs, Mapping) else None
+    if (
+        not isinstance(text, Mapping) or manifest.get("identity") != producer
+        or text.get("kind") != "text" or text.get("result_ref") != receipt["output_ref"]
+    ):
+        raise _closed("workflow_result_invalid", "manifest")
+    _guarded("manifest", lambda: _require_completed_result(manifest, allow_partial=allow_partial))
+    result = {
+        "descriptor": _descriptor(workflow, run, workflow_id, run_id, digest), "partial": allow_partial,
+        "output_count": 1, "excerpts": [], "saved_inputs": [], "truncated": False,
+        "omitted_outputs": 0, "skipped_reports": 0, "analysis_only": False,
+    }
+    if not include_excerpts:
+        return result
+    selectors, page = result_selectors(producer), read_page or read_workflow_node_result_page
+    excerpt, cut, note = _guarded("excerpt", lambda: _output_excerpt(
+        workflow, run_id, task_id, {**manifest, "authoritative_output": "text"},
+        lambda *args: loader(*args, **selectors),
+        lambda *args, **options: page(*args, **options, **selectors), budget,
+    ))
+    label = next((
+        task.get("name") for task in workflow.get("tasks") or ()
+        if isinstance(task, Mapping) and task.get("id") == task_id
+    ), None)
+    result["excerpts"].append({
+        "label": _clean_line(label, TASK_LABEL_MAX_CHARS) or "Report", "kind": "text", "final": True,
+        "text": excerpt, "truncated": cut, "note": note,
+    })
+    result["truncated"] = cut
+    return result
 
 
 def _task_rows(container, workflow_id, run_id):
@@ -723,7 +815,14 @@ def read_workflow_result(
     ):
         raise _closed("workflow_result_not_found", "run")
     if _is_structured(workflow, run):
-        raise _closed("workflow_result_unsupported", "run")
+        receipt = _handoff_receipt(workflow, run, workflow_id, user_id)
+        if receipt is None:
+            raise _closed("workflow_result_unsupported", "run")
+        return _read_handoff_result(
+            workflow, run, workflow_id, run_id, receipt, expected_sha256=expected_sha256,
+            include_excerpts=include_excerpts, budget=excerpt_budget_bytes,
+            load_result=load_result, read_page=read_page,
+        )
     status = run.get("status")
     if status not in READABLE_RUN_STATUSES:
         raise _closed(

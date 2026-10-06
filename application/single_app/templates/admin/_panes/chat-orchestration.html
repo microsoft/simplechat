@@ -134,11 +134,26 @@
                             Off by default, because a run does whatever its workflow is set up to do, with the user's access. Requires Chat Orchestration and Enable Personal Workflows. When a user asks for it, such as "run my weekly digest now", a plan can start one of the user's saved personal workflows from the user's own private conversation. A plan that starts a workflow always waits for the user to run it, whatever the approval mode, and approving it starts each named workflow once. Only workflows with durable execution on can be started this way.
                         </div>
                     </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_orchestration_workflow_handoff"
+                            name="enable_chat_orchestration_workflow_handoff"
+                            aria-describedby="chat-orchestration-workflow-handoff-help"
+                            {% if settings.enable_chat_orchestration_workflow_handoff %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_orchestration_workflow_handoff">
+                            Hand Off Large Work From Chat
+                        </label>
+                        <div class="form-text" id="chat-orchestration-workflow-handoff-help">
+                            Off by default, because a hand-off starts background work that keeps running with the user's access after the chat turn ends. Requires Chat Orchestration, Enable Personal Workflows, Propose Workflows From Chat, Run Workflows From Chat and Use Workflow Results In Chat. When a request is too large for a chat plan, such as reviewing hundreds of documents, a plan can hand the work to a one-time durable workflow instead. The user approves the plan, then approves a hand-off card; approving the card creates the workflow turned off, so it never runs on a schedule, and starts it once. When the run finishes, its result is posted back into the conversation.
+                        </div>
+                    </div>
                     <p class="text-muted">
                         Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled. An empty selection also means every otherwise-enabled capability. Use an action still requires Enable Action Access.
                     </p>
                     <p class="text-muted small">
-                        Plans need Prepare content to write a chat answer or the content of a file, and Create a file to deliver a downloadable file. Generate images also requires Image Generation. Propose workflows also requires Propose Workflows From Chat and personal workflows. Run workflows also requires Run Workflows From Chat and personal workflows. Read workflow results also requires Use Workflow Results In Chat and personal workflows.
+                        Plans need Prepare content to write a chat answer or the content of a file, and Create a file to deliver a downloadable file. Generate images also requires Image Generation. Propose workflows also requires Propose Workflows From Chat and personal workflows. Run workflows also requires Run Workflows From Chat and personal workflows. Read workflow results also requires Use Workflow Results In Chat and personal workflows. Hand off large work also requires Hand Off Large Work From Chat, Propose Workflows From Chat, Run Workflows From Chat, Use Workflow Results In Chat and personal workflows.
                     </p>
 
                     {% for capability in orchestration_capabilities or [] %}
@@ -211,6 +226,12 @@
                             <input type="number" class="form-control" id="chat_orchestration_min_workflow_interval_seconds" name="chat_orchestration_min_workflow_interval_seconds" min="60" max="86400" step="1"
                                 value="{{ settings.chat_orchestration_min_workflow_interval_seconds if settings.chat_orchestration_min_workflow_interval_seconds is not none else 3600 }}">
                             <div class="form-text">The shortest repeat interval a chat plan may give a workflow it creates. Daily, weekly and monthly schedules always pass.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_max_workflow_handoffs_per_day">Hand-offs from chat per user per day</label>
+                            <input type="number" class="form-control" id="chat_orchestration_max_workflow_handoffs_per_day" name="chat_orchestration_max_workflow_handoffs_per_day" min="1" max="100" step="1"
+                                value="{{ settings.chat_orchestration_max_workflow_handoffs_per_day if settings.chat_orchestration_max_workflow_handoffs_per_day is not none else 5 }}">
+                            <div class="form-text">How many hand-offs one user may start from chat in any rolling 24 hours. Applies only when Hand Off Large Work From Chat is on; hand-off workflows do not count toward the workflows-per-user limit.</div>
                         </div>
                     </div>
                 </div>
