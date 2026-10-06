@@ -1256,6 +1256,11 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     if not allowed:
         raise PermissionError(reason)
 
+    invited_participants = (
+        _normalize_group_conversation_participants(group_doc, invited_participants)
+        if invited_participants else []
+    )
+
     collaboration_conversation_doc = None
     linked_collaboration_id = str(source_conversation_doc.get('collaboration_conversation_id') or '').strip()
     if linked_collaboration_id:

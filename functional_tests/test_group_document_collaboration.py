@@ -1,8 +1,9 @@
 # test_group_document_collaboration.py
 """
 Functional tests for immutable group document sharing and repair.
-Version: 0.261.131
+Version: 0.261.258
 Implemented in: 0.261.131
+Workflow alert safety fixture updated in: 0.261.258
 
 Real Flask routes, policy, conditional source writes, Search write guards, access
 index projections and notification persistence run against local service seams.
@@ -179,7 +180,14 @@ def sharing(management):
         get_user_public_workspaces=Mock(),
     ))
     patch.setitem(sys.modules, "functions_workflow_alert_safety", module_stub(
-        "functions_workflow_alert_safety", sanitize_workflow_alert_record=Mock(
+        "functions_workflow_alert_safety",
+        WORKFLOW_ALERT_EVALUATION_ERROR_CODE="workflow_alert_evaluation_failed",
+        WORKFLOW_ALERT_EVALUATION_ERROR_MESSAGE=(
+            "Alert conditions could not be evaluated. "
+            "Review the workflow model configuration or contact an administrator."
+        ),
+        WORKFLOW_ALERT_EVALUATOR_UNAVAILABLE_MESSAGE="No model evaluator was available for this run.",
+        sanitize_workflow_alert_record=Mock(
             side_effect=AssertionError("Sharing must not enter workflow alert rendering."),
         ),
     ))
