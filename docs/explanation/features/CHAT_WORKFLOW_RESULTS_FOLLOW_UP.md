@@ -736,7 +736,7 @@ the controls are listed in
 - Re-checking workflow result contexts when a generated file is published.
 - Phase 6b's delivery, run card, recurring-workflow card and chat-list
   indicator, and `v2WorkflowRunPath` shipped in 6b-1 (**0.261.227**) and 6b-2
-  (**0.261.249**). See
+  (**0.261.251**). See
   [Workflow result delivery to chat](CHAT_WORKFLOW_RESULT_DELIVERY.md), and
   [V2 experience (6b-2)](CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2)
   for **Follow up** on a posted result.

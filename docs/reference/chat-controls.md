@@ -587,7 +587,7 @@ for up to two minutes, and waits while the browser tab is hidden. When
 Microsoft 365 isn't connected for workflows, the card links to the connection in
 your profile, and while a run waits for Run as approval, it links to Approvals.
 
-Since **0.261.249**, a created card reads the workflow and its recent runs once
+Since **0.261.251**, a created card reads the workflow and its recent runs once
 to show **Next run** and **Last run**. It doesn't keep checking, so open the
 chat again to see a newer run. If that read fails, the card says "Run details
 aren't available right now."
@@ -628,7 +628,7 @@ A run takes one action at a time. While its **Cancel run** or **Retry** is waiti
 on the server, that run's **Cancel run**, **Retry** and **Review and approve** stay
 in place but do nothing, on the card and on the run's note in the chat.
 
-Runs are tracked since **0.261.249**. While a tracked run is in flight, V2
+Runs are tracked since **0.261.251**. While a tracked run is in flight, V2
 checks on it from any page, so the chat list and the bell stay current: first
 after 15 seconds, then less often, up to every 5 minutes. It pauses while the
 browser tab is hidden, unless desktop notifications are on, and stops checking
@@ -636,7 +636,7 @@ once nothing is in flight.
 
 ### Results posted to the chat
 
-Implemented in **0.261.227**, with V2's controls in **0.261.249** (Refs:
+Implemented in **0.261.227**, with V2's controls in **0.261.251** (Refs:
 microsoft/simplechat#1546). When **Use Workflow Results In Chat**
 (`enable_chat_workflow_results`) is also on, a run started from chat posts its
 result, or a short note when it failed, was cancelled or can't be shown, back

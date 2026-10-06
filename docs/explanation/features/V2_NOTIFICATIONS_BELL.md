@@ -167,7 +167,7 @@ leaves the open conversation alone.
 
 ### The seams for Phase 6b
 
-Phase 6b-2 (0.261.249) filled in all three; see
+Phase 6b-2 (0.261.251) filled in all three; see
 [Chat Workflow Result Delivery](CHAT_WORKFLOW_RESULT_DELIVERY.md) for the V2 side.
 
 - **Run pages.** `v2WorkflowRunPath(scope, workflowId, runId)` in
