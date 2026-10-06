@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -45,6 +45,12 @@ are Cosmos maintenance switches and are now declared under
 "storage" in ``data-management-storage-section`` and appeared under Backup &
 Recovery, while ``enable_key_vault_secret_expiration_reminders`` matched nothing at
 all and fell into "Other capabilities".
+
+``enable_search_result_caching`` matched "search" in both ``web-search-section``
+and ``azure-ai-search-section``. Web Search comes first in navigation order, so the
+tie put a workspace-index cache under the setting that reaches the public internet,
+as a bare switch with no description. It is now declared under
+``azure-ai-search-section``, with its cache lifetime beside it.
 """
 
 import re
@@ -122,12 +128,14 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_mixed_source_conversation_continuity",
 )
 
-# Relocations with no server-rendered counterpart to check against. Both are
+# Relocations with no server-rendered counterpart to check against. All are
 # documented in ``V2_ONLY_FIELDS``, which is what the section assertion below reads
 # instead of a pane.
 RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD = {
     "enable_app_maintenance": "cosmos-maintenance-section",
     "enable_startup_app_maintenance": "cosmos-maintenance-section",
+    # Guessed into Web Search, which wins the tie on "search" by navigation order.
+    "enable_search_result_caching": "azure-ai-search-section",
 }
 
 # The rules the ported heuristic depends on. If the renderer stops doing any of
