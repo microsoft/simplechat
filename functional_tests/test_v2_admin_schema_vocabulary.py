@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.260
+Version: 0.261.265
 Implemented in: 0.261.084
-Runtime flag evaluation, open_until_set and on_enable added in: 0.261.260
+Runtime flag evaluation, open_until_set and on_enable added in: 0.261.265
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed

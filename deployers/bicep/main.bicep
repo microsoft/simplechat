@@ -329,6 +329,14 @@ param deploySpeechService bool
 - Default is false''')
 param deployVideoIndexerService bool
 
+@minLength(1)
+@description('''Optional Azure region override for Azure Video Indexer.
+- Defaults to the deployment location.
+- Use when the primary app region does not offer Video Indexer, for example northcentralus.
+- A region that differs from the deployment location gets a dedicated Video Indexer storage account in that region.
+- Set this before the first deployment that enables Video Indexer; an existing account cannot move regions.''')
+param videoIndexerLocation string = location
+
 //=========================================================
 // variable declarations for the main deployment 
 //=========================================================
@@ -378,6 +386,14 @@ var resolvedVideoIndexerEndpoint = scCloudEnvironment == 'usgovernment'
   : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerEndpoint) ? customVideoIndexerEndpoint : 'https://api.videoindexer.ai')
 var videoIndexerSupportsOpenAiIntegration = resolvedVideoIndexerArmApiVersion == '2025-04-01'
 var videoIndexerSupportsPrivateEndpoints = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var normalizedVideoIndexerLocation = toLower(replace(videoIndexerLocation, ' ', ''))
+// Video Indexer keeps its media in a storage account in its own region.
+var videoIndexerUsesDedicatedStorage = normalizedVideoIndexerLocation != normalizedLocation
+// The app identity needs generateAccessToken. Video Indexer Account Contributor is the least-privilege
+// built-in role; Contributor is used where that newer role has not been confirmed.
+var videoIndexerAppRoleDefinitionId = scCloudEnvironment == 'public'
+  ? '3f99eaab-6f59-4877-adf5-1cacd22e20b0'
+  : 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var hasExistingAppServiceSubnetId = !empty(existingAppServiceSubnetId)
 var hasExistingPrivateEndpointSubnetId = !empty(existingPrivateEndpointSubnetId)
 var inferredVirtualNetworkId = hasExistingAppServiceSubnetId ? split(existingAppServiceSubnetId, '/subnets/')[0] : (hasExistingPrivateEndpointSubnetId ? split(existingPrivateEndpointSubnetId, '/subnets/')[0] : '')
@@ -819,7 +835,7 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
   name: 'videoIndexerService'
   scope: rg
   params: {
-    location: location
+    location: videoIndexerLocation
     appName: appName
     environment: environment
     tags: tags
@@ -827,6 +843,7 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
     storageAccount: storageAccount.outputs.name
+    useDedicatedStorageAccount: videoIndexerUsesDedicatedStorage
     openAiServiceName: openAI.outputs.openAIName
     videoIndexerArmApiVersion: resolvedVideoIndexerArmApiVersion
 
@@ -865,6 +882,9 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerStorageAccountName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerStorageAccountName : ''
+    videoIndexerAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
     videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
 }
@@ -892,6 +912,9 @@ module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = i
     redisCacheKind: redisCacheKind
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
   }
   dependsOn: [
     setPermissions
@@ -975,6 +998,8 @@ output var_videoIndexerArmApiVersion string = resolvedVideoIndexerArmApiVersion
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
 output var_videoIndexerEndpoint string = resolvedVideoIndexerEndpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerLocation string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerLocation : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
 

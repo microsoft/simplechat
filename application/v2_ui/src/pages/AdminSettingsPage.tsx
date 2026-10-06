@@ -87,6 +87,7 @@ import {
     isRequirementSatisfied,
     isSectionVisible,
     readFieldValue,
+    readStoredFieldValue,
     type AdminField,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
@@ -499,11 +500,12 @@ export function AdminSettingsPage() {
                     settings,
                     draft,
                     sectionStatus[section.sectionId],
+                    fieldsByKey,
                 ),
             );
         }
         return statuses;
-    }, [sections, settings, draft, sectionStatus]);
+    }, [sections, settings, draft, sectionStatus, fieldsByKey]);
 
     /** The page index follows the same filters as the cards. */
     const indexEntries = useMemo<SettingsIndexEntry[]>(
@@ -841,7 +843,9 @@ export function AdminSettingsPage() {
                     value={value}
                     // The saved value, not the draft: only that says whether a credential
                     // exists, which is what tells an empty box apart from a pending delete.
-                    storedValue={field.key ? settings[field.key] : undefined}
+                    // Read from where the field is stored, which for the Web Search client
+                    // secret is inside `web_search_agent` rather than under its own key.
+                    storedValue={readStoredFieldValue(field, settings)}
                     error={error}
                     warning={warning}
                     disabled={saving}
@@ -903,6 +907,7 @@ export function AdminSettingsPage() {
                             field={field}
                             settings={settings}
                             draft={draft}
+                            fieldsByKey={fieldsByKey}
                             disabled={saving}
                         />
                     );
@@ -1409,6 +1414,7 @@ export function AdminSettingsPage() {
                                         icon={resolveAdminNavIcon(section.icon)}
                                         fields={section.fields}
                                         hierarchyFields={section.allFields}
+                                        fieldsByKey={fieldsByKey}
                                         settings={settings}
                                         draft={draft}
                                         // Sections that describe a status rule use it;

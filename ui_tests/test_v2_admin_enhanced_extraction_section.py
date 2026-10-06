@@ -1,8 +1,8 @@
 # test_v2_admin_enhanced_extraction_section.py
 """
 Browser coverage for the V2 Admin Settings Enhanced Extraction section.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.265
+Implemented in: 0.261.265
 
 Exercise the built application with the real field schema and intercepted APIs.
 Check that Enhanced extraction is the switch that leads its own card rather than a

@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.260
+Version: 0.261.265
 Implemented in: 0.261.039
-Content Understanding runtime flag recognised in: 0.261.260
+Content Understanding runtime flag recognised in: 0.261.265
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that

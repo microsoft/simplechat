@@ -2,8 +2,8 @@
 # test_v2_admin_enhanced_extraction_section.py
 """
 Functional test for the V2 Admin Settings Enhanced Extraction section.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.265
+Implemented in: 0.261.265
 
 This test ensures that Enhanced extraction and the Azure AI Content Understanding
 connection behind it read as one capability in the V2 admin surface.
@@ -84,7 +84,7 @@ def test_enhanced_extraction_follows_document_intelligence_in_navigation():
     """The capability is navigated to by name, right after the connection it falls back to."""
     print("Testing the Enhanced Extraction navigation entry...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.265")
 
     extraction_tab = next(
         tab

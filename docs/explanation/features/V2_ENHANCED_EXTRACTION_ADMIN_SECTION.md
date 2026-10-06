@@ -1,6 +1,6 @@
 # Enhanced Extraction Section in the V2 Admin Surface
 
-**Implemented in version:** 0.261.260
+**Implemented in version:** 0.261.265
 
 ## Overview
 

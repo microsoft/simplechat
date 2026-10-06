@@ -1110,6 +1110,55 @@ ADMIN_SETTINGS_FIELDS = {
             },
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
         },
+        # Declared here because the fallback scan matched "search" and filed the
+        # switch under Web Search, which reaches the public internet. This cache sits
+        # in front of the workspace indexes configured above.
+        {
+            "key": "enable_search_result_caching",
+            "type": "switch",
+            "label": "Cache workspace search results",
+            "help": (
+                "Reuses the results of a recent identical search, so a repeated question "
+                "returns faster, cites the same sources, and skips the query embedding and "
+                "the semantic-ranked Azure AI Search queries. Results are reused only while "
+                "the query, scope, filters, embedding model and the documents in scope, "
+                "including their versions, still match, and they are re-checked against the "
+                "requesting user's access before they are returned. Leave it on; turn it off "
+                "only to make every search run fresh while you troubleshoot relevance."
+            ),
+            "default": True,
+            "group": {
+                "id": "search-result-cache",
+                "label": "Search result cache",
+                "variant": "behavior",
+                "help": (
+                    "Applies to the workspace document searches behind grounded chat, "
+                    "agents and workflows, not to web search. Cached results are kept in "
+                    "the search_cache Cosmos DB container, so Redis is not required."
+                ),
+            },
+        },
+        {
+            "key": "search_cache_ttl_seconds",
+            "type": "number",
+            "label": "Cache lifetime (seconds)",
+            "help": (
+                "How long a cached result set can be reused. Adding, deleting, re-sharing "
+                "or re-versioning a document forces a fresh search straight away. Other "
+                "changes, such as a document that finishes processing after the search ran "
+                "or an edit made directly in Azure AI Search, can take up to this long to "
+                "appear. 300 seconds (5 minutes) by default."
+            ),
+            "default": 300,
+            "min": 60,
+            "max": 3600,
+            "group": {
+                "id": "search-result-cache",
+                "label": "Search result cache",
+                "variant": "behavior",
+            },
+            "depends_on": {"key": "enable_search_result_caching", "equals": True},
+        },
     ],
     # ------------------------------------------------------------------
     # Knowledge / Web & Research
@@ -6366,6 +6415,17 @@ V2_ONLY_FIELDS = {
         "Same as enable_app_maintenance: no server-rendered control, and misfiled "
         "into Security by the fallback scan until it was declared."
     ),
+    "enable_search_result_caching": (
+        "The classic Azure AI Search card showed this switch briefly in late 2025, "
+        "but the classic save handler never stored it and the control was removed. "
+        "Declared under Azure AI Search so the fallback scan stops filing it under "
+        "Web Search, which it matched on the shared word stem 'search'."
+    ),
+    "search_cache_ttl_seconds": (
+        "Read by utils_cache.get_cache_settings() but editable in neither interface "
+        "since the classic control was removed alongside the caching switch. "
+        "Declared with that switch so the cache lifetime can be tuned."
+    ),
 }
 
 
@@ -6452,6 +6512,38 @@ SUPPRESSED_CAPABILITY_KEYS = {
     "enable_mixed_source_conversation_continuity": (
         "Staged rollout flag gated behind enable_mixed_source_chat_search, with no "
         "control in the server-rendered admin form."
+    ),
+    # The three tabular durable-preflight switches below are always on by design.
+    # normalize_tabular_parity_durable_preflight_defaults() in functions_settings.py
+    # resets each one to True on every settings read and persists the correction, and
+    # _apply_tabular_parity_env_kill_switch() forces them off only while the
+    # SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is set.
+    # A switch would therefore revert in either direction. The word "shared" in the
+    # first key also filed it under Shared Conversation File Approvals, where it had
+    # nothing to do with the cards around it.
+    "enable_tabular_search_shared_preflight": (
+        "Always on. Routes an exhaustive row-by-row request against a CSV or XLSX file, "
+        "made from a regular chat message (Search), through the shared tabular planner, "
+        "so it can run as a durable background job over every row rather than a "
+        "bounded foreground answer that covers only the first few. get_settings() "
+        "resets it to True on every read, so a switch would revert; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is "
+        "the only way to turn it off."
+    ),
+    "enable_tabular_analyze_durable_preflight": (
+        "Always on. The Analyze counterpart of enable_tabular_search_shared_preflight: "
+        "an Analyze request against a single CSV or XLSX file goes through the same "
+        "shared planner and can run as a durable background job. get_settings() resets "
+        "it to True on every read; the SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT "
+        "environment variable is the only way to turn it off."
+    ),
+    "enable_tabular_hierarchical_analysis": (
+        "Always on. Lets the durable tabular job take exhaustive per-row and per-line "
+        "requests, including narrative ones that ask for written answers rather than a "
+        "CSV, JSON or XML export; without it they fall back to a bounded foreground "
+        "answer. get_settings() resets it to True on every read; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is the "
+        "only way to turn it off."
     ),
 }
 
