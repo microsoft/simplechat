@@ -314,11 +314,17 @@ export function deriveFieldHierarchy(fields: AdminField[]): FieldHierarchy {
  * the capability is on and something required is still blank; everything else stays shut.
  * Turning a capability on therefore reveals the next step rather than forty controls, and
  * a section that is already working stays a summary.
+ *
+ * An optional connection cannot be `required` -- Enhanced extraction works without
+ * Content Understanding -- so a group may instead name the key it waits on with
+ * `open_until_set`. It opens while that key is blank and the capability is on, which is
+ * when an administrator has just turned the capability on and is choosing an engine.
  */
 export function shouldGroupStartOpen(
     group: RenderedFieldGroup,
     status: SectionStatus,
     capabilityOn: boolean,
+    read?: (key: string) => unknown,
 ): boolean {
     if (!group.id) {
         // Ungrouped fields are the section's own preamble; collapsing them would hide
@@ -332,6 +338,9 @@ export function shouldGroupStartOpen(
     }
     if (!capabilityOn) {
         return false;
+    }
+    if (group.openUntilSet && read && !hasValue(read(group.openUntilSet))) {
+        return true;
     }
     return group.variant === 'connection' && status === 'incomplete';
 }

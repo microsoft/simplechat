@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.105
+Version: 0.261.265
 Implemented in: 0.261.039
+Content Understanding runtime flag recognised in: 0.261.265
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
@@ -43,8 +44,9 @@ fields_module = import_app_module("admin_settings_fields")
 
 # Runtime flags the settings API sends alongside the schema. A field may depend on
 # one of these instead of on another field, for a capability gated outside the
-# settings document.
-RUNTIME_FLAGS = {"mcp_ui_enabled"}
+# settings document: Inbound MCP by an App Service setting, Content Understanding
+# by whether the Azure cloud offers it.
+RUNTIME_FLAGS = {"mcp_ui_enabled", "content_understanding_supported"}
 
 # Properties every field type must carry beyond the common ones, because the
 # renderer cannot draw the control without them.

@@ -97,6 +97,15 @@ export interface AdminFieldGroup {
     label?: string;
     variant?: 'connection' | 'behavior' | 'limits' | 'access' | 'advanced';
     help?: string;
+    /**
+     * A key in this group whose blank value opens the group while the section's
+     * capability is on.
+     *
+     * For an optional connection an administrator most likely wants next -- Content
+     * Understanding under Enhanced extraction -- which cannot be marked `required`
+     * because the capability works without it.
+     */
+    open_until_set?: string;
 }
 
 /** Normalise either declared group shape into the object form. */
@@ -138,6 +147,20 @@ export interface AdminFieldAcknowledgement {
     when: 'enabled';
     title: string;
     message: string;
+}
+
+/**
+ * Companion values a switch sets when it is turned on.
+ *
+ * Mirrors `on_enable` in `admin_settings_fields.py`. Turning Enhanced extraction on
+ * while the extraction mode still reads Standard would change nothing, so the mode
+ * moves to Auto. The page applies this to the draft as the switch flips, so the new
+ * value is on screen before saving, and only while `when` holds against the current
+ * values. The server applies the same rule to a save that omits the companion.
+ */
+export interface AdminFieldEnableEffect {
+    set: Record<string, string | number | boolean>;
+    when?: AdminFieldDependency;
 }
 
 export interface AdminField {
@@ -262,6 +285,8 @@ export interface AdminField {
      */
     scale?: number;
     requires_acknowledgement?: AdminFieldAcknowledgement;
+    /** Switch fields only: companion values to set when it is turned on. */
+    on_enable?: AdminFieldEnableEffect;
 }
 
 /** Section id -> ordered fields. Section ids come from `admin_settings_nav.py`. */
@@ -482,6 +507,8 @@ export interface RenderedFieldGroup {
      * always-on built-in actions out of the way.
      */
     collapsed?: boolean;
+    /** A key whose blank value opens the group while the capability is on. */
+    openUntilSet?: string;
     fields: AdminField[];
 }
 
@@ -509,10 +536,15 @@ export function groupFields(fields: AdminField[]): RenderedFieldGroup[] {
                 variant: declared?.variant,
                 help: declared?.help,
                 collapsed: Boolean(field.collapsed),
+                openUntilSet: declared?.open_until_set,
                 fields: [],
             };
             byId.set(id, group);
             groups.push(group);
+        } else if (!group.openUntilSet && declared?.open_until_set) {
+            // Declared once, usually on the group's first field, which may be the one
+            // a dependency is hiding.
+            group.openUntilSet = declared.open_until_set;
         }
         group.fields.push(field);
     }
@@ -792,6 +824,47 @@ export function isRequirementSatisfied(
         ? draft[requirement.key]
         : settings[requirement.key];
     return asBoolean(current);
+}
+
+/**
+ * Apply a switch's `on_enable` companions to a draft, returning the new draft.
+ *
+ * Only a transition counts, as on the server: a switch that is already on when saved
+ * brings nothing with it. Turning it on sets each companion that the administrator has not
+ * already edited, while `when` holds against the values on screen. Turning it back off
+ * before saving takes back any companion still holding the value it set, so the draft only
+ * carries what the administrator chose. A key that has never been saved reads as its
+ * declared default, which is what the server would have merged in.
+ */
+export function applyEnableEffect(
+    draft: Json,
+    settings: Json,
+    field: AdminField,
+    next: boolean,
+    fieldsByKey?: Map<string, AdminField>,
+): Json {
+    const effect = field.on_enable;
+    if (!field.key || !effect || asBoolean(settings[field.key])) {
+        return draft;
+    }
+
+    const read = (key: string): unknown => {
+        const value = readSettingValue(key, settings, draft, fieldsByKey);
+        return value === undefined ? fieldsByKey?.get(key)?.default : value;
+    };
+
+    const updated: Json = { ...draft };
+    for (const [companion, value] of Object.entries(effect.set ?? {})) {
+        const edited = Object.prototype.hasOwnProperty.call(draft, companion);
+        if (next) {
+            if (!edited && evaluateDependency(effect.when, read)) {
+                updated[companion] = value;
+            }
+        } else if (edited && draft[companion] === value) {
+            delete updated[companion];
+        }
+    }
+    return updated;
 }
 
 /**

@@ -140,31 +140,53 @@ Screening requires Enhanced Citations and is configured in Security so the polic
 
 ### Document Intelligence {#document-intelligence-section}
 
-Document Intelligence reads PDFs and images. Nothing else in this tab produces searchable
-text without it, so the tab leads with the connection: endpoint, authentication and a
-connection test, either directly or through API Management. Only the path in use is shown.
+Document Intelligence reads PDFs and images, and nothing else in this tab produces
+searchable text without it: Standard extraction is its Read model, and Enhanced extraction
+falls back to its Layout model. The section is the connection alone -- endpoint,
+authentication and a connection test, either directly or through API Management. Only the
+path in use is shown.
 
-Extraction behaviour follows. Standard uses Document Intelligence Read and is the fastest
-and cheapest path for plain text. Enhanced captures tables, page structure, forms and
-checkbox states, at roughly six times the cost per thousand pages. Auto inspects the
-opening pages of a PDF and picks: if it finds tables, selection marks or figures the whole
-document uses Enhanced, otherwise it finishes with Standard. Images always use Enhanced
-under Auto.
+### Enhanced Extraction {#enhanced-extraction-section}
 
-Formula extraction is a separately billed Document Intelligence add-on that captures
-equations as LaTeX instead of approximate OCR text. It applies to the Layout model only,
-so it has no effect while extraction is set to Standard.
+Enhanced extraction is for documents where structure matters: tables, page layout, forms,
+checkbox states and, with Content Understanding, figures and charts. The section is led by
+its switch, and every setting that only takes effect while Enhanced is on sits beneath it
+and is hidden while it is off -- the Content Understanding connection included, since
+Content Understanding is never called while Enhanced is off. With the switch off, every
+PDF and image uses Standard extraction.
 
-### Content Understanding {#content-understanding-section}
+The extraction mode decides what new uploads use. Standard uses Document Intelligence Read
+and is the fastest and cheapest path for plain text. Enhanced captures tables, page
+structure, forms and checkbox states, at roughly six times the cost per thousand pages.
+Auto inspects the opening pages of a PDF and picks: if it finds tables, selection marks or
+figures the whole document uses Enhanced, otherwise it finishes with Standard. Images
+always use Enhanced under Auto. Turning Enhanced on moves the mode from Standard to Auto,
+because Enhanced with the mode left on Standard would change nothing for new uploads. With
+Standard selected deliberately, people can still extract a document again as Enhanced from
+its workspace.
+
+Formula extraction is a separately billed add-on to the Document Intelligence Layout model
+that captures equations as LaTeX instead of approximate OCR text. It applies wherever
+Layout runs -- Auto's page sampling, and Enhanced extraction without Content
+Understanding -- so it has no effect on Standard extraction or on documents Content
+Understanding extracts.
+
+The section also names the engine Enhanced extraction will use with the settings on
+screen: Azure AI Content Understanding, or Document Intelligence Layout together with the
+reason Content Understanding is not in use. It judges configuration rather than
+connectivity; the connection test is what confirms the service answers.
+
+#### Content Understanding connection {#content-understanding-section}
 
 Azure AI Content Understanding is what backs Enhanced extraction where it is available. It
 returns tables, page structure, checkbox states and generated descriptions of figures and
-charts. Leave the endpoint blank and Enhanced falls back to Document Intelligence Layout,
-which still captures tables, structure, forms and checkbox states but not figure
+charts. It is optional: leave the endpoint blank and Enhanced uses Document Intelligence
+Layout, which still captures tables, structure, forms and checkbox states but not figure
 descriptions.
 
-Content Understanding is not offered in every Azure cloud. Where it is unavailable the tab
-says so and Enhanced uses the Layout fallback with nothing further to configure.
+Content Understanding is not offered in every Azure cloud. Where it is unavailable its
+connection is not shown, the section says Enhanced uses Document Intelligence Layout, and
+there is nothing further to configure.
 
 ### Images Inside Office Files {#office-embedded-image-section}
 
@@ -273,10 +295,10 @@ already captures the surrounding structure.
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |
 | Plan multiple web search queries | Narrows the admin list shown for plan multiple web search queries. | On | `deep_research_enable_query_planning` |
 | Save research ledger artifacts | Narrows the admin list shown for save research ledger artifacts. | On | `deep_research_enable_ledger_artifact` |
-| Enable Enhanced extraction | Enables the enhanced extraction path for richer PDF and image structure when the required services are configured. | Off | `enable_enhanced_extraction`; capability toggle |
+| Enable Enhanced extraction | Leads the Enhanced Extraction section. While it is off every PDF and image uses Standard extraction, and the extraction mode, formula extraction and Content Understanding connection are hidden because none of them can take effect. Turning it on moves a Standard mode to Auto. | Off | `enable_enhanced_extraction`; capability toggle |
 | PDF and Image Extraction Mode | Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected. | read | `document_intelligence_pdf_image_extraction_mode` |
 | Auto Sample Pages | Auto samples this many first PDF pages with Document Intelligence Layout. If it detects tables, selection marks, or figures, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mo | Not specified in defaults | `document_intelligence_auto_sample_pages` |
-| Extract mathematical formulas | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
+| Extract mathematical formulas | Captures equations as LaTeX through a billed add-on to the Document Intelligence Layout model, so it adds per-page cost wherever Layout runs: Auto's page sampling, and Enhanced extraction without Content Understanding. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
 | Foundry Endpoint | Your Microsoft Foundry resource endpoint, without a trailing path. | Empty | `azure_content_understanding_endpoint` |
 | Authentication Type | Managed identity requires the Cognitive Services User role on the Foundry resource. | key | `azure_content_understanding_authentication_type` |
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |

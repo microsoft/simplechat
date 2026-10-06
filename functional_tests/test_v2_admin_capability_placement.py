@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.263
+Version: 0.261.265
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -138,7 +138,9 @@ RELOCATED_CAPABILITIES = {
     # Local completion sounds belong with notifications, not Azure Speech.
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
-    "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
+    # Leads the section that holds everything it governs, Content Understanding
+    # included, rather than sitting in a collapsed group of Document Intelligence.
+    "enable_enhanced_extraction": ("enhanced-extraction-section", "extraction"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an
