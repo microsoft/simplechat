@@ -2,8 +2,8 @@
 # test_workflow_handoff_origin.py
 """
 Functional test for the one-time marker on a hand-off workflow's origin.
-Version: 0.261.239
-Implemented in: 0.261.239
+Version: 0.261.250
+Implemented in: 0.261.250
 
 This test ensures that ``origin.one_time``, which marks a workflow chat orchestration created for a
 single hand-off run, is server-only on every client path:
@@ -58,7 +58,7 @@ from test_workflow_origin_provenance import (  # noqa: E402
 )
 
 
-MINIMUM_VERSION = "0.261.239"
+MINIMUM_VERSION = "0.261.250"
 ONE_TIME = {**UNEDITED, "one_time": True}
 ONE_TIME_EDITED = {**EDITED, "one_time": True}
 # Every origin an editor save of a hand-off might carry, plus a removed one (``...``).

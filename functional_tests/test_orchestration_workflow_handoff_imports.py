@@ -2,8 +2,8 @@
 # test_orchestration_workflow_handoff_imports.py
 """
 Functional test for cold imports of the chat workflow hand-off modules.
-Version: 0.261.239
-Implemented in: 0.261.239
+Version: 0.261.250
+Implemented in: 0.261.250
 
 This test ensures that the workflow hand-off step module and the one-time workflow builder load in
 fresh normal and optimized interpreters in the orders the application uses: during the web

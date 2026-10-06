@@ -2,8 +2,8 @@
 # test_workflow_handoff_result_reader.py
 """
 Functional test for reading a one-time hand-off's report in the workflow result reader.
-Version: 0.261.239
-Implemented in: 0.261.239
+Version: 0.261.250
+Implemented in: 0.261.250
 
 This test ensures that the result reader, which keeps structured (v3) runs closed, opens exactly
 one shape: a one-time chat hand-off run whose single workflow output is the report node's text.
@@ -49,7 +49,7 @@ from test_support.workflow_result_chat import (  # noqa: E402
 )
 
 
-MINIMUM_VERSION = "0.261.239"
+MINIMUM_VERSION = "0.261.250"
 HANDOFF_ID = "handoff-7f3"
 RUN = "run-handoff-41"
 CONVERSATION = "conversation-9"
