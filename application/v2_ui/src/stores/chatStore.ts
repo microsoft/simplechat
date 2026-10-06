@@ -217,6 +217,16 @@ export type { ConversationKind };
  */
 export type ReconnectPhase = 'connecting' | 'reconnected' | null;
 
+/**
+ * Which part of an orchestrated turn holds the streaming surface.
+ *
+ * `planning` is the planner working before a plan or question exists, and `running` is an approved
+ * plan executing. They are told apart because they draw differently. While a turn plans, the
+ * streaming bubble is the only sign of progress. A run's progress is already on the plan card, so a
+ * bubble beside it only repeated it.
+ */
+export type OrchestrationSurfacePhase = 'planning' | 'running';
+
 export interface ComposerOptions {
     /**
      * The picker's selection key for the chosen model, NOT its deployment name.
@@ -352,6 +362,16 @@ interface ChatState {
      * the first state for the whole reattached stream makes working output look stalled.
      */
     reconnectPhase: ReconnectPhase;
+    /**
+     * The orchestration phase holding the open conversation's `streaming` flag, or null when the
+     * flag belongs to an ordinary chat stream or nothing is streaming.
+     *
+     * `streaming` alone cannot say whose it is. A chat message can be sent while an orchestration
+     * run waits or is being reconciled in the same conversation, and that reply must still show
+     * Thinking, so the owner is recorded when the flag is taken rather than guessed from the
+     * orchestration store.
+     */
+    orchestrationSurface: OrchestrationSurfacePhase | null;
 
     /** Right-hand drawer state. Null means closed. */
     drawerMode: DrawerMode;
@@ -453,7 +473,9 @@ interface ChatState {
      * `beginOrchestrationTurn` returns the optimistic user bubble's id so the controller can hand
      * it back on completion for reconciliation with the server's persisted id. Passing
      * `addUserMessage: false` re-enters the thinking state for a re-plan without adding a second
-     * bubble, because the user's question is already in the thread from the first plan.
+     * bubble, because the user's question is already in the thread from the first plan. `phase`
+     * says which part of the turn takes the surface: a plan by default, or `running` for an
+     * approved plan, whose progress the plan card shows instead of the streaming bubble.
      */
     beginOrchestrationTurn: (
         conversationId: string,
@@ -461,6 +483,7 @@ interface ChatState {
         addUserMessage?: boolean,
         turnId?: string,
         promptInfo?: Json | null,
+        phase?: OrchestrationSurfacePhase,
     ) => string;
     pushOrchestrationThought: (conversationId: string, event: RunStreamEvent) => void;
     pushOrchestrationContent: (conversationId: string, accumulated: string) => void;
@@ -873,7 +896,7 @@ let streamingConversationId: string | null = null;
 let streamingConversationKind: ConversationKind = 'personal';
 
 /**
- * Conversations whose orchestration turn currently holds the streaming surface.
+ * Conversations whose orchestration turn currently holds the streaming surface, and in which phase.
  *
  * A plan or run is driven by its own controller, not `activeStreamController`, so
  * `detachActiveStream` knows nothing about it. The turn takes the shared `streaming` flag in
@@ -883,9 +906,10 @@ let streamingConversationKind: ConversationKind = 'personal';
  * Stop with nothing to stop, and refused to send until the page was reloaded.
  *
  * Kept per conversation, whatever is on screen, so leaving can drop the flag and reopening a
- * conversation whose turn is still running in this tab can put it back.
+ * conversation whose turn is still running in this tab can put it back. The phase comes back with
+ * it, so a reopened run still shows its progress on the plan card alone.
  */
-const orchestrationSurfaces = new Set<string>();
+const orchestrationSurfaces = new Map<string, OrchestrationSurfacePhase>();
 
 /**
  * Bumped each time the reader starts a new chat or opens a conversation.
@@ -1550,6 +1574,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
 
     set({
         streaming: true,
+        orchestrationSurface: null,
         streamingContent: '',
         thoughts: [],
         streamingReasoningAdjustments: [],
@@ -2069,6 +2094,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamError: null,
     streamAuthUrl: null,
     reconnectPhase: null,
+    orchestrationSurface: null,
 
     drawerMode: null,
     metadata: null,
@@ -2176,6 +2202,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // thoughts and its settle land here as usual. A chat stream is picked back up by
             // `resumeChatStream` below.
             streaming: conversationId ? orchestrationSurfaces.has(conversationId) : false,
+            orchestrationSurface: conversationId ? orchestrationSurfaces.get(conversationId) ?? null : null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -2389,6 +2416,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // once its conversation is off screen, so the new chat kept the old turn's Thinking
             // state and a Stop button with nothing to stop. The turn itself keeps running.
             streaming: false,
+            orchestrationSurface: null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -3182,6 +3210,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     },
                 ],
                 streaming: true,
+                orchestrationSurface: null,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
@@ -3252,12 +3281,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    beginOrchestrationTurn: (conversationId, text, addUserMessage = true, turnId, promptInfo) => {
+    beginOrchestrationTurn: (
+        conversationId,
+        text,
+        addUserMessage = true,
+        turnId,
+        promptInfo,
+        phase = 'planning',
+    ) => {
         const trimmed = text.trim();
         const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
         // Recorded whether or not the conversation is on screen, so opening it while this turn
         // is still in flight shows it working.
-        orchestrationSurfaces.add(conversationId);
+        orchestrationSurfaces.set(conversationId, phase);
         // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
         // started here keeps going after the reader opens another thread, and its question must
         // not appear inside that other thread.
@@ -3287,6 +3323,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ]
                     : state.messages,
                 streaming: true,
+                orchestrationSurface: phase,
                 analysisTurnRevision: state.analysisContextRevision,
                 streamingContent: '',
                 thoughts: [],
@@ -3353,6 +3390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // the next turn's streaming bubble.
             set({
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
@@ -3364,6 +3402,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (outcome.status === 'failed' && !('event' in outcome)) {
             set({
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
                 streamError: outcome.error,
@@ -3392,6 +3431,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ]
                     : state.messages,
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
             }));
@@ -3462,6 +3502,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     finalMessage as CollaborationMessage,
                 ),
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
                 streamError: null,
@@ -3498,8 +3539,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
         // The turn's claim on the streaming surface follows it to the id the server named.
-        if (conversationChanged && orchestrationSurfaces.delete(fromConversationId)) {
-            orchestrationSurfaces.add(toConversationId);
+        const surfacePhase = orchestrationSurfaces.get(fromConversationId);
+        if (conversationChanged && surfacePhase && orchestrationSurfaces.delete(fromConversationId)) {
+            orchestrationSurfaces.set(toConversationId, surfacePhase);
         }
         set((state) => {
             const messages = state.messages.map((message) => {
@@ -3709,6 +3751,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         set({
             streaming: true,
+            orchestrationSurface: null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -3765,6 +3808,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         set({
             streaming: true,
+            orchestrationSurface: null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],

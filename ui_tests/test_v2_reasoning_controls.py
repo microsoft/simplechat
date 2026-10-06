@@ -1,7 +1,7 @@
 # test_v2_reasoning_controls.py
 """
 Real-Composer reasoning, capability selections, and saved-plan notice regressions.
-Version: 0.261.132
+Version: 0.261.256
 Implemented in: 0.261.104; Image requests orchestration image proposals since 0.261.132
 
 Reuse the local/Azure Playwright fixtures without live model, Azure or retrieval calls.
@@ -545,7 +545,8 @@ def test_run_thought_corrections_appear_before_completion_and_latest_stage_wins(
         }],
     }
     page.evaluate("(event) => window.emitReasoningRunEvent(event)", correction)
-    notice = page.locator("#mount-b").get_by_role("status")
+    # Filtered to the notice: the running card's own status line ("Starting") is a status as well.
+    notice = page.locator("#mount-b").get_by_role("status").filter(has_text="could not be used")
     expect(notice).to_contain_text("Planner: Minimal could not be used for gpt-5.6-luna; using Model default.")
     expect(notice).not_to_contain_text("using Low")
     assert page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().streaming")
