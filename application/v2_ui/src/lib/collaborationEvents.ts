@@ -20,6 +20,7 @@
 
 import { collaborationEventsUrl } from './collaboration';
 import { API_BASE } from './apiClient';
+import type { AiActivityEvent } from './aiActivity';
 import type {
     CollaborationConversation,
     CollaborationEvent,
@@ -162,6 +163,13 @@ export interface CollaborationEventHandlers {
         isTyping: boolean,
         expiresAt: string | undefined,
     ) => void;
+    /**
+     * An AI request in the conversation started, made progress or finished.
+     *
+     * Unlike every other event, these are also delivered when replayed: a run that began
+     * before the reader opened the conversation is still running, and only its history says so.
+     */
+    onAiActivity?: (event: AiActivityEvent) => void;
 }
 
 /**
@@ -173,13 +181,14 @@ export interface CollaborationEventHandlers {
  */
 function eventKey(event: CollaborationEvent): string {
     const payload = event.payload ?? {};
+    const run = payload.run as { run_id?: unknown } | undefined;
     const subject =
         payload.message?.id ??
         payload.message_id ??
         payload.participant?.user_id ??
         payload.user?.user_id ??
         payload.deleted_by_user_id ??
-        '';
+        (typeof run?.run_id === 'string' ? run.run_id : '');
     return [
         event.conversation_id ?? payload.conversation?.id ?? '',
         event.event_type ?? '',
@@ -219,6 +228,20 @@ export function isReplayedEvent(event: CollaborationEvent, subscribedAt: number)
     return occurredAt < subscribedAt - REPLAY_TOLERANCE_MS;
 }
 
+/** The kind of an AI activity event, or null for any other event. */
+function aiActivityKind(eventType: string | undefined): AiActivityEvent['kind'] | null {
+    switch (eventType) {
+        case 'collaboration.ai.started':
+            return 'started';
+        case 'collaboration.ai.progress':
+            return 'progress';
+        case 'collaboration.ai.finished':
+            return 'finished';
+        default:
+            return null;
+    }
+}
+
 /**
  * Route one decoded envelope to the matching handler.
  *
@@ -227,9 +250,24 @@ export function isReplayedEvent(event: CollaborationEvent, subscribedAt: number)
 export function dispatchCollaborationEvent(
     event: CollaborationEvent,
     handlers: CollaborationEventHandlers,
+    replayed = false,
 ): void {
     const payload = event.payload ?? {};
     const conversation = payload.conversation;
+
+    const activityKind = aiActivityKind(event.event_type);
+    if (activityKind) {
+        const run = payload.run;
+        if (run && typeof run === 'object' && !Array.isArray(run)) {
+            handlers.onAiActivity?.({
+                kind: activityKind,
+                run: run as Record<string, unknown>,
+                occurredAt: parseEventTimestamp(event.occurred_at),
+                replayed,
+            });
+        }
+        return;
+    }
 
     switch (event.event_type) {
         case 'collaboration.message.created':
@@ -383,6 +421,11 @@ export function subscribeToCollaborationEvents(
         }
 
         if (isReplayedEvent(event, subscribedAt)) {
+            // History is dropped, except AI activity: replayed in order, it rebuilds which
+            // requests are still running.
+            if (aiActivityKind(event.event_type)) {
+                dispatchCollaborationEvent(event, handlers, true);
+            }
             return;
         }
 
