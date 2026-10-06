@@ -2,7 +2,7 @@
 """
 Functional test for V2 chat stream reconnection.
 
-Version: 0.261.017
+Version: 0.261.256
 Implemented in: 0.261.017
 
 A chat answer is generated on the server and written into a stream session that outlives
@@ -226,10 +226,15 @@ def test_reconnecting_and_reconnected_are_distinct_states():
         "test exists to prevent"
     )
 
-    # The label reverts once connected.
-    assert "connecting ? 'Reconnecting' : 'Thinking'" in message_list, (
-        "The activity label must go back to Thinking once frames are arriving again"
+    # The label reverts once connected. Reconnecting is only ever a chat stream's state, and a chat
+    # stream's usual label is Thinking; an orchestration plan's is Planning.
+    assert "connecting ? 'Reconnecting' : activityLabel" in message_list, (
+        "The activity label must go back to its usual wording once frames are arriving again"
     )
+    assert (
+        "const activityLabel = orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';"
+        in message_list
+    ), "A chat stream's usual activity label must still be Thinking"
 
     print("Reconnect phase separation test passed!")
     return True

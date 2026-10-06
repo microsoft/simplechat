@@ -50,7 +50,7 @@ their card. Use the existing save bar to save or discard edits; the visual
 treatment does not change defaults, permissions, or when settings take effect.
 
 This presentation was implemented in **0.261.093** and extended to every V2 section
-in **0.261.256**, tracked in `application/single_app/config.py`.
+in **0.261.257**, tracked in `application/single_app/config.py`.
 
 ### Agent Runtime {#agents-config}
 

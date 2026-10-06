@@ -18,7 +18,7 @@ This change does four things:
 - On a wide card each setting puts its label and description on the left and its
   control on the right, and runs of independent switches pair up in two columns.
 
-## Implemented in version: **0.261.256**
+## Implemented in version: **0.261.257**
 
 The application version is maintained in `application/single_app/config.py`.
 

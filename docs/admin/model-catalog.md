@@ -5,7 +5,7 @@ description: "Describe model strengths, manage shared profiles, and influence pe
 section: "Administration"
 audience: admin
 admin_tab: model-catalog
-version: "0.261.256"
+version: "0.261.257"
 ---
 
 # Model Catalog
@@ -52,7 +52,7 @@ outlined, which is where its **Catalog profile** association is changed. When a
 settings search had hidden AI Connections, the search is cleared first.
 
 The classic interface keeps its existing catalog layout. The V2 workbench was
-implemented in **0.261.256**.
+implemented in **0.261.257**.
 
 ## Favorites and priority
 

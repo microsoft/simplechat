@@ -3,7 +3,7 @@
 """
 Functional test for starting a new chat in V2 while the open conversation is busy.
 
-Version: 0.261.226
+Version: 0.261.256
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
@@ -111,12 +111,12 @@ def test_orchestration_turns_record_their_streaming_surface_whatever_is_on_scree
     print("Testing the orchestration surface bookkeeping...")
 
     store = _store()
-    assert "const orchestrationSurfaces = new Set<string>();" in store, (
+    assert "const orchestrationSurfaces = new Map<string, OrchestrationSurfacePhase>();" in store, (
         "The store must track which conversations' orchestration turns hold the streaming surface"
     )
 
     begin = _store_action_body(store, "beginOrchestrationTurn")
-    claim = begin.index("orchestrationSurfaces.add(conversationId);")
+    claim = begin.index("orchestrationSurfaces.set(conversationId, phase);")
     assert claim < begin.index("if (get().activeConversationId === conversationId) {"), (
         "beginOrchestrationTurn must record the surface before its on-screen guard, so a turn "
         "started out of sight still shows as working when its conversation is opened"
@@ -131,10 +131,11 @@ def test_orchestration_turns_record_their_streaming_surface_whatever_is_on_scree
 
     reassign = _store_action_body(store, "reassignOrchestrationTurn")
     assert re.search(
-        r"if \(conversationChanged && orchestrationSurfaces\.delete\(fromConversationId\)\) \{\s*"
-        r"orchestrationSurfaces\.add\(toConversationId\);",
+        r"const surfacePhase = orchestrationSurfaces\.get\(fromConversationId\);\s*"
+        r"if \(conversationChanged && surfacePhase && orchestrationSurfaces\.delete\(fromConversationId\)\) \{\s*"
+        r"orchestrationSurfaces\.set\(toConversationId, surfacePhase\);",
         reassign,
-    ), "A turn re-keyed to the server's conversation id must take its surface with it"
+    ), "A turn re-keyed to the server's conversation id must take its surface, and its phase, with it"
 
     print("Orchestration surface bookkeeping test passed!")
     return True

@@ -1,8 +1,8 @@
 # test_v2_admin_model_catalog_workbench.py
 """
 Browser coverage for the native V2 Model Catalog workbench.
-Version: 0.261.256
-Implemented in: 0.261.256
+Version: 0.261.257
+Implemented in: 0.261.257
 
 Exercise the built application with the real catalog profiles, field schema, and
 intercepted APIs. Check that each profile reads as one line -- name, vendor, and

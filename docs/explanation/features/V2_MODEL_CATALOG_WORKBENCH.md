@@ -19,7 +19,7 @@ The workbench keeps the same API, behaviour, and labels, and changes the reading
 
 The classic page keeps its existing catalog, rendered by the shared module.
 
-## Implemented in version: **0.261.256**
+## Implemented in version: **0.261.257**
 
 The application version is maintained in `application/single_app/config.py`.
 

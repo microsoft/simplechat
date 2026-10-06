@@ -1423,6 +1423,28 @@ export function selectInFlightForConversation(
     );
 }
 
+/**
+ * Whether the conversation's inline card is drawing a run that is in flight.
+ *
+ * True exactly when `ActiveOrchestrationCard` draws the plan card's running row: the active turn
+ * has a plan, no question supersedes it, and a run for that turn is in flight. The streaming bubble
+ * reads this so a run's progress appears once, on the card, and so the bubble comes back if the
+ * card is ever not drawing the run. A boolean, so subscribers re-render only when it flips.
+ */
+export function selectActiveTurnRunInFlight(
+    state: OrchestrationState,
+    conversationId: string,
+): boolean {
+    const turnId = selectActiveTurn(state, conversationId);
+    if (!turnId || selectElicitation(state, conversationId, turnId) !== null
+        || selectPlan(state, conversationId, turnId) === null) {
+        return false;
+    }
+    return Object.values(state.inFlight).some(
+        (run) => run.conversationId === conversationId && run.turnId === turnId,
+    );
+}
+
 /** How many runs are in flight for a conversation. Drives a row indicator. */
 export function selectInFlightCount(
     state: OrchestrationState,

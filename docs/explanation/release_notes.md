@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.256)**
+### **(v0.261.257)**
 
 #### User Interface Enhancements
 
@@ -23,6 +23,22 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **V2 Admin Settings Links Scroll to Their Target**
     *   **Go to setting** in App Role Requirements and other links between settings cleared the search and category but never scrolled, because they looked up an id the cards no longer rendered. They now scroll to the section and focus its heading, keep the current category when it already shows the target, and respect reduced motion.
     *   (Ref: `AdminSettingsPage.tsx`, `test_v2_admin_settings_layout.py`, [V2 Admin Section Jump Fix](fixes/V2_ADMIN_SECTION_JUMP_FIX.md))
+
+### **(v0.261.256)**
+
+#### Bug Fixes
+
+*   **One Progress Indicator While Orchestrate Runs a Plan**
+    *   Once a plan started running, the V2 chat showed **Thinking** in a reply bubble above the plan card, which was already showing the run's progress. The plan card is now the only indicator while a plan runs, and the answer appears when it arrives. Run notices, such as a saved-memory warning, are still under the finished answer's reasoning steps.
+    *   A chat reply sent while a plan waits in the same conversation still shows **Thinking**, and **Stop** works as before.
+    *   (Ref: `MessageList.tsx`, `chatStore.ts` `orchestrationSurface`, `executeSavedPlan`, `selectActiveTurnRunInFlight`, `test_v2_orchestration_streaming_bubble.py`, `test_v2_orchestration_streaming_surface.mjs`, [Orchestration Duplicate Thinking Indicator Fix](fixes/ORCHESTRATION_RUN_DUPLICATE_THINKING_INDICATOR_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Orchestrate Says What It's Doing**
+    *   While Orchestrate plans a question, the reply bubble now says **Planning** instead of **Thinking**.
+    *   The running plan card's status line names the work instead of a bare role. It shows "Starting", then each step's kind of work and title, such as "Gathering: Read quarterly reports", then "Preparing the answer" once every step has settled. "Waiting for results" is unchanged.
+    *   (Ref: `describeRunProgress` in `orchestrationPlan.ts`, `OrchestrationPlanCard.tsx`, `test_v2_orchestration_run_progress_status.mjs`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md#stream-events))
 
 ### **(v0.261.253)**
 
