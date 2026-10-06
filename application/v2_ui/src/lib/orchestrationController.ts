@@ -765,8 +765,9 @@ async function executeSavedPlan(
 
     const context = turnContexts.get(scopeKey(conversationId, turnId));
     // Enter the streaming state for the answer without a second user bubble — the question is
-    // already in the thread from planning.
-    useChatStore.getState().beginOrchestrationTurn(conversationId, '', false);
+    // already in the thread from planning. Taken as the run phase: the plan card shows a run's
+    // progress, so the streaming bubble stays out of the way until there is an answer to show.
+    useChatStore.getState().beginOrchestrationTurn(conversationId, '', false, undefined, undefined, 'running');
 
     const controller = new AbortController();
     activeControllers.get(conversationId)?.abort();

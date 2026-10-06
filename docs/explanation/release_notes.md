@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.256)**
+### **(v0.261.257)**
 
 #### Bug Fixes
 
@@ -15,6 +15,22 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Deleting only the latest answer of a retried turn re-activated the lowest-numbered earlier attempt, so an old question and answer showed beside the latest question. Another attempt now takes over only when the active attempt's question is deleted, a deleted attempt is never chosen, and only one attempt stays active. This applies whether or not archiving is on.
     *   The V2 attempt control counts the attempts that remain, so it reads "2/2" rather than "3/2" after one is removed.
     *   (Ref: #1649, `_promote_remaining_thread_attempt`, `threads.ts`, [Deleted Messages Shown as Masked Fix](fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
+
+### **(v0.261.256)**
+
+#### Bug Fixes
+
+*   **One Progress Indicator While Orchestrate Runs a Plan**
+    *   Once a plan started running, the V2 chat showed **Thinking** in a reply bubble above the plan card, which was already showing the run's progress. The plan card is now the only indicator while a plan runs, and the answer appears when it arrives. Run notices, such as a saved-memory warning, are still under the finished answer's reasoning steps.
+    *   A chat reply sent while a plan waits in the same conversation still shows **Thinking**, and **Stop** works as before.
+    *   (Ref: `MessageList.tsx`, `chatStore.ts` `orchestrationSurface`, `executeSavedPlan`, `selectActiveTurnRunInFlight`, `test_v2_orchestration_streaming_bubble.py`, `test_v2_orchestration_streaming_surface.mjs`, [Orchestration Duplicate Thinking Indicator Fix](fixes/ORCHESTRATION_RUN_DUPLICATE_THINKING_INDICATOR_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Orchestrate Says What It's Doing**
+    *   While Orchestrate plans a question, the reply bubble now says **Planning** instead of **Thinking**.
+    *   The running plan card's status line names the work instead of a bare role. It shows "Starting", then each step's kind of work and title, such as "Gathering: Read quarterly reports", then "Preparing the answer" once every step has settled. "Waiting for results" is unchanged.
+    *   (Ref: `describeRunProgress` in `orchestrationPlan.ts`, `OrchestrationPlanCard.tsx`, `test_v2_orchestration_run_progress_status.mjs`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md#stream-events))
 
 ### **(v0.261.253)**
 

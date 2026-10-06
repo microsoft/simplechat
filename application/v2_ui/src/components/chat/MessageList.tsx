@@ -47,6 +47,7 @@ import { OrchestrationPlanCard } from './OrchestrationPlanCard';
 import { ElicitationCard } from './ElicitationCard';
 import {
     selectActiveTurn,
+    selectActiveTurnRunInFlight,
     selectElicitation,
     selectPlan,
     useOrchestrationStore,
@@ -1263,11 +1264,27 @@ const MessageBubble = memo(MessageBubbleInner);
  * A recovered stream is deliberately made to look ordinary once it is flowing again. The
  * interruption is worth a brief note, but leaving "Reconnecting" under an answer that is
  * actively arriving reads as a stall, which is the opposite of what is happening.
+ *
+ * An orchestrated turn shows one indicator at a time. While it plans, this bubble is the only
+ * sign of work, and it says "Planning" so the plan card that replaces it reads as the result. While
+ * an approved plan runs, the plan card already shows its progress, so this bubble draws nothing
+ * until the answer arrives and then only the answer. Its run notices stay with the finished
+ * message's reasoning steps. If the card is ever not drawing the run, the bubble shows as usual,
+ * so a run is never left with no indicator at all.
  */
 function StreamingBubble() {
-    const { streamingContent, streamingReasoningAdjustments, thoughts, reconnectPhase } = useChatStore();
+    const {
+        streamingContent,
+        streamingReasoningAdjustments,
+        thoughts,
+        reconnectPhase,
+        orchestrationSurface,
+        activeConversationId,
+    } = useChatStore();
     const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
     const chatWidth = useUiStore((state) => state.chatWidth);
+    const runCardShowsProgress = useOrchestrationStore((state) =>
+        selectActiveTurnRunInFlight(state, activeConversationId ?? ''));
     const [showReconnectedNote, setShowReconnectedNote] = useState(false);
 
     useEffect(() => {
@@ -1282,6 +1299,12 @@ function StreamingBubble() {
     }, [reconnectPhase]);
 
     const connecting = reconnectPhase === 'connecting';
+    const runShownOnCard = orchestrationSurface === 'running' && runCardShowsProgress;
+    const activityLabel = orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';
+
+    if (runShownOnCard && !streamingContent) {
+        return null;
+    }
 
     // In a shared conversation the activity line says the request is running, for everyone
     // in it, so the bubble only appears once there is an answer to show.
@@ -1307,7 +1330,7 @@ function StreamingBubble() {
                     </p>
                 )}
                 <ReasoningAdjustmentNotice adjustments={streamingReasoningAdjustments} />
-                <ThoughtsPanel thoughts={thoughts} live />
+                {!runShownOnCard && <ThoughtsPanel thoughts={thoughts} live />}
                 {streamingContent ? (
                     <AssistantMarkdown content={streamingContent} streaming />
                 ) : (
@@ -1321,7 +1344,7 @@ function StreamingBubble() {
                                 />
                             ))}
                         </span>
-                        {connecting ? 'Reconnecting' : 'Thinking'}
+                        {connecting ? 'Reconnecting' : activityLabel}
                     </span>
                 )}
             </div>

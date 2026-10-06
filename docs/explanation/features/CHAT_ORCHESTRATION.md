@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.192** (tracked in `application/single_app/config.py`)
+**Version: 0.261.256** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -24,6 +24,7 @@
 **Deliverables contract and generated images in files implemented in version: 0.261.138**
 **Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
 **Photorealistic planned images and reference images implemented in version: 0.261.192**
+**One progress indicator per phase (Planning label, run progress on the plan card only) fixed in version: 0.261.256**
 
 ## Overview
 
@@ -1137,10 +1138,22 @@ and `orchestration_synthesis`, each carrying `activity.lane_key = "orchestration
 
 The client's orchestration lane claims these steps, so they are never counted as agent or
 tabular work, but it draws no progress card. The planner's steps sit under the reasoning
-toggle next to **Thinking**. A run's progress is on the plan card, which counts completed
-steps and names the running one, and in the drawer. A card on top repeated both, and during
-planning it stayed at 45% until the plan replaced it. See the
+toggle next to **Planning**. A run's progress is on the plan card, which counts completed
+steps, and in the drawer. A card on top repeated both, and during planning it stayed at 45%
+until the plan replaced it. See the
 [duplicate progress card fix](../fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md).
+
+An orchestrated turn shows one progress indicator at a time. The chat store records which
+part of the turn holds the streaming surface: `planning` while the planner works and
+`running` while an approved plan executes. While planning, the streaming bubble says
+**Planning**. While a plan runs, the bubble draws nothing until the answer arrives, and the
+plan card's status line is the only indicator. It names the work in progress: "Starting", the
+running step's kind of work and title (for example "Gathering: Read quarterly reports"),
+"Waiting for results", and "Preparing the answer" once every step has settled. The server sends
+the answer in one piece after the last step, so the run's notices are kept with the finished
+answer's reasoning steps rather than in a live toggle. Any other stream, such as a chat reply
+sent while a run waits, still shows **Thinking**. See the
+[duplicate Thinking indicator fix](../fixes/ORCHESTRATION_RUN_DUPLICATE_THINKING_INDICATOR_FIX.md).
 
 Execution terminal events also retain the actual outcome, safe failure
 information, and attempt/recovery identifiers. A final explanatory message does
@@ -1375,7 +1388,9 @@ to the front.
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
 | `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification/model transport, cancellation, original-turn continuity, all approval modes, visible answer model names and navigation |
 | `functional_tests/test_v2_orchestration_progress_lane.mjs` | Planner, plan-ready, saved-memory and reasoning-adjustment steps stay in the orchestration lane, which draws no progress card; an agent hand-off inside an orchestrated turn stays there; tabular and agent lanes keep their cards |
-| `ui_tests/test_v2_orchestration_streaming_bubble.py` | While planning, the streaming bubble shows only the reasoning toggle and **Thinking**; no orchestration progress card appears during a run or in a finished answer's reasoning; a tabular turn still draws its card |
+| `ui_tests/test_v2_orchestration_streaming_bubble.py` | While planning, the streaming bubble shows only the reasoning toggle and **Planning**; while a plan runs, manually or auto-approved, only the plan card shows, its status line naming each step and then "Preparing the answer", and **Thinking** never appears; the run's notice stays with the finished answer's reasoning; a stream that is not the run's still shows **Thinking**; no orchestration progress card appears; a tabular turn still draws its card |
+| `functional_tests/test_v2_orchestration_run_progress_status.mjs` | The running plan card's status line: starting, a running step's kind of work and title with fallbacks, the gap between steps, every step settled including failed and skipped ones, disabled steps, and waiting runs and steps |
+| `functional_tests/test_v2_orchestration_streaming_surface.mjs` | The real controller and stores: the planner holds the streaming surface as `planning` and an approved run as `running`; an auto-approved plan hands it straight to the run; a chat reply sent while a run waits is not mistaken for the run; the phase survives leaving, returning and server re-keying; every write that takes the streaming flag names its owner |
 
 Research-selection evaluation distinguishes contract coverage from model behaviour. A
 mocked plan proves that the application preserves an allowed choice; it does not prove
