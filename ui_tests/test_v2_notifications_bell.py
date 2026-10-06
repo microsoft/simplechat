@@ -1,8 +1,9 @@
 # test_v2_notifications_bell.py
 """
 Browser regressions for the V2 notification bell, its panel and desktop notifications.
-Version: 0.261.195
+Version: 0.261.251
 Implemented in: 0.261.195
+Notices about a chat-started run's results, and workflow-activity links, open the run in V2: 0.261.251
 
 Exercises the real rail, bell, panel, chat page, preferences tab, stores and notification
 runtime, bundled by fixtures/notification_bell. Only HTTP answers and the browser APIs a
@@ -315,12 +316,12 @@ def stream_body(frames):
 class NotificationApi:
     """The routes the frame calls, answered the way route_backend_* answers, with their state."""
 
-    def __init__(self, page):
+    def __init__(self, page, titles=None, *, streams=0):
         self.page = page
         self.notices = []
         self.conversations = {
             conversation_id: {"id": conversation_id, "title": title, "unread": False}
-            for conversation_id, title in CONVERSATIONS.items()
+            for conversation_id, title in (CONVERSATIONS if titles is None else titles).items()
         }
         self.requests = []
         self.list_queries = []
@@ -342,7 +343,7 @@ class NotificationApi:
         self.held_kinds = {}
         self.hold_streams = False
         self.held_streams = []
-        self.streams = 0
+        self.streams = streams
         self.errors = []
         self.unexpected = []
         self.expected_http_failures = set()
@@ -708,8 +709,8 @@ LIST_SETTLED = r"""
 class Harness(NotificationApi):
     """The frame in a browser page, driven the way a reader drives it."""
 
-    def __init__(self, page, stylesheets):
-        super().__init__(page)
+    def __init__(self, page, stylesheets, titles=None, *, streams=0):
+        super().__init__(page, titles, streams=streams)
         self.stylesheets = stylesheets
 
     def open(self, path="/chat", *, browser=None, features=None, settings=None, settings_loading=False,
@@ -2243,3 +2244,123 @@ def test_preferences_say_why_this_browser_cannot_show_a_notice(harness, case):
     harness.hide()
     harness.announce(**chat_reply("conv-a", "m-1"))
     harness.page.wait_for_timeout(200)
+
+
+# Workflow run notices -------------------------------------------------------------------------
+
+RUN_ROUTE = "/workspace/workflows?workflow_id=wf-7&run_id=run-7"
+RUN_ACTIVITY_LINK = "/workflow-activity?workflowId=wf-7&runId=run-7&scope=personal"
+UNDELIVERABLE_NOTICE = (
+    "The chat that started this run can't show it anymore. Open the run in Workflows to see the details."
+)
+EXPIRED_NOTICE = "The run didn't finish in time to post to the chat. Open it in Workflows to see where it stands."
+
+
+def chat_delivery_notice(notice_id, title, message, *, delivery_status, link_url=RUN_ACTIVITY_LINK,
+                         link_context=None, **metadata):
+    """The notice functions_workflow_chat_delivery_worker._send_notice writes when a chat-started
+    run's results cannot be posted to its chat."""
+    return notice(
+        notice_id, "workflow_chat_delivery", title, message, link_url=link_url, link_context=link_context,
+        metadata={
+            "workflow_id": "wf-7", "run_id": "run-7", "workflow_scope": "personal",
+            "delivery_status": delivery_status, **metadata,
+        },
+        color="info", icon="bi-activity",
+    )
+
+
+def test_a_chat_run_notice_reads_as_workflow_results_and_opens_its_run_in_v2(harness):
+    # The workflow's name is the one thing in it a person wrote, and it is shown as text.
+    title = 'Results from "<img src=x onerror="window.__xss=5">Weekly digest" are ready'
+    harness.add(chat_delivery_notice("n-results", title, UNDELIVERABLE_NOTICE, delivery_status="undeliverable"))
+    harness.open("/elsewhere")
+    harness.open_panel()
+
+    row = harness.row("n-results")
+    expect(row).to_have_attribute("data-notification-type", "workflow_chat_delivery")
+    expect(row.locator("p").first.locator("span.truncate")).to_have_text("Workflow results")
+    icon = row.locator("xpath=./span[@aria-hidden='true']")
+    expect(icon).to_have_class(re.compile(r"(^|\s)text-info(\s|$)"))
+    expect(icon.locator("svg.lucide-workflow")).to_have_count(1)
+    expect(row.locator("svg.lucide-bell")).to_have_count(0)
+    expect(harness.action("n-results", "open")).to_have_text(title)
+    expect(row).to_contain_text(UNDELIVERABLE_NOTICE)
+    expect(row.locator("[data-notification-link-error]")).to_have_count(0)
+    expect(row.locator("img")).to_have_count(0)
+
+    # 6b-1 links it to the classic run page; the notice and the link agree, so it opens in V2.
+    harness.action("n-results", "open").click()
+    expect(current_route(harness)).to_have_text(RUN_ROUTE)
+    expect(harness.panel).to_have_count(0)
+    harness.wait_for(lambda: harness.read_calls == ["n-results"], "Opening the notice should mark it read.")
+    harness.page.wait_for_timeout(200)
+    classic_reads = harness.count_requests("GET", "/workflow-activity")
+    assert classic_reads == 0
+    assert harness.set_active_calls == []
+    xss = harness.js("() => window.__xss")
+    assert xss is None
+
+
+def test_a_workflow_notice_without_a_link_opens_the_run_it_names(harness):
+    harness.add(
+        chat_delivery_notice(
+            "n-expired", "\"Weekly digest\" didn't finish in time to post to chat", EXPIRED_NOTICE,
+            delivery_status="expired", link_url="",
+        ),
+        # Only workflow notices open a run they name without linking to it.
+        notice(
+            "n-announcement", "system_announcement", "Weekly digest ran",
+            metadata={"workflow_id": "wf-7", "run_id": "run-7", "workflow_scope": "personal"},
+        ),
+        # Without its workspace there is no telling which Workflows page the run is on.
+        chat_delivery_notice(
+            "n-unscoped", "\"Weekly digest\" didn't finish", UNDELIVERABLE_NOTICE,
+            delivery_status="undeliverable", link_url="", workflow_scope=None,
+        ),
+        # A Microsoft 365 action is resolved on classic pages, so V2 does not guess at one.
+        chat_delivery_notice(
+            "n-m365", "\"Weekly digest\" was cancelled", UNDELIVERABLE_NOTICE,
+            delivery_status="undeliverable", link_url="", link_context={"m365_pending_action_id": "act-7"},
+        ),
+    )
+    harness.open("/elsewhere")
+    harness.open_panel()
+
+    for notice_id in ("n-announcement", "n-unscoped", "n-m365"):
+        expect(harness.action(notice_id, "open")).to_have_count(0)
+        expect(harness.row(notice_id).locator("[data-notification-link-error]")).to_have_count(0)
+
+    harness.action("n-expired", "open").click()
+    expect(current_route(harness)).to_have_text(RUN_ROUTE)
+    harness.wait_for(lambda: harness.read_calls == ["n-expired"], "Opening the notice should mark it read.")
+
+
+@pytest.mark.parametrize("written_in", ["metadata", "link_context"])
+def test_a_microsoft_365_notice_keeps_its_classic_run_page(harness, written_in):
+    # Everything else about it would open the run in V2; the Microsoft 365 action keeps it classic,
+    # wherever the action id was written.
+    marker = {"m365_pending_action_id": "act-7"}
+    harness.add(notice(
+        "n-classic", "system_announcement", "Microsoft 365 action awaiting review",
+        "Review the calendar invite before it is sent.", link_url=RUN_ACTIVITY_LINK,
+        link_context=marker if written_in == "link_context" else None,
+        metadata={
+            "workflow_id": "wf-7", "run_id": "run-7", "workflow_scope": "personal",
+            **(marker if written_in == "metadata" else {}),
+        },
+    ))
+    harness.open("/elsewhere")
+    harness.open_panel()
+    harness.action("n-classic", "open").click()
+
+    harness.page.wait_for_url(f"{ORIGIN}{RUN_ACTIVITY_LINK}")
+    expect(harness.page.get_by_role("heading", name="Classic interface")).to_be_visible()
+    assert harness.read_calls == ["n-classic"]
+    assert harness.set_active_calls == []
+    # A full page load cancels whatever is still on its way, so the read goes first.
+    order = [(method, target) for method, target, _ in harness.requests]
+    read_at = order.index(("POST", "/api/notifications/n-classic/read"))
+    page_at = order.index(("GET", RUN_ACTIVITY_LINK))
+    assert read_at < page_at
+

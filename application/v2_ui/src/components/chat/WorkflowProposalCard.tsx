@@ -13,7 +13,9 @@ import { Link } from 'react-router-dom';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowEditorDialog } from '../workflows/WorkflowEditorDialog';
+import { WorkflowProposalRunSummary } from './WorkflowProposalRunSummary';
 import { ApiError } from '../../lib/apiClient';
+import { M365_CONNECT_HREF } from '../../lib/m365Links';
 import {
     fetchWorkflowEditorOptions,
     normalizeWorkflowDefinition,
@@ -42,7 +44,6 @@ const CREATING_POLL_MS = 3000;
 const CREATING_POLL_LIMIT = 40;
 const CREATING_WINDOW_MS = 120_000;
 // Classic pages: V2 has no Microsoft 365 connection or approval page of its own.
-const M365_CONNECT_HREF = '/profile?tab=settings#m365-connection-status';
 const M365_APPROVALS_HREF = '/approvals';
 const URL_ACCESS_REFUSED = 'URL Access is not available for workflows created from chat.';
 
@@ -430,6 +431,7 @@ function ProposalCard({
             </div>
             <ProposalDetails proposal={proposal} />
             <p className="break-words text-text-2">{[stateNote(proposal), expiry].filter(Boolean).join(' ')}</p>
+            {isCreated && proposal.workflow ? <WorkflowProposalRunSummary workflowId={proposal.workflow.id} workflowName={name} /> : null}
             {proposal.state === 'creating' && pollingStopped ? (
                 <p className="break-words text-text-2">
                     This is taking longer than expected.{' '}

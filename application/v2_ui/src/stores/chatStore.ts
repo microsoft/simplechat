@@ -134,7 +134,7 @@ import {
     retryOrchestrationPlanning,
 } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
-import { announceCompletedReply } from '../lib/replyEvents';
+import { announceCompletedReply, type CompletedReply } from '../lib/replyEvents';
 import { getAppNavigator, subscribeRouteChanges, type AppRoute } from '../lib/appNavigation';
 import { readConversationParam } from '../lib/conversationUrl';
 import { refreshNotificationCount } from './notificationStore';
@@ -488,7 +488,15 @@ interface ChatState {
     setDrawerMode: (mode: DrawerMode) => void;
     loadMetadata: (conversationId: string) => Promise<void>;
 
-    reloadMessages: () => Promise<void>;
+    /**
+     * Re-read the open chat's messages and show them.
+     *
+     * `onlyIfUnchanged` is for a re-read the reader didn't ask for, such as a workflow result
+     * landing: it is dropped, resolving 'superseded', if a reply started or the messages changed
+     * while it was out, so it can't replace a question sent in the meantime. Every other re-read
+     * resolves 'done', including one that showed nothing because the chat changed or it failed.
+     */
+    reloadMessages: (options?: { onlyIfUnchanged?: boolean }) => Promise<'done' | 'superseded'>;
     removeMessage: (messageId: string, deleteThread?: boolean) => Promise<void>;
     retryMessage: (messageId: string, options?: ComposerOptions) => Promise<void>;
     editMessage: (messageId: string, content: string) => Promise<void>;
@@ -1143,23 +1151,19 @@ function deferReplyRead(conversationId: string): void {
 /**
  * Act on a finished reply for the reader: announce it to the desktop notifier, whether or
  * not it is on screen, and settle the unread marker the server gave it.
+ *
+ * `current` is whether the reply landed in the open conversation, and `serverMarksUnread`
+ * whether the server marked that conversation unread for it. Exported for replies that
+ * arrive without a stream: a saved workflow's results, which the server posts back to the
+ * chat that started the run, are settled exactly as a streamed reply is.
  */
-function settleFinishedReply(
-    conversationId: string,
-    kind: ConversationKind,
-    event: ChatStreamEvent,
-    current: boolean,
-    getState: () => ChatState,
+export function settleCompletedReply(
+    reply: CompletedReply,
+    { current, serverMarksUnread }: { current: boolean; serverMarksUnread: boolean },
 ): void {
-    const listed = getState().conversations.find((item) => item.id === conversationId);
-    announceCompletedReply({
-        conversationId,
-        messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
-        conversationTitle: event.conversation_title || listed?.title || null,
-        blocked: event.blocked === true || event.role === 'safety',
-        source: 'chat',
-    });
-    if (!serverMarksReplyUnread(kind, event)) {
+    const { conversationId } = reply;
+    announceCompletedReply(reply);
+    if (!serverMarksUnread) {
         return;
     }
     if (current && replyIsWatched()) {
@@ -1176,6 +1180,27 @@ function settleFinishedReply(
     // The reply's notice is already in the bell's count; show it now rather than at the
     // next poll.
     void refreshNotificationCount('action');
+}
+
+/** Settle a reply that finished streaming. */
+function settleFinishedReply(
+    conversationId: string,
+    kind: ConversationKind,
+    event: ChatStreamEvent,
+    current: boolean,
+    getState: () => ChatState,
+): void {
+    const listed = getState().conversations.find((item) => item.id === conversationId);
+    settleCompletedReply(
+        {
+            conversationId,
+            messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
+            conversationTitle: event.conversation_title || listed?.title || null,
+            blocked: event.blocked === true || event.role === 'safety',
+            source: 'chat',
+        },
+        { current, serverMarksUnread: serverMarksReplyUnread(kind, event) },
+    );
 }
 
 /**
@@ -3546,11 +3571,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    reloadMessages: async () => {
+    reloadMessages: async (options) => {
         const conversationId = get().activeConversationId;
         const analysisRevision = get().analysisContextRevision;
+        const shownBefore = get().messages;
         if (!conversationId) {
-            return;
+            return 'done';
         }
         try {
             const { messages } =
@@ -3558,7 +3584,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
             if (get().activeConversationId !== conversationId) {
-                return;
+                return 'done';
+            }
+            // Checked before anything is written, so a dropped re-read changes nothing at all.
+            if (options?.onlyIfUnchanged && (get().streaming || get().messages !== shownBefore)) {
+                return 'superseded';
             }
             set({ messages: messages ?? [] });
             const selected = get().analysisResultContext;
@@ -3591,6 +3621,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     error instanceof Error ? error.message : 'Failed to reload messages.',
             });
         }
+        return 'done';
     },
 
     removeMessage: async (messageId, deleteThread = false) => {
