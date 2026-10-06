@@ -1,8 +1,9 @@
 # test_chat_workflow_results.py
 """
 Browser regressions for asking chat about a finished workflow run's stored result.
-Version: 0.261.214
+Version: 0.261.253
 Implemented in: 0.261.214
+A run's own post hidden once its reply is mirrored in: 0.261.253
 
 Exercises the real V2 chat page, composer, chat store, run history and workflow alert card,
 bundled by fixtures/workflow_results, against a fake server. The fake answers with the real
@@ -12,8 +13,9 @@ error text with a private diagnostic the page must never show. Covered: Ask in c
 personal runs only, the composer chip, a follow-up turn that inherits the run, refusals on
 the descriptor read and on the stream (including a result changed by resume-failed), a
 question sent while Ask in chat is still opening, the alert card's Ask about this, the
-setting turned off, reopening a chat whose latest answer used a result or was masked, and a
-user-authored workflow name that must stay text. No live application data is read or
+setting turned off, reopening a chat whose latest answer used a result or was masked, a
+user-authored workflow name that must stay text, and a conversation a run created, where the
+run's own post gives way to its mirrored reply. No live application data is read or
 modified; the existing Azure Playwright connection fixture also supports a local browser.
 """
 
@@ -1006,3 +1008,48 @@ def test_a_workflow_name_is_shown_as_text(tab, server):
     )
     expect(tab.page.locator('img[src="x"]')).to_have_count(0)
     assert tab.page.evaluate("() => window.__xss") is None
+
+
+# A conversation a run created ------------------------------------------------------------------
+
+
+def test_a_runs_own_post_gives_way_to_its_mirrored_reply(tab, server):
+    """
+    The run posted a briefing into the conversation it created, then its whole reply was
+    mirrored in. The post is stored and marked superseded_by_workflow_reply
+    (functions_workflow_runner), so only the reply shows. An agent post without the marker
+    still shows, labelled as posted through an agent.
+    """
+    thread = {"thread_id": "conv-run-thread-1", "previous_thread_id": None, "active_thread": True,
+              "thread_attempt": 1}
+    agent_posted = {"posted_via": "agent_action", "content_format": "markdown"}
+    server.conversations["conv-run"] = [
+        {
+            "id": "conv-run_post", "conversation_id": "conv-run", "role": "user",
+            "content": "Opening briefing the run posted.", "timestamp": "2026-05-05T15:00:00Z",
+            "metadata": {**agent_posted, "superseded_by_workflow_reply": {
+                "message_id": "conv-run_reply", "workflow_id": WORKFLOW_ID,
+                "superseded_at": "2026-05-05T15:04:00Z",
+            }},
+        },
+        {
+            "id": "conv-run_reply", "conversation_id": "conv-run", "role": "assistant",
+            "content": "The run's full reply, with everything it found.", "timestamp": "2026-05-05T15:04:00Z",
+            "model_deployment_name": "gpt-4o", "augmented": False, "hybrid_citations": [],
+            "web_search_citations": [], "agent_citations": [],
+            "metadata": {"source": "workflow_mirror", "thread_info": thread},
+        },
+        {
+            "id": "conv-run_note", "conversation_id": "conv-run", "role": "user",
+            "content": "A later note an agent posted.", "timestamp": "2026-05-05T15:06:00Z",
+            "metadata": dict(agent_posted),
+        },
+    ]
+    server.titles["conv-run"] = "Created by a run"
+    tab.open("/chat?conversationId=conv-run")
+
+    expect(tab.message("conv-run_reply")).to_contain_text("The run's full reply, with everything it found.")
+    expect(tab.message("conv-run_note")).to_contain_text("A later note an agent posted.")
+    expect(tab.message("conv-run_note")).to_contain_text("Posted through an agent")
+    expect(tab.message("conv-run_post")).to_have_count(0)
+    expect(tab.messages_with("Opening briefing the run posted.")).to_have_count(0)

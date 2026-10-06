@@ -134,3 +134,18 @@ export function isAgentPostedMessage(message: ChatMessage | undefined): boolean 
         metadata?.content_format === 'markdown'
     );
 }
+
+/**
+ * Whether a workflow run's mirrored reply has replaced this message in the thread.
+ *
+ * A run that creates a conversation and posts its own message there later mirrors its full
+ * reply into the same conversation, with the maps and sources its tools returned. The server
+ * then marks the run's post with `superseded_by_workflow_reply`
+ * (`_hide_run_posts_superseded_by_reply` in functions_workflow_runner.py). It stays stored, and
+ * in the AI's history, but showing it would repeat the reply in a form that reads as though the
+ * person had written it.
+ */
+export function isSupersededByWorkflowReply(message: ChatMessage | undefined): boolean {
+    const metadata = message?.metadata as { superseded_by_workflow_reply?: unknown } | undefined;
+    return Boolean(metadata?.superseded_by_workflow_reply);
+}

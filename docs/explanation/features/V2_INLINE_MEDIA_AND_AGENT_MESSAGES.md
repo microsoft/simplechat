@@ -68,6 +68,10 @@ players. Messages people type stay plain text.
 - `components/chat/MessageList.tsx` renders those messages with `AssistantMarkdown` in the neutral
   bubble (tables and links are unreadable on the accent colour), keeps them on the sender's side of
   the thread, and labels them "posted through an agent".
+- Since 0.261.253, a workflow run's own post is hidden once the run's full reply is mirrored into the
+  conversation it created. The server marks the post `superseded_by_workflow_reply`, and
+  `isSupersededByWorkflowReply` leaves it out of the thread. See
+  [Workflow reply replaces the agent-posted message](../fixes/WORKFLOW_REPLY_REPLACES_AGENT_POSTED_MESSAGE_FIX.md).
 
 ### Configuration
 
