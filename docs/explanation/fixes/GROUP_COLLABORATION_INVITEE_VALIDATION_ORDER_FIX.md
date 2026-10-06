@@ -1,16 +1,16 @@
-# Group Collaboration Invitee Validation Order Fix (v0.261.258)
+# Group Collaboration Invitee Validation Order Fix (v0.261.259)
 
 ## Overview
 
 Group conversation conversion now proves that every requested invitee is a current member of the source group before reading the conversation's message history. This keeps authorization checks ahead of dependent data access while preserving the existing conversion and invitation behavior.
 
-Fixed in version: **0.261.258**
+Fixed in version: **0.261.259**
 
 Related issue: [#1651](https://github.com/microsoft/simplechat/issues/1651)
 
 Dependencies: group membership normalization, group role authorization, and Microsoft 365 history publication.
 
-The application version was updated in `application/single_app/config.py` from `0.261.256` to `0.261.258`. Version `0.261.257` was already claimed by an open change against the React V2 branch.
+The application version was updated in `application/single_app/config.py` from `0.261.258` to `0.261.259`.
 
 ## Issue Description
 

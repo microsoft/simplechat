@@ -12,6 +12,13 @@ inset boundaries make those different responsibilities easier to recognize.
 The application version is maintained in `application/single_app/config.py`.
 This change increments its third segment from `0.261.092` to `0.261.093`.
 
+> **Extended in 0.261.258.** This presentation now applies to every V2 Admin Settings
+> section, with icons taken from the navigation definition and the field emphasis
+> derived from each field's `depends_on` rather than declared per section. The appearance
+> map below keeps only the workspace-permission icons. See
+> [V2 Admin Settings Layout and Hierarchy](V2_ADMIN_SETTINGS_LAYOUT_AND_HIERARCHY.md).
+> The rest of this page describes the original, Agents-only change.
+
 **Dependencies:** the existing React/TypeScript V2 UI, local Lucide icons,
 `SettingsSection`, and the server-declared admin field schema. No new packages,
 settings, routes, or browser asset sources are required.

@@ -1,20 +1,17 @@
 // agentSectionAppearance.ts
 
-import { Bot, Layers, Palette, UserRound, UsersRound } from 'lucide-react';
+import { UserRound, UsersRound } from 'lucide-react';
 import type { SettingsSectionAppearance } from './SettingsSection';
 
 // Presentation only: field order, visibility, and status still come from the schema.
+//
+// Section icons now come from the navigation definition, and which switch leads which
+// settings is derived from `depends_on`, so the Agent Runtime emphasis no longer needs
+// declaring here. What remains is the one cue the schema cannot express: whether a
+// workspace permission applies to a person or to a group.
 export const agentSectionAppearances: Readonly<
     Partial<Record<string, SettingsSectionAppearance>>
 > = {
-    'agents-config': {
-        Icon: Bot,
-        fields: {
-            enable_semantic_kernel: { emphasis: 'primary' },
-            per_user_semantic_kernel: { emphasis: 'dependent' },
-            merge_global_semantic_kernel_with_workspace: { emphasis: 'dependent' },
-        },
-    },
     'agent-toggles-card': {
         Icon: UsersRound,
         fields: {
@@ -24,6 +21,4 @@ export const agentSectionAppearances: Readonly<
             allow_group_custom_endpoints: { Icon: UsersRound },
         },
     },
-    'agents-page-customization-card': { Icon: Palette },
-    'agent-template-approvals-section': { Icon: Layers },
 };

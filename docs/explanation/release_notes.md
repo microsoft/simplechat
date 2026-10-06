@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.258)**
+### **(v0.261.259)**
 
 #### Bug Fixes
 
@@ -10,6 +10,42 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Converting an existing group conversation now verifies every invited participant against the group's current membership before preparing Microsoft 365 publication evidence or reading the conversation transcript. An identity outside the group is still rejected without changing any records, but the rejection now happens before message history is queried.
     *   The document collaboration regression fixture now exposes the current workflow-alert safety contract, so its sharing and repair checks reach their assertions instead of stopping during module import.
     *   (Ref: #1651, `ensure_group_collaboration_for_legacy_conversation`, `test_group_collaboration_source_storage_fix.py`, `test_group_document_collaboration.py`, [Group Collaboration Invitee Validation Order Fix](fixes/GROUP_COLLABORATION_INVITEE_VALIDATION_ORDER_FIX.md))
+
+### **(v0.261.258)**
+
+#### User Interface Enhancements
+
+*   **V2 Admin Settings Use the Full Width**
+    *   Admin Settings now fills the screen instead of a 768px column. On wide screens an **On this page** list sits beside the cards with each section's status (Configured, Needs configuration, Off, or Prerequisite missing), a count of sections that need attention, and a marker for the section you are reading. Select an entry to jump to it.
+    *   Every section uses the card the Agents settings introduced: an icon from the navigation, a larger title, and stronger group boundaries. The switch a section depends on is highlighted, and settings that only apply while a switch is on are indented beneath it. That nesting is read from the field schema, so it appears in every section that declares it.
+    *   On a wide card each setting's label and description sit beside its control, and independent switches pair up in two columns. Narrow screens and larger text sizes keep the stacked layout.
+    *   (Ref: `AdminSettingsPage.tsx`, `SettingsSection.tsx`, `SettingsIndex.tsx`, `adminSections.ts`, `fields.tsx`, `theme.css`, [V2 Admin Settings Layout and Hierarchy](features/V2_ADMIN_SETTINGS_LAYOUT_AND_HIERARCHY.md))
+
+*   **Model Catalog Workbench in V2**
+    *   The V2 Model Catalog is now drawn natively as a workbench. Each profile is one line, with its name, publisher, and the number of global models connected to it, and the list and the selected profile scroll separately.
+    *   A profile's detail is split into **Overview**, **Capabilities**, **Connections**, and **Evidence** tabs, with **Favorite** and **Priority** in its header. Selecting the connected-model count opens the Connections tab, and **Open in AI Connections** opens that model's connection editor with the model outlined.
+    *   The admin catalog response now includes each linked model's connection and model ids. The classic catalog is unchanged.
+    *   (Ref: `ModelCatalogManager.tsx`, `ModelCatalogDetail.tsx`, `ModelCatalogEditor.tsx`, `modelCatalog.ts`, `ModelConnectionsManager.tsx`, `route_backend_models.py`, [V2 Model Catalog Workbench](features/V2_MODEL_CATALOG_WORKBENCH.md))
+
+#### Bug Fixes
+
+*   **V2 Admin Settings Links Scroll to Their Target**
+    *   **Go to setting** in App Role Requirements and other links between settings cleared the search and category but never scrolled, because they looked up an id the cards no longer rendered. They now scroll to the section and focus its heading, keep the current category when it already shows the target, and respect reduced motion.
+    *   (Ref: `AdminSettingsPage.tsx`, `test_v2_admin_settings_layout.py`, [V2 Admin Section Jump Fix](fixes/V2_ADMIN_SECTION_JUMP_FIX.md))
+
+### **(v0.261.257)**
+
+#### Bug Fixes
+
+*   **Deleted Messages No Longer Come Back As Masked**
+    *   With **Enable Conversation Archiving** on, a message deleted in the V2 chat no longer reappears as "This message is masked", either right after the delete or when the conversation is opened again. Deleted messages are left out wherever messages are shown, copied, searched or sent to the model: the message list, attempt switching, retry and edit, forks, sharing a conversation, conversation search, the inbound MCP message tool, conversation summaries and chat history. Their archived copies are kept as before.
+    *   Delete, retry, edit, attempt switching and both mask actions treat a deleted message as gone, so its fail-safe mask can't be cleared. Shared conversations that already hold copies of deleted messages hide them, with no data migration.
+    *   (Ref: #1649, `functions_message_deletion.py`, `route_backend_conversations.py`, `route_backend_chats.py`, `functions_collaboration.py`, `chatStore.ts`, `deletedMessages.ts`, [Deleted Messages Shown as Masked Fix](fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
+
+*   **Deleting An Answer No Longer Brings Back An Earlier Attempt**
+    *   Deleting only the latest answer of a retried turn re-activated the lowest-numbered earlier attempt, so an old question and answer showed beside the latest question. Another attempt now takes over only when the active attempt's question is deleted, a deleted attempt is never chosen, and only one attempt stays active. This applies whether or not archiving is on.
+    *   The V2 attempt control counts the attempts that remain, so it reads "2/2" rather than "3/2" after one is removed.
+    *   (Ref: #1649, `_promote_remaining_thread_attempt`, `threads.ts`, [Deleted Messages Shown as Masked Fix](fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
 
 ### **(v0.261.256)**
 

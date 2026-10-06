@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional regression for group conversation source storage.
-Version: 0.261.258
+Version: 0.261.259
 Implemented in: 0.261.024
 Ported to the React branch in: 0.261.106
-Invitee validation ordering fixed in: 0.261.258
+Soft-delete helper seeded in the harness in: 0.261.257
+Invitee validation ordering fixed in: 0.261.259
 Related issues: microsoft/simplechat#1472, microsoft/simplechat#1651
 
 Exercise production conversion and route helpers against isolated Cosmos stores.
@@ -75,6 +76,7 @@ SECOND_INVITEE = {
 # These modules are pure helpers; loading by path avoids application bootstrap.
 MODEL_HELPERS = runpy.run_path(str(APP_ROOT / 'collaboration_models.py'))
 MASK_HELPERS = runpy.run_path(str(APP_ROOT / 'functions_message_masking.py'))
+DELETION_HELPERS = runpy.run_path(str(APP_ROOT / 'functions_message_deletion.py'))
 ARTIFACT_HELPERS = load_source_members(
     str(APP_ROOT / 'functions_message_artifacts.py'),
     {'is_assistant_artifact_role', 'filter_assistant_artifact_items'},
@@ -356,6 +358,7 @@ class ConversionHarness:
             'logging': logging,
             'CosmosResourceNotFoundError': FakeCosmosResourceNotFoundError,
             'filter_assistant_artifact_items': ARTIFACT_HELPERS['filter_assistant_artifact_items'],
+            'exclude_soft_deleted_messages': DELETION_HELPERS['exclude_soft_deleted_messages'],
             'invalidate_conversation_cache_for_item': self.invalidate,
             'log_event': lambda *args, **kwargs: self.logs.append((args, kwargs)),
             'log_conversation_archival': lambda **kwargs: None,

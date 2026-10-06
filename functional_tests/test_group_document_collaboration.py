@@ -1,9 +1,9 @@
 # test_group_document_collaboration.py
 """
 Functional tests for immutable group document sharing and repair.
-Version: 0.261.258
+Version: 0.261.259
 Implemented in: 0.261.131
-Workflow alert safety fixture updated in: 0.261.258
+Workflow alert safety fixture updated in: 0.261.259
 
 Real Flask routes, policy, conditional source writes, Search write guards, access
 index projections and notification persistence run against local service seams.

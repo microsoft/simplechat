@@ -41,6 +41,7 @@ from functions_appinsights import log_event, workflow_log_context
 from functions_action_catalog import build_action_planner_projection
 from functions_assist_references import sanitize_reference_label
 from functions_message_block_revisions import resolve_block_sources_in_content
+from functions_message_deletion import is_soft_deleted_message
 from functions_message_masking import remove_masked_content
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
@@ -1783,6 +1784,8 @@ def normalize_history_message(message):
         raise ConversationContextError('The conversation contains invalid thread metadata.')
     if (
         metadata.get('masked')
+        # Deleted while archiving was enabled; its mask is only the delete route's fail-safe.
+        or is_soft_deleted_message(message)
         or metadata.get('is_generated_chat_artifact')
         # Answers built from a stored workflow result, or inheriting one, stay out of
         # orchestration history until orchestration can re-check that result itself.
