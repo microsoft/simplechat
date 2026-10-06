@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.259)**
+
+#### Bug Fixes
+
+*   **Rejected Group Conversation Invites Stop Before History Reads**
+    *   Converting an existing group conversation now verifies every invited participant against the group's current membership before preparing Microsoft 365 publication evidence or reading the conversation transcript. An identity outside the group is still rejected without changing any records, but the rejection now happens before message history is queried.
+    *   The document collaboration regression fixture now exposes the current workflow-alert safety contract, so its sharing and repair checks reach their assertions instead of stopping during module import.
+    *   (Ref: #1651, `ensure_group_collaboration_for_legacy_conversation`, `test_group_collaboration_source_storage_fix.py`, `test_group_document_collaboration.py`, [Group Collaboration Invitee Validation Order Fix](fixes/GROUP_COLLABORATION_INVITEE_VALIDATION_ORDER_FIX.md))
+
 ### **(v0.261.258)**
 
 #### User Interface Enhancements
