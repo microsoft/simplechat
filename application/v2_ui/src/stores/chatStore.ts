@@ -1664,6 +1664,8 @@ function attachCollaborationEvents(conversationId: string): void {
                     currentUserId: currentUserId(),
                 }),
             }));
+            // The answer is proof its request has finished, should that event be late or lost.
+            collaboration().finishAiRunsAnsweredBy(message);
 
             const senderId = String(message.sender?.user_id ?? '').trim();
             if (!senderId || senderId === currentUserId()) {
@@ -1797,6 +1799,13 @@ function attachCollaborationEvents(conversationId: string): void {
                 return;
             }
             collaboration().applyTyping(user, isTyping, expiresAt, currentUserId());
+        },
+
+        onAiActivity: (activity) => {
+            if (!stillOpen()) {
+                return;
+            }
+            collaboration().applyAiActivity(activity);
         },
 
         onConversationUpdated: (conversation) => {
@@ -2895,6 +2904,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   effectiveReferenceImageLimit(bootstrap?.capabilities?.image_edit),
               )
             : [];
+        const mentionedParticipants = collaborative
+            ? extractMentionedParticipants(
+                  trimmed,
+                  conversationParticipants(collaborationConversation),
+              )
+            : [];
         const pendingUserMessageId = `pending-user-${Date.now()}`;
         const optimisticUserMessage: ChatMessage = {
             id: pendingUserMessageId,
@@ -2906,6 +2921,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // away. Without it the message would render as one blob until the server echo
             // arrived and then silently rearrange itself.
             ...(options.promptInfo || optimisticImageReferences.length > 0 || workflowContext
+                || mentionedParticipants.length > 0 || (collaborative && invocationTarget)
                 ? {
                       metadata: {
                           ...(options.promptInfo
@@ -2918,6 +2934,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                           // about a workflow result before its echo arrives.
                           ...(workflowContext
                               ? { workflow_result_context: workflowResultContext(workflowContext.descriptor) }
+                              : {}),
+                          // As the server stores them, so the mention pills replace the
+                          // `@Name` text before the echo arrives rather than after.
+                          ...(mentionedParticipants.length > 0
+                              ? { mentioned_participants: mentionedParticipants as unknown as Json }
+                              : {}),
+                          ...(collaborative && invocationTarget
+                              ? { ai_invocation_target: invocationTarget as unknown as Json }
                               : {}),
                       },
                   }
@@ -2946,13 +2970,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reconnectPhase: null,
             }));
         }
-
-        const mentionedParticipants = collaborative
-            ? extractMentionedParticipants(
-                  trimmed,
-                  conversationParticipants(collaborationConversation),
-              )
-            : [];
 
         if (collaborative && !invocationTarget) {
             // Posted rather than streamed. The response carries the stored message, which

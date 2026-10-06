@@ -1,8 +1,8 @@
 # test_v2_admin_settings_wide_layout.py
 """
 Browser coverage for the wide V2 Admin Settings layout.
-Version: 0.261.254
-Implemented in: 0.261.254
+Version: 0.261.256
+Implemented in: 0.261.256
 
 Exercise the built application with the real field schema and intercepted APIs.
 Check that settings fill the width beside the "On this page" index, that a wide

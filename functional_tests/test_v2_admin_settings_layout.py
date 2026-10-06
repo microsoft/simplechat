@@ -2,8 +2,8 @@
 # test_v2_admin_settings_layout.py
 """
 Functional test for the wide V2 Admin Settings layout and section presentation.
-Version: 0.261.254
-Implemented in: 0.261.254
+Version: 0.261.256
+Implemented in: 0.261.256
 
 The settings content used to sit in a 768px column, and only the four Agents cards
 had the header band, icon, and nested-switch presentation. The page now fills the
@@ -54,7 +54,7 @@ def _nav_icon_names():
 def test_every_navigation_icon_has_a_v2_icon():
     """A new section reusing an unknown icon name would silently draw the fallback."""
     print("Testing navigation icon coverage...")
-    assert_app_version_at_least("0.261.254")
+    assert_app_version_at_least("0.261.256")
 
     mapped = set(re.findall(r"^\s*'(bi-[a-z0-9-]+)':\s*[A-Z]\w*,\s*$", _read(ICONS_TS), re.MULTILINE))
     missing = sorted(_nav_icon_names() - mapped)

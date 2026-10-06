@@ -154,7 +154,7 @@ def test_catalog_read_failure_is_safe_and_explicit(catalog_api):
 
 
 def test_admin_links_carry_connection_and_model_ids(catalog_api):
-    """Added in 0.261.254 so the V2 catalog can open the exact AI Connection and model."""
+    """Added in 0.261.256 so the V2 catalog can open the exact AI Connection and model."""
     client, cosmos, _namespace = catalog_api
     profile_id = get_effective_model_profiles({})[0]["id"]
     cosmos.document["model_endpoints"] = [{

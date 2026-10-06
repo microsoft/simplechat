@@ -12,7 +12,7 @@ inset boundaries make those different responsibilities easier to recognize.
 The application version is maintained in `application/single_app/config.py`.
 This change increments its third segment from `0.261.092` to `0.261.093`.
 
-> **Extended in 0.261.254.** This presentation now applies to every V2 Admin Settings
+> **Extended in 0.261.256.** This presentation now applies to every V2 Admin Settings
 > section, with icons taken from the navigation definition and the field emphasis
 > derived from each field's `depends_on` rather than declared per section. The appearance
 > map below keeps only the workspace-permission icons. See

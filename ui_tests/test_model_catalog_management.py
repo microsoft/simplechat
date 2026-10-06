@@ -1,11 +1,11 @@
 # test_model_catalog_management.py
 """
 Classic and real React V2 catalog workflows on Azure Playwright or local Chromium.
-Version: 0.261.254
+Version: 0.261.256
 Implemented in: 0.261.126
 Orchestrate model picker under Manual controls, Auto by default, since: 0.261.137
 Single orchestration contract updated in: 0.261.139
-V2 catalog drawn natively, with sentence-case capability labels: 0.261.254
+V2 catalog drawn natively, with sentence-case capability labels: 0.261.256
 
 API fixtures use the real pure profile validator/transform. They do not establish
 tenant authentication, Cosmos availability, or live provider readiness.

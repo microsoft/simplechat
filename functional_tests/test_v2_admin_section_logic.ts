@@ -1,10 +1,10 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.254
+// Version: 0.261.256
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
-// Every-section presentation and schema-derived hierarchy added in: 0.261.254
+// Every-section presentation and schema-derived hierarchy added in: 0.261.256
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document

@@ -19,7 +19,14 @@ import {
 } from 'lucide-react';
 import { useChatStore, type DrawerMode } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { collectConversationMedia } from '../../lib/conversationMedia';
 import { EmptyState, Skeleton } from '../ui/primitives';
+import {
+    GeneratedDocumentsSection,
+    MediaSection,
+    SectionHeading,
+    useGeneratedDocuments,
+} from './DrawerAssets';
 import { OrchestrationPlanPanel } from './OrchestrationPlanPanel';
 import type { UsedDocument } from '../../lib/types';
 
@@ -150,6 +157,10 @@ function DocumentRow({ document }: { document: UsedDocument }) {
 function DocumentsMode() {
     const { metadata, metadataLoading, metadataError, activeConversationId, loadMetadata } =
         useChatStore();
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const messages = useChatStore((state) => state.messages);
+    const media = useMemo(() => collectConversationMedia(messages), [messages]);
+    const generated = useGeneratedDocuments(activeConversationId, collaborative);
 
     useEffect(() => {
         if (activeConversationId && !metadata && !metadataLoading && !metadataError) {
@@ -180,26 +191,44 @@ function DocumentsMode() {
         return [...merged.values()];
     }, [metadata]);
 
+    const hasAssets = generated.documents.length > 0 || Boolean(generated.error) || media.length > 0;
+    const assets = hasAssets && activeConversationId ? (
+        <>
+            <GeneratedDocumentsSection
+                conversationId={activeConversationId}
+                documents={generated.documents}
+                error={generated.error}
+            />
+            <MediaSection items={media} />
+        </>
+    ) : null;
+
     if (metadataLoading && !metadata) {
         return (
-            <div className="space-y-2 p-3">
-                {Array.from({ length: 3 }).map((_, index) => (
-                    <Skeleton key={index} className="h-16 w-full" />
-                ))}
+            <div className="space-y-4 p-3">
+                {assets}
+                <div className="space-y-2">
+                    {Array.from({ length: 3 }).map((_, index) => (
+                        <Skeleton key={index} className="h-16 w-full" />
+                    ))}
+                </div>
             </div>
         );
     }
 
     if (metadataError) {
         return (
-            <div className="flex items-start gap-2 p-3 text-sm text-danger">
-                <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-                {metadataError}
+            <div className="space-y-4 p-3">
+                {assets}
+                <div className="flex items-start gap-2 text-sm text-danger">
+                    <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+                    {metadataError}
+                </div>
             </div>
         );
     }
 
-    if (documents.length === 0) {
+    if (documents.length === 0 && !assets) {
         return (
             <EmptyState
                 icon={<Files size={24} />}
@@ -210,11 +239,19 @@ function DocumentsMode() {
     }
 
     return (
-        <ul className="space-y-2 p-3">
-            {documents.map((document) => (
-                <DocumentRow key={document.document_id} document={document} />
-            ))}
-        </ul>
+        <div className="space-y-4 p-3">
+            {assets}
+            {documents.length > 0 && (
+                <section aria-label="Used in answers">
+                    {assets && <SectionHeading>Used in answers</SectionHeading>}
+                    <ul className="space-y-2">
+                        {documents.map((document) => (
+                            <DocumentRow key={document.document_id} document={document} />
+                        ))}
+                    </ul>
+                </section>
+            )}
+        </div>
     );
 }
 
