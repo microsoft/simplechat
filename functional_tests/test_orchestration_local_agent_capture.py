@@ -1,11 +1,14 @@
 # test_orchestration_local_agent_capture.py
 """Actual local-agent loader bindings through the private acquisition contract.
 
-Version: 0.261.127
+Version: 0.261.269
 Implemented in: 0.261.127
+Local agent results trust the signed-in session in: 0.261.269
 
 Uses the real resolver, SDK construction, prepared manifests and strict attestor.
 External storage/model I/O is doubled; no live model or user artifact is created.
+Since 0.261.269 a saved agent result is reread on current access to the agent, not
+on its configuration (microsoft/simplechat#1661).
 """
 
 import asyncio
@@ -268,7 +271,11 @@ def test_real_loader_provider_and_complete_result_survive_restart_without_captur
         assert calls_before_restart == (len(state.services), len(state.prompts))
         assert "PRIVATE_AGENT_KEY" not in json.dumps(task.to_dict())
 
+        # A local agent's results trust the signed-in session (microsoft/simplechat#1661): editing
+        # the agent leaves its saved result readable, and losing access to the agent does not.
         record["instructions"] = "Changed current configuration."
+        assert reader.read_value() == world.prepared
+        record["is_enabled"] = False
         with pytest.raises(state.modules.configuration.ResultUnavailableError):
             reader.read_value()
         assert calls_before_restart == (len(state.services), len(state.prompts))

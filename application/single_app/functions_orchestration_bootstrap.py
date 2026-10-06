@@ -1,19 +1,22 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.245
+Version: 0.261.269
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
 artifact factory performs no I/O; each use rebuilds current actor/source access.
 External-source identity trusts the signed-in session's app roles, like classic
 chat, and makes no Microsoft Graph calls (0.261.209). Merged documents are rendered
-from their own original files through a screening-aware reader (0.261.245).
+from their own original files through a screening-aware reader (0.261.245). Agent
+and action steps are session-trusted: their access is rechecked on every capture,
+but their configuration is not attested (0.261.269).
 """
 
 import hashlib
 import hmac
 from copy import deepcopy
+from threading import Lock
 
 from flask import has_request_context
 
@@ -30,7 +33,9 @@ from functions_orchestration_external_configuration import (
     OrchestrationExternalConfigurationAttestor, _read_metadata,
 )
 from functions_orchestration_external_metadata import build_external_metadata_reader
-from functions_orchestration_external_sources import OrchestrationExternalSourceProvider
+from functions_orchestration_external_sources import (
+    SESSION_TRUSTED_CAPABILITIES, SESSION_TRUSTED_SOURCE_TYPES, OrchestrationExternalSourceProvider,
+)
 from functions_orchestration_output_store import (
     OrchestrationOutputStore, OutputError, OutputUnavailableError,
 )
@@ -364,24 +369,37 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         configuration_admitter=attestor.for_admission,
         acquisition_validator=attestor.validate_acquisition,
     )
+    # The selector each session-trusted agent or action step acquired, for its admission.
+    session_selectors = {}
+    session_selectors_lock = Lock()
 
     def capture(source_type, *, producer, settings, source=None, selector=None):
+        if source_type in SESSION_TRUSTED_SOURCE_TYPES:
+            # Agents and actions trust the signed-in session, like classic chat: each call
+            # rechecks current access, and their configuration is not captured or compared.
+            provider.preflight_session_acquisition(source_type, producer=producer, selector=selector)
+            with session_selectors_lock:
+                known = session_selectors.setdefault(producer, selector)
+            if known != selector:
+                raise ResultUnavailableError("result_external_selection_mismatch")
+            return
         provider.preflight_gather_acquisition(
             source_type, producer=producer, settings=settings, source=source, selector=selector,
         )
-        if source is None and (source_type, producer.capability_id) in (
-            ("agent", "agent_invoke"), ("action", "action_invoke"),
-        ):
-            return
         attestor.capture(
             source_type, producer=producer, settings=settings, source=source, selector=selector,
         )
 
     def admit(*, producer, prepared):
+        if producer.capability_id in SESSION_TRUSTED_CAPABILITIES:
+            with session_selectors_lock:
+                selector = session_selectors.get(producer)
+            if selector is None:
+                raise ResultUnavailableError("result_external_capture_required")
+        else:
+            selector = attestor.selector_for(producer)
         # The runtime validates and installs these aliases in the facade's copied catalog.
-        return provider.admit_gather_result(
-            producer=producer, prepared=prepared, selector=attestor.selector_for(producer),
-        )
+        return provider.admit_gather_result(producer=producer, prepared=prepared, selector=selector)
 
     def authorize_output(record, *, operation):
         return _authorize_render_output(

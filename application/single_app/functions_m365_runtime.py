@@ -564,11 +564,26 @@ def _step_action_manifest(action):
 
 
 def step_selected_m365_manifests(selection, actor_user_id):
-    """Resolve an orchestration action step's selection from current storage, never the plan.
+    """Resolve an orchestration step's Microsoft 365 selection from current storage, never the plan.
 
-    The selection names the approved step's saved action by its exact reference, and the
-    catalog reauthorizes that reference on every read.
+    An action step names the approved step's saved action by its exact reference, and the
+    catalog reauthorizes that reference on every read. An agent step names the step's agent,
+    whose Microsoft 365 actions and overrides resolve the way a chat-selected agent's do.
     """
+    if isinstance(selection, dict) and selection.get("kind") == "agent":
+        agent = selection.get("agent")
+        if not isinstance(agent, dict) or not (agent.get("id") or agent.get("name")):
+            raise M365PolicyError(
+                "m365_action_selection_unavailable",
+                "The selected Microsoft 365 actions could not be resolved.",
+            )
+        manifests, _ = workflow_m365_manifests({
+            "user_id": actor_user_id,
+            "group_id": agent.get("group_id") if agent.get("is_group") else None,
+            "selected_agent": agent,
+            "tasks": [],
+        })
+        return manifests
     if not isinstance(selection, dict) or selection.get("kind") != "action":
         raise M365PolicyError(
             "m365_action_selection_unavailable",
@@ -697,20 +712,25 @@ def _stopping_approval_id(error):
 
 @contextmanager
 def step_m365_context(*, user_id, conversation_id, request_id, selection, origin=None):
-    """Authorize Microsoft 365 for one orchestration action step inside its execution bridge.
+    """Authorize Microsoft 365 for one orchestration action or agent step inside its bridge.
 
     A plan step runs in a fresh request context, so the chat request's Microsoft 365
     context never reaches it. This context uses the signed-in user as actor and data user,
-    selects only the step's own action, and never enables send, invite or read-state
-    functions. Shared conversations are refused: their source-sharing approvals resume chat
-    requests, not plan steps. Delegated sign-in is checked here, before any model call or
-    Microsoft Graph request.
+    selects only the step's own action or agent, and never enables send, invite or
+    read-state functions. Shared conversations are refused: their source-sharing approvals
+    resume chat requests, not plan steps. Delegated sign-in is checked here, before any
+    model call or Microsoft Graph request. An agent step whose agent loads no Microsoft 365
+    action gets no context and leaves no request record.
     """
     if not has_request_context() or (session.get("user") or {}).get("oid") != user_id:
         raise M365PolicyError("m365_session_required", "Sign in again to use Microsoft 365.")
     conversation, _access, shared = _conversation_access(user_id, conversation_id)
     if conversation is None or conversation.get("user_id") != user_id:
         raise M365PolicyError("conversation_not_found", "Conversation not found.")
+    selected = step_selected_m365_manifests(selection, user_id)
+    if not selected and selection.get("kind") == "agent":
+        yield None
+        return
     if shared is not None:
         raise M365PolicyError(
             "m365_shared_conversation_unsupported",
@@ -727,7 +747,6 @@ def step_m365_context(*, user_id, conversation_id, request_id, selection, origin
             audience_version=_audience_version(conversation, None),
         )
         install_m365_context(context)
-        selected = step_selected_m365_manifests(selection, user_id)
         manifests = _readable_m365_manifests(selected)
         if not manifests:
             if selected:

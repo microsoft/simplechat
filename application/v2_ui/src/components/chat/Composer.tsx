@@ -86,7 +86,7 @@ import {
     type TabularRunSettings,
 } from '../../lib/tabularRunEstimate';
 import { LargeRunDialog } from './LargeRunDialog';
-import type { MentionSuggestion } from '../../lib/mentions';
+import { resolveInvocationTarget, type MentionSuggestion } from '../../lib/mentions';
 import { useUiStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
 import { chatWidthClass } from '../../lib/chatWidth';
@@ -107,7 +107,7 @@ import { messageToPlainText } from '../../lib/messageText';
 import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
 import { WORKFLOW_RESULT_PLACEHOLDER } from '../../lib/workflowResults';
 import { WorkflowResultChip } from './WorkflowResultChip';
-import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
+import type { AgentOption, Json, PromptOption, WorkspaceRef } from '../../lib/types';
 import { rememberPromptValues } from '../../lib/promptVariableMemory';
 import {
     EMPTY_PROMPT_DRAFT,
@@ -1146,17 +1146,27 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (options.imageGeneration && draftImageReferences.length > 0) {
             seeds.image_references = draftImageReferences;
         }
+        // An explicit @agent or @model tag says who should answer, the way it does in a shared
+        // chat: an agent tag seeds that agent, so the plan asks it rather than using its actions
+        // directly, and a model tag pins that model. A tag wins over the manual controls.
+        const tagged = resolveInvocationTarget(
+            message,
+            bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        );
+        const taggedAgent = tagged?.target_type === 'agent' ? tagged.agent_selection_key : undefined;
+        const taggedModel = tagged?.target_type === 'model' ? tagged.selection_key : undefined;
         Object.assign(
             seeds,
             buildSelectionFields({
                 agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
                 models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-                agentSelection: options.agentSelection,
-                modelDeployment: orchestrationModel || options.modelDeployment,
+                agentSelection: taggedAgent ?? (taggedModel ? undefined : options.agentSelection),
+                modelDeployment: taggedModel ?? (orchestrationModel || options.modelDeployment),
                 reasoningEffort: options.reasoningEffort,
             }),
         );
-        if (autoModelRouting) {
+        if (autoModelRouting && !taggedModel) {
             seeds.model_routing = 'auto';
             for (const key of ['model_deployment', 'model_id', 'model_endpoint_id', 'model_provider', 'reasoning_effort']) {
                 delete seeds[key];

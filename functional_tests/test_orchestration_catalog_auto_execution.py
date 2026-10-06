@@ -1,9 +1,10 @@
 # test_orchestration_catalog_auto_execution.py
 """Exercise catalog-selected agent/action execution and Auto routing.
 
-Version: 0.261.139
+Version: 0.261.269
 Implemented in: 0.261.126
 Single orchestration contract updated in: 0.261.139
+Agent and action engines run without an invocation capture in: 0.261.269
 
 Uses production adapters, model routing, and dependency-plan validation with offline
 provider responses and explicitly authorized candidate inventories.
@@ -74,7 +75,8 @@ def test_catalog_selected_action_step_executes_and_forwards_visual_flags(modules
 
     async def invoke_action(action_ref, task, context, **kwargs):
         calls.append((action_ref, task, kwargs))
-        kwargs["invocation_capture"]("action", settings={}, source={"action_ref": action_ref}, selector=action_ref)
+        # Action steps trust the signed-in session, so the engine gets no invocation capture.
+        assert kwargs.get("invocation_capture") is None
         return {"findings": "Action result", "artifacts": [], "invocations": [], "root_id": "root", "calls": 1, "charts": 0}
 
     stubs = {
@@ -135,7 +137,8 @@ def test_catalog_selected_agent_step_executes_with_the_server_identity(modules):
 
     async def invoke_scoped_agent(agent_cfg, task, **kwargs):
         calls.append((deepcopy(agent_cfg), task, kwargs))
-        kwargs["invocation_capture"]("agent", settings={}, source={"agent_id": agent_cfg["id"]}, selector=agent_cfg["catalog_key"])
+        # Agent steps trust the signed-in session, so the engine gets no invocation capture.
+        assert kwargs.get("invocation_capture") is None
         return {"response": "Agent result", "citations": [], "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}}
 
     stubs = {

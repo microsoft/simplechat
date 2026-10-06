@@ -1,9 +1,10 @@
 # test_orchestration_external_sources.py
 """
 Functional coverage for retained external Gather source admission and access.
-Version: 0.261.139
+Version: 0.261.269
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
+Agent and action sources trust the signed-in session in: 0.261.269
 
 Real result contracts/store/readers, capability gates, scoped integration
 resolvers and memory authorization run with identity, configuration and storage
@@ -11,6 +12,8 @@ I/O doubled. Fresh-process reads and receipt recovery prove that committed
 bindings do not depend on the live admission catalog. Network and implicit
 memory recall are prohibited. Invocation preflight must reauthorize before
 capture/effects without creating content authority or a URL fetch grant.
+Web search, URL fetch and Deep Research keep configuration attestation; agent and
+action results recheck current access only (microsoft/simplechat#1660).
 Refs microsoft/simplechat#1509.
 """
 
@@ -609,15 +612,22 @@ class OrchestrationExternalSourceTests(unittest.TestCase):
             self.assertEqual(value, world.prepared)
 
     def test_configuration_admitter_receives_the_original_exact_integration_selector(self):
-        for capability in ("web_search", "url_fetch", "deep_research", "agent_invoke", "action_invoke"):
+        for capability in ("web_search", "url_fetch", "deep_research"):
             with self.subTest(capability=capability), ExternalSourceWorld(capability) as world:
                 admission = Mock(side_effect=world.admit_configuration)
                 provider = world.provider(configuration_admitter=admission)
                 world.admit(provider)
                 self.assertEqual(admission.call_count, 1)
                 self.assertEqual(admission.call_args.kwargs["producer"], world.fixture.producer)
-                expected = {"agent_invoke": world.agent_selector, "action_invoke": world.action_selector}.get(capability)
-                self.assertEqual(admission.call_args.kwargs["selector"], expected)
+                self.assertIsNone(admission.call_args.kwargs["selector"])
+        # Agents and actions trust the signed-in session (microsoft/simplechat#1660): admission
+        # rechecks access to the exact selection and never consults configuration.
+        for capability in ("agent_invoke", "action_invoke"):
+            with self.subTest(capability=capability), ExternalSourceWorld(capability) as world:
+                admission = Mock(side_effect=world.admit_configuration)
+                provider = world.provider(configuration_admitter=admission)
+                self.assertTrue(world.admit(provider))
+                self.assertEqual(admission.call_count, 0)
 
     def test_current_configuration_cannot_replace_the_captured_admission_configuration(self):
         with ExternalSourceWorld() as world:
@@ -671,7 +681,9 @@ class OrchestrationExternalSourceTests(unittest.TestCase):
                 world.service(world.provider()).open_result(reference)
 
     def test_current_configuration_revision_is_not_a_remote_content_revision(self):
-        for capability in ("web_search", "agent_invoke", "action_invoke"):
+        # Agent and action references carry no configuration revision; see
+        # test_orchestration_session_trusted_sources.py (microsoft/simplechat#1660).
+        for capability in ("web_search",):
             with self.subTest(capability=capability), ExternalSourceWorld(capability) as world:
                 provider, catalog, reference = world.save()
                 external = next(iter(catalog.values()))
@@ -834,10 +846,18 @@ class OrchestrationExternalSourceTests(unittest.TestCase):
                 self.assertGreater(world.identity_reads, reads_before)
                 if not memory:
                     world.configuration_revision = "revision-2"
-                    with self.assertRaises(ResultUnavailableError):
-                        restarted.recover_task_result(
+                    if capability in ("agent_invoke", "action_invoke"):
+                        # Agent and action results trust the signed-in session
+                        # (microsoft/simplechat#1660): editing the configuration leaves a
+                        # committed result recoverable, while losing access below does not.
+                        self.assertEqual(restarted.recover_task_result(
                             producer=world.fixture.producer, input_fingerprint=fingerprint,
-                        )
+                        ), original)
+                    else:
+                        with self.assertRaises(ResultUnavailableError):
+                            restarted.recover_task_result(
+                                producer=world.fixture.producer, input_fingerprint=fingerprint,
+                            )
                     world.configuration_revision = "revision-1"
                 if capability in {"agent_invoke", "action_invoke", "compose"}:
                     world.services.roles.clear()

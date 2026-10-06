@@ -1,13 +1,14 @@
 # test_orchestration_external_capture_integration.py
 """
 Real external acquisition hooks through preflight, capture, admission and restart.
-Version: 0.261.127
+Version: 0.261.269
 Implemented in: 0.261.127
+Action results admitted on the signed-in session's current access in: 0.261.269
 
 Reuse the engine owner's provider/page I/O doubles, not a capture callback double.
 Adapters, configuration attestation, authorization, central retention and result
 readers are real. No network, credential grants or live model calls are permitted.
-Refs microsoft/simplechat#1509.
+Refs microsoft/simplechat#1509 and microsoft/simplechat#1660.
 """
 
 import asyncio
@@ -335,8 +336,11 @@ def test_actual_action_reauthorization_capture_and_restart_use_one_envelope(runt
         capture("action", settings=world.settings, source=None, selector=world.action_selector)
         assert observed == []
         assert attestor._captures == {}
-        with pytest.raises(configuration.ResultUnavailableError):
-            world.admit(provider)
+        # Action results trust the signed-in session (microsoft/simplechat#1660): the provider
+        # admits them on current access alone and never consults configuration attestation.
+        # The application root still refuses an action result without its session-checked
+        # acquisition (test_orchestration_external_bootstrap).
+        assert world.admit(provider)
 
         state.replies = [tool_message("42", "43")]
         result = asyncio.run(state.runtime.invoke_action(

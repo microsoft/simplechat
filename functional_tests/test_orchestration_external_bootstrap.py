@@ -1,16 +1,19 @@
 # test_orchestration_external_bootstrap.py
 """
 Functional test for application-owned session identity and acquisition wiring on retained results.
-Version: 0.261.209
+Version: 0.261.269
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.209
+Session-trusted agent and action steps implemented in: 0.261.269
 
 Runs the real bootstrap, session capture, current-access reader, retention and
 result store with only Cosmos storage doubled and networking blocked. Roles come
 from the signed-in session, as in classic chat, so no MSAL client or directory
 call is made. Background continuations without that session fail closed with a
-distinct reason instead of restoring saved roles. Refs microsoft/simplechat#1509.
+distinct reason instead of restoring saved roles. Action steps recheck current
+access but never re-read their configuration (microsoft/simplechat#1660).
+Refs microsoft/simplechat#1509.
 """
 
 import hashlib
@@ -623,3 +626,140 @@ def test_existing_auth_factory_keeps_its_default_arguments(external_root, monkey
         APP_ID, authority=runtime.auth.AUTHORITY,
         client_credential="synthetic-client-secret", token_cache=cache,
     )
+
+
+def action_root(runtime, monkeypatch):
+    """The real root with one personal Microsoft 365 action step and only its stores doubled.
+
+    The configuration reader fails if it is ever called: re-reading an action's prepared
+    manifest inside a step's Microsoft 365 scope is what refused every Microsoft 365 step.
+    """
+    manifests = importlib.import_module("functions_action_manifest")
+    catalog_module = importlib.import_module("functions_action_catalog")
+    registry = importlib.import_module("functions_orchestration_registry")
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    settings = {
+        "enable_chat_orchestration": True, "enable_semantic_kernel": True,
+        "enable_chat_orchestration_actions": True, "chat_orchestration_enabled_capabilities": [],
+        "max_generated_chat_artifact_size_mb": 1,
+    }
+    monkeypatch.setattr(runtime.root, "get_settings", lambda: deepcopy(settings))
+    monkeypatch.setitem(runtime.root.config.CLIENTS, "storage_account_office_docs_client", None)
+    selector = catalog_module._action_ref("personal", USER_ID, "mail-action")
+    entry = {
+        "id": "mail-action", "name": "m365_email", "display_name": "M365 Email", "type": "m365_email",
+        "scope_type": "personal", "scope_id": USER_ID, "action_ref": selector,
+    }
+    state = SimpleNamespace(catalog=[entry], description="Delegated mail reads.", metadata_reads=[])
+
+    def resolve(user_id, action_ref, *, settings=None, user_groups=None):
+        if user_id != USER_ID or action_ref != selector or not state.catalog:
+            raise PermissionError("The action is unavailable.")
+        return manifests.bind_action_origin({**entry, "description": state.description}, "personal", USER_ID)
+
+    defaults = runtime.root.OrchestrationExternalSourceProvider.__init__.__kwdefaults__
+    monkeypatch.setitem(defaults, "action_catalog_reader", lambda user_id, settings=None: deepcopy(state.catalog))
+    monkeypatch.setitem(defaults, "action_resolver", resolve)
+
+    def reread(*args, **kwargs):
+        state.metadata_reads.append(args)
+        raise AssertionError("An action step must not re-read its configuration.")
+
+    monkeypatch.setattr(runtime.root, "build_external_metadata_reader", lambda *_args, **_kwargs: reread)
+    step = {
+        "step_id": "gather", "capability_id": "action_invoke", "enabled": True,
+        "arguments": {"action_ref": selector, "task": "Read my latest emails."},
+    }
+    runtime.runs.create_item({
+        "id": "action-root-run", "user_id": USER_ID, "conversation_id": CONVERSATION_ID,
+        "attempt_index": 1, "status": "running", "user_message": "what are my emails",
+        "memory_audience": {"kind": "personal", "owner_id": USER_ID, "collaboration_id": ""},
+        "plan": {"planner_contract_version": 2, "steps": [deepcopy(step)]},
+    })
+    contract = registry.get_capability("action_invoke", contract_version=2)["result_contract_version"]
+    return SimpleNamespace(
+        settings=settings, selector=selector, state=state, step=step,
+        producer=contracts.ProducerIdentity(
+            USER_ID, CONVERSATION_ID, "action-root-run", 1, "gather", "action_invoke", contract,
+        ),
+        prepared={
+            "version": "orchestration-gathered-content-v1", "capability_id": "action_invoke",
+            "content_scope": "reported_external_content", "evidence": [], "citations": [],
+            "notes": ['Action "M365 Email" findings:\nAda sent Quarterly review.'],
+            "limitations": ["Returned content, not whole-source coverage."],
+        },
+    )
+
+
+def test_root_action_steps_trust_the_session_without_rereading_configuration(external_root, monkeypatch):
+    runtime = external_root
+    bound = action_root(runtime, monkeypatch)
+    # The result runtime and its fixtures load only after the offline application is initialized.
+    results = importlib.import_module("functions_orchestration_results")
+    from test_support.orchestration_results import complete
+
+    services = services_for(runtime, bound.settings)
+    assert services.external_source_preflight(producer=bound.producer, selector=bound.selector) is None
+    services.capture_external_source_configuration(
+        "action", producer=bound.producer, settings=deepcopy(bound.settings), selector=bound.selector,
+    )
+    # An engine may still report the manifest it resolved, as one running inside a step's
+    # Microsoft 365 scope did; it is not compared with anything.
+    services.capture_external_source_configuration(
+        "action", producer=bound.producer, settings=deepcopy(bound.settings), selector=bound.selector,
+        source={
+            "version": "orchestration-external-acquisition-v1", "kind": "action", "phase": "resolved",
+            "reference": {"id": "mail-action", "scope_type": "personal", "scope_id": USER_ID},
+            "manifest": {"id": "mail-action"}, "prepared_manifest": {"id": "mail-action"}, "model": None,
+        },
+    )
+    with pytest.raises(ResultUnavailableError) as raised:
+        services.capture_external_source_configuration(
+            "action", producer=bound.producer, settings=deepcopy(bound.settings), selector="another-action",
+        )
+    assert raised.value.code == "result_external_source_unavailable"
+
+    admitted = services.external_source_admission(producer=bound.producer, prepared=deepcopy(bound.prepared))
+    assert len(admitted) == 1
+    reference = next(iter(admitted.values()))
+    assert (reference.source_type, reference.capability_id) == ("action", "action_invoke")
+    services.results.access.external_source_catalog.update(admitted)
+    task = services.results.persist_task_result(
+        producer=bound.producer, role="gather", status="complete",
+        outputs=[results.NamedOutput("prepared", "structured-v1", deepcopy(bound.prepared), complete(1))],
+        sources=[], origin="grounded", external_sources=tuple(admitted),
+        guard_token="server-attempt-token", input_fingerprint=canonical_digest({"step": bound.step}),
+    )
+
+    restarted = services_for(runtime, bound.settings)
+    assert restarted.results.open_result(
+        task.output("prepared"), require_current_sources=True,
+    ).read_value() == bound.prepared
+    bound.state.description = "Edited after the result was saved."
+    assert restarted.results.open_result(
+        task.output("prepared"), require_current_sources=True,
+    ).read_value() == bound.prepared
+    bound.state.catalog = []
+    with pytest.raises(ResultUnavailableError):
+        restarted.results.open_result(task.output("prepared"), require_current_sources=True)
+    assert bound.state.metadata_reads == []
+
+
+def test_root_refuses_action_admission_without_its_session_checked_acquisition(external_root, monkeypatch):
+    runtime = external_root
+    bound = action_root(runtime, monkeypatch)
+    services = services_for(runtime, bound.settings)
+    with pytest.raises(ResultUnavailableError) as raised:
+        services.external_source_admission(producer=bound.producer, prepared=deepcopy(bound.prepared))
+    assert raised.value.code == "result_external_capture_required"
+
+    revoked = services_for(runtime, bound.settings, roles=("Viewer",))
+    with pytest.raises(ResultUnavailableError):
+        revoked.capture_external_source_configuration(
+            "action", producer=bound.producer, settings=deepcopy(bound.settings), selector=bound.selector,
+        )
+    with pytest.raises(ResultUnavailableError) as raised:
+        revoked.external_source_admission(producer=bound.producer, prepared=deepcopy(bound.prepared))
+    assert raised.value.code == "result_external_capture_required"
+    assert services.results.access.external_source_catalog == {}
+    assert bound.state.metadata_reads == []

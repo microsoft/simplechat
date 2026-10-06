@@ -1,11 +1,16 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.209
+Version: 0.261.269
+Session-trusted agent and action sources in: 0.261.269
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page
 revision. Committed result lineage supplies the binding after a process restart.
+
+Agent and action sources trust the signed-in session the way classic chat does: every
+admission and read rechecks the user's current access to the conversation, the run's
+step and the exact agent or action, but their configuration is not attested or compared.
 """
 
 from dataclasses import dataclass
@@ -62,6 +67,13 @@ _REQUIRED_SETTINGS = {
 }
 _OPAQUE_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 MAX_CATALOG_ITEMS = 4096
+# Gather sources that trust the signed-in session instead of attesting their configuration.
+SESSION_TRUSTED_SOURCE_TYPES = frozenset({"agent", "action"})
+SESSION_TRUSTED_CAPABILITIES = frozenset(
+    capability for capability, source_type in _GATHER_SOURCES.items()
+    if source_type in SESSION_TRUSTED_SOURCE_TYPES
+)
+_SESSION_TRUSTED_VERSION = "orchestration-session-trusted-source-v1"
 
 
 @dataclass(frozen=True)
@@ -118,6 +130,13 @@ def _content_digest(prepared):
     return hashlib.sha256(value).hexdigest()
 
 
+def _session_configuration_identity(source_type, reference):
+    """A stable identity for one agent or action, from its scope and id alone."""
+    return f"source:{source_type}:" + canonical_digest({
+        "version": _SESSION_TRUSTED_VERSION, "source_type": source_type, "reference": reference,
+    })
+
+
 def _reference_id(producer, source_type, selector, content_sha256):
     return "retained:" + canonical_digest({
         "producer": producer.to_dict(), "source_type": source_type,
@@ -145,6 +164,9 @@ class OrchestrationExternalSourceProvider:
     alone. All callbacks run again on reads, including with a fresh provider and
     an empty admission catalog. The owner must supply restart-capable callbacks;
     read_identity refuses when no signed-in session is available.
+
+    The configuration callbacks apply to web, URL and deep research sources. Agent
+    and action sources are session-trusted: they recheck current access only.
     """
 
     def __init__(
@@ -405,6 +427,20 @@ class OrchestrationExternalSourceProvider:
         if validated is not None:
             raise ResultContractError("result_external_acquisition_validation_invalid")
 
+    def preflight_session_acquisition(self, source_type, *, producer, selector=None):
+        """Recheck current access before a session-trusted agent or action acquisition.
+
+        Like classic chat, the signed-in user's current access to the conversation, the
+        run's step and the exact agent or action is what authorizes it. Its configuration
+        is neither captured nor compared, so this needs no acquisition evidence.
+        """
+        if (
+            type(producer) is not ProducerIdentity or source_type not in SESSION_TRUSTED_SOURCE_TYPES
+            or _GATHER_SOURCES.get(producer.capability_id) != source_type
+        ):
+            raise ResultContractError("result_external_producer_invalid")
+        self._gather_invocation_state(producer, selector)
+
     def _gather_invocation_state(self, producer, selector):
         if type(producer) is not ProducerIdentity or producer.capability_id not in _GATHER_SOURCES:
             raise ResultContractError("result_external_producer_invalid")
@@ -455,10 +491,10 @@ class OrchestrationExternalSourceProvider:
         catalog = self._catalog(source_type, identity, settings) if source_type in {"agent", "action"} else []
         self._capability(source_type, producer, identity, settings, catalog)
         revision = None
-        configuration_identity = None
+        configuration_suffix = None
         if source_type == "fact_memory":
             selector = self._memory_scope(identity, settings, conversation, run, audience)
-        elif source_type in {"agent", "action"}:
+        elif source_type in SESSION_TRUSTED_SOURCE_TYPES:
             key = "catalog_key" if source_type == "agent" else "action_ref"
             matches = [
                 item for item in catalog
@@ -474,15 +510,23 @@ class OrchestrationExternalSourceProvider:
             selector = selected[key]
             if previous is None:
                 self._check_integration_selection(source_type, producer, run, selected, selector)
-            source = self._resolve_integration(source_type, selected, identity, settings)
-            configuration = self._configuration(
-                source_type, producer, settings, source,
-                selector=selector, for_admission=previous is None,
-            )
-            configuration_identity = configuration.identity
-            revision = "configuration:" + canonical_digest({
-                "identity": configuration.identity, "revision": configuration.revision,
-            })
+            self._resolve_integration(source_type, selected, identity, settings)
+            if previous is None:
+                reference = (
+                    agent_reference(selected, identity.user_id) if source_type == "agent"
+                    else {name: selected[name] for name in ("id", "scope_type", "scope_id")}
+                )
+                configuration_identity = _session_configuration_identity(source_type, reference)
+                configuration_suffix = canonical_digest(configuration_identity)
+                revision = "configuration:" + canonical_digest({
+                    "identity": configuration_identity, "revision": _SESSION_TRUSTED_VERSION,
+                })
+            else:
+                # Access was rechecked above. Configuration is not compared, so a reference
+                # keeps its own identity and revision, including one admitted while
+                # agent and action configuration was still attested.
+                configuration_suffix = previous.reference_id.rsplit(":", 1)[1]
+                revision = previous.source_revision
         else:
             if selector is not None:
                 raise ResultContractError("result_external_selection_invalid")
@@ -494,8 +538,8 @@ class OrchestrationExternalSourceProvider:
                 "identity": configuration.identity, "revision": configuration.revision,
             })
         reference_id = _reference_id(producer, source_type, selector, content_sha256)
-        if configuration_identity is not None:
-            reference_id += ":" + canonical_digest(configuration_identity)
+        if configuration_suffix is not None:
+            reference_id += ":" + configuration_suffix
         return ExternalSourceRef(
             source_type, producer.capability_id, reference_id,
             "audience:" + canonical_digest(audience), content_sha256, revision,
