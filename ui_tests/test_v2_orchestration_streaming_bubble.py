@@ -1,7 +1,7 @@
 # test_v2_orchestration_streaming_bubble.py
 """
 Browser regression for the V2 orchestration streaming bubble.
-Version: 0.261.253
+Version: 0.261.254
 Implemented in: 0.261.204
 
 An orchestrated turn shows one progress indicator at a time.
@@ -9,10 +9,10 @@ An orchestrated turn shows one progress indicator at a time.
 While a turn plans, the streaming bubble shows only the "N reasoning steps" toggle and a
 "Planning" indicator. It used to also draw an Orchestration progress card (heading, "Current
 step: Building a plan", a percentage, a step count and a progress bar) that repeated what the
-toggle and the plan card already say (0.261.204), and it said "Thinking" (0.261.253).
+toggle and the plan card already say (0.261.204), and it said "Thinking" (0.261.254).
 
 While an approved plan runs, the plan card is the only indicator. The streaming bubble used to
-show "Thinking", and its run notices, beside the card's own progress line (0.261.253). The card's
+show "Thinking", and its run notices, beside the card's own progress line (0.261.254). The card's
 status line now says what the run is doing: "Starting", the running step's kind of work and title,
 and "Preparing the answer" once every step has settled. The run's notices stay with the finished
 answer's reasoning steps. Any stream that is not the run's own, such as a chat reply sent while a

@@ -94,5 +94,5 @@ card instead.
 - [Chat Orchestration](../features/CHAT_ORCHESTRATION.md), under "Stream events"
 - [V2 Tabular Analysis](../features/V2_TABULAR_ANALYSIS.md), under "Progress lanes"
 - [Orchestration Duplicate Thinking Indicator Fix](ORCHESTRATION_RUN_DUPLICATE_THINKING_INDICATOR_FIX.md)
-  (0.261.253), which removed the **Thinking** bubble that was still drawn beside the plan card
+  (0.261.254), which removed the **Thinking** bubble that was still drawn beside the plan card
   during a run and relabelled the planning bubble **Planning**

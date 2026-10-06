@@ -3,7 +3,7 @@
 """
 Functional test for starting a new chat in V2 while the open conversation is busy.
 
-Version: 0.261.253
+Version: 0.261.254
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's

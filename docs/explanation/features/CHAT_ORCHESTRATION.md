@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.253** (tracked in `application/single_app/config.py`)
+**Version: 0.261.254** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -24,7 +24,7 @@
 **Deliverables contract and generated images in files implemented in version: 0.261.138**
 **Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
 **Photorealistic planned images and reference images implemented in version: 0.261.192**
-**One progress indicator per phase (Planning label, run progress on the plan card only) fixed in version: 0.261.253**
+**One progress indicator per phase (Planning label, run progress on the plan card only) fixed in version: 0.261.254**
 
 ## Overview
 

@@ -1,4 +1,4 @@
-# Orchestration Duplicate Thinking Indicator Fix (v0.261.253)
+# Orchestration Duplicate Thinking Indicator Fix (v0.261.254)
 
 ## Issue
 
@@ -13,7 +13,7 @@ same work:
 Neither said what the run was actually doing. The planning phase before them also said
 "Thinking", which didn't match the plan card that replaced it.
 
-Fixed in version: **0.261.253**, tracked in `application/single_app/config.py`.
+Fixed in version: **0.261.254**, tracked in `application/single_app/config.py`.
 
 ## Root cause
 
@@ -65,7 +65,7 @@ whenever a run was in flight would also have hidden the chat reply's **Thinking*
   running card's status line.
 - `application/v2_ui/src/components/chat/OrchestrationPlanCard.tsx`: the running row's status line
   comes from `describeRunProgress`. The row's layout, step count and **Review** are unchanged.
-- `application/single_app/config.py`: version bumped to `0.261.253`.
+- `application/single_app/config.py`: version bumped to `0.261.254`.
 
 ### Status line
 

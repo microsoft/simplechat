@@ -1,7 +1,7 @@
 # test_v2_reasoning_controls.py
 """
 Real-Composer reasoning, capability selections, and saved-plan notice regressions.
-Version: 0.261.253
+Version: 0.261.254
 Implemented in: 0.261.104; Image requests orchestration image proposals since 0.261.132
 
 Reuse the local/Azure Playwright fixtures without live model, Azure or retrieval calls.
