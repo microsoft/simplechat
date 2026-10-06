@@ -73,6 +73,7 @@ import {
     isAiRequest,
     isAgentPostedMessage,
     isOwnMessage,
+    isSupersededByWorkflowReply,
     messageAuthorName,
     resolveReplyContext,
 } from '../../lib/sharedMessage';
@@ -1484,13 +1485,17 @@ export function MessageList() {
      * paid to generate must never end up visible nowhere.
      */
     const { threadMessages, proposalImagesByMessage } = useMemo(() => {
-        const grouped = groupProposalImages(messages);
+        // A workflow run's own post is replaced by its mirrored reply, which says the same
+        // with the maps and sources attached. It stays loaded, so a reply quoting it still
+        // resolves.
+        const shown = messages.filter((message) => !isSupersededByWorkflowReply(message));
+        const grouped = groupProposalImages(shown);
         if (grouped.size === 0) {
-            return { threadMessages: messages, proposalImagesByMessage: grouped };
+            return { threadMessages: shown, proposalImagesByMessage: grouped };
         }
 
         const claimed = new Set<string>();
-        for (const message of messages) {
+        for (const message of shown) {
             const candidates = message.role === 'assistant' ? grouped.get(message.id) : undefined;
             if (!candidates?.length) {
                 continue;
@@ -1504,7 +1509,7 @@ export function MessageList() {
             }
         }
 
-        const visible = messages.filter(
+        const visible = shown.filter(
             (message) => message.role !== 'image' || !claimed.has(message.id),
         );
 

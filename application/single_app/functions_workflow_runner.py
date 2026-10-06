@@ -60,6 +60,7 @@ from config import (
     TABULAR_EXTENSIONS,
     VERSION,
     cognitive_services_scope,
+    cosmos_collaboration_messages_container,
     cosmos_conversations_container,
     cosmos_group_documents_container,
     cosmos_messages_container,
@@ -105,6 +106,7 @@ from functions_collaboration import (
     get_collaboration_conversation,
     mirror_source_message_to_collaboration,
 )
+from functions_conversation_cache import bump_conversation_cache_version
 from functions_generated_file_exports import (
     normalize_complete_xml_artifact_payload,
     normalize_xml_artifact_payload,
@@ -4763,6 +4765,139 @@ def _filter_visualization_agent_citations(agent_citations):
     return [citation for citation in agent_citations or [] if _is_visualization_citation(citation)]
 
 
+# Set on a message a run posted itself once the run's reply has been mirrored into the same
+# conversation. The message stays stored, and in the conversation's AI history, but clients
+# do not show it: the reply carries the same findings with the maps and sources the tools
+# returned, and the posted copy reads as though the person had written it.
+WORKFLOW_REPLY_SUPERSEDED_METADATA_KEY = 'superseded_by_workflow_reply'
+
+
+def _extract_run_posted_message_ids_from_citations(agent_citations):
+    """Return the ids of the messages a run posted itself, keyed by conversation id.
+
+    Covers the opening message a create call seeded and every add_conversation_message call.
+    The ids come from the tool results, so only messages this run posted can match.
+    """
+    seeding_function_names = {
+        'create_group_conversation',
+        'create_personal_collaboration_conversation',
+        'create_personal_conversation',
+    }
+    posted_message_ids = {}
+
+    for citation in agent_citations or []:
+        if not isinstance(citation, dict) or citation.get('plugin_name') != 'SimpleChatPlugin':
+            continue
+        function_name = citation.get('function_name')
+        if function_name not in seeding_function_names and function_name != 'add_conversation_message':
+            continue
+        if citation.get('success') is False:
+            continue
+
+        invocation_result = citation.get('function_result') if isinstance(citation.get('function_result'), dict) else {}
+        if invocation_result.get('success') is False:
+            continue
+        if function_name in seeding_function_names and invocation_result.get('seeded_initial_message') is not True:
+            continue
+
+        message_doc = invocation_result.get('message') if isinstance(invocation_result.get('message'), dict) else {}
+        conversation_doc = invocation_result.get('conversation') if isinstance(invocation_result.get('conversation'), dict) else {}
+        message_id = str(message_doc.get('id') or '').strip()
+        conversation_id = str(conversation_doc.get('id') or message_doc.get('conversation_id') or '').strip()
+        if not message_id or not conversation_id:
+            continue
+
+        conversation_message_ids = posted_message_ids.setdefault(conversation_id, [])
+        if message_id not in conversation_message_ids:
+            conversation_message_ids.append(message_id)
+
+    return posted_message_ids
+
+
+def _hide_run_posts_superseded_by_reply(workflow, conversation_id, message_ids, reply_message_doc, collaboration):
+    """Withdraw the run's own posts from view once its reply is mirrored into the conversation.
+
+    Only messages posted through the agent action are marked (posted_via 'agent_action', set by
+    add_conversation_message_for_current_user). Best effort: a failure leaves the post visible
+    and never undoes the mirror.
+    """
+    reply_message_id = str((reply_message_doc or {}).get('id') or '').strip()
+    if not conversation_id or not reply_message_id or not message_ids:
+        return []
+
+    container = cosmos_collaboration_messages_container if collaboration else cosmos_messages_container
+    marker = {
+        'message_id': reply_message_id,
+        'workflow_id': str(workflow.get('id') or '').strip(),
+        'superseded_at': _utc_now_iso(),
+    }
+    hidden_message_ids = []
+    for message_id in message_ids:
+        if message_id == reply_message_id:
+            continue
+        try:
+            message_doc = container.read_item(item=message_id, partition_key=conversation_id)
+            metadata = message_doc.get('metadata') if isinstance(message_doc.get('metadata'), dict) else {}
+            if metadata.get('posted_via') != 'agent_action':
+                continue
+            if not metadata.get(WORKFLOW_REPLY_SUPERSEDED_METADATA_KEY):
+                message_doc['metadata'] = {**metadata, WORKFLOW_REPLY_SUPERSEDED_METADATA_KEY: marker}
+                container.upsert_item(message_doc)
+            hidden_message_ids.append(message_id)
+        except CosmosResourceNotFoundError:
+            continue
+        except Exception as exc:
+            log_event(
+                f'[WORKFLOW_RUNNER] Failed to hide a run-posted message replaced by the mirrored reply: {exc}',
+                extra={
+                    'workflow_id': str(workflow.get('id') or '').strip(),
+                    'conversation_id': conversation_id,
+                    'message_id': message_id,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+    return hidden_message_ids
+
+
+def _hide_workflow_conversation_after_delivery(conversation_id):
+    """Hide a workflow's own conversation the first time a run delivers into one it created.
+
+    The created conversation is where people read the result; the workflow conversation is the
+    run's working record and stays reachable by link. The timestamp makes this a one-time
+    default, so a person who shows the conversation again is not overruled by later runs.
+    """
+    if not conversation_id:
+        return False
+    try:
+        conversation_doc = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+        if str(conversation_doc.get('chat_type') or '').strip() != 'workflow':
+            return False
+        if conversation_doc.get('is_hidden') or conversation_doc.get('workflow_delivery_hidden_at'):
+            return False
+        conversation_doc['is_hidden'] = True
+        conversation_doc['workflow_delivery_hidden_at'] = _utc_now_iso()
+        cosmos_conversations_container.upsert_item(conversation_doc)
+        bump_conversation_cache_version(
+            str(conversation_doc.get('user_id') or '').strip(),
+            reason='workflow_conversation_hidden_after_delivery',
+        )
+        return True
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Failed to hide the workflow conversation after delivery: {exc}',
+            extra={'conversation_id': conversation_id},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return False
+
+
 def _is_collaboration_target_conversation(conversation_doc):
     chat_type = str((conversation_doc or {}).get('chat_type') or '').strip()
     conversation_kind = str((conversation_doc or {}).get('conversation_kind') or '').strip()
@@ -4905,6 +5040,7 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
         'hybrid_citations': hybrid_citations,
         'web_search_citations': web_search_citations,
     }
+    run_posted_message_ids = _extract_run_posted_message_ids_from_citations(raw_agent_citations)
     mirrored_message_ids = []
 
     for created_conversation in created_conversations:
@@ -4928,6 +5064,14 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
                 if created and mirrored_message_doc:
                     create_collaboration_message_notifications(updated_conversation, mirrored_message_doc)
                     mirrored_message_ids.append(mirrored_message_doc.get('id'))
+                if mirrored_message_doc:
+                    _hide_run_posts_superseded_by_reply(
+                        workflow,
+                        conversation_id,
+                        run_posted_message_ids.get(conversation_id),
+                        mirrored_message_doc,
+                        collaboration=True,
+                    )
             else:
                 mirrored_message_doc = _mirror_assistant_message_to_personal_conversation(
                     workflow,
@@ -4937,6 +5081,13 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
                 )
                 if mirrored_message_doc:
                     mirrored_message_ids.append(mirrored_message_doc.get('id'))
+                    _hide_run_posts_superseded_by_reply(
+                        workflow,
+                        conversation_id,
+                        run_posted_message_ids.get(conversation_id),
+                        mirrored_message_doc,
+                        collaboration=False,
+                    )
         except Exception as exc:
             log_event(
                 f'[WORKFLOW_RUNNER] Failed to mirror workflow visualizations into conversation {conversation_id}: {exc}',
@@ -4948,6 +5099,9 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
+
+    if mirrored_message_ids:
+        _hide_workflow_conversation_after_delivery(source_conversation_id)
 
     return mirrored_message_ids
 
