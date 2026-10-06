@@ -46,18 +46,20 @@ Two access-control problems shared the same code path:
 - Each merge carries only the chunk key and the changed fields, so embeddings never round-trip and concurrent projections of other fields cannot undo each other. Any unacknowledged batch raises.
 
 **Durable background sync for metadata.**
-- When `update_document()` changes the title, authors, file name, classification, or tags, it first records a sync request in the settings container with `request_document_search_metadata_sync()`. The record has type `document_search_metadata_sync`, a revision counter, the union of pending fields, and its status, lease, and backoff state.
-- `update_document()` then saves the document with a matching `search_metadata_revision`, queues the sync, and returns `{'updated': ..., 'search_sync': {'status': 'pending', ...}}`. It does no per-chunk work.
+- When `update_document()` changes the title, authors, file name, classification, or tags, it first records a sync request in the settings container with `request_document_search_metadata_sync()`. The record has type `document_search_metadata_sync`, a revision counter, a unique token for the latest request, the union of pending fields, and its status, lease, and backoff state.
+- `update_document()` then saves the document with the same request token in `search_metadata_sync_token`, queues the sync, and returns `{'updated': ..., 'search_sync': {'status': 'pending', ...}}`. It does no per-chunk work.
 - `run_document_search_metadata_sync()` runs on a small dedicated thread pool and takes a per-document lease on the record. Each pass projects the latest saved value of every pending field, so a retry also heals partially synced chunks.
-- If an edit lands during a sync, the same worker projects it next. On success the record is deleted with an etag check. On failure the record keeps a retry time with backoff (1, 5, 15, and 60 minutes, then every 6 hours), the exception type is recorded, and `[DOCUMENT_SEARCH_SYNC]` is logged.
+- A pass only completes the request when the document carries the latest request's token, so a save that has not landed yet is re-checked instead of being skipped. A token left by an earlier request never counts.
+- If an edit lands during a sync, the same worker projects it next. On success the record is deleted with an etag check. On failure the record keeps a retry time with backoff (1, 5, 15, and 60 minutes, then every 6 hours), the exception type is recorded, and `[DOCUMENT_SEARCH_SYNC]` is logged. Search writes frozen by a Data Management migration retry every 5 minutes without climbing the backoff.
 - The worker never writes sync state back onto the document. The document `_ts` (which drives list sorting and the access index) and its etag only change when users save.
 - Tag changes also refresh blob metadata tags from the worker.
 - `run_document_search_metadata_sync_loop()` in `background_tasks.py` runs every 60 seconds under a distributed lock. It picks up requests that failed, never started because the process restarted, or lost their lease.
 
 **Access-control projections stay synchronous and fail closed.**
-- `update_document()` projects `shared_group_ids` (group) and `shared_user_ids` (personal) changes to every chunk before saving the document, using `project_document_acl_to_chunks()`. This fixes ACL-only changes never reaching Search.
+- `update_document()` projects `shared_group_ids` (group) and `shared_user_ids` (personal) changes to every chunk before saving the document, using `project_document_acl_to_chunks()`. This fixes ACL-only changes never reaching Search. Only real access changes are projected; a missing list and an empty list are treated the same, so the legacy document upgrade never depends on Search.
 - A frozen Search write fence raises `DocumentSearchAclProjectionDeferredError` (HTTP 503 with `Retry-After`). Any other failure raises `DocumentSearchAclProjectionError` (HTTP 500 with a safe message). In both cases the access change is not saved.
 - Personal unshare and share approval also project before saving. A pending personal share grants no access, so it still saves first and projects best effort.
+- Group shares approved before this fix are projected the next time that document's sharing changes. There is no automatic backfill of existing chunk access lists.
 
 **Routes and client.**
 - The personal, group, and public metadata PATCH routes save every field in one `update_document()` call and return `search_sync`. Error responses no longer include raw exception text.

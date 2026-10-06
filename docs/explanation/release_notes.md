@@ -17,6 +17,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Approving, removing, or revoking a group share now updates the search index before the change is saved. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
     *   Personal share approvals now also update the search index before they are saved, so a failed update can simply be retried instead of reporting "Already approved".
     *   When the search index cannot apply a sharing change, the change is not saved and users get a clear, retryable error.
+    *   Group shares approved before this update become searchable the next time that document's sharing changes.
     *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, group and personal sharing routes, #1657)
 
 ### **(v0.261.051)**

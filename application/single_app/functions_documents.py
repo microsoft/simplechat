@@ -3436,7 +3436,8 @@ def update_document(**kwargs):
             )
 
         for key, value in kwargs.items():
-            if value is not None and existing_document.get(key) != value:
+            previous_value = existing_document.get(key)
+            if value is not None and previous_value != value:
                 # Avoid overwriting num_chunks if it was just incremented
                 if key == 'num_chunks' and num_chunks_increment > 0:
                     continue # Skip direct assignment if increment was used
@@ -3444,7 +3445,12 @@ def update_document(**kwargs):
                 update_occurred = True
                 if key in DOCUMENT_SEARCH_METADATA_FIELD_MAP:
                     metadata_fields_requiring_sync.add(key)
-                if key in document_search_acl_fields:
+                # Project only real access changes; a missing list and an empty list grant the same
+                # access, so legacy normalization never waits on (or fails because of) Search.
+                if (
+                    key in document_search_acl_fields
+                    and _normalize_search_acl_entries(previous_value) != _normalize_search_acl_entries(value)
+                ):
                     acl_fields_requiring_projection[key] = value
 
         # 3. If any update happened, handle timestamps and percentage
@@ -3503,12 +3509,11 @@ def update_document(**kwargs):
                 user_id,
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
-            )
-            sync_revision = int((sync_record or {}).get('revision') or 0)
-            existing_document[DOCUMENT_SEARCH_SYNC_REVISION_FIELD] = sync_revision
+            ) or {}
+            existing_document[DOCUMENT_SEARCH_SYNC_TOKEN_FIELD] = sync_record.get('latest_request_token')
             search_sync = {
                 'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
-                'revision': sync_revision,
+                'revision': int(sync_record.get('revision') or 0),
                 'fields': sorted(metadata_fields_requiring_sync),
             }
 
@@ -4215,7 +4220,10 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
 # saved, so the index never grants access that Cosmos does not record.
 DOCUMENT_SEARCH_SYNC_RECORD_TYPE = 'document_search_metadata_sync'
 DOCUMENT_SEARCH_SYNC_SCHEMA_VERSION = 1
-DOCUMENT_SEARCH_SYNC_REVISION_FIELD = 'search_metadata_revision'
+# Each sync request gets a unique token, and the document save that goes with it stores the same
+# token. A worker treats the save as landed only when the tokens match, so a value left on the
+# document by an earlier request can never be mistaken for a newer one.
+DOCUMENT_SEARCH_SYNC_TOKEN_FIELD = 'search_metadata_sync_token'
 DOCUMENT_SEARCH_SYNC_STATUS_PENDING = 'pending'
 DOCUMENT_SEARCH_SYNC_STATUS_SYNCING = 'syncing'
 DOCUMENT_SEARCH_SYNC_STATUS_FAILED = 'failed'
@@ -4231,6 +4239,9 @@ DOCUMENT_SEARCH_SYNC_UNCOMMITTED_INTENT_SECONDS = 600
 DOCUMENT_SEARCH_SYNC_MAX_PASSES = 5
 DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS = 8
 DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS = (60, 300, 900, 3600, 21600)
+# Search writes frozen by a Data Management migration are not failures, so they retry on a short
+# fixed delay instead of climbing the backoff ladder.
+DOCUMENT_SEARCH_SYNC_FROZEN_RETRY_SECONDS = 300
 DOCUMENT_SEARCH_SYNC_WORKER_COUNT = 2
 DOCUMENT_SEARCH_SYNC_RECONCILE_BATCH_SIZE = 25
 DOCUMENT_SEARCH_SYNC_RECONCILE_TIME_BUDGET_SECONDS = 240
@@ -4477,6 +4488,18 @@ def _is_cosmos_write_conflict(exc):
     return getattr(exc, 'status_code', None) in (409, 412)
 
 
+def _is_cosmos_not_found(exc):
+    return isinstance(exc, CosmosResourceNotFoundError) or getattr(exc, 'status_code', None) == 404
+
+
+def _normalize_search_acl_entries(value):
+    """Return access entries in a comparable form; a missing list and an empty list are the same."""
+    if value is None:
+        return []
+    entries = value if isinstance(value, (list, tuple, set)) else [value]
+    return sorted({str(entry).strip() for entry in entries if str(entry or '').strip()})
+
+
 def _read_document_search_sync_record(record_id):
     try:
         return cosmos_settings_container.read_item(item=record_id, partition_key=record_id)
@@ -4503,6 +4526,7 @@ def request_document_search_metadata_sync(document_id, changed_fields, user_id, 
     if not fields:
         return None
 
+    request_token = uuid.uuid4().hex
     record_id = get_document_search_sync_record_id(document_id, group_id, public_workspace_id)
     for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
         now = _document_search_sync_now()
@@ -4522,6 +4546,7 @@ def request_document_search_metadata_sync(document_id, changed_fields, user_id, 
                     'group_id': group_id,
                     'public_workspace_id': public_workspace_id,
                     'revision': 1,
+                    'latest_request_token': request_token,
                     'pending_fields': fields,
                     'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
                     'requested_at': now_text,
@@ -4534,6 +4559,7 @@ def request_document_search_metadata_sync(document_id, changed_fields, user_id, 
                 })
 
             record['revision'] = int(record.get('revision') or 0) + 1
+            record['latest_request_token'] = request_token
             record['pending_fields'] = sorted(set(record.get('pending_fields') or []) | set(fields))
             record['requested_at'] = now_text
             record['updated_at'] = now_text
@@ -4546,7 +4572,9 @@ def request_document_search_metadata_sync(document_id, changed_fields, user_id, 
                 record['next_attempt_at'] = next_attempt_at
             return _replace_document_search_sync_record(record)
         except Exception as exc:
-            if not _is_cosmos_write_conflict(exc):
+            # A conflict means another writer changed the record; not-found means a worker finished
+            # and removed it after this read. Either way, re-read and try again.
+            if not (_is_cosmos_write_conflict(exc) or _is_cosmos_not_found(exc)):
                 raise
     raise RuntimeError("Unable to record the document search metadata sync request.")
 
@@ -4654,6 +4682,8 @@ def _renew_document_search_sync_lease(record_id, lease_token):
         try:
             return _replace_document_search_sync_record(record)
         except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                raise DocumentSearchSyncLeaseLostError("The document search sync lease was lost.") from exc
             if not _is_cosmos_write_conflict(exc):
                 raise
     raise DocumentSearchSyncLeaseLostError("The document search sync lease could not be renewed.")
@@ -4677,22 +4707,32 @@ def _release_document_search_sync_lease(record_id, lease_token):
             _replace_document_search_sync_record(record)
             return
         except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return
             if not _is_cosmos_write_conflict(exc):
                 raise
 
 
 def _record_document_search_sync_failure(record_id, lease_token, error):
-    """Release the lease and schedule a retry with backoff."""
+    """Release the lease and schedule a retry: a short fixed delay while Search writes are frozen,
+    otherwise an increasing backoff."""
+    search_writes_frozen = isinstance(error, DataManagementSearchWritesFrozenError)
     for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
         record = _read_document_search_sync_record(record_id)
         if record is None or record.get('lease_token') != lease_token:
             return None
         now = _document_search_sync_now()
-        attempts = int(record.get('attempts') or 0) + 1
-        retry_delays = DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS
-        retry_delay_seconds = retry_delays[min(attempts, len(retry_delays)) - 1]
+        attempts = int(record.get('attempts') or 0)
+        if search_writes_frozen:
+            status = DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+            retry_delay_seconds = DOCUMENT_SEARCH_SYNC_FROZEN_RETRY_SECONDS
+        else:
+            attempts += 1
+            status = DOCUMENT_SEARCH_SYNC_STATUS_FAILED
+            retry_delays = DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS
+            retry_delay_seconds = retry_delays[min(attempts, len(retry_delays)) - 1]
         record.update({
-            'status': DOCUMENT_SEARCH_SYNC_STATUS_FAILED,
+            'status': status,
             'attempts': attempts,
             'last_error_type': type(error).__name__,
             'last_failed_at': _format_document_search_sync_time(now),
@@ -4704,6 +4744,8 @@ def _record_document_search_sync_failure(record_id, lease_token, error):
         try:
             return _replace_document_search_sync_record(record)
         except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return None
             if not _is_cosmos_write_conflict(exc):
                 raise
     return None
@@ -4853,10 +4895,12 @@ def run_document_search_metadata_sync(record_id, lease_wait_seconds=0):
             return {'status': 'failed', 'record_id': record_id, 'error_type': type(exc).__name__}
 
         now = _document_search_sync_now()
+        # Only the save that carries this request's token proves the projected values are current.
+        latest_request_token = record.get('latest_request_token')
         document_committed = (
-            int(document_item.get(DOCUMENT_SEARCH_SYNC_REVISION_FIELD) or 0) >= revision
-            or _document_search_sync_intent_is_stale(record, now)
-        )
+            bool(latest_request_token)
+            and document_item.get(DOCUMENT_SEARCH_SYNC_TOKEN_FIELD) == latest_request_token
+        ) or _document_search_sync_intent_is_stale(record, now)
         outcome, next_record = _complete_document_search_sync_pass(
             record_id,
             lease_token,

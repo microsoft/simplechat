@@ -56,6 +56,8 @@ LOADED_FUNCTIONS = {
     "_document_search_sync_lease_is_active",
     "_document_search_sync_intent_is_stale",
     "_is_cosmos_write_conflict",
+    "_is_cosmos_not_found",
+    "_normalize_search_acl_entries",
     "_read_document_search_sync_record",
     "_replace_document_search_sync_record",
     "request_document_search_metadata_sync",
@@ -111,6 +113,7 @@ class FakeSettingsContainer:
 
     def __init__(self):
         self.items = {}
+        self.before_replace = None
 
     def _store(self, body):
         item = copy.deepcopy(body)
@@ -130,6 +133,8 @@ class FakeSettingsContainer:
         return self._store(body)
 
     def replace_item(self, item, body, etag=None, match_condition=None):
+        if self.before_replace is not None:
+            self.before_replace(item)
         if item not in self.items:
             raise FakeNotFoundError()
         if etag is not None and self.items[item]["_etag"] != etag:
@@ -459,19 +464,22 @@ def test_update_document_queues_metadata_sync_without_chunk_work():
     assert harness.user_search.merge_batches == []
     assert harness.user_search.search_calls == []
     saved = harness.user_documents.documents["doc-1"]
-    assert saved["tags"] == ["bills"] and saved["search_metadata_revision"] == 1
     (record,) = harness.sync_records()
+    assert saved["tags"] == ["bills"]
+    assert record["latest_request_token"] and saved["search_metadata_sync_token"] == record["latest_request_token"]
     assert record["id"] == "document_search_metadata_sync:personal:doc-1"
     assert record["revision"] == 1 and record["pending_fields"] == ["tags", "title"]
     assert record["status"] == "pending" and record["user_id"] == "owner-1"
     executor = harness["_document_search_sync_executor"]
     assert len(executor.submitted) == 1
+    first_token = record["latest_request_token"]
 
     second = harness["update_document"](document_id="doc-1", user_id="owner-1", authors=["Ada"])
     assert second["search_sync"]["revision"] == 2
     (record,) = harness.sync_records()
     assert record["pending_fields"] == ["authors", "tags", "title"]
-    assert harness.user_documents.documents["doc-1"]["search_metadata_revision"] == 2
+    assert record["latest_request_token"] != first_token
+    assert harness.user_documents.documents["doc-1"]["search_metadata_sync_token"] == record["latest_request_token"]
 
     unrelated = harness["update_document"](document_id="doc-1", user_id="owner-1", abstract="New summary")
     assert unrelated["search_sync"] == {"status": "not_required"}
@@ -584,6 +592,92 @@ def test_worker_waits_for_an_uncommitted_document_write():
     harness.advance(601)
     assert harness["run_document_search_metadata_sync"](record_id)["status"] == "complete"
     assert harness.sync_records() == []
+
+
+def test_token_from_an_earlier_request_does_not_count_as_a_landed_save():
+    """A new request is not completed by a document token left over from an earlier request."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=2)
+    record_id = "document_search_metadata_sync:personal:doc-1"
+    harness["update_document"](document_id="doc-1", user_id="owner-1", tags=["first"])
+    assert harness["run_document_search_metadata_sync"](record_id)["status"] == "complete"
+    earlier_token = harness.user_documents.documents["doc-1"]["search_metadata_sync_token"]
+
+    # The next request restarts the record at revision 1 before its document save lands.
+    new_record = harness["request_document_search_metadata_sync"]("doc-1", ["tags"], "owner-1")
+    assert new_record["revision"] == 1 and new_record["latest_request_token"] != earlier_token
+
+    result = harness["run_document_search_metadata_sync"](record_id)
+
+    assert result["status"] == "deferred"
+    (record,) = harness.sync_records()
+    assert record["latest_request_token"] == new_record["latest_request_token"]
+
+
+def test_request_retries_when_a_worker_removes_the_record_mid_write():
+    """A save is not failed when a finishing worker deletes the record between read and replace."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=2)
+    record_id = "document_search_metadata_sync:personal:doc-1"
+    harness["request_document_search_metadata_sync"]("doc-1", ["tags"], "owner-1")
+    removals = []
+
+    def remove_once(item):
+        if not removals:
+            removals.append(item)
+            del harness.settings.items[item]
+
+    harness.settings.before_replace = remove_once
+
+    record = harness["request_document_search_metadata_sync"]("doc-1", ["title"], "owner-1")
+
+    assert removals == [record_id]
+    assert record["revision"] == 1 and record["pending_fields"] == ["title"]
+    assert harness.settings.items[record_id]["latest_request_token"] == record["latest_request_token"]
+
+
+def test_frozen_search_writes_retry_on_a_fixed_delay():
+    """A Data Management write freeze is retried shortly without climbing the failure backoff."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=2)
+    harness["update_document"](document_id="doc-1", user_id="owner-1", tags=["bills"])
+    harness.search_writes_frozen = True
+
+    result = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:personal:doc-1")
+
+    assert result["status"] == "failed"
+    (record,) = harness.sync_records()
+    assert record["status"] == "pending" and record["attempts"] == 0
+    assert record["last_error_type"] == "FakeSearchWritesFrozenError"
+    assert record["next_attempt_at"] == "2026-10-06T16:05:00.000000+00:00"
+
+    harness.search_writes_frozen = False
+    harness.advance(301)
+    assert harness["process_due_document_search_metadata_syncs"]()["complete"] == 1
+    assert all(chunk["document_tags"] == ["bills"] for chunk in harness.user_search.chunks.values())
+
+
+def test_equivalent_access_lists_are_not_projected():
+    """A missing access list and an empty one grant the same access, so no Search write is needed."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=2)
+    del harness.user_documents.documents["doc-1"]["shared_user_ids"]
+    harness.user_search.fail_merges = True
+
+    result = harness["update_document"](document_id="doc-1", user_id="owner-1", shared_user_ids=[])
+
+    assert result == {"updated": True, "search_sync": {"status": "not_required"}}
+    assert harness.user_search.merge_batches == []
+    assert harness.user_documents.documents["doc-1"]["shared_user_ids"] == []
+
+    harness.add_group_document(shared_group_ids=["group-2,approved"])
+    harness.group_search.fail_merges = True
+    reordered = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        shared_group_ids=["group-2,approved", "group-2,approved"],
+    )
+    assert reordered["updated"] is True
+    assert harness.group_search.merge_batches == []
 
 
 def test_worker_drops_requests_for_missing_or_moved_documents():
