@@ -1,10 +1,11 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.258
+// Version: 0.261.260
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
 // Every-section presentation and schema-derived hierarchy added in: 0.261.258
+// Values saved at a nested path covered in: 0.261.260
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -45,6 +46,7 @@ import {
     shouldGroupStartOpen,
 } from '../application/v2_ui/src/lib/adminSections';
 import {
+    buildFieldIndex,
     groupFields,
     evaluateDependency,
     type AdminField,
@@ -592,6 +594,98 @@ check('distinct subsection presentation preserves collapsed defaults and counts'
     assert.match(markup, /2 settings/);
     assert.doesNotMatch(markup, /Hero Title|Hero Subtitle/);
     assert.deepEqual(calls, []);
+});
+
+/**
+ * A connection saved inside a container, declared the way Web Search's is.
+ *
+ * The draft is keyed flat, but the saved values live under `nested_agent`, so a reader
+ * that treats each key as a top-level setting finds nothing once the values are saved.
+ */
+const NESTED_SETTINGS = {
+    enable_nested: true,
+    nested_agent: {
+        connection: {
+            endpoint: 'https://example.invalid',
+            authentication_type: 'managed_identity',
+            enabled: true,
+        },
+    },
+};
+
+check('a required value saved inside a container reads as configured', () => {
+    const fields = [
+        capability('enable_nested'),
+        required('nested_endpoint', { paths: ['nested_agent.connection.endpoint'] }),
+    ];
+    const fieldsByKey = buildFieldIndex({ 'nested-section': fields });
+
+    assert.equal(deriveSectionStatus(fields, NESTED_SETTINGS, {}, fieldsByKey), 'ready');
+    assert.equal(computeSectionStatus(fields, NESTED_SETTINGS, {}, undefined, fieldsByKey), 'ready');
+    // An unsaved edit still decides the status before the save lands.
+    assert.equal(
+        deriveSectionStatus(fields, NESTED_SETTINGS, { nested_endpoint: '' }, fieldsByKey),
+        'incomplete',
+    );
+});
+
+check('the shell shows a field gated on a value saved inside a container', () => {
+    // Both nested descriptors: `paths`, as the Web Search connection declares, and
+    // `settings_path`, as the document action limits declare.
+    const fields: AdminField[] = [
+        capability('enable_nested'),
+        {
+            key: 'nested_auth_type',
+            type: 'select',
+            label: 'Authentication Type',
+            paths: ['nested_agent.connection.authentication_type'],
+        },
+        {
+            key: 'nested_identity_type',
+            type: 'select',
+            label: 'Managed Identity Type',
+            paths: ['nested_agent.connection.managed_identity_type'],
+            depends_on: { key: 'nested_auth_type', equals: 'managed_identity' },
+        },
+        {
+            key: 'nested_enabled',
+            type: 'switch',
+            label: 'Enabled',
+            settings_path: ['nested_agent', 'connection', 'enabled'],
+        },
+        {
+            key: 'nested_limit',
+            type: 'number',
+            label: 'Limit',
+            settings_path: ['nested_agent', 'connection', 'limit'],
+            depends_on: { key: 'nested_enabled', equals: true },
+        },
+    ];
+    const calls: string[] = [];
+    renderToStaticMarkup(createElement(SettingsSection, {
+        sectionId: 'nested-section',
+        label: 'Nested',
+        groupLabel: 'Group',
+        tabLabel: '',
+        fields,
+        settings: NESTED_SETTINGS,
+        draft: {},
+        fieldsByKey: buildFieldIndex({ 'nested-section': fields }),
+        renderField: (field) => {
+            calls.push(`field:${field.key}`);
+            return createElement('span', { key: field.key }, field.label);
+        },
+        renderCapability: () => null,
+    }));
+
+    assert.ok(
+        calls.includes('field:nested_identity_type'),
+        'the identity type is hidden although the authentication type it depends on is saved',
+    );
+    assert.ok(
+        calls.includes('field:nested_limit'),
+        'the limit is hidden although the flag it depends on is saved',
+    );
 });
 
 let passed = 0;

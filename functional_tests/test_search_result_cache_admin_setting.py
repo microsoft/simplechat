@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the search result cache admin setting.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.262
+Implemented in: 0.261.262
 
 ``enable_search_result_caching`` had no declared field, so the V2 admin
 surface's ``enable_*`` fallback scan drew it as a bare switch labelled from its
@@ -115,7 +115,7 @@ def test_both_settings_are_declared_together_under_azure_ai_search():
     """Declaring the key is what takes it out of the fallback scan's guess."""
     print("Testing where the search result cache is declared...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.262")
 
     for key in (SWITCH_KEY, LIFETIME_KEY):
         section_id, field = declared_field(key)

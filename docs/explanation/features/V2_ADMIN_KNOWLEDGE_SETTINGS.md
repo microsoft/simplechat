@@ -138,7 +138,7 @@ that the two interfaces order or group them identically. The intentional differe
   `get_source_review_config` rewrites any other value on read.
 - The Video Indexer cloud selector not reproduced. It has no stored setting of its own,
   existing only to compute `video_indexer_endpoint`, which V2 edits directly.
-- The search result cache is V2-only. Added in **0.261.260**, `enable_search_result_caching`
+- The search result cache is V2-only. Added in **0.261.262**, `enable_search_result_caching`
   and `search_cache_ttl_seconds` form a **Search result cache** group after the Azure AI
   Search connection, with an explanation of what is cached, what forces a fresh search, and
   why to leave it on. The classic page dropped its short-lived control, which never saved,

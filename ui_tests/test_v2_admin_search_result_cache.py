@@ -2,8 +2,8 @@
 """
 UI test for the search result cache settings in V2 Admin Settings.
 
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.262
+Implemented in: 0.261.262
 
 Serve the built V2 SPA with the real field schema for the Web Search and Azure AI
 Search sections, through the schema-backed fixture, so no application server,

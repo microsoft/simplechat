@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.260)**
+### **(v0.261.262)**
 
 #### User Interface Enhancements
 
@@ -10,6 +10,26 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   V2 Admin Settings now shows the workspace search result cache in a **Search result cache** group under **Knowledge › Search Index › Azure AI Search**. The group explains what is cached, what forces a fresh search, and why the cache should stay on. Previously the fallback scan matched the word "search" and placed it under Web Search as a bare switch labelled with its key, `enable_search_result_caching`.
     *   **Cache lifetime (seconds)** can now be changed, from 60 to 3,600 seconds with a default of 300. It appears only while caching is on. Caching stays on by default, and a value an administrator saved as off is kept.
     *   (Ref: `admin_settings_fields.py`, `test_search_result_cache_admin_setting.py`, `test_v2_admin_search_result_cache.py`, [Search Result Cache Admin Setting Fix](fixes/SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md))
+
+### **(v0.261.261)**
+
+#### Bug Fixes
+
+*   **Always-On Tabular Switches Removed From V2 Admin Settings**
+    *   V2 Admin Settings no longer shows an unlabelled **Tabular search shared preflight** switch under Workspaces › Files & Sharing › Shared Conversation File Approvals. It landed there only because its key contains the word "shared". It also no longer shows `enable_tabular_analyze_durable_preflight` or `enable_tabular_hierarchical_analysis` under Other capabilities.
+    *   All three flags send exhaustive row-by-row requests against CSV and XLSX files to a durable background job that covers every row, instead of a foreground answer that truncates. They are always on: settings loading resets them to on every time, so the switches reverted after every save. Behavior is unchanged, and the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable is still the emergency off switch.
+    *   The capability placement test now fails if any flag that settings loading resets is drawn as a switch, or if a guessed switch lands in the Workspaces group.
+    *   (Ref: `admin_settings_fields.SUPPRESSED_CAPABILITY_KEYS`, `TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS`, `test_v2_admin_capability_placement.py`, [V2 Admin Tabular Preflight Switch Fix](fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md))
+
+### **(v0.261.260)**
+
+#### Bug Fixes
+
+*   **V2 Web Search Test Uses the Saved Foundry Connection**
+    *   **Test web search** in V2 Admin Settings reported "Foundry Project Endpoint is required", "Foundry API Version is required" and "Foundry Agent ID is required" for a saved connection whose values were on screen. The Foundry connection is saved inside `web_search_agent`, but the test read each field as a top-level setting, so it only worked before the values were saved. It now reads the saved values, including a service principal's authentication type and masked client secret, which the server swaps for the stored secret.
+    *   The same fix shows **Managed Identity Type**, or the service principal fields, for the saved authentication type, and marks a saved connection as configured. Clearing a saved client secret now shows the removal warning and **Undo**.
+    *   The **Document action capabilities** card now shows the chat and workflow limits for Analyze, Comparison and Merge while that action is enabled. The section card used to hide them once the setting was saved.
+    *   (Ref: `adminFields.ts` `readSettingValue` and `buildConnectionTestPayload`, `adminSections.ts`, `ConnectionTest.tsx`, `SettingsSection.tsx`, `AdminSettingsPage.tsx`, `test_v2_admin_nested_setting_reads.py`, [V2 Admin Web Search Nested Settings Fix](fixes/V2_ADMIN_WEB_SEARCH_NESTED_SETTINGS_FIX.md))
 
 ### **(v0.261.259)**
 
