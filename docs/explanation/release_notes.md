@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.260)**
+
+#### Bug Fixes
+
+*   **Always-On Tabular Switches Removed From V2 Admin Settings**
+    *   V2 Admin Settings no longer shows an unlabelled **Tabular search shared preflight** switch under Workspaces › Files & Sharing › Shared Conversation File Approvals. It landed there only because its key contains the word "shared". It also no longer shows `enable_tabular_analyze_durable_preflight` or `enable_tabular_hierarchical_analysis` under Other capabilities.
+    *   All three flags send exhaustive row-by-row requests against CSV and XLSX files to a durable background job that covers every row, instead of a foreground answer that truncates. They are always on: settings loading resets them to on every time, so the switches reverted after every save. Behavior is unchanged, and the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable is still the emergency off switch.
+    *   The capability placement test now fails if any flag that settings loading resets is drawn as a switch, or if a guessed switch lands in the Workspaces group.
+    *   (Ref: `admin_settings_fields.SUPPRESSED_CAPABILITY_KEYS`, `TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS`, `test_v2_admin_capability_placement.py`, [V2 Admin Tabular Preflight Switch Fix](fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md))
+
 ### **(v0.261.259)**
 
 #### Bug Fixes
