@@ -56,6 +56,7 @@ from functions_group import (
     get_user_groups,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_message_deletion import exclude_soft_deleted_messages
 from functions_message_image_revisions import (
     IMAGE_REVISIONS_METADATA_KEY,
     resolve_image_message_content,
@@ -967,6 +968,8 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
         partition_key=source_conversation_id,
     ))
     raw_messages = filter_assistant_artifact_items(raw_messages)
+    # Deleted while archiving was enabled: not part of the conversation being shared.
+    raw_messages = exclude_soft_deleted_messages(raw_messages)
 
     copied_messages = []
     source_to_collaboration_message_ids = {}
@@ -1164,6 +1167,7 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
         partition_key=source_conversation_id,
     ))
     raw_messages = filter_assistant_artifact_items(raw_messages)
+    raw_messages = exclude_soft_deleted_messages(raw_messages)
 
     copied_messages = []
     source_to_collaboration_message_ids = {}
@@ -1937,12 +1941,19 @@ def remove_personal_collaboration_member(conversation_id, owner_user_id, member_
 
 
 def list_collaboration_messages(conversation_id):
+    """Return a shared conversation's messages, oldest first.
+
+    A shared message is deleted outright, but a conversation shared from a personal one can
+    hold copies of messages that were deleted there while archiving was enabled; earlier
+    conversions copied them. They are not part of the conversation and are excluded.
+    Conversation deletion queries the container directly, so the copies still go with it.
+    """
     query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id ORDER BY c.timestamp ASC'
-    return list(cosmos_collaboration_messages_container.query_items(
+    return exclude_soft_deleted_messages(list(cosmos_collaboration_messages_container.query_items(
         query=query,
         parameters=[{'name': '@conversation_id', 'value': conversation_id}],
         partition_key=conversation_id,
-    ))
+    )))
 
 
 def persist_collaboration_message(

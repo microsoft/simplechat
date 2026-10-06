@@ -14,7 +14,7 @@ into `SettingsSection`, each card took the bare section id instead, so the looku
 nothing and the scroll never ran. Clearing every filter on each jump also threw away the
 category the administrator was working in.
 
-## Fixed in version: **0.261.257**
+## Fixed in version: **0.261.258**
 
 The application version is maintained in `application/single_app/config.py`.
 

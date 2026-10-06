@@ -68,6 +68,11 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
+from functions_message_deletion import (
+    exclude_soft_deleted_messages,
+    is_soft_deleted_message,
+    strip_soft_delete_metadata,
+)
 from functions_m365_context import M365PolicyError
 from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 import functions_msgraph_pending_actions
@@ -507,7 +512,7 @@ def _query_matching_messages(container, search_term, match_mode):
     ))
 
     return [
-        message for message in messages
+        message for message in exclude_soft_deleted_messages(messages)
         if _matches_search_text(message.get('content', ''), search_term, match_mode)
     ]
 
@@ -879,6 +884,63 @@ def _collect_child_message_documents(conversation_id, root_message_ids):
     return child_docs
 
 
+def _thread_attempt_number(message_doc):
+    """Return a message's thread attempt, defaulting to 0 like the attempt sorts do."""
+    metadata = (message_doc or {}).get('metadata') or {}
+    thread_info = metadata.get('thread_info') or {}
+    return thread_info.get('thread_attempt', 0)
+
+
+def _promote_remaining_thread_attempt(conversation_id, thread_id, deleted_attempt, deleted_message_ids):
+    """Activate another attempt after a delete removes the active attempt's question.
+
+    Deleting only an answer leaves its question, and so its attempt, in place, and nothing is
+    promoted. Soft-deleted attempts are never promoted. The promoted attempt becomes the only
+    active one, so whatever is left of the deleted attempt stops showing beside it. Returns
+    the promoted attempt number, or None when no attempt was promoted.
+    """
+    thread_messages = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT * FROM c WHERE c.conversation_id = @conversation_id '
+            'AND c.metadata.thread_info.thread_id = @thread_id'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@thread_id', 'value': thread_id},
+        ],
+        partition_key=conversation_id,
+    ))
+    remaining_messages = [
+        message for message in exclude_soft_deleted_messages(thread_messages)
+        if message.get('id') not in deleted_message_ids
+    ]
+    remaining_attempts = {
+        _thread_attempt_number(message)
+        for message in remaining_messages
+        if message.get('role') == 'user'
+    }
+    if not remaining_attempts or deleted_attempt in remaining_attempts:
+        return None
+
+    promoted_attempt = min(remaining_attempts)
+    for message in remaining_messages:
+        metadata = message.get('metadata')
+        if not isinstance(metadata, dict):
+            metadata = {}
+            message['metadata'] = metadata
+        thread_info = metadata.get('thread_info')
+        if not isinstance(thread_info, dict):
+            thread_info = {}
+            metadata['thread_info'] = thread_info
+        should_be_active = _thread_attempt_number(message) == promoted_attempt
+        if thread_info.get('active_thread') is should_be_active:
+            continue
+        thread_info['active_thread'] = should_be_active
+        patch_chat_message_metadata(cosmos_messages_container, message)
+
+    return promoted_attempt
+
+
 def _authorize_personal_conversation_read(user_id, conversation_id):
     """Load a personal conversation and ensure the caller owns it."""
     try:
@@ -1117,6 +1179,9 @@ def register_route_backend_conversations(bp):
                 int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
                 str(item.get('id') or ''),
             ))
+            # Deleted while archiving was enabled. They are masked too, but only as a
+            # fail-safe: returned here, they would render as masked messages.
+            all_items = exclude_soft_deleted_messages(all_items)
             artifact_payload_map = build_message_artifact_payload_map(all_items)
             all_items = filter_assistant_artifact_items(all_items)
             
@@ -2410,6 +2475,7 @@ def register_route_backend_conversations(bp):
                     enable_cross_partition_query=True
                 ))
             raw_messages = filter_assistant_artifact_items(raw_messages)
+            raw_messages = exclude_soft_deleted_messages(raw_messages)
         except Exception as e:
             debug_print(f"Error querying messages for summary: {e}")
             return jsonify({'error': 'Failed to query messages'}), 500
@@ -2597,6 +2663,8 @@ def register_route_backend_conversations(bp):
                 'per_page': per_page,
                 'access': access_parameters,
                 'analysis_result_policy_version': 1,
+                # Results cached before soft-deleted messages were excluded must not be served.
+                'soft_deleted_message_policy_version': 1,
             }
             search_cache_key = None
             if cache_settings.get('enabled') and access_parameters is not None:
@@ -2911,6 +2979,8 @@ def register_route_backend_conversations(bp):
                 return jsonify({'error': 'Message not found'}), 404
             
             message_doc = message_results[0]
+            if is_soft_deleted_message(message_doc):
+                return jsonify({'error': 'Message not found'}), 404
             conversation_id = message_doc.get('conversation_id')
             
             # Verify ownership - only the message author can delete their message
@@ -2995,53 +3065,26 @@ def register_route_backend_conversations(bp):
             if child_message_docs:
                 messages_to_delete.extend(child_message_docs)
             
-            # THREAD ATTEMPT PROMOTION: If deleting an active thread attempt, promote next attempt
+            # THREAD ATTEMPT PROMOTION: if the delete removes the active attempt's question,
+            # another attempt takes its place. Deleting only an answer promotes nothing.
             if messages_to_delete:
                 first_msg = messages_to_delete[0]
-                thread_id = first_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-                is_active = first_msg.get('metadata', {}).get('thread_info', {}).get('active_thread', True)
+                first_thread_info = first_msg.get('metadata', {}).get('thread_info', {})
+                thread_id = first_thread_info.get('thread_id')
+                is_active = first_thread_info.get('active_thread', True)
                 
                 if thread_id and is_active:
-                    # Find all other attempts for this thread_id
-                    other_attempts_query = f"""
-                        SELECT * FROM c 
-                        WHERE c.conversation_id = '{conversation_id}' 
-                        AND c.metadata.thread_info.thread_id = '{thread_id}'
-                        AND c.id NOT IN ({','.join([f"'{m['id']}'" for m in messages_to_delete])})
-                        AND c.role = 'user'
-                    """
-                    other_attempts = list(cosmos_messages_container.query_items(
-                        query=other_attempts_query,
-                        partition_key=conversation_id
-                    ))
-                    
-                    # If there are other attempts, promote the next one (lowest thread_attempt)
-                    if other_attempts:
-                        # Sort by thread_attempt to find the next one
-                        other_attempts.sort(key=lambda m: m.get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0))
-                        next_attempt_number = other_attempts[0].get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0)
-                        
-                        # Activate all messages with this thread_attempt
-                        activate_query = f"""
-                            SELECT * FROM c 
-                            WHERE c.conversation_id = '{conversation_id}' 
-                            AND c.metadata.thread_info.thread_id = '{thread_id}'
-                            AND c.metadata.thread_info.thread_attempt = {next_attempt_number}
-                        """
-                        messages_to_activate = list(cosmos_messages_container.query_items(
-                            query=activate_query,
-                            partition_key=conversation_id
-                        ))
-                        
-                        for msg_to_activate in messages_to_activate:
-                            if 'metadata' not in msg_to_activate:
-                                msg_to_activate['metadata'] = {}
-                            if 'thread_info' not in msg_to_activate['metadata']:
-                                msg_to_activate['metadata']['thread_info'] = {}
-                            msg_to_activate['metadata']['thread_info']['active_thread'] = True
-                            patch_chat_message_metadata(cosmos_messages_container, msg_to_activate)
-                        
-                        print(f"Promoted thread_attempt {next_attempt_number} to active after deleting active thread {thread_id}")
+                    promoted_attempt = _promote_remaining_thread_attempt(
+                        conversation_id,
+                        thread_id,
+                        _thread_attempt_number(first_msg),
+                        {message.get('id') for message in messages_to_delete},
+                    )
+                    if promoted_attempt is not None:
+                        debug_print(
+                            f"[THREAD] Promoted thread_attempt {promoted_attempt} to active "
+                            f"after deleting the active attempt of thread {thread_id}"
+                        )
             
             deleted_message_ids = []
 
@@ -3131,6 +3174,8 @@ def register_route_backend_conversations(bp):
                 return jsonify({'error': 'Message not found'}), 404
             
             original_msg = message_results[0]
+            if is_soft_deleted_message(original_msg):
+                return jsonify({'error': 'Message not found'}), 404
             conversation_id = original_msg.get('conversation_id')
             original_role = original_msg.get('role')
             
@@ -3162,9 +3207,11 @@ def register_route_backend_conversations(bp):
             if not thread_id:
                 return jsonify({'error': 'Message has no thread_id'}), 400
 
-            user_msg_results = list(cosmos_messages_container.query_items(
+            # The question is replayed from the earliest attempt that still exists. A deleted
+            # attempt is not a source: its metadata would make the new question deleted too.
+            user_msg_results = exclude_soft_deleted_messages(list(cosmos_messages_container.query_items(
                 query=(
-                    "SELECT TOP 1 * FROM c WHERE c.conversation_id = @conversation "
+                    "SELECT * FROM c WHERE c.conversation_id = @conversation "
                     "AND c.metadata.thread_info.thread_id = @thread AND c.role = 'user' "
                     "ORDER BY c.metadata.thread_info.thread_attempt ASC"
                 ),
@@ -3173,7 +3220,7 @@ def register_route_backend_conversations(bp):
                     {"name": "@thread", "value": thread_id},
                 ],
                 partition_key=conversation_id,
-            ))
+            )))
             if not user_msg_results:
                 return jsonify({"error": "User message not found in thread"}), 404
             original_user_msg = user_msg_results[0]
@@ -3254,6 +3301,7 @@ def register_route_backend_conversations(bp):
             
             # Copy metadata but update thread_attempt and keep same thread_id and previous_thread_id from original
             new_metadata = dict(original_metadata)
+            strip_soft_delete_metadata(new_metadata)
             new_metadata['retried'] = True  # Mark as retried
             new_metadata['thread_info'] = {
                 'thread_id': thread_id,  # Keep same thread_id
@@ -3375,6 +3423,8 @@ def register_route_backend_conversations(bp):
                 return jsonify({'error': 'Message not found'}), 404
             
             original_msg = message_results[0]
+            if is_soft_deleted_message(original_msg):
+                return jsonify({'error': 'Message not found'}), 404
             conversation_id = original_msg.get('conversation_id')
             original_role = original_msg.get('role')
 
@@ -3464,7 +3514,8 @@ def register_route_backend_conversations(bp):
                 
                 print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
             
-            # Get the FIRST user message in this thread (attempt=1) to get original metadata
+            # Get the earliest user message in this thread that still exists, for its metadata.
+            # A deleted attempt is not a source: its metadata would make the edit deleted too.
             user_msg_query = f"""
                 SELECT * FROM c 
                 WHERE c.conversation_id = '{conversation_id}' 
@@ -3472,10 +3523,10 @@ def register_route_backend_conversations(bp):
                 AND c.role = 'user'
                 ORDER BY c.metadata.thread_info.thread_attempt ASC
             """
-            user_msg_results = list(cosmos_messages_container.query_items(
+            user_msg_results = exclude_soft_deleted_messages(list(cosmos_messages_container.query_items(
                 query=user_msg_query,
                 partition_key=conversation_id
-            ))
+            )))
             
             if not user_msg_results:
                 return jsonify({'error': 'User message not found in thread'}), 404
@@ -3499,6 +3550,7 @@ def register_route_backend_conversations(bp):
             
             # Copy metadata but update thread_attempt, add edited flag, and keep same thread_id
             new_metadata = dict(original_metadata)
+            strip_soft_delete_metadata(new_metadata)
             new_metadata['edited'] = True  # Mark as edited
             new_metadata['thread_info'] = {
                 'thread_id': thread_id,  # Keep same thread_id
@@ -3619,6 +3671,8 @@ def register_route_backend_conversations(bp):
                 return jsonify({'error': 'Message not found'}), 404
             
             current_msg = message_results[0]
+            if is_soft_deleted_message(current_msg):
+                return jsonify({'error': 'Message not found'}), 404
             conversation_id = current_msg.get('conversation_id')
             
             # Verify ownership
@@ -3643,21 +3697,24 @@ def register_route_backend_conversations(bp):
             if not thread_id:
                 return jsonify({'error': 'Message has no thread_id'}), 400
             
-            # Get all attempts for this thread_id, ordered by thread_attempt
-            attempts_query = f"""
-                SELECT DISTINCT c.metadata.thread_info.thread_attempt 
-                FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
+            # Get the attempts for this thread_id whose question still exists. An attempt whose
+            # question was deleted is not offered: switching to it would show a deleted turn.
             attempts_results = list(cosmos_messages_container.query_items(
-                query=attempts_query,
-                partition_key=conversation_id
+                query=(
+                    'SELECT c.metadata FROM c WHERE c.conversation_id = @conversation_id '
+                    "AND c.metadata.thread_info.thread_id = @thread_id AND c.role = 'user'"
+                ),
+                parameters=[
+                    {'name': '@conversation_id', 'value': conversation_id},
+                    {'name': '@thread_id', 'value': thread_id},
+                ],
+                partition_key=conversation_id,
             ))
             
-            available_attempts = sorted([r.get('thread_attempt', 0) for r in attempts_results])
+            available_attempts = sorted({
+                _thread_attempt_number(result)
+                for result in exclude_soft_deleted_messages(attempts_results)
+            })
             
             if not available_attempts:
                 return jsonify({'error': 'No attempts found'}), 404

@@ -124,6 +124,7 @@ import {
     type ContextItem,
 } from '../lib/chatContext';
 import { messageThreadId } from '../lib/threads';
+import { withoutDeletedMessages } from '../lib/deletedMessages';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
@@ -2241,20 +2242,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             set({ activeConversationKind: kind });
 
-            const { messages } =
+            const { messages: loadedMessages } =
                 kind === 'collaborative'
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
+            // A message deleted while archiving was enabled is never shown, not even as a
+            // masked one; see deletedMessages.ts.
+            const messages = withoutDeletedMessages(loadedMessages);
 
             if (get().activeConversationId !== conversationId) {
                 return;
             }
-            set({ messages: messages ?? [], messagesLoading: false });
-            const descriptor = latestSavedAnalysis(messages ?? []);
+            set({ messages, messagesLoading: false });
+            const descriptor = latestSavedAnalysis(messages);
             if (descriptor && !get().analysisContextChosen) {
                 get().selectAnalysisResult(descriptor, analysisRevision);
             }
-            const workflowResult = latestWorkflowResult(messages ?? []);
+            const workflowResult = latestWorkflowResult(messages);
             if (workflowResult && !get().analysisContextChosen) {
                 get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
             }
@@ -3638,7 +3642,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return 'done';
         }
         try {
-            const { messages } =
+            const { messages: loadedMessages } =
                 get().activeConversationKind === 'collaborative'
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
@@ -3649,15 +3653,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (options?.onlyIfUnchanged && (get().streaming || get().messages !== shownBefore)) {
                 return 'superseded';
             }
-            set({ messages: messages ?? [] });
+            // A message deleted while archiving was enabled is never shown, not even as a
+            // masked one; see deletedMessages.ts.
+            const messages = withoutDeletedMessages(loadedMessages);
+            set({ messages });
             const selected = get().analysisResultContext;
-            if (selected && get().analysisContextRevision === analysisRevision && !(messages ?? []).some((message) =>
+            if (selected && get().analysisContextRevision === analysisRevision && !messages.some((message) =>
                 sameAnalysis(selected, latestSavedAnalysis([message])),
             )) {
                 get().clearAnalysisResultContext();
             }
             if (!get().analysisContextChosen) {
-                const descriptor = latestSavedAnalysis(messages ?? []);
+                const descriptor = latestSavedAnalysis(messages);
                 if (descriptor) {
                     get().selectAnalysisResult(descriptor, analysisRevision);
                 }
@@ -3666,7 +3673,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // with Ask in chat is in no message until its first answer arrives. A result that
             // became unavailable is refused, and its chip removed, when it is next asked about.
             if (!get().analysisContextChosen) {
-                const workflowResult = latestWorkflowResult(messages ?? []);
+                const workflowResult = latestWorkflowResult(messages);
                 if (workflowResult) {
                     get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
                 }
@@ -3696,9 +3703,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             } else {
                 await deleteMessageApi(messageId, deleteThread);
             }
-            // Deletion is soft when archiving is enabled: the server masks the message
-            // rather than removing it, so the authoritative list is re-read instead of
-            // trusting the optimistic removal.
+            // The authoritative list is re-read rather than trusting the optimistic removal:
+            // deleting a question removes its whole turn, every attempt included, which the
+            // client cannot work out from the one message it removed.
             await get().reloadMessages();
         } catch (error) {
             set({

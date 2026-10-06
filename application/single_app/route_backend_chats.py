@@ -346,6 +346,11 @@ from functions_message_masking import (
     remove_masked_content,
     resolve_mask_display_name,
 )
+from functions_message_deletion import (
+    NOT_SOFT_DELETED_COSMOS_FILTER,
+    exclude_soft_deleted_messages,
+    is_soft_deleted_message,
+)
 from functions_message_visual_styles import (
     UNSET as VISUAL_STYLE_HEIGHT_UNSET,
     VisualStyleError,
@@ -2628,9 +2633,12 @@ def _resolve_prior_turn_history_window(settings=None):
 
 
 def _read_recent_assistant_messages(conversation_id, message_limit):
+    # A deleted reply's tool results and wording must not carry into later turns. Excluded in
+    # the query so TOP counts only replies that still exist, and checked again as a backstop.
     query = (
         f'SELECT TOP {int(message_limit)} c.id, c.conversation_id, c.role, c.content, c.metadata, c.agent_citations, c.hybrid_citations FROM c '
         'WHERE c.conversation_id = @conversation_id AND c.role = @role '
+        f'AND {NOT_SOFT_DELETED_COSMOS_FILTER} '
         'ORDER BY c.timestamp DESC'
     )
     messages = list(cosmos_messages_container.query_items(
@@ -2641,6 +2649,7 @@ def _read_recent_assistant_messages(conversation_id, message_limit):
         ],
         partition_key=conversation_id,
     ))
+    messages = exclude_soft_deleted_messages(messages)
     return _sanitize_saved_analysis_history(messages)
 
 
@@ -26634,6 +26643,11 @@ def register_route_backend_chats(bp):
 
                     message_doc = message_results[0]
 
+                # Deleted while archiving was enabled. Its mask is the delete route's fail-safe,
+                # so clearing it here would reveal deleted content to the reader and the model.
+                if is_soft_deleted_message(message_doc):
+                    return jsonify({'error': 'Message not found'}), 404
+
                 conversation_id = message_doc.get('conversation_id')
 
                 # Verify ownership - only the message author can mask their message
@@ -27014,7 +27028,8 @@ def register_route_backend_chats(bp):
 
         The nearest preceding user message. "Make it match what we discussed" nearly always
         means the request the diagram came from, and passing that one message is enough for it
-        to mean something without sending the whole conversation to redraw a flowchart.
+        to mean something without sending the whole conversation to redraw a flowchart. A
+        deleted message is skipped, so its text never reaches the model.
 
         Best effort: an edit works perfectly well with no grounding at all, so a failure here is
         swallowed rather than failing the edit.
@@ -27028,6 +27043,7 @@ def register_route_backend_chats(bp):
                     'SELECT TOP 1 c.content FROM c '
                     'WHERE c.conversation_id = @conversation_id '
                     "AND c.role = 'user' AND c.timestamp < @timestamp "
+                    f'AND {NOT_SOFT_DELETED_COSMOS_FILTER} '
                     'ORDER BY c.timestamp DESC'
                 ),
                 parameters=[
@@ -28408,6 +28424,10 @@ def build_conversation_history_segments(
     filtered_messages = filter_assistant_artifact_items(all_messages or [])
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     ordered_messages = sort_messages_by_thread(filtered_messages)
+    # Dropped after ordering, so the surviving messages keep the order the thread chain gives
+    # them. A deleted message must not reach the summary or the recent window, nor take a slot
+    # in the history limit; its mask is only a fail-safe, not what keeps it out.
+    ordered_messages = exclude_soft_deleted_messages(ordered_messages)
 
     total_messages = len(ordered_messages)
     num_recent_messages = min(total_messages, conversation_history_limit)
