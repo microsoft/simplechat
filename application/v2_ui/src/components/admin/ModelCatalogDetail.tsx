@@ -459,7 +459,7 @@ export function ModelCatalogDetail({
     // Arrow keys move between tabs and select as they go, the usual tablist behaviour.
     const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         const index = TABS.findIndex((item) => item.id === tab);
-        let next = index;
+        let next: number;
         if (event.key === 'ArrowRight') next = (index + 1) % TABS.length;
         else if (event.key === 'ArrowLeft') next = (index - 1 + TABS.length) % TABS.length;
         else if (event.key === 'Home') next = 0;
