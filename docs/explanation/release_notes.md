@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.260)**
+
+#### User Interface Enhancements
+
+*   **Search Result Cache Explained Under Azure AI Search**
+    *   V2 Admin Settings now shows the workspace search result cache in a **Search result cache** group under **Knowledge › Search Index › Azure AI Search**. The group explains what is cached, what forces a fresh search, and why the cache should stay on. Previously the fallback scan matched the word "search" and placed it under Web Search as a bare switch labelled with its key, `enable_search_result_caching`.
+    *   **Cache lifetime (seconds)** can now be changed, from 60 to 3,600 seconds with a default of 300. It appears only while caching is on. Caching stays on by default, and a value an administrator saved as off is kept.
+    *   (Ref: `admin_settings_fields.py`, `test_search_result_cache_admin_setting.py`, `test_v2_admin_search_result_cache.py`, [Search Result Cache Admin Setting Fix](fixes/SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md))
+
 ### **(v0.261.259)**
 
 #### Bug Fixes
