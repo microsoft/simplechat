@@ -18,6 +18,7 @@ from config import (
     cosmos_conversations_container,
     cosmos_m365_execution_runs_container,
 )
+from collaboration_models import is_shared_conversation_backing
 from functions_appinsights import log_event
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -230,6 +231,8 @@ def initialize_m365_chat_context(user_id, conversation_id, *, allow_new=False):
         actor_user_id=user_id, data_user_id=user_id, tenant_id=TENANT_ID,
         conversation_id=conversation_id, shared=shared is not None,
         request_id=request_id, audience_version=_audience_version(conversation, shared),
+        # Your own chat request in a shared conversation is your consent to share what it reads.
+        shared_by_request=shared is not None,
     )
     g.m365_request_fingerprint = fingerprint
     return install_m365_context(context)
@@ -717,10 +720,11 @@ def step_m365_context(*, user_id, conversation_id, request_id, selection, origin
     A plan step runs in a fresh request context, so the chat request's Microsoft 365
     context never reaches it. This context uses the signed-in user as actor and data user,
     selects only the step's own action or agent, and never enables send, invite or
-    read-state functions. Shared conversations are refused: their source-sharing approvals
-    resume chat requests, not plan steps. Delegated sign-in is checked here, before any
-    model call or Microsoft Graph request. An agent step whose agent loads no Microsoft 365
-    action gets no context and leaves no request record.
+    read-state functions. In a shared conversation it carries that conversation's real
+    audience; the user's own request is their consent to share the sources it reads there.
+    Delegated sign-in is checked here, before any model call or Microsoft Graph request. An
+    agent step whose agent loads no Microsoft 365 action gets no context and leaves no
+    request record.
     """
     if not has_request_context() or (session.get("user") or {}).get("oid") != user_id:
         raise M365PolicyError("m365_session_required", "Sign in again to use Microsoft 365.")
@@ -731,11 +735,6 @@ def step_m365_context(*, user_id, conversation_id, request_id, selection, origin
     if not selected and selection.get("kind") == "agent":
         yield None
         return
-    if shared is not None:
-        raise M365PolicyError(
-            "m365_shared_conversation_unsupported",
-            "Plans can't use Microsoft 365 in a shared conversation.",
-        )
     previous_state = {name: value for name, value in vars(g).items() if name.startswith("m365_")}
     for name in previous_state:
         delattr(g, name)
@@ -743,8 +742,9 @@ def step_m365_context(*, user_id, conversation_id, request_id, selection, origin
     try:
         context = M365ExecutionContext(
             actor_user_id=user_id, data_user_id=user_id, tenant_id=TENANT_ID,
-            conversation_id=conversation_id, shared=False, request_id=request_id,
-            audience_version=_audience_version(conversation, None),
+            conversation_id=conversation_id, shared=shared is not None, request_id=request_id,
+            audience_version=_audience_version(conversation, shared),
+            shared_by_request=shared is not None,
         )
         install_m365_context(context)
         manifests = _readable_m365_manifests(selected)
@@ -928,7 +928,9 @@ def authorize_m365_conversation_audit(user_id, conversation_id):
 
 def resolve_m365_audit_conversation_id(user_id, conversation_id):
     conversation, _access, _shared = _conversation_access(user_id, conversation_id)
-    if conversation is not None:
+    # Orchestrate's backing record shares its shared conversation's id; the shared
+    # conversation's Microsoft 365 records belong to its classic source conversation.
+    if conversation is not None and not is_shared_conversation_backing(conversation):
         return conversation_id
     shared = get_collaboration_conversation(conversation_id)
     assert_user_can_participate_in_collaboration_conversation(user_id, shared)

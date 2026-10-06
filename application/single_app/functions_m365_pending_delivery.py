@@ -1,5 +1,10 @@
 # functions_m365_pending_delivery.py
-"""Claimed M365 delivery using reviewed material and current subject authorization."""
+"""Claimed M365 delivery using reviewed material and current subject authorization.
+
+Version: 0.261.269
+A chat delivery keeps its request's ``shared_by_request`` consent in: 0.261.269, so sending a
+reviewed action in a shared conversation needs no approval its request didn't need.
+"""
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -16,10 +21,12 @@ from m365_interaction import M365_AUTH_INTERACTION_CODES
 
 
 _dependencies = {}
+# A delivery recorded before 0.261.269 has no ``shared_by_request`` and restores it as False.
 _CONTEXT_FIELDS = (
     "actor_user_id", "data_user_id", "tenant_id", "conversation_id", "shared",
     "request_id", "workflow_id", "run_id", "step_id", "audience_version",
     "binding_id", "workflow_fingerprint", "connection_id", "group_id", "agent_id",
+    "shared_by_request",
 )
 _TERMINAL = {"sent", "cancelled", "failed", "recovery_required"}
 DELIVERY_BINDING_VERSION = 1

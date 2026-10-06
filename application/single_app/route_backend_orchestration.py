@@ -24,7 +24,11 @@ A saved run from the removed legacy plan contract is never opened, run, retried,
 restored or continued. Every by-id route answers it with HTTP 409 and the one stable
 ``LEGACY_PLAN_MESSAGE``, and conversation run listings omit it.
 
-Version: 0.261.141
+In a shared conversation the person who started it plans in a hidden backing conversation
+with the shared conversation's id; the question and each final answer are mirrored into the
+shared thread for every participant (0.261.269).
+
+Version: 0.261.269
 """
 
 import hashlib
@@ -128,6 +132,16 @@ from functions_orchestration_memory import (
     load_orchestration_memory,
     validate_memory_context,
 )
+from functions_orchestration_collaboration import (
+    SHARED_ORCHESTRATION_STALE_COPY,
+    SharedOrchestrationError,
+    authorize_shared_orchestration,
+    is_orchestration_backing,
+    log_mirror_failure,
+    mirror_orchestration_turn,
+    shared_conversation,
+)
+from collaboration_models import normalize_collaboration_user
 from functions_orchestration_external_configuration import ExternalConfigurationServiceError
 from functions_orchestration_external_identity import ExternalIdentityServiceError
 from functions_orchestration_workflow_context import (
@@ -752,23 +766,27 @@ def _ensure_conversation(conversation_id, user_id, title=''):
     exist before a plan can be stored against it. Created here with the same shape
     ``route_backend_chats`` uses, so a conversation started by orchestration is
     indistinguishable from any other and the classic interface can open it.
+
+    A shared conversation's id gets a hidden backing conversation with that same id, owned by
+    the person who started the shared conversation, so plans never become a private copy that
+    other participants cannot see. A backing record created before shared conversations had
+    one is adopted in place, and the backing keeps the shared conversation's workspace lock.
+    Raises ``SharedOrchestrationError`` for any other participant; anyone who is not a
+    participant gets the same answer as for a conversation that does not exist. A backing
+    conversation is never reported as created, because the browser already holds its id.
     """
 
 
+    requested = bool(conversation_id)
     conversation_id = conversation_id or f"conv_{uuid.uuid4().hex}"
     now = _now_iso()
 
     try:
         existing = cosmos_conversations_container.read_item(
             item=conversation_id, partition_key=conversation_id
-        )
-        if existing.get('user_id') != user_id:
-            # Someone else's conversation. Treated as absent rather than reported, so an
-            # id cannot be used to probe for conversations that exist.
-            return None, False
-        return conversation_id, False
+        ) if requested else None
     except CosmosResourceNotFoundError:
-        pass
+        existing = None
     except Exception as exc:
         log_event(
             '[ORCHESTRATION] Conversation ownership could not be verified.',
@@ -777,15 +795,54 @@ def _ensure_conversation(conversation_id, user_id, title=''):
         return None, False
 
     try:
+        # A new chat's generated id can't belong to a shared conversation.
+        collaboration = shared_conversation(conversation_id) if requested else None
+        backing = authorize_shared_orchestration(collaboration, user_id) if collaboration is not None else {}
+    except SharedOrchestrationError:
+        raise
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION] Shared conversation access could not be verified.',
+            extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        return None, False
+
+    if existing is not None:
+        if existing.get('user_id') != user_id:
+            if backing:
+                # The person who started this shared conversation, blocked by a private copy that
+                # an earlier version made for another participant under the same id.
+                log_event(
+                    '[ORCHESTRATION] A shared conversation has another participant\'s private copy.',
+                    extra={'reason': 'shared_conversation_stale_copy'}, level=logging.WARNING,
+                )
+                raise SharedOrchestrationError(SHARED_ORCHESTRATION_STALE_COPY)
+            # Someone else's conversation. Treated as absent rather than reported, so an
+            # id cannot be used to probe for conversations that exist.
+            return None, False
+        if any(existing.get(key) != value for key, value in backing.items()):
+            existing.update(backing)
+            try:
+                cosmos_conversations_container.upsert_item(existing)
+            except Exception as exc:
+                log_event(
+                    '[ORCHESTRATION] A shared conversation backing could not be updated.',
+                    extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+                )
+                return None, False
+        return conversation_id, False
+
+    try:
         cosmos_conversations_container.create_item({
             'id': conversation_id,
             'user_id': user_id,
             'last_updated': now,
-            'title': _text(title, 80) or 'New Conversation',
+            'title': _text((collaboration or {}).get('title') or title, 80) or 'New Conversation',
             'context': [],
             'tags': [],
             'strict': False,
             'chat_type': 'new',
+            **backing,
         })
     except Exception as exc:
         log_event(
@@ -794,7 +851,7 @@ def _ensure_conversation(conversation_id, user_id, title=''):
         )
         return None, False
 
-    return conversation_id, True
+    return conversation_id, not backing
 
 
 def _request_identity(user_id=None, seeded_agent=None):
@@ -891,6 +948,50 @@ def _validate_turn_memory_context(turn_context, user_id, conversation_id):
     )
 
 
+_SHARED_TARGET_KEYS = (
+    'target_type', 'display_name', 'mention_text', 'source_mode', 'selection_key', 'agent_selection_key',
+)
+
+
+def _shared_turn_details(data):
+    """Who a shared conversation's orchestrated question addressed, bounded and display-only.
+
+    Mentions are resolved against the conversation's participants when the question is
+    mirrored, so nothing here grants access or names anyone who is not already a member.
+    """
+    details = {}
+    target = data.get('invocation_target')
+    if isinstance(target, dict):
+        details['invocation_target'] = {
+            key: _text(target.get(key), 200) for key in _SHARED_TARGET_KEYS if _text(target.get(key))
+        }
+    mentions = data.get('mentioned_participants')
+    if isinstance(mentions, list):
+        details['mentioned_participants'] = [
+            {key: _text(mention.get(key), 320) for key in ('user_id', 'display_name', 'email') if _text(mention.get(key))}
+            for mention in mentions[:50] if isinstance(mention, dict)
+        ]
+    reply_to = _text(data.get('reply_to_message_id'), 200)
+    if reply_to:
+        details['reply_to_message_id'] = reply_to
+    return {key: value for key, value in details.items() if value}
+
+
+def _mirror_planned_turn(conversation_id, user_id, message_id, turn_context):
+    """Show a shared conversation's orchestrated question to everyone; the plan never waits on it."""
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id, partition_key=conversation_id,
+        )
+        if not is_orchestration_backing(conversation) or conversation.get('user_id') != user_id:
+            return
+        message = cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+        sender = normalize_collaboration_user(get_current_user_info() or {}) or {'user_id': user_id}
+        mirror_orchestration_turn(conversation, message, sender, details=turn_context.get('collaboration'))
+    except Exception as exc:
+        log_mirror_failure('question', exc)
+
+
 def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id):
     context = {
         **turn_context,
@@ -939,6 +1040,7 @@ def _persist_planned_turn(
     )
     turn_context['user_message_id'] = message_id
     turn_context['user_message_fingerprint'] = fingerprint
+    _mirror_planned_turn(conversation_id, user_id, message_id, turn_context)
     create_orchestration_run(
         plan, user_id, conversation_id=conversation_id, idempotent=True,
         turn_context=turn_context, expected_previous_run=expected_previous_run,
@@ -1666,6 +1768,9 @@ def register_route_backend_orchestration(bp):
             'replan_hint': replan_hint,
             'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         }
+        shared_details = _shared_turn_details(data)
+        if shared_details:
+            turn_context['collaboration'] = shared_details
         # Workflow proposals schedule in the user's browser time zone, and a workflow results step
         # names the local day a run finished on, so it is validated here and kept with the turn.
         # Nothing about the turn changes while both are off.
@@ -2226,6 +2331,8 @@ def register_route_backend_orchestration(bp):
                     level=logging.WARNING, extra={'reason': 'capability_context_failed', 'error_type': type(exc).__name__},
                 )
                 yield build_error_event(exc.message, resolved_conversation_id)
+            except SharedOrchestrationError as exc:
+                yield build_error_event(exc.message, conversation_id)
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION] Planning failed.',

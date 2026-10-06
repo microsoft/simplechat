@@ -42,6 +42,23 @@ def _clean_string(value):
     return str(value or '').strip()
 
 
+def is_shared_conversation_backing(conversation_item):
+    """Whether a personal conversation record is stored under its own shared conversation's id.
+
+    Orchestrate keeps a shared conversation's plans in such a hidden record (0.261.269). Its id is
+    the id every participant's browser uses for the shared conversation, so a lookup by that id
+    must treat the record as part of the shared conversation, never as anyone's personal one.
+    The classic assistant's hidden source conversation has an id of its own and is not one.
+    """
+    item = conversation_item if isinstance(conversation_item, dict) else {}
+    conversation_id = _clean_string(item.get('id'))
+    return bool(
+        conversation_id
+        and _clean_string(item.get('conversation_kind')) == COLLABORATION_SOURCE_KIND
+        and _clean_string(item.get('collaboration_conversation_id')) == conversation_id
+    )
+
+
 def normalize_collaboration_user(raw_user, fallback_user_id=None):
     raw_user = raw_user or {}
     if not isinstance(raw_user, dict):

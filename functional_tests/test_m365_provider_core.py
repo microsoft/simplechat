@@ -1340,6 +1340,71 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
     assert forbidden.call_count == 0
 
 
+def test_shared_request_consent_publishes_a_capture_without_an_approval(
+    execution, memory_runtime, real_content_helpers, monkeypatch,
+):
+    """Asking for your own file in a shared conversation shares it there; no approval waits (#1659)."""
+    from dataclasses import replace
+    import functions_m365_approvals as approval_module
+    import functions_m365_execution as execution_module
+    from test_m365_runtime_adapters import load_module, module_stub
+    from test_support.m365 import CosmosContainer, Notifications
+
+    actions = ContentGraphFixture().operations()
+    prepared = actions.prepare_file("drive-1", "item-1")
+    manifest = {
+        "id": actions.action_id, "type": "m365_onedrive", "source": "onedrive",
+        "enabled_functions": ["read_file_chunk"],
+    }
+    actions.manifest["enabled_functions"] = ["read_file_chunk"]
+    context = execution_module.M365ExecutionContext(
+        actor_user_id="user-1", data_user_id="user-1", tenant_id="tenant-1",
+        conversation_id="conversation-1", request_id="shared-chat-request",
+        shared=True, audience_version="audience-1", action_configs={actions.action_id: manifest},
+        shared_by_request=True,
+    )
+    container = CosmosContainer()
+    notifications = Notifications()
+    service = approval_module.M365ApprovalService(
+        container_factory=lambda: container, notification_sender=notifications,
+        decision_validator=lambda approval: True,
+    )
+    runtime = load_module("conversation_memory_runtime", {
+        "config": module_stub(
+            "config", CLIENTS={}, TENANT_ID="tenant-1", cosmos_conversations_container=None,
+            cosmos_messages_container=None, build_enhanced_citations_blob_service_client=lambda settings: None,
+        ),
+        "functions_appinsights": module_stub("functions_appinsights", log_event=Mock()),
+        "functions_collaboration": module_stub("functions_collaboration", build_conversation_participation_context=lambda *args: None),
+        "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
+    })
+    monkeypatch.setattr(memory_runtime.store, "authorize_publish", runtime._authorize_memory_publication)
+    monkeypatch.setattr(approval_module, "_service", service)
+    monkeypatch.setattr(execution_module, "_action_config_resolver", lambda *args: manifest)
+    monkeypatch.setattr(execution_module, "_action_selection_resolver", lambda context: [actions.action_id])
+    for module in (retrieval, transport_module):
+        monkeypatch.setattr(module, "get_m365_context", lambda **kwargs: execution_module.get_m365_execution_context())
+    monkeypatch.setattr(retrieval, "authorize_m365_capability", REAL_AUTHORIZE_CAPABILITY)
+    monkeypatch.setattr(retrieval, "authorize_m365_publication", transport_module.authorize_m365_publication)
+    forbidden = Mock(side_effect=AssertionError("Publishing a retained snapshot must not fetch source data or tokens."))
+    monkeypatch.setattr(retrieval, "authorize_m365_source", forbidden)
+    monkeypatch.setattr(M365Transport, "get_token", forbidden)
+    monkeypatch.setattr(M365Transport, "request_json", forbidden)
+    with execution_module.m365_execution_context(context):
+        published = actions.read_file_chunk(prepared["memory_id"])
+    reader = replace(context, actor_user_id="user-2", data_user_id="user-2", request_id="reader-request")
+    with execution_module.m365_execution_context(reader):
+        reused = actions.read_file_chunk(prepared["memory_id"])
+
+    assert published["snapshot_state"] == reused["snapshot_state"] == "published_snapshot"
+    assert published["text"] == reused["text"] == "file content"
+    records = list(container.items.values())
+    assert [(record.get("event_type"), record.get("source")) for record in records] == [
+        ("shared_by_request", "onedrive"),
+    ]
+    assert notifications.calls == [] and forbidden.call_count == 0
+
+
 def test_source_schemas_accept_defaults_and_reject_cross_source_capabilities():
     for action_type in operations.M365_ACTION_TYPES:
         schema = operations.get_m365_schema_for_type(action_type)

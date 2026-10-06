@@ -2,13 +2,15 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 actions in chat orchestration.
-Version: 0.261.238
+Version: 0.261.269
 Implemented in: 0.261.238
+Shared conversations read for their real audience, with the request as consent, in: 0.261.269
 
 An orchestration "Use an action" step runs in its own request context, the execution
 identity's bridge. Before 0.261.238 no Microsoft 365 execution context existed there, so
 every Microsoft 365 function refused the call with ``m365_context_required`` before reaching
-Microsoft Graph, and the step still reported completed.
+Microsoft Graph, and the step still reported completed. Before 0.261.269 a step in a shared
+conversation was refused outright (microsoft/simplechat#1659).
 
 These tests run the real action runner, step scope, Microsoft 365 runtime, execution
 boundary, approval service and email plugin through a real Flask bridge. Storage, tokens,
@@ -422,11 +424,37 @@ def test_ordinary_graph_outcomes_stay_findings(env, world):
     assert request_record(env, world)["status"] == "completed"
 
 
-def test_shared_conversations_are_refused_before_any_microsoft_365_work(env, world):
+def test_shared_conversation_step_reads_mail_with_the_requests_own_consent(env, world, monkeypatch):
+    """A shared conversation's step reads for its real audience; asking for the mail is the consent."""
+    approvals = CosmosContainer()
+    monkeypatch.setattr(env.approvals, "_service", env.approvals.M365ApprovalService(
+        container_factory=lambda: approvals, notification_sender=lambda approval: None,
+    ))
     world.participation = {"collaboration_conversation_id": "shared-1"}
-    error = stopped(env, world)
-    assert error.orchestration_failure_code == "m365_shared_conversation"
-    assert world.token_requests == [] and world.requests == [] and world.jobs.items == {}
+    world.replies = [tool_call()]
+    result, _context = run_step(env, world)
+
+    request_id = env.orchestration.step_request_id(REQUEST_KEY)
+    assert result["calls"] == 1 and "Quarterly review" in result["findings"]
+    assert len(world.graph_calls) == 1
+    assert world.token_requests and all(request["shared"] is True for request in world.token_requests)
+    records = list(approvals.items.values())
+    # One audit event says the requester shared their mail by asking; no approval is waiting.
+    assert [(record["event_type"], record["source"]) for record in records] == [("shared_by_request", "email")]
+    assert records[0]["context"]["request_id"] == request_id and records[0]["context"]["shared"] is True
+    assert request_record(env, world)["status"] == "completed"
+
+
+def test_shared_conversation_step_still_needs_a_current_participant(env, world):
+    world.participation = {"collaboration_conversation_id": "shared-1"}
+
+    def removed(*args):
+        raise PermissionError("You are no longer a participant in this conversation.")
+
+    with patch.object(env.runtime, "assert_user_can_participate_in_collaboration_conversation", removed):
+        with pytest.raises(PermissionError):
+            run_step(env, world)
+    assert world.token_requests == [] and world.requests == [] and world.graph_calls == []
 
 
 def test_send_only_action_is_refused_as_read_only(env, world):

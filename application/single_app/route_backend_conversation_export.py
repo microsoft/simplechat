@@ -14,6 +14,7 @@ from html import escape as _escape_html
 from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup, NavigableString, Tag
+from collaboration_models import is_shared_conversation_backing
 from content_screening.access import public_history_messages
 from content_screening.contracts import DocumentHeldError
 from config import *
@@ -609,12 +610,18 @@ def _load_exportable_conversation_for_user(
     user_id: str,
     conversation_id: str,
 ) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
-    """Load a conversation and its messages when the user is allowed to export it."""
+    """Load a conversation and its messages when the user is allowed to export it.
+
+    Orchestrate's backing record shares its shared conversation's id; the shared conversation
+    is what gets exported.
+    """
     try:
         conversation = cosmos_conversations_container.read_item(
             item=conversation_id,
             partition_key=conversation_id
         )
+        if is_shared_conversation_backing(conversation):
+            raise LookupError('A shared conversation backing is exported as its shared conversation.')
         if conversation.get('user_id') != user_id:
             debug_print(f"Export: user {user_id} does not own conversation {conversation_id}")
             return None

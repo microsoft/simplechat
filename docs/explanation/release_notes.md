@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.269)**
+
+#### Bug Fixes
+
+*   **Orchestrate Action and Agent Steps Work Again, Including Microsoft 365**
+    *   With **Orchestrate** on, "what are my emails" failed with "A required retained result is unavailable or changed" in personal and shared chats, while the same request worked with Orchestrate off. Agent and action steps now trust the signed-in session the way manual chat does: access to the conversation, run and exact agent or action is checked, and the step runs without comparing configuration. Web search, linked-page reading and deep research keep their configuration checks.
+    *   Local agents now run as plan steps. An agent that uses Microsoft 365 actions gets a Microsoft 365 request for its own actions, with the same read-only and signed-in-user rules as an action step.
+    *   An @agent or @model tag in an Orchestrate message now chooses that agent or model, like the pickers do.
+    *   Editing an agent or action no longer invalidates results it already produced. A result stays readable until the user loses access to that agent or action.
+    *   (Ref: #1660, #1661, `functions_orchestration_external_sources.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_adapters.py`, `functions_orchestration_m365.py`, `agent_delegation_runtime.py`, `Composer.tsx`, [Session-Trusted Action and Agent Steps Fix](fixes/ORCHESTRATION_SESSION_TRUSTED_ACTION_AGENT_STEPS_FIX.md))
+
+*   **Orchestrate Respects Shared Conversations**
+    *   In a shared conversation with Orchestrate on, a message that addresses only people, such as "@person hey", is now posted to them instead of being sent to the model, as it is with Orchestrate off.
+    *   Only the person who started the shared conversation plans in it. Their question and the run's answer are posted to the shared thread, where every participant sees them arrive. Plans run in a hidden conversation with the shared conversation's ID and workspace lock instead of a private copy, and earlier private copies no longer appear in conversation lists. Other participants' requests are answered the classic way.
+    *   Reopening the shared conversation, and its images, summaries, exports, uploads and Microsoft 365 action cards, keep using the shared conversation for every participant. An answer that finishes later, for example after a waiting step, updates its shared copy. Nothing is posted once the person who started the conversation has left it, and deleting the shared conversation deletes its plans.
+    *   Asking for your own Microsoft 365 data in a shared conversation is now your consent to share what that request reads, in chat and in plans, recorded in your audit history without a prompt. Sharing earlier answers' history and workflow Run as approvals still ask.
+    *   (Ref: #1659, `functions_orchestration_collaboration.py`, `route_backend_orchestration.py`, `collaboration_models.py`, `route_backend_conversations.py`, `functions_m365_approvals.py`, `functions_m365_runtime.py`, `mentions.ts`, `chatStore.ts`, [Shared Conversations Fix](fixes/ORCHESTRATION_SHARED_CONVERSATIONS_FIX.md))
+
 ### **(v0.261.268)**
 
 #### Bug Fixes

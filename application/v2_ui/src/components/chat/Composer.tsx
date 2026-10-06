@@ -86,7 +86,13 @@ import {
     type TabularRunSettings,
 } from '../../lib/tabularRunEstimate';
 import { LargeRunDialog } from './LargeRunDialog';
-import { resolveInvocationTarget, type MentionSuggestion } from '../../lib/mentions';
+import {
+    conversationParticipants,
+    extractMentionedParticipants,
+    resolveInvocationTarget,
+    sharedConversationTarget,
+    type MentionSuggestion,
+} from '../../lib/mentions';
 import { useUiStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
 import { chatWidthClass } from '../../lib/chatWidth';
@@ -236,6 +242,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const canPost = !shared || collaboration?.can_post_messages === true;
     const awaitingInvite = Boolean(shared && collaboration?.can_accept_invite);
     const checkingAccess = shared && !collaboration;
+    // Plans in a shared conversation run for the person who started it (the server serializes
+    // that person as the conversation's `user_id`); everyone else asks the assistant directly.
+    const sharedOrchestrationAllowed = Boolean(
+        shared && collaboration && bootstrap?.user?.id && collaboration.user_id === bootstrap.user.id,
+    );
     const replyTo = useCollaborationStore((state) => state.replyTo);
     const setReplyTo = useCollaborationStore((state) => state.setReplyTo);
 
@@ -1029,11 +1040,24 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // Orchestration takes a different road entirely: the server plans the work rather than
         // running a chat stream, so the large-run confirmation — a manual-flow concern about a
         // tabular export the planner has not chosen — does not apply.
+        //
+        // A shared conversation applies its own rule first, exactly as manual mode does: a
+        // message that only addresses people is posted to them and never planned. Only the person
+        // who started the conversation plans in it, so anyone else's request to the assistant is
+        // answered the classic way.
+        const sharedRequest = orchestrating && shared ? sharedOrchestrationRequest(outgoing.message) : null;
+        if (orchestrating && shared && !sharedRequest) {
+            dispatch(outgoing);
+            return;
+        }
         if (orchestrating) {
             // Asked inside the click or key press that sent the message, because that is the
             // only moment a browser shows its prompt. Does nothing once it has been answered.
             void requestDesktopNotificationPermission();
-            dispatchOrchestration(outgoing.message, outgoing.promptInfo);
+            dispatchOrchestration(outgoing.message, outgoing.promptInfo, sharedRequest);
+            if (sharedRequest) {
+                setReplyTo(null);
+            }
             return;
         }
 
@@ -1181,7 +1205,35 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         return seeds;
     };
 
-    const dispatchOrchestration = (message: string, promptInfo: Json | null = null) => {
+    /**
+     * Who a shared conversation's planned question addresses, or null when it isn't planned.
+     *
+     * Null when the message addresses only people, or when the reader didn't start the
+     * conversation. The plan request carries the target, mentions and reply so the server
+     * can post the question to the shared thread as it was asked.
+     */
+    const sharedOrchestrationRequest = (message: string): Record<string, unknown> | null => {
+        const target = sharedConversationTarget(message, options, {
+            agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        });
+        if (!target || !sharedOrchestrationAllowed) {
+            return null;
+        }
+        return {
+            invocation_target: target,
+            mentioned_participants: extractMentionedParticipants(
+                message, conversationParticipants(collaboration),
+            ),
+            ...(replyTo?.message_id ? { reply_to_message_id: replyTo.message_id } : {}),
+        };
+    };
+
+    const dispatchOrchestration = (
+        message: string,
+        promptInfo: Json | null = null,
+        sharedDetails: Record<string, unknown> | null = null,
+    ) => {
         if (attachedPrompt && promptInfo) {
             rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
@@ -1194,7 +1246,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             conversationId,
             message,
             approvalMode: effectiveApprovalMode,
-            seeds: buildOrchestrationSeeds(message, promptInfo),
+            // Who a shared conversation's question addressed travels with the plan request, so
+            // the server can post the question to the shared thread as it was asked.
+            seeds: { ...buildOrchestrationSeeds(message, promptInfo), ...(sharedDetails ?? {}) },
         });
         clearDraft();
         stopTyping();

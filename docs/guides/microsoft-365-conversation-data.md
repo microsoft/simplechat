@@ -29,7 +29,7 @@ walk; continuation and coverage results describe the available search window.
 | Decision | What it authorizes |
 | --- | --- |
 | Microsoft Entra consent/sign-in | The application may call the selected Microsoft 365 APIs as the user. Source permissions still apply. |
-| Sharing acknowledgement | Retrieved answers and retained source evidence may be published to conversation participants. |
+| Sharing acknowledgement | Retrieved answers and retained source evidence may be published to conversation participants. In a shared conversation, your own chat or plan request is this acknowledgement for the data it reads. |
 | Extended analysis | The selected files may receive additional staged processing beyond the fast windows. |
 | Workflow Run as approval | A specific workflow revision may use the selected person's connected account. A revision that person saved themselves needs no separate approval. |
 | Outgoing action review | The data owner may send the exact prepared email or invitation in manual mode, or stop a configured delayed delivery. |
@@ -43,11 +43,20 @@ The **Settings** tab on Profile keeps independent sharing preferences for
 Calendar, Email, OneDrive, and SPO. They apply across personal, group, and global
 actions rather than being tied to one agent you might not be able to edit.
 
-In shared conversations, choose **Allow this request**, **Allow for today**,
-**Always allow**, or **No**. Today expires at local midnight in the confirmed
-time zone. An action owner can permit a shorter maximum duration. An Always
-preference does not silently create a fresh daily approval when that action's
-shorter approval has expired.
+Since **0.261.269**, asking for your own Microsoft 365 data in a shared
+conversation is your consent to share what that request reads with the
+conversation's participants, with or without **Orchestrate**. You aren't
+prompted, and each request and source is recorded in your audit history as
+shared by your request. Before 0.261.269 these requests waited for a sharing
+approval, and plans refused them.
+
+Sharing a private conversation that already used Microsoft 365 data, and a
+workflow that runs as you in a shared conversation, still ask. For those,
+choose **Allow this request**, **Allow for today**, **Always allow**, or
+**No**. Today expires at local midnight in the confirmed time zone. An action
+owner can permit a shorter maximum duration. An Always preference does not
+silently create a fresh daily approval when that action's shorter approval has
+expired.
 
 Declining a source lets the request continue without that source. Private
 single-user chats do not require a sharing acknowledgement merely because
@@ -74,11 +83,13 @@ fresh source sign-in.
 ## Use Microsoft 365 in a plan
 
 Implemented in version: **0.261.238** (`application/single_app/config.py`).
+Agent steps and shared conversations: **0.261.269**.
 
 With **Orchestrate** on in V2 chat, a plan can include a **Use an action** step
 that runs one of your Calendar, Email, OneDrive, or SharePoint Online actions.
 The step reads as you, the person who sent the request, and uses only that one
-action. An agent step doesn't make its agent's Microsoft 365 actions available.
+action. An **Ask an agent** step whose agent uses Microsoft 365 actions reads
+with that agent's own actions, under the same rules.
 
 Plans only read Microsoft 365 data. Sending mail, sending calendar invitations,
 and marking mail as read aren't offered to a plan step, even when the action
@@ -95,10 +106,12 @@ Some file analysis needs your approval first. The step then stops and links to
 from failed step** afterward: the retried step continues the same Microsoft 365
 request, so an approval you gave applies while the action is unchanged.
 
-Plans don't use Microsoft 365 in shared conversations, and a step there stops
-before reading anything. An answer from a plan step that read Microsoft 365
-counts as Microsoft 365 history: sharing that conversation later asks for your
-approval, as it does for a chat answer.
+In a shared conversation, a plan step reads for the conversation's
+participants, and your request is your consent to share what it reads, as it
+is in chat. Only the person who started a shared conversation plans in it. An
+answer from a plan step that read Microsoft 365 counts as Microsoft 365
+history: sharing a private conversation later asks for your approval, as it
+does for a chat answer.
 
 ## Review an email or meeting before delivery
 
@@ -149,8 +162,9 @@ configuration is a different failure and must not be described as expired login.
 ## Share evidence deliberately
 
 A sharing acknowledgement covers **retained source evidence, not only the final
-answer**. Other participants can reuse the published snapshot without having
-access to its original Microsoft 365 file. New remote calls still use the
+answer**. Your own request in a shared conversation is that acknowledgement for
+the files it reads. Other participants can reuse the published snapshot without
+having access to its original Microsoft 365 file. New remote calls still use the
 requesting participant's delegated identity.
 
 The same rules apply when a private conversation is shared later. Published
