@@ -13,6 +13,7 @@
         - [Deployment Prompts](#Deployment-Prompts)
     - [Post Deployment Tasks](#Post-Deployment-Tasks)
 - [Key Vault secret permissions](#key-vault-secret-permissions)
+- [Video Indexer region and permissions](#video-indexer-region-and-permissions)
 - [Cleanup / Deprovision](#Cleanup-/-Deprovisioning)
 - [Helpful Info](#Helpful-Info)
     - [Private Networking](#Private-Networking)
@@ -69,6 +70,7 @@ Ensure the following resource providers are registered in your subscription:
 - `Microsoft.ContainerRegistry`
 - `Microsoft.Insights`
 - `Microsoft.OperationalInsights`
+- `Microsoft.VideoIndexer` (only when `deployVideoIndexerService` is `true`)
 
 
 ## Deployment Process
@@ -364,6 +366,46 @@ If your platform team owns IAM instead, `configureApplicationPermissions=false` 
 
 Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py); it checks both Bicep modules, generated ARM, permission-disable conditions, and runtime principals without deploying resources.
 
+## Video Indexer region and permissions
+
+Implemented in application version **0.261.260** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
+
+### Choosing a Video Indexer region
+
+Azure Video Indexer is not offered in every region. North Central US, for example, has no Video Indexer, so `deployVideoIndexerService=true` in that region used to fail Azure Resource Manager validation before anything was deployed. Set `VIDEO_INDEXER_LOCATION` to a region that offers Video Indexer and keep the rest of SimpleChat in `AZURE_LOCATION`:
+
+```powershell
+azd env set DEPLOY_VIDEO_INDEXER_SERVICE true
+azd env set VIDEO_INDEXER_LOCATION centralus
+azd provision --preview
+```
+
+- Leave `VIDEO_INDEXER_LOCATION` unset to deploy Video Indexer in `AZURE_LOCATION`, as earlier versions did.
+- When the two regions differ, the deployment also creates `<appName><environment>vi`, a Standard general-purpose v2 storage account in the Video Indexer region, because Video Indexer keeps its media in a storage account in its own region. Only Video Indexer uses this account; SimpleChat uploads video to the Video Indexer API and never reads it. With `enablePrivateNetworking=true`, its firewall denies public traffic and admits trusted Azure services, which is how Video Indexer reaches firewalled storage. It needs no private endpoint.
+- Choose the region before the first deployment that enables Video Indexer. An existing account cannot move regions; Azure rejects a later deployment that asks for the same account name in another region.
+- The preprovision hook compares the selected region with the regions the `Microsoft.VideoIndexer` provider reports. If Video Indexer is unavailable there, the hook lists the supported regions and stops before provisioning. If the list cannot be read, it warns and continues, because Azure Resource Manager still validates the region.
+
+### Application access
+
+SimpleChat calls the Video Indexer `generateAccessToken` Azure Resource Manager API with the App Service **system-assigned** managed identity, whatever `authenticationType` is. Whenever `configureApplicationPermissions=true`, the container app and the optional native Python app each receive a role on the Video Indexer account:
+
+| Cloud | Role | Role definition ID |
+|---|---|---|
+| Azure Commercial | Video Indexer Account Contributor | `3f99eaab-6f59-4877-adf5-1cacd22e20b0` |
+| Azure Government and custom clouds | Contributor | `b24988ac-6180-42a0-ab88-20f7382dd24c` |
+
+Video Indexer Account Contributor is limited to Video Indexer accounts and their access tokens. Contributor is used where that newer built-in role has not been confirmed. The assignment name is `guid(videoIndexerService.id, webApp.id, 'video-indexer-app-access', <role definition ID>)`, and these grants live in `modules/setVideoIndexerPermissions.bicep`.
+
+Earlier deployer versions created the account without this grant, so video processing failed authorization until an administrator added **Contributor** by hand. In Azure Commercial, that manual grant does not conflict with the new assignment; it can stay, or you can remove it afterward to keep only the narrower role. In Azure Government and custom clouds, an identical manual Contributor assignment on the account makes the next deployment return `RoleAssignmentExists`. Keep the manual grant and adopt its GUID in an environment-specific copy of `modules/setVideoIndexerPermissions.bicep`, as described for Key Vault in [Upgrading and adopting existing ARM assignments](#upgrading-and-adopting-existing-arm-assignments).
+
+Video Indexer's own identity keeps **Storage Blob Data Contributor** on the storage account that holds its media. That assignment moved into the same module with an unchanged name, so upgrades do not recreate it.
+
+### Application settings
+
+Post-provision configuration writes the Video Indexer settings only when the deployment created the account, and records the account's own region rather than the deployment region. A provisioning run with `deployVideoIndexerService=false` leaves an existing Video Indexer configuration in **Admin Settings > AI Video Intelligence** untouched; earlier versions blanked the account name and ID and reset the location on every such run.
+
+Offline coverage is in [test_video_indexer_deployment_region_permissions.py](../../functional_tests/test_video_indexer_deployment_region_permissions.py) and [test_deployment_configuration.py](../../functional_tests/test_deployment_configuration.py).
+
 ---
 
 ### Post Deployment Tasks:
@@ -615,6 +657,10 @@ If you do not want this deployment to create new Azure OpenAI model deployments,
 **Error: "Resource 'Microsoft.VideoIndexer/accounts' not found"**
 - **Cause:** Video Indexer API capabilities differ by cloud and region
 - **Solution:** Use the cloud-appropriate API profile. Azure Government deployments use the `2024-01-01` profile; commercial deployments use `2025-04-01`; custom clouds can override the API version and endpoint.
+
+**Error: "The provided location '\<region\>' is not available for resource type 'Microsoft.VideoIndexer/accounts'"**
+- **Cause:** Azure Video Indexer is not offered in the region Video Indexer is being deployed to.
+- **Solution:** Run `azd env set VIDEO_INDEXER_LOCATION <supported-region>` and rerun `azd up`. The rest of SimpleChat stays in `AZURE_LOCATION`. See [Video Indexer region and permissions](#video-indexer-region-and-permissions).
 
 ### Post-Deployment Issues
 

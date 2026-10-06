@@ -309,7 +309,10 @@ The endpoint comes first because the account details are read against it: use
 `https://api.videoindexer.ai` for Azure Public and `https://api.videoindexer.ai.azure.us`
 for Azure Government, and another value only for a non-standard deployment. The account id,
 name, location, resource group and subscription follow, and the indexing timeout bounds how
-long one file may take.
+long one file may take. All five account fields are required: the name, resource group and
+subscription identify the account when SimpleChat requests an access token, and the location
+and account id address its API. Video Indexer is not offered in every region, so the account
+can sit in a different region from SimpleChat; enter the account's own region as the location.
 
 ### AI Voice Conversations {#ai-voice-chat-section}
 

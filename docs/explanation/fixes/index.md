@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Video Indexer Deployment Region and Permissions Fix](VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md)
 - [Deleted Messages Shown as Masked Fix](SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md)
 - [Shared Conversation Diagram Editing Fix](SHARED_CONVERSATION_DIAGRAM_EDITING_FIX.md)
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
