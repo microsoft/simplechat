@@ -2,8 +2,9 @@
 # test_document_search_metadata_sync.py
 """
 Functional test for durable, batched document search metadata sync.
-Version: 0.261.052
+Version: 0.261.053
 Implemented in: 0.261.052
+Updated in: 0.261.053
 
 This test ensures that document metadata edits no longer do per-chunk Search work inside the
 request: update_document() records a durable sync request in the same save, a background worker
@@ -71,6 +72,8 @@ LOADED_FUNCTIONS = {
     "_complete_document_search_sync_pass",
     "_delete_document_search_sync_record",
     "_read_document_for_search_sync",
+    "_approved_search_share_principals",
+    "_invalidate_document_search_results_cache",
     "run_document_search_metadata_sync",
     "process_due_document_search_metadata_syncs",
 }
@@ -254,6 +257,7 @@ class Harness:
         self.events = []
         self.logs = []
         self.blob_tag_calls = []
+        self.cache_invalidations = []
         self.search_writes_frozen = False
         self.settings = FakeSettingsContainer()
         self.user_documents = FakeDocumentsContainer("user_id")
@@ -321,6 +325,11 @@ class Harness:
             "add_file_task_to_file_processing_log": lambda **_kwargs: None,
             "calculate_processing_percentage": lambda document_item: document_item.get("percentage_complete", 0),
             "propagate_tags_to_blob_metadata": lambda *args: harness.blob_tag_calls.append(args),
+            "invalidate_personal_search_cache": lambda user_id: harness.cache_invalidations.append(("personal", user_id)),
+            "invalidate_group_search_cache": lambda group_id: harness.cache_invalidations.append(("group", group_id)),
+            "invalidate_public_workspace_search_cache": (
+                lambda workspace_id: harness.cache_invalidations.append(("public", workspace_id))
+            ),
             "log_event": lambda message, extra=None, **kwargs: harness.logs.append((message, extra, kwargs)),
         }
         module = ast.Module(body=nodes, type_ignores=[])
@@ -499,6 +508,35 @@ def test_worker_projects_latest_pending_values_and_clears_the_request():
     assert all(chunk["document_tags"] == ["bills"] and chunk["title"] == "Renamed" for chunk in harness.user_search.chunks.values())
     assert all(set(action) == {"id", "document_tags", "title"} for batch in harness.user_search.merge_batches for action in batch)
     assert harness.blob_tag_calls == [("doc-1", ["bills"], "owner-1", None, None)]
+
+
+def test_worker_clears_cached_search_results_for_the_owner_and_approved_recipients():
+    """A sync that changed chunks clears cached results for every scope that can see the document."""
+    harness = Harness()
+    harness.add_personal_document(
+        chunk_count=3,
+        shared_user_ids=["viewer-1,approved", "viewer-2,not_approved"],
+    )
+    harness["update_document"](document_id="doc-1", user_id="owner-1", tags=["bills"])
+
+    harness["run_document_search_metadata_sync"]("document_search_metadata_sync:personal:doc-1")
+
+    assert harness.cache_invalidations == [("personal", "owner-1"), ("personal", "viewer-1")]
+
+    harness.cache_invalidations.clear()
+    harness.add_group_document(shared_group_ids=["group-2,approved", "group-3,not_approved"])
+    harness["update_document"](document_id="group-doc-1", group_id="group-1", user_id="editor-1", tags=["q3"])
+    harness["run_document_search_metadata_sync"]("document_search_metadata_sync:group:group-doc-1")
+
+    assert harness.cache_invalidations == [("group", "group-1"), ("group", "group-2")]
+
+    harness.cache_invalidations.clear()
+    harness.add_personal_document(document_id="doc-empty", chunk_count=0)
+    harness["update_document"](document_id="doc-empty", user_id="owner-1", tags=["bills"])
+    result = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:personal:doc-empty")
+
+    assert result["status"] == "complete" and result["chunks_updated"] == 0
+    assert harness.cache_invalidations == []
 
 
 def test_worker_projects_a_newer_edit_that_arrives_mid_sync():
