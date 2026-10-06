@@ -117,6 +117,7 @@ regeneration instructions didn't change.
 | `application/single_app/functions_workflow_result_reader.py` | The hand-off read walks the report's lineage. |
 | `functional_tests/test_workflow_handoff_result_reader.py` | A fixture with real lineage, and the tests below. |
 | `functional_tests/test_orchestration_workflow_handoff_off_golden.py`, `functional_tests/test_support/orchestration_workflow_handoff_off_golden.json` | The recaptured fixture. |
+| `functional_tests/test_workflow_handoff_builder.py` | The Phase 4 schema digest pin, refreshed to the a5a5b1c53 value. |
 | `docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md` | The reader's checks, the performance note, and the files and test tables. |
 | `docs/explanation/release_notes.md` | 0.261.252. |
 | `application/single_app/config.py` | Version `0.261.252`. |
@@ -168,13 +169,24 @@ lineage once and the walk succeeds. With the walk removed, the 3-document read
 drops from 27 node-result loads to 2, and the 200-document read from 1,409 to
 2.
 
+### Phase 4 digest pin
+
+`functional_tests/test_workflow_handoff_builder.py` pins digests of the Phase 4
+blueprint schema, payloads, validation and dry run, to prove hand-off left them
+unchanged. Its `test_the_phase_4_blueprint_and_payloads_are_unchanged` failed at
+15feec650 because the schema pin predated
+[#1641](https://github.com/microsoft/simplechat/pull/1641), which added the
+`merge` task schema. The pin now holds the value V2 computes at a5a5b1c53, after
+#1641 and before hand-off merged, so the test still proves hand-off didn't change
+the Phase 4 schema. The other four pins are unchanged.
+
 ### Before and after
 
 | Before | After |
 | --- | --- |
 | A report whose consumed-input receipts don't chain to the run's results is read and posted to chat. | It's refused with `workflow_result_invalid` before its text is loaded. |
 | A missing or damaged parent result doesn't stop the read. | A missing parent is `workflow_result_not_found`; a damaged one is `workflow_result_invalid`. |
-| A hand-off's report read loads the report's manifest and text. | It also walks the report's lineage. The 200-document read makes 1,409 node-result loads, about 1.9 seconds with the in-memory store. |
+| A hand-off's report read loads the report's manifest and text. | It also walks the report's lineage. The 200-document read makes 1,409 node-result loads, about 1.7 seconds with the in-memory store. |
 | The hand-off off-golden failed 4 of 10 cases. | It passes 10 of 10 under pytest, optimized pytest, and as a normal or optimized script. |
 
 ## Limitations
