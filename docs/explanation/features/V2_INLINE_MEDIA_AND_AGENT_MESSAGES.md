@@ -20,6 +20,10 @@ usually as short-lived signed links from an OpenAPI action. The V2 chat now pres
 - Media that cannot play (an expired link, a host the policy does not allow, an unsupported format)
   falls back to a short notice and a link.
 
+Since 0.261.260, two or more images or clips in a row show as a gallery of tiles, three to a row,
+with one viewer for all of them, and recordings can be downloaded. See
+[V2 Media Galleries and Viewer](V2_MEDIA_GALLERIES_AND_VIEWER.md).
+
 Messages an agent posts into a conversation through the Simple Chat action
 (`add_conversation_message`) are marked as agent-authored markdown and render like the agent's
 replies, so a briefing posted to a group conversation keeps its headings, tables, links, images and

@@ -3,24 +3,50 @@
 //
 // Collapsed, it is a single line: play/pause, the recording's title, elapsed and total time, and
 // a thin progress line. Pressing play (or the chevron) expands it to add a seek slider, stop,
-// volume and mute, and playback speed. It stays in the message rather than floating over the
-// thread, so a briefing that cites several recordings keeps each one beside the text about it.
+// volume and mute, playback speed, download and a link to open it in a new tab. It stays in the
+// message rather than floating over the thread, so a briefing that cites several recordings
+// keeps each one beside the text about it. The conversation drawer lists recordings with the
+// same player, adding a button that scrolls to the message the recording is in.
 //
 // Built from <span>, <button> and <input> only: links sit inside <p> and <li> elements, where
 // block elements would be invalid HTML.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { AudioLines, ChevronDown, ExternalLink, Pause, Play, Square, Volume2, VolumeX } from 'lucide-react';
+import {
+    AudioLines,
+    ChevronDown,
+    Download,
+    ExternalLink,
+    Loader2,
+    LocateFixed,
+    Pause,
+    Play,
+    Square,
+    Volume2,
+    VolumeX,
+} from 'lucide-react';
 import { claimPlayback, formatMediaTime, PLAYBACK_RATES, safeMediaUrl } from '../../lib/inlineMedia';
 import { InlineMediaFallback } from './InlineMediaFallback';
+import { useMediaDownload } from './useMediaDownload';
 
 const ICON_BUTTON =
     'inline-flex size-8 shrink-0 items-center justify-center rounded-full text-text-2 transition-colors ' +
-    'hover:bg-surface-2 hover:text-text-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent';
+    'hover:bg-surface-2 hover:text-text-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ' +
+    'disabled:cursor-not-allowed disabled:opacity-50';
 
-export function InlineAudioPlayer({ src, title }: { src: string; title: string }) {
+export function InlineAudioPlayer({
+    src,
+    title,
+    onLocate,
+}: {
+    src: string;
+    title: string;
+    /** Scrolls to the message the recording is in, where the player is listed away from it. */
+    onLocate?: () => void;
+}) {
     const audioRef = useRef<HTMLAudioElement>(null);
+    const { download, busy: downloading } = useMediaDownload();
     const [playing, setPlaying] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const [position, setPosition] = useState(0);
@@ -194,6 +220,16 @@ export function InlineAudioPlayer({ src, title }: { src: string; title: string }
                     >
                         {rate}x
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => void download('audio', src, title)}
+                        disabled={downloading}
+                        aria-label={`Download ${title}`}
+                        title="Download"
+                        className={ICON_BUTTON}
+                    >
+                        {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    </button>
                     <a
                         href={safeMediaUrl(src) ?? undefined}
                         target="_blank"
@@ -204,6 +240,17 @@ export function InlineAudioPlayer({ src, title }: { src: string; title: string }
                     >
                         <ExternalLink size={14} />
                     </a>
+                    {onLocate && (
+                        <button
+                            type="button"
+                            onClick={onLocate}
+                            aria-label={`Show ${title} in the conversation`}
+                            title="Show in conversation"
+                            className={ICON_BUTTON}
+                        >
+                            <LocateFixed size={14} />
+                        </button>
+                    )}
                 </span>
             )}
         </span>
