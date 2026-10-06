@@ -1,7 +1,7 @@
 # functions_orchestration_workflow_proposals.py
 """Decisions on workflow proposals from chat orchestration: status, accept, deny and draft.
 
-Version: 0.261.207
+Version: 0.261.242
 Implemented in: 0.261.207
 
 A plan's ``workflow_propose`` step describes a personal workflow and creates nothing
@@ -158,10 +158,13 @@ _FORBIDDEN_DRAFT_CODES = frozenset({'workflows_unavailable', 'not_allowed'})
 _CONFLICT_DRAFT_CODES = frozenset({
     'quota_exceeded', 'workflow_conflict', 'agent_unavailable', 'reference_unknown', 'reference_unauthorized',
     'file_sync_source_unavailable', 'workflow_unavailable', 'workflow_definition_conflict', 'workflow_deleted',
+    'merge_unavailable',
 })
 _INVALID_DRAFT_CODES = frozenset({
     'blueprint_invalid', 'unsupported_field', 'too_many_tasks', 'trigger_invalid', 'cadence_below_minimum',
     'invalid_workflow', 'invalid_workflow_definition', 'invalid_workflow_settings', 'invalid_workflow_alerts',
+    'merge_inputs_required', 'merge_trigger_required', 'merge_options_invalid', 'merge_runner_invalid',
+    'merge_format_invalid',
 })
 _INVALID_WORKFLOW_MESSAGE = 'Invalid workflow settings. Review the task, runner, trigger, and document inputs.'
 _SAFE_POINTER = re.compile(r'^(/[A-Za-z0-9_-]{1,64}){0,8}$')

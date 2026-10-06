@@ -18,6 +18,9 @@ from functions_generated_export_contracts import (
     GeneratedFileExportStream,
 )
 from functions_generated_export_registry import (
+    ASSEMBLED_DOCUMENT_PROFILE,
+    EXACT_TABULAR_DEFAULT_SHEET_NAME,
+    EXACT_TABULAR_WORKBOOK_PROFILE,
     GENERATED_IMAGE_REFERENCE_PATTERN,
     PREPARED_SLIDE_DECK_VERSION,
     get_prepared_slide_deck_schema,
@@ -29,6 +32,7 @@ from functions_structured_file_renderers import (
     _SourceChecks,
     _iter_records,
     _render_text,
+    _tabular_request_columns,
     _validate_column_names,
     _validate_export_limits,
     _validate_source_limits,
@@ -252,15 +256,55 @@ def _image_resolver(callback, checks, boundary):
     return resolve
 
 
+def _render_assembled_document(source, request, entry, *, max_output_bytes, check, limits, document_reader):
+    """Assemble a merged file again from its original files and deliver it only if identical."""
+    # The merge engine and its assemblers load only when a merged file is rendered.
+    from functions_document_merge_assembly import DocumentAssemblyError, assembled_output_format, reassemble_document
+
+    if not callable(document_reader):
+        raise GeneratedFileExportError('unsupported_source', 'A merged file needs its original files.')
+    limits = GeneratedFileExportLimits() if limits is None else limits
+    _validate_source_limits(source, limits, max_output_bytes, check)
+    checks = _SourceChecks(source, check)
+    checks.run()
+    value = source.read_value()
+    try:
+        if assembled_output_format(value) != entry.format_id:
+            raise GeneratedFileExportError('unsupported_source', 'This merged file is a different format.')
+        merged, content_sha256 = reassemble_document(
+            value, document_reader, max_output_bytes=max_output_bytes, check=checks.run,
+        )
+    except DocumentAssemblyError as exc:
+        raise GeneratedFileExportError(exc.code, exc.message) from exc
+    try:
+        checks.run()
+        return GeneratedFileExportStream(
+            file_content=merged.open_stream(), output_format=entry.format_id, media_type=entry.media_type,
+            size_bytes=merged.size_bytes, content_sha256=content_sha256, record_count=0,
+            profile=request.profile, source_kind=source.kind, file_extension=entry.file_extension,
+            character_count=None, metadata={'renderer_profile': request.profile},
+        )
+    except BaseException:
+        merged.close()
+        raise
+
+
 def _render_generated_office_source(
     source, request, *, max_output_bytes, check=None, limits=None, office_limits=None,
-    image_resolver=None,
+    image_resolver=None, document_reader=None,
 ):
     entry = resolve_generated_file_export_format(request, getattr(source, 'kind', None))
     if entry.renderer_id != 'office':
         raise GeneratedFileExportError('unsupported_format', 'This Office export format is not supported.')
     if image_resolver is not None and (not entry.rich_media or not callable(image_resolver)):
         raise GeneratedFileExportError('invalid_options', 'This export does not accept the supplied image resolver.')
+    if request.profile == ASSEMBLED_DOCUMENT_PROFILE:
+        return _render_assembled_document(
+            source, request, entry, max_output_bytes=max_output_bytes, check=check, limits=limits,
+            document_reader=document_reader,
+        )
+    if document_reader is not None:
+        raise GeneratedFileExportError('invalid_options', 'Only a merged file reads original files.')
     limits = GeneratedFileExportLimits() if limits is None else limits
     _validate_source_limits(source, limits, max_output_bytes, check)
     renderer_limits = _office_limits(office_limits, limits, max_output_bytes)
@@ -272,12 +316,17 @@ def _render_generated_office_source(
     rows = None
     with ExitStack() as resources:
         if entry.format_id == 'xlsx':
-            columns = _validate_column_names(request.columns, limits, checks, label='XLSX')
+            columns = _validate_column_names(
+                _tabular_request_columns(source, request), limits, checks, label='XLSX',
+            )
+            sheet_name = request.sheet_name
+            if sheet_name is None and request.profile == EXACT_TABULAR_WORKBOOK_PROFILE:
+                sheet_name = EXACT_TABULAR_DEFAULT_SHEET_NAME
             rows = resources.enter_context(ClosingExportResource(
                 boundary.rows(_workbook_records(source, request, columns, limits, checks)),
             ))
             prepared = office.PreparedWorkbook((
-                office.PreparedSheet(request.sheet_name, columns, rows, checks.expected_count),
+                office.PreparedSheet(sheet_name, columns, rows, checks.expected_count),
             ))
             renderer = office.render_prepared_xlsx
         elif entry.format_id in ('docx', 'pdf'):

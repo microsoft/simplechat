@@ -1,7 +1,7 @@
 # functions_orchestration_workflows.py
 """Workflow proposals from chat orchestration: plan checks, the proposal step and degrading.
 
-Version: 0.261.207
+Version: 0.261.242
 Implemented in: 0.261.207
 
 A plan proposes a personal workflow with one ``workflow_propose`` step. Its ``blueprint``
@@ -32,6 +32,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 from functions_appinsights import log_event
+from functions_document_actions import MERGE_KIND_OUTPUT_FORMATS, MERGE_KIND_TABULAR
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_registry import CAPABILITY_WORKFLOW_PROPOSE
 from functions_orchestration_result_contracts import (
@@ -488,6 +489,7 @@ def _proposal_summary(blueprint, task_actions, planning, used, request_time_zone
                 document_names.get(handle) or 'Document'
                 for handle in task.get('inputs') or () if isinstance(handle, str)
             ],
+            **({'merge': _merge_summary(task['merge'])} if isinstance(task.get('merge'), dict) else {}),
         })
 
     m365_sources, can_send, required = set(), False, False
@@ -528,9 +530,21 @@ def _uncovered_task(blueprint, task_actions, planning):
     return False
 
 
+def _merge_summary(merge):
+    """What a proposed merge task merges and creates, for the card's fixed wording."""
+    kind = merge.get('kind') or MERGE_KIND_TABULAR
+    return {
+        'kind': kind,
+        'files': merge.get('files'),
+        'output_format': merge.get('output_format') or MERGE_KIND_OUTPUT_FORMATS[kind][0],
+    }
+
+
 def _uses_default_model(blueprint):
+    # A merge task merges files with code, so it never needs the default model.
     return any(
-        isinstance(task, dict) and _runner_agent(task) is None for task in blueprint.get('tasks') or ()
+        isinstance(task, dict) and _runner_agent(task) is None and not task.get('merge')
+        for task in blueprint.get('tasks') or ()
     )
 
 

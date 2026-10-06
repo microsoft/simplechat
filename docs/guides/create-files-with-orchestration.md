@@ -117,8 +117,8 @@ result can be rendered directly into every format.
 
 | Requested format | Appropriate prepared input |
 | --- | --- |
-| CSV | Complete records with an explicit ordered selection of scalar columns. Spreadsheet-like formulas are protected as data. |
-| XLSX | Complete typed records with explicit columns and a sheet name. Strings are not treated as executable formulas. |
+| CSV | Complete records with an explicit ordered selection of scalar columns, or, for a table whose columns are only known at run time such as a merge, every retained column in order. Spreadsheet-like formulas are protected as data. |
+| XLSX | Complete typed records with explicit columns and a sheet name, or every retained column in order with an optional sheet name. Strings are not treated as executable formulas. |
 | JSON | Complete records or a structured value, including nested objects and arrays. |
 | YAML or YML | Complete records or a structured value using the declared safe serialization profile. YML is an extension alias. |
 | XML | Complete records or a structured value using the typed XML representation. This is not automatic generation of an arbitrary requested XML schema. |

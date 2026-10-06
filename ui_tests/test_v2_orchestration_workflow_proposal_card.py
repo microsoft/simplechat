@@ -2,9 +2,9 @@
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
 Version: 0.261.239
-Implemented in: 0.261.207
+Implemented in: 0.261.207; merge task wording added in 0.261.241; merge kinds in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 Next and last run on a created card: 0.261.239 (microsoft/simplechat#1546)
-Refs: microsoft/simplechat#1547
+Refs: microsoft/simplechat#1547, microsoft/simplechat#1619
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in
 Chromium with the production CSS. Only HTTP boundaries are stubbed. The status responses follow
@@ -534,6 +534,48 @@ def test_pending_card_discloses_everything_and_renders_planner_text_inert(card_u
     expect(page.get_by_role("button", name=re.compile("^Download"))).to_have_count(0)
     expect(page.get_by_role("article", name=NAME)).to_have_count(1)
     assert article.evaluate("(element) => element.scrollWidth <= element.clientWidth + 1")
+    assert not api.writes()
+
+
+def merge_proposal(files, output_format, kind=None):
+    """A proposal whose only task merges files with code; the server sends the task's merge summary."""
+    value = proposal()
+    value["summary"]["tasks"] = [{
+        "title": "Merge regional sales", "runner": "model", "agent_name": "", "action_kinds": [],
+        "requested_actions": [], "inputs": ["north.csv", "south.xlsx"] if files == "inputs" else [],
+        "instructions": "Merge the regional sales files.",
+        # Proposals saved before merge kinds existed carry no kind and are row merges.
+        "merge": {"files": files, "output_format": output_format, **({"kind": kind} if kind else {})},
+    }]
+    return value
+
+
+@pytest.mark.parametrize("files,output_format,kind,text", [
+    ("inputs", "xlsx", None, "Merges the input files below, in order, into one Excel file with code. No model runs."),
+    ("changed", "csv", "tabular", "Merges the files each sync adds or changes into one CSV file with code. No model runs."),
+    ("all", "csv", None, "Merges every CSV and Excel file in your personal workspace into one CSV file with code. No model runs."),
+    ("recent", "xlsx", None, (
+        "Merges the CSV and Excel files added or changed recently in your personal workspace into one Excel file "
+        "with code. No model runs."
+    )),
+    ("all", "pdf", "pdf", "Merges every PDF in your personal workspace into one PDF with code. No model runs."),
+    ("all", "docx", "docx", (
+        "Merges every Word document in your personal workspace into one Word document with code. No model runs."
+    )),
+    ("changed", "pptx", "pptx", (
+        "Merges the files each sync adds or changes into one PowerPoint deck with code. No model runs."
+    )),
+])
+def test_a_merge_task_says_code_merges_the_files_instead_of_a_model(card_ui, files, output_format, kind, text):
+    page, api = card_ui
+    api.proposal = merge_proposal(files, output_format, kind)
+    mount(page, api)
+    tasks = card(page).get_by_role("list", name="Workflow tasks")
+    expect(tasks).to_contain_text(text)
+    expect(tasks).not_to_contain_text("Runs with the default model.")
+    if files == "inputs":
+        expect(tasks).to_contain_text("Files to merge, in order: north.csv, south.xlsx.")
+    expect(tasks).not_to_contain_text("Reads:")
     assert not api.writes()
 
 
