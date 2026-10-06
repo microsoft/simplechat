@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.257)**
+
+#### Bug Fixes
+
+*   **Deleted Messages No Longer Come Back As Masked**
+    *   With **Enable Conversation Archiving** on, a message deleted in the V2 chat no longer reappears as "This message is masked", either right after the delete or when the conversation is opened again. Deleted messages are left out wherever messages are shown, copied, searched or sent to the model: the message list, attempt switching, retry and edit, forks, sharing a conversation, conversation search, the inbound MCP message tool, conversation summaries and chat history. Their archived copies are kept as before.
+    *   Delete, retry, edit, attempt switching and both mask actions treat a deleted message as gone, so its fail-safe mask can't be cleared. Shared conversations that already hold copies of deleted messages hide them, with no data migration.
+    *   (Ref: #1649, `functions_message_deletion.py`, `route_backend_conversations.py`, `route_backend_chats.py`, `functions_collaboration.py`, `chatStore.ts`, `deletedMessages.ts`, [Deleted Messages Shown as Masked Fix](fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
+
+*   **Deleting An Answer No Longer Brings Back An Earlier Attempt**
+    *   Deleting only the latest answer of a retried turn re-activated the lowest-numbered earlier attempt, so an old question and answer showed beside the latest question. Another attempt now takes over only when the active attempt's question is deleted, a deleted attempt is never chosen, and only one attempt stays active. This applies whether or not archiving is on.
+    *   The V2 attempt control counts the attempts that remain, so it reads "2/2" rather than "3/2" after one is removed.
+    *   (Ref: #1649, `_promote_remaining_thread_attempt`, `threads.ts`, [Deleted Messages Shown as Masked Fix](fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
+
 ### **(v0.261.256)**
 
 #### Bug Fixes

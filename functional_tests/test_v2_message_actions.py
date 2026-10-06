@@ -151,8 +151,8 @@ def test_delete_sends_its_option_in_the_body():
     remove_start = store.index("removeMessage: async")
     remove_block = store[remove_start : store.index("retryMessage: async", remove_start)]
     assert "reloadMessages()" in remove_block, (
-        "Deletion is soft when archiving is enabled, so the list must be re-read rather "
-        "than trusting the optimistic removal"
+        "Deleting a question removes its whole turn, every attempt included, so the list "
+        "must be re-read rather than trusting the optimistic removal"
     )
 
     print("Delete request shape test passed!")
