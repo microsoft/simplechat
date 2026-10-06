@@ -1416,7 +1416,20 @@ function ConnectionEditor({
 /* Manager                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTIONS_ADAPTER }: { help?: string; adapter?: ModelConnectionsAdapter }) {
+export function ModelConnectionsManager({
+    help,
+    adapter = ADMIN_MODEL_CONNECTIONS_ADAPTER,
+    landmark = true,
+}: {
+    help?: string;
+    adapter?: ModelConnectionsAdapter;
+    /**
+     * Whether the list marks itself as the "AI Connections" region. Admin Settings turns
+     * this off: its section card is already a region with that name, and a second one
+     * nested inside it would only repeat the landmark for screen reader users.
+     */
+    landmark?: boolean;
+}) {
     const [connections, setConnections] = useState<ModelConnection[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -1591,7 +1604,11 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
     };
 
     return (
-        <div className="py-3" role="region" aria-label="AI Connections">
+        <div
+            className="py-3"
+            role={landmark ? 'region' : undefined}
+            aria-label={landmark ? 'AI Connections' : undefined}
+        >
             <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-text-1">AI Connections</span>
                 {adapter.canCreate ? (

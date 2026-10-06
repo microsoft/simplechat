@@ -898,7 +898,8 @@ export function AdminSettingsPage() {
                 case 'inbound-mcp-disabled-notice':
                     return <InboundMcpNotice key={key} />;
                 case 'model-connections-manager':
-                    return <ModelConnectionsManager key={key} help={field.help} />;
+                    // The section card is already the "AI Connections" region.
+                    return <ModelConnectionsManager key={key} help={field.help} landmark={false} />;
                 case 'model-catalog-manager':
                     return (
                         <ModelCatalogManager

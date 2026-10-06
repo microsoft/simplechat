@@ -71,7 +71,7 @@ Links from one setting to another, such as **Go to setting** in App Role
 Requirements, scroll to their target. When a search or a different category hides
 the target, the page clears the search or switches to the target's category first.
 
-This layout was implemented in **0.261.253**.
+This layout was implemented in **0.261.254**.
 
 ## Settings groups
 

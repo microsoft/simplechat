@@ -2,10 +2,10 @@
 # test_v2_admin_section_shell.py
 """
 Functional test for the Admin Settings section shell and connection tests.
-Version: 0.261.253
+Version: 0.261.254
 Implemented in: 0.261.084
 Agents-only visual hierarchy coverage added in: 0.261.093
-Every-section presentation and schema-derived hierarchy coverage added in: 0.261.253
+Every-section presentation and schema-derived hierarchy coverage added in: 0.261.254
 
 Two things arrive together here, because neither is useful without the other.
 

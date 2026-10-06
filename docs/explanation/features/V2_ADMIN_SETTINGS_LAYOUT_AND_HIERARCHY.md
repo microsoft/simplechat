@@ -18,7 +18,7 @@ This change does four things:
 - On a wide card each setting puts its label and description on the left and its
   control on the right, and runs of independent switches pair up in two columns.
 
-## Implemented in version: **0.261.253**
+## Implemented in version: **0.261.254**
 
 The application version is maintained in `application/single_app/config.py`.
 
@@ -40,7 +40,9 @@ rail shows each group's icon from the navigation definition.
 
 `SettingsSection` always renders the distinct card: a labelled region, a header band
 with the section icon, a large title that can take focus, the group and tab, and the
-status chip. The plain card is gone.
+status chip. The plain card is gone. Because the AI Connections card is now itself the
+"AI Connections" region, the connection list inside it drops its own region of the same
+name in Admin Settings (`landmark={false}`); group workspaces keep it.
 
 | Piece | Source |
 | --- | --- |

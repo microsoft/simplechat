@@ -47,7 +47,7 @@ booleans.
 In version **0.261.093**, the four Agents sections gained neutral header bands,
 distinct icons, larger titles, and clearer field and disclosure boundaries.
 Runtime emphasis and personal/group cues are presentation-only; they do not
-change the schema, defaults, section status, or save behavior. Since **0.261.253**
+change the schema, defaults, section status, or save behavior. Since **0.261.254**
 every admin section uses this presentation, with the emphasis derived from the
 schema; see [V2 Admin Settings Layout and Hierarchy](V2_ADMIN_SETTINGS_LAYOUT_AND_HIERARCHY.md).
 

@@ -1,9 +1,9 @@
 # test_v2_admin_agents_visual_hierarchy.py
 """
 Browser coverage for the V2 Agents settings presentation.
-Version: 0.261.253
+Version: 0.261.254
 Implemented in: 0.261.093
-Presentation extended to every section, with derived emphasis: 0.261.253
+Presentation extended to every section, with derived emphasis: 0.261.254
 
 Exercise the built application and real field schema with intercepted APIs. Check
 visual hierarchy, contrast, keyboard disclosure, responsiveness, dependency

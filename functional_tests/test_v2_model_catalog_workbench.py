@@ -2,8 +2,8 @@
 # test_v2_model_catalog_workbench.py
 """
 Functional test for the native V2 Model Catalog workbench.
-Version: 0.261.253
-Implemented in: 0.261.253
+Version: 0.261.254
+Implemented in: 0.261.254
 
 V2 used to mount the classic catalog module inside its 768px settings column. It now
 draws the catalog natively, and links each connected model to its AI Connection. This
@@ -43,7 +43,7 @@ def _read(path):
 def test_v2_draws_its_own_catalog_and_classic_keeps_the_shared_module():
     """V2 must not pull the classic module back in; classic must keep it."""
     print("Testing the V2 and classic catalog boundary...")
-    assert_app_version_at_least("0.261.253")
+    assert_app_version_at_least("0.261.254")
 
     for path in (MANAGER_TSX, DETAIL_TSX):
         imports = re.findall(r"^import[^;]*?from\s+'([^']+)'|^import\s+'([^']+)'", _read(path), re.MULTILINE | re.DOTALL)
