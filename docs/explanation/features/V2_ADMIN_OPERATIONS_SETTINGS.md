@@ -13,7 +13,7 @@ moves the rules the classic page used for schedules and timers into shared modul
 pages and the background checks agree, and replaces the classic page's three setup modals
 with in-app guides.
 
-**Implemented in version:** 0.261.260
+**Implemented in version:** 0.261.269
 
 **Dependencies:** `admin_settings_nav.py` for section ids, the existing
 `/api/admin/settings/file-processing-logs/cleanup` endpoint, `swagger_wrapper.py` route
@@ -26,7 +26,7 @@ renderer (`AdminSettingsPage.tsx`, `SettingsSection.tsx`, `fields.tsx`).
 | --- | --- | --- |
 | Automatic Data Refresh | Not rendered | Switch, time picker, timezone with **Use my timezone**, next and last refresh in both zones, link to the Control Center |
 | Control Center Access | Two switches | Two switches, an access table that follows unsaved edits, copyable role values, **Role setup guide** |
-| Application Insights | One switch | Switch, connection status, running state against the saved value |
+| Application Insights | One switch | Global logging switch, connection status, running state against the saved value, and the mixed-source telemetry switch declared beside them |
 | Debug Logging | Switch plus a raw "Dai debug" switch | Switch, nested timer with per-unit limits, turnoff time in the reader's zone, Document Access Index diagnostics with a link to DAI Metrics |
 | File Process Logging | One switch | Switch, nested timer, turnoff time, stored log cleanup |
 | Health Check | Not rendered | Two switches, full copyable endpoint addresses with live state, **Configuration guide** |

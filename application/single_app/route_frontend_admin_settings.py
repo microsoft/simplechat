@@ -2389,6 +2389,7 @@ def register_route_frontend_admin_settings(bp):
                 **chat_content_form_updates(form_data, settings),
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
+                'enable_mixed_source_development_telemetry': form_data.get('enable_mixed_source_development_telemetry') == 'on',
                 'enable_debug_logging': enable_debug_logging,
                 'debug_logging_timer_enabled': debug_logging_timer_enabled,
                 'debug_timer_value': debug_timer_value,
@@ -2674,6 +2675,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
                 'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
+                'enable_mixed_source_relevance_candidates': form_data.get('enable_mixed_source_relevance_candidates') == 'on',
                 'enable_tabular_durable_run_confirmation': form_data.get('enable_tabular_durable_run_confirmation') == 'on',
                 'tabular_durable_run_confirmation_threshold_rows': max(1, parse_admin_int(
                     form_data.get('tabular_durable_run_confirmation_threshold_rows'),

@@ -141,6 +141,7 @@ from functions_settings import (
     is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
     is_chat_workflow_results_enabled_for_user,
+    is_content_understanding_supported_environment,
     is_user_workflows_enabled_for_user,
     is_workflow_assistant_enabled_for_user,
     merge_model_endpoint_payload,
@@ -1337,14 +1338,19 @@ def register_route_backend_v2_admin(bp):
         """Server-resolved flags the admin surface reads but cannot set.
 
         ``mcp_ui_enabled`` gates a navigation section on an App Service application
-        setting. The rest describe how this process was started -- whether
-        Application Insights has a destination, whether its global logging is live
-        and whether the Swagger routes were registered -- so a section can say when
-        a saved change is still waiting for a restart.
+        setting. ``content_understanding_supported`` says whether this Azure cloud
+        offers Content Understanding, which only the server's AZURE_ENVIRONMENT can
+        say. The rest describe how this process was started -- whether Application
+        Insights has a destination, whether its global logging is live and whether
+        the Swagger routes were registered -- so a section can say when a saved
+        change is still waiting for a restart.
         """
         appinsights = get_appinsights_runtime_state()
         return {
             "mcp_ui_enabled": is_mcp_ui_enabled(),
+            "content_understanding_supported": (
+                is_content_understanding_supported_environment()
+            ),
             "appinsights_connection_configured": appinsights["connection_configured"],
             "appinsights_global_logging_active": appinsights["global_logging_active"],
             "swagger_routes_registered": are_swagger_routes_registered(current_app),

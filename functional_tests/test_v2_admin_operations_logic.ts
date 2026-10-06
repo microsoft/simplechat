@@ -1,8 +1,8 @@
 // test_v2_admin_operations_logic.ts
 //
 // Runtime test for the decisions behind the V2 Operations settings.
-// Version: 0.261.260
-// Implemented in: 0.261.260
+// Version: 0.261.269
+// Implemented in: 0.261.269
 //
 // The Operations readouts make claims an administrator will act on: who the Control Center
 // admits under a pair of role switches, when a logging timer ends, whether a save would

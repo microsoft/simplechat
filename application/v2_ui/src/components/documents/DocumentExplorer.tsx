@@ -29,6 +29,7 @@ import {
 } from '../../lib/documentReadAdapter';
 import {
     changedDocumentMetadata, createGroupDocumentOperations, documentDownloadName, PERSONAL_DOCUMENT_OPERATIONS,
+    SEARCH_SYNC_PENDING_NOTICE,
     type DocumentBatchOutcome, type DocumentDeleteOptions, type DocumentOperation,
     type DocumentOperationAdapter, type DocumentOperationError, type TagOperationError,
 } from '../../lib/documentOperations';
@@ -903,6 +904,7 @@ function ScopedDocumentExplorer({
                         const result = await perBatch(captured.adapter, batch);
                         outcome.succeeded.push(...result.succeeded);
                         outcome.errors.push(...result.errors);
+                        if (result.searchSyncPending) outcome.searchSyncPending = true;
                     } catch (batchError) {
                         outcome.errors.push(...batch.map((document) => ({
                             document_id: documentId(document),
@@ -921,6 +923,7 @@ function ScopedDocumentExplorer({
                 const title = `${label}: ${outcome.succeeded.length} of ${captured.targets.length} confirmed.`;
                 setFeedback({ title, errors: outcome.errors });
                 if (outcome.errors.length) toast.error(`${title} Review the failed items before retrying.`);
+                else if (outcome.searchSyncPending) toast.info(`${title} ${SEARCH_SYNC_PENDING_NOTICE}`);
                 else toast.success(title);
                 await refreshAll();
                 return outcome;
@@ -1140,10 +1143,11 @@ function ScopedDocumentExplorer({
             const changes = changedDocumentMetadata(target, draft);
             beginMutation('Saving metadata', 1);
             try {
-                await captured.adapter.editMetadata(captured.targets[0], changes);
+                const outcome = await captured.adapter.editMetadata(captured.targets[0], changes);
                 if (!mounted.current) return;
                 setDialog(null);
-                toast.success('Metadata saved.');
+                if (outcome.searchSyncPending) toast.info(`Metadata saved. ${SEARCH_SYNC_PENDING_NOTICE}`);
+                else toast.success('Metadata saved.');
                 await refreshAll();
             } catch (saveError) {
                 if (mounted.current) {
@@ -1185,6 +1189,7 @@ function ScopedDocumentExplorer({
                 succeeded: batch.map(documentId).filter((id) =>
                     results.every((result) => result.succeeded.includes(id)) && !errors.some((error) => error.document_id === id)),
                 errors,
+                ...(results.some((result) => result.searchSyncPending) ? { searchSyncPending: true } : {}),
             };
         });
         if (!outcome || !mounted.current) return;

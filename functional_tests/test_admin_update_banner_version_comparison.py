@@ -1,10 +1,10 @@
 # test_admin_update_banner_version_comparison.py
 """
 Functional coverage for shared classic/V2 admin release status.
-Version: 0.261.260
+Version: 0.261.269
 Implemented in: 0.261.126
 Non-blocking V2 release check: 0.261.133
-Settings payload adds section guides and runtime flags: 0.261.260
+Settings payload adds section guides and runtime flags: 0.261.269
 
 Execute the production checker, parser and comparator with HTTP/storage boundaries
 mocked. AST loading avoids initializing Azure clients; these are behavior tests,

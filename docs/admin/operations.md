@@ -170,16 +170,26 @@ application-wide log level to informational, so routine messages from every modu
 library arrive as well, agents and orchestration included. That is useful while tracing a
 problem across components, and costs noticeably more ingestion while it is on.
 
+**Record mixed document and spreadsheet metrics** adds `[MIXED_SOURCE_TELEMETRY]`
+entries for the processing behind Chat, Search, Analyze and Compare over workspace
+documents and spreadsheets: aggregate counts, timings and token totals showing how
+many sources completed, were partial, failed, were skipped or were canceled, plus
+authorization failures and background exports. The entries never carry prompts,
+content, file names, document IDs or storage paths. Turn it on while checking how
+those requests behave, for example after enabling Enhanced Citations, and off again
+afterwards, because each request adds several log entries.
+
 Application Insights is reached through the `APPLICATIONINSIGHTS_CONNECTION_STRING` App
 Service setting, not through anything on this page. The V2 card's **Connection** line says
-whether that setting is present and whether the exporter started, because the switch does
-nothing without them.
+whether that setting is present and whether the exporter started, because global logging
+does nothing without them.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Enable Application Insights Global Logging | Sends informational messages from every module and library to Application Insights, not only SimpleChat's own events. | Off | `enable_appinsights_global_logging`; takes effect after an App Service restart |
+| Record mixed document and spreadsheet metrics | Logs aggregate counts, timings and token totals for Chat, Search, Analyze and Compare over workspace documents and spreadsheets, with no prompts, content, file names, document IDs or storage paths. | Off | `enable_mixed_source_development_telemetry` |
 
 ### Debug Logging {#debug-logging-section}
 

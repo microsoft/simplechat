@@ -1445,6 +1445,9 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
             .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
             .then(updatedDoc => {
                 if (docMetadataModalEl) docMetadataModalEl.hide();
+                if (updatedDoc?.search_sync?.status === "pending" && typeof window.showToast === "function") {
+                    window.showToast("Metadata saved. Search and chat results will reflect the change once the search index finishes updating.", "info");
+                }
                 fetchUserDocuments(); // Refresh the table
                 loadWorkspaceTags(); // Refresh tag counts and grid view
             })

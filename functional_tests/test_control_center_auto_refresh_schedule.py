@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center auto-refresh scheduling.
-Version: 0.261.260
+Version: 0.261.269
 Implemented in: 0.241.026
-Updated in: 0.261.260 (schedule helpers moved to functions_control_center_schedule.py)
+Updated in: 0.261.269 (schedule helpers moved to functions_control_center_schedule.py)
 
 This test validates the enabled 02:00 Eastern default, timezone normalization,
 DST-aware UTC next-run timestamps, and scheduler/admin/status integration.

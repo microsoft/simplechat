@@ -1,7 +1,7 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.230
+Version: 0.261.268
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.
@@ -10,6 +10,7 @@ The refusal also answers a bulk tagging batch and, naming the document, a metada
 The group-scoped content screening routes, modelled in group_screening.py: 0.261.174
 The V2 notification bell's unread count is an expected shell read: 0.261.195
 Metadata edits apply directly and are never screened, so every metadata receipt is `updated`: 0.261.230
+Metadata and re-tag receipts report the background search sync in `search_sync`: 0.261.268
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -47,6 +48,8 @@ METADATA_FIELDS = {
     "title", "abstract", "keywords", "publication_date",
     "document_classification", "authors", "tags",
 }
+# The metadata fields the search chunks mirror (DOCUMENT_SEARCH_METADATA_FIELD_MAP).
+SEARCH_SYNCED_FIELDS = {"title", "authors", "file_name", "document_classification", "tags"}
 DELETE_OPTIONS = {
     "delete_mode", "conversation_linked_delete_confirmed", "file_sync_delete_action",
 }
@@ -106,13 +109,27 @@ SYNCED_DELETE_OPTIONS = (
 )
 
 
-def metadata_result(document_id, changes, *, group_id="group-a"):
+def search_sync_summary(document_count):
+    """The search sync summary of a receipt that saved `document_count` documents' tags: each saved
+    document's chunks are refreshed by a background sync, so a receipt that saved any is `pending`."""
+    if document_count:
+        return {"status": "pending", "document_count": document_count}
+    return {"status": "not_required"}
+
+
+def metadata_result(document_id, changes, *, group_id="group-a", search_sync=None):
     """The server names the fields in the order the request sent them. Metadata edits apply directly,
-    including on a screened document, so the receipt is always `updated`."""
+    including on a screened document, so the receipt is always `updated`. Sending a field the search
+    chunks mirror requests a background search sync, which `search_sync` reports; the first request
+    for a document is revision 1."""
+    if search_sync is None:
+        fields = sorted(field for field, value in changes.items() if field in SEARCH_SYNCED_FIELDS and value is not None)
+        search_sync = {"status": "pending", "revision": 1, "fields": fields} if fields else {"status": "not_required"}
     return {
         "message": METADATA_UPDATED_MESSAGE,
         "document_id": document_id, "group_id": group_id,
         "updated_fields": list(changes), "status": "updated",
+        "search_sync": copy.deepcopy(search_sync),
     }
 
 
@@ -167,8 +184,11 @@ def batch_error(document_id, error=DOCUMENT_OPERATION_FAILED_ERROR, *, group_id=
     return {"document_id": document_id, "error": error, "group_id": group_id}
 
 
-def bulk_tag_result(success, errors=()):
-    return {"success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors))}
+def bulk_tag_result(success, errors=(), *, search_sync=None):
+    return {
+        "success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors)),
+        "search_sync": copy.deepcopy(search_sync) if search_sync is not None else search_sync_summary(len(success)),
+    }
 
 
 def queue_result(*document_ids, errors=(), extraction_mode=None):
@@ -199,10 +219,11 @@ def tag_created(name, color):
     return {"message": TAG_CREATED_MESSAGE, "tag": {"name": name, "color": color}}
 
 
-def tag_result(operation, *, tag=None, success=(), errors=()):
+def tag_result(operation, *, tag=None, success=(), errors=(), search_sync=None):
     """A tag vocabulary receipt for what the request did: `update` a colour, `rename` (or merge)
     the tag, or `delete` it. Only a delete names no tag, and only a rename or delete re-tags the
-    documents; the old vocabulary is retained exactly when a change is incomplete."""
+    documents; the old vocabulary is retained exactly when a change is incomplete. Every re-tagged
+    document's chunks are refreshed by a background search sync, which `search_sync` summarizes."""
     assert operation in TAG_MESSAGES, operation
     assert (tag is None) == (operation == "delete"), "Only a tag delete omits the resulting tag."
     assert operation != "update" or not (success or errors), "A colour change re-tags no documents."
@@ -211,6 +232,7 @@ def tag_result(operation, *, tag=None, success=(), errors=()):
         "documents_updated": len(success),
         "success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors)),
         "vocabulary_retained": bool(errors),
+        "search_sync": copy.deepcopy(search_sync) if search_sync is not None else search_sync_summary(len(success)),
     }
     if tag is not None:
         result["tag"] = copy.deepcopy(tag)

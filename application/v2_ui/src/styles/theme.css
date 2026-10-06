@@ -429,6 +429,13 @@ html[data-font-size='xl'] {
             grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
         }
 
+        /* An anchored panel lines up with the text of the switch it belongs to, the
+           same 3.5rem a switch row indents its notices by. A narrow card keeps the full
+           width instead, where the indent would cost more room than it explains. */
+        .admin-anchored-groups {
+            margin-inline-start: 3.5rem;
+        }
+
         .admin-field[data-field-width='compact'] > .admin-field-control {
             max-width: 12rem;
         }

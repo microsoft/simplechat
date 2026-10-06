@@ -1,9 +1,9 @@
 # test_app_settings_auxiliary_writers.py
 """
 Functional tests for auxiliary app-settings writers.
-Version: 0.261.260
+Version: 0.261.269
 Implemented in: 0.261.025
-Logging timers checked through the shared UTC helpers: 0.261.260
+Logging timers checked through the shared UTC helpers: 0.261.269
 
 Execute isolated production functions through AST extraction, without importing
 application configuration or contacting Redis, Cosmos DB, or other cloud services.

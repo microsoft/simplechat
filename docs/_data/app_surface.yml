@@ -4,7 +4,7 @@ counts:
   capabilities: 126
   admin_groups: 15
   admin_tabs: 49
-  admin_sections: 110
+  admin_sections: 106
   actions: 32
   chat_controls: 47
   sub_elements: 3
@@ -157,16 +157,16 @@ capabilities:
   default: true
 - key: enable_mcp_destination_governance
   default: false
+- key: enable_mixed_source_analyze_all
+  default: false
 - key: enable_mixed_source_chat_search
   default: false
 - key: enable_mixed_source_conversation_continuity
   default: false
 - key: enable_mixed_source_development_telemetry
   default: false
-- key: enable_mixed_source_manifest
-  default: false
 - key: enable_mixed_source_relevance_candidates
-  default: false
+  default: true
 - key: enable_multi_agent_orchestration
   default: false
 - key: enable_multi_model_endpoints
@@ -599,10 +599,6 @@ admin_sections:
   label: Content Screening
   tab: content-screening
   group: security
-- id: content-understanding-section
-  label: Content Understanding
-  tab: extraction
-  group: knowledge
 - id: control-center-auto-refresh-section
   label: Automatic Data Refresh
   tab: control-center-config
@@ -719,6 +715,10 @@ admin_sections:
   label: Enhanced
   tab: citation
   group: chat
+- id: enhanced-extraction-section
+  label: Enhanced Extraction
+  tab: extraction
+  group: knowledge
 - id: external-links-section
   label: External Links
   tab: custom-pages
@@ -743,24 +743,8 @@ admin_sections:
   label: Maximum File Size
   tab: extraction
   group: knowledge
-- id: file-sync-group-section
-  label: Group Workspace Sync
-  tab: file-sync
-  group: knowledge
-- id: file-sync-personal-section
-  label: Personal Workspace Sync
-  tab: file-sync
-  group: knowledge
-- id: file-sync-public-section
-  label: Public Workspace Sync
-  tab: file-sync
-  group: knowledge
 - id: file-sync-section
   label: File Sync
-  tab: file-sync
-  group: knowledge
-- id: file-sync-source-types-section
-  label: Visible Source Types
   tab: file-sync
   group: knowledge
 - id: front-door-section

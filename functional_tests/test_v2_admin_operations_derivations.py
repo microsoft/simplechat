@@ -2,8 +2,8 @@
 # test_v2_admin_operations_derivations.py
 """
 Functional test for the values the Operations settings calculate on save.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.269
+Implemented in: 0.261.269
 
 Three Operations values are worked out by the server rather than typed: the next
 scheduled Control Center refresh and each log's automatic turnoff time. The
@@ -108,7 +108,7 @@ def test_switching_debug_logging_on_starts_a_utc_timer():
     """The V2 save works out the turnoff time, and stores it as an exact instant."""
     print("Testing that enabling a timed log sets a UTC turnoff...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.269")
 
     before = datetime.now(timezone.utc)
     normalized, _ = save(

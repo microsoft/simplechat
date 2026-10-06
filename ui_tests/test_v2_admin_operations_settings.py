@@ -1,8 +1,8 @@
 # test_v2_admin_operations_settings.py
 """
 Browser coverage for the V2 Admin Settings Operations group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.269
+Implemented in: 0.261.269
 
 Exercise the built application with the real Operations field schema and the real
 settings normalizer behind an intercepted API. Check that every Operations section
