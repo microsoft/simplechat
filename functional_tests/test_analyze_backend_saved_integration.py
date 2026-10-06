@@ -1,10 +1,11 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.234
+Version: 0.261.253
 Implemented in: 0.261.109
 Container-only saved-result access covered in: 0.261.232
 Message family constants added to the chat harness in: 0.261.234
+Soft-deleted message filter added to the chat harness in: 0.261.253
 
 Real adapter, artifact, history, chat route and shared section-reader functions
 run against serialized storage, Flask requests and deterministic model doubles.
@@ -57,6 +58,7 @@ budget = import_app_module("functions_workflow_context")
 agent_runtime = import_app_module("agent_delegation_runtime")
 result_storage = import_app_module("functions_workflow_result_store")
 tabular = import_app_module("functions_tabular_orchestration")
+deletion = import_app_module("functions_message_deletion")
 
 
 def load_m365_runtime():
@@ -480,6 +482,7 @@ def chat(saved_chat, monkeypatch):
         ),
         "extract_chat_completion_response_text": lambda value: value.choices[0].message.content,
         "filter_assistant_artifact_items": lambda values: list(values),
+        "exclude_soft_deleted_messages": deletion.exclude_soft_deleted_messages,
         "build_message_artifact_payload_map": lambda values: {},
         "hydrate_agent_citations_from_artifacts": lambda values, payloads: values,
         "sort_messages_by_thread": lambda values: values,

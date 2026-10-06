@@ -71,7 +71,7 @@ The Conversation Archiving section belongs to the Archiving tab. Use it with the
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Conversation Archiving | Changes conversation deletion behavior to archive conversations instead of permanently deleting them immediately. | Off | `enable_conversation_archiving`; capability toggle |
+| Enable Conversation Archiving | Changes conversation deletion behavior to archive conversations instead of permanently deleting them immediately. Deleted chat messages are archived too, and no longer appear in the conversation, search results, or the context sent to the model. | Off | `enable_conversation_archiving`; capability toggle |
 
 ## Common tasks
 

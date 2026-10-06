@@ -67,6 +67,7 @@ from functions_message_masking import (
     copy_message_mask_metadata,
     resolve_mask_display_name,
 )
+from functions_message_deletion import NOT_SOFT_DELETED_COSMOS_FILTER, is_soft_deleted_message
 from functions_message_block_revisions import (
     BLOCK_REVISIONS_METADATA_KEY,
     MAX_CHAT_CONTENT_LENGTH as BLOCK_MAX_CHAT_CONTENT_LENGTH,
@@ -818,7 +819,7 @@ def _find_collaboration_originating_request(conversation_id, message_doc):
     The nearest preceding human message in the shared thread. Only that one message is used, and
     it is passed to the model as background rather than as instructions — sending a whole shared
     conversation to redraw one flowchart would be expensive and would hand the model a great
-    deal of other people's writing.
+    deal of other people's writing. A message copied in already deleted is skipped.
 
     Best effort: an edit works perfectly well with no grounding at all, so a failure here is
     swallowed rather than failing the edit.
@@ -832,6 +833,7 @@ def _find_collaboration_originating_request(conversation_id, message_doc):
                 'SELECT TOP 1 c.content FROM c '
                 'WHERE c.conversation_id = @conversation_id '
                 "AND c.role = 'user' AND c.timestamp < @timestamp "
+                f'AND {NOT_SOFT_DELETED_COSMOS_FILTER} '
                 'ORDER BY c.timestamp DESC'
             ),
             parameters=[
@@ -1757,6 +1759,10 @@ def register_route_backend_collaboration(bp):
 
             message_doc = get_collaboration_message(message_id)
             if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+                return jsonify({'error': 'Collaborative message not found'}), 404
+            # A copy of a message deleted before the conversation was shared. Unmasking it would
+            # reveal deleted content, and the sync below would unmask the original too.
+            if is_soft_deleted_message(message_doc):
                 return jsonify({'error': 'Collaborative message not found'}), 404
 
             _assert_user_can_mask_collaboration_message(current_user['user_id'], message_doc)

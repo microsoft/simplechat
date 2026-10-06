@@ -7,7 +7,8 @@
 //
 // `/api/get_messages` filters the list to the active attempt
 // (route_backend_conversations.py), so the number of attempts can never be counted from the
-// messages on screen. Only the switch-attempt endpoint reports the full set.
+// messages on screen. Only the switch-attempt endpoint reports the full set, and it leaves out
+// attempts whose question was deleted, so the attempt numbers in that set can skip.
 
 import type { ChatMessage } from './types';
 
@@ -38,6 +39,10 @@ export function currentAttempt(message: ChatMessage | undefined): number {
 export interface AttemptState {
     /** Whether attempt navigation should be offered at all. */
     show: boolean;
+    /**
+     * This attempt's position among the known attempts, or its attempt number when the set
+     * is not known.
+     */
     current: number;
     /** Total attempts, when it is actually known. Null means "at least `current`". */
     total: number | null;
@@ -53,6 +58,10 @@ export interface AttemptState {
  *   - this message is attempt 2 or later, which proves earlier attempts exist, or
  *   - the switch-attempt endpoint has already reported the set for this thread.
  *
+ * A reported set is counted by position, because attempt numbers skip the attempts that were
+ * deleted: the third attempt of the two that remain is "2 of 2", not "3 of 2". A set that does
+ * not contain this attempt was reported before it existed, so it is not used.
+ *
  * Until an exact set is known, the total is null and the caller shows the attempt number
  * alone rather than inventing a denominator.
  */
@@ -63,9 +72,12 @@ export function attemptState(
     const current = currentAttempt(message);
     const threadId = messageThreadId(message);
     const known = threadId ? attemptsByThread[threadId] : undefined;
+    const position = Array.isArray(known) ? known.indexOf(current) : -1;
 
-    if (Array.isArray(known) && known.length > 1) {
-        return { show: true, current, total: known.length };
+    if (Array.isArray(known) && position >= 0) {
+        return known.length > 1
+            ? { show: true, current: position + 1, total: known.length }
+            : { show: false, current, total: null };
     }
 
     if (current > 1) {
