@@ -26,9 +26,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Network, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { Loader2, Network, PanelLeftClose, PanelLeftOpen, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
+import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
@@ -222,6 +223,10 @@ function buildCapabilityIndex(
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
     const bootstrapVersion = useBootstrapStore((state) => state.data?.version);
+    // The categories rail's icons-only state is its own per-user preference, so making room
+    // here leaves the workspace and shell rails as they are.
+    const railCollapsed = useUserSettingsStore((state) => state.settings.v2AdminRailCollapsed === true);
+    const updateUserSettings = useUserSettingsStore((state) => state.update);
 
     /**
      * Re-read the bootstrap payload once a save lands.
@@ -1274,9 +1279,28 @@ export function AdminSettingsPage() {
             <div className="flex min-h-0 flex-1">
                 <aside
                     aria-label="Settings categories"
-                    className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block"
+                    className={clsx(
+                        'hidden shrink-0 overflow-y-auto border-r border-edge transition-[width] motion-reduce:transition-none lg:block',
+                        railCollapsed ? 'w-16 px-2 py-3' : 'w-56 p-3',
+                    )}
                 >
-                    <div className="space-y-0.5">
+                    <button
+                        type="button"
+                        onClick={() => updateUserSettings({ v2AdminRailCollapsed: !railCollapsed })}
+                        aria-label={railCollapsed ? 'Expand settings categories' : 'Collapse settings categories'}
+                        aria-expanded={!railCollapsed}
+                        aria-controls="admin-settings-category-list"
+                        title={railCollapsed ? 'Expand settings categories' : 'Collapse settings categories'}
+                        className={clsx(
+                            'mb-2 flex w-full items-center gap-2 rounded-lg py-1.5 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                            railCollapsed ? 'justify-center px-2' : 'px-3',
+                        )}
+                    >
+                        {railCollapsed ? <PanelLeftOpen size={15} aria-hidden="true" /> : (
+                            <><PanelLeftClose size={15} aria-hidden="true" /><span>Collapse</span></>
+                        )}
+                    </button>
+                    <div id="admin-settings-category-list" className="space-y-0.5">
                         {categories.map((category) => {
                             const active = activeGroup === category.id;
                             return (
@@ -1285,9 +1309,11 @@ export function AdminSettingsPage() {
                                     type="button"
                                     disabled={delegationDirty}
                                     aria-pressed={active}
+                                    title={railCollapsed ? category.label : undefined}
                                     onClick={() => setActiveGroup(category.id)}
                                     className={clsx(
-                                        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
+                                        'flex w-full items-center gap-2.5 rounded-lg py-2.5 text-left text-sm transition-colors',
+                                        railCollapsed ? 'justify-center px-2' : 'px-3',
                                         'disabled:cursor-not-allowed disabled:opacity-60',
                                         active
                                             ? 'bg-accent-soft font-semibold text-accent'
@@ -1299,7 +1325,8 @@ export function AdminSettingsPage() {
                                         aria-hidden="true"
                                         className={clsx('shrink-0', active ? 'text-accent' : 'text-text-3')}
                                     />
-                                    <span className="min-w-0 flex-1">{category.label}</span>
+                                    {/* Collapsed, the label stays as the button's accessible name. */}
+                                    <span className={railCollapsed ? 'sr-only' : 'min-w-0 flex-1'}>{category.label}</span>
                                 </button>
                             );
                         })}
