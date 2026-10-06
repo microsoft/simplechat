@@ -1,6 +1,6 @@
 # Document Search Metadata Sync Fix
 
-Fixed/Implemented in version: **0.261.052**
+Fixed/Implemented in version: **0.261.052** (search cache refresh after a sync added in **0.261.053**)
 
 Related issue: [#1657](https://github.com/microsoft/simplechat/issues/1657). Supersedes the request-batching approach in [Document Metadata Chunk Sync Batching Fix](DOCUMENT_METADATA_CHUNK_SYNC_BATCHING_FIX.md) (`0.261.051`, #1645).
 
@@ -52,6 +52,7 @@ Two access-control problems shared the same code path:
 - A pass only completes the request when the document carries the latest request's token, so a save that has not landed yet is re-checked instead of being skipped. A token left by an earlier request never counts.
 - If an edit lands during a sync, the same worker projects it next. On success the record is deleted with an etag check. On failure the record keeps a retry time with backoff (1, 5, 15, and 60 minutes, then every 6 hours), the exception type is recorded, and `[DOCUMENT_SEARCH_SYNC]` is logged. Search writes frozen by a Data Management migration retry every 5 minutes without climbing the backoff.
 - The worker never writes sync state back onto the document. The document `_ts` (which drives list sorting and the access index) and its etag only change when users save.
+- After a pass that changed chunks, the worker clears cached search results for the document's workspace and for every user or group with an approved share (added in `0.261.053`). Routes clear the cache when the change is saved, but a search that runs while the sync is still merging could otherwise cache the old values for the search cache lifetime.
 - Tag changes also refresh blob metadata tags from the worker.
 - `run_document_search_metadata_sync_loop()` in `background_tasks.py` runs every 60 seconds under a distributed lock. It picks up requests that failed, never started because the process restarted, or lost their lease.
 

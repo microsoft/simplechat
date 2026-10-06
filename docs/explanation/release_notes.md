@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.053)**
+
+#### Bug Fixes
+
+*   **Search Results Refresh After a Background Metadata Sync**
+    *   When the background search sync finishes merging a tag or metadata change, it now clears cached search results for the document's workspace and for every user or group with an approved share.
+    *   Previously, a chat or search that ran while the sync was still in progress could cache the old values and keep returning them for up to the search cache lifetime (5 minutes by default) after the sync completed.
+    *   (Ref: `run_document_search_metadata_sync()`, `utils_cache.py`, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+
 ### **(v0.261.052)**
 
 #### Bug Fixes

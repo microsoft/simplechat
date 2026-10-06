@@ -28,6 +28,11 @@ from functions_data_management_search_write_fence import (
     DataManagementSearchWritesFrozenError,
     hold_data_management_search_write_slot,
 )
+from utils_cache import (
+    invalidate_group_search_cache,
+    invalidate_personal_search_cache,
+    invalidate_public_workspace_search_cache,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_office_media import extract_office_embedded_images_with_diagnostics
@@ -4828,6 +4833,44 @@ def _read_document_for_search_sync(record):
     return document_item if belongs_to_scope else None
 
 
+def _approved_search_share_principals(entries):
+    """Return the users or groups whose approved share lets them find a document in search."""
+    principals = []
+    for entry in _normalize_search_acl_entries(entries):
+        principal, _separator, status = entry.partition(',')
+        if principal and status == 'approved':
+            principals.append(principal)
+    return principals
+
+
+def _invalidate_document_search_results_cache(document_item, group_id=None, public_workspace_id=None):
+    """Drop cached search results that can include a document once a sync has changed its chunks.
+
+    Routes clear the cache when a change is saved, but a search that ran while the sync was still
+    merging could otherwise keep serving the old values until its cache entry expires. Recipients of
+    approved shares cache their own results, so theirs are cleared too. Best effort.
+    """
+    try:
+        if public_workspace_id is not None:
+            invalidate_public_workspace_search_cache(public_workspace_id)
+        elif group_id is not None:
+            invalidate_group_search_cache(group_id)
+            for shared_group_id in _approved_search_share_principals(document_item.get('shared_group_ids')):
+                invalidate_group_search_cache(shared_group_id)
+        else:
+            owner_user_id = document_item.get('user_id')
+            if owner_user_id:
+                invalidate_personal_search_cache(owner_user_id)
+            for shared_user_id in _approved_search_share_principals(document_item.get('shared_user_ids')):
+                invalidate_personal_search_cache(shared_user_id)
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Cached search results were not cleared after a search metadata sync.",
+            extra={'document_id': document_item.get('id'), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+
+
 def run_document_search_metadata_sync(record_id, lease_wait_seconds=0):
     """Project a document's pending metadata to all of its search chunks.
 
@@ -4869,6 +4912,12 @@ def run_document_search_metadata_sync(record_id, lease_wait_seconds=0):
                     document_item.get('user_id') or record.get('user_id'),
                     group_id,
                     public_workspace_id,
+                )
+            if chunks_updated:
+                _invalidate_document_search_results_cache(
+                    document_item,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
                 )
         except DocumentSearchSyncLeaseLostError:
             log_event(
