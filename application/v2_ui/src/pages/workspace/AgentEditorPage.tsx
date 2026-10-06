@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { BookOpen, Cpu, IdCard, LayoutTemplate, Plug, ScrollText, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { GlassButton } from '../../components/ui/primitives';
 import { WorkspaceEditorFrame } from '../../components/workspace/WorkspaceEditorFrame';
 import { SectionSkeleton } from '../../components/workspace/primitives';
@@ -63,18 +64,11 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const [knowledgeRevision, setKnowledgeRevision] = useState(0);
     const returnedAction = useRef<ActionConfiguration | null>(null);
     const handoffChecked = useRef(false);
-    const templatesAnchor = useRef<HTMLDivElement>(null);
     // A member without the edit hint sees the group editor read-only; personal scope always authors.
     const canAuthor = adapter.allows(isNew ? 'create' : 'edit', original?.record ?? draft);
     const readOnly = accessReadOnly || original?.read_only === true || !canAuthor;
     const advancedError = agentAdvancedError(draft, original);
     const arraySecretError = agentText(draft._editor_array_secret_error) || null;
-
-    useEffect(() => {
-        if (bootLoading || new URLSearchParams(location.search).get('templates') !== '1') return;
-        templatesAnchor.current?.scrollIntoView({ block: 'start' });
-        templatesAnchor.current?.focus({ preventScroll: true });
-    }, [bootLoading, location.search]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -206,10 +200,11 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const structured = (content: ReactNode) => <fieldset disabled={Boolean(advancedError) || iconBusy} className="min-w-0">{content}</fieldset>;
     return (
         <WorkspaceEditorFrame
-            title={isNew ? 'New agent' : draft.display_name || draft.name || 'Agent details'}
+            title={isNew ? 'New agent' : draft.display_name || draft.name || 'Agent details'} icon={Sparkles}
             description={isNew ? 'Configure a reusable assistant. Changes are saved only when you choose Save agent.' : `Stable ID: ${draft.id}`}
             backTo={adapter.basePath} dirty={dirty || iconBusy} saving={saving} readOnly={readOnly} error={arraySecretError || saveError}
             onSave={() => void save()} onDiscard={clear} saveLabel="Save agent" saveDisabled={Boolean(advancedError) || iconBusy}
+            initialSection={new URLSearchParams(location.search).get('templates') === '1' ? 'templates' : undefined}
             actions={<>
                 {advancedError ? <span role="status" className="max-w-xs text-xs text-danger">
                     {arraySecretError ? 'Review stored array credentials before saving.' : 'Fix Additional settings JSON to enable saving.'}
@@ -225,30 +220,36 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             </>}
             sections={[
                 {
-                    id: 'identity', label: 'Identity',
+                    id: 'identity', label: 'Identity', icon: IdCard,
+                    description: 'The name people see, what the agent is for, its type and its icon.',
                     content: <><AgentIdentityFields draft={draft} setDraft={setDraft} options={options} isNew={isNew} onIconBusyChange={setIconBusy} />
                         {restored ? <p role="status" className="mt-3 text-xs text-text-3">Your unsaved draft was restored from this tab’s memory.</p> : null}</>,
                 },
-                { id: 'model', label: 'Model & connection', content: structured(<AgentModelFields draft={draft} setDraft={setDraft} options={options} original={original}
+                { id: 'model', label: 'Model & connection', icon: Cpu,
+                    description: 'The model that answers, or the Foundry resource that runs the agent.', content: structured(<AgentModelFields draft={draft} setDraft={setDraft} options={options} original={original}
                     allowCustomEndpoints={adapter.allowsCustomEndpoints(options.settings)} discoverFoundryResources={adapter.discoverFoundryResources}
                     neutralReadOnlyCopy={adapter.scope.kind === 'group' && readOnly} />) },
-                { id: 'actions', label: 'Actions', content: structured(<AgentActionPicker draft={draft} setDraft={setDraft}
+                { id: 'actions', label: 'Actions', icon: Plug,
+                    description: 'The actions the agent can call, and what each one may do.', content: structured(<AgentActionPicker draft={draft} setDraft={setDraft}
                     actions={actions} targets={targets} loading={actionsLoading} error={actionsError} targetError={targetError}
                     builtinActions={options.builtin_actions} ownerId={ownerId} canCreateActions={canCreateActions} readOnly={readOnly}
                     scopeKind={adapter.scope.kind}
                     onRefresh={() => setActionsRevision((value) => value + 1)}
                     onNewAction={() => navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`, { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } })} />) },
-                { id: 'knowledge', label: 'Assigned knowledge', content: structured(<AgentKnowledgeFields draft={draft} setDraft={setDraft}
+                { id: 'knowledge', label: 'Assigned knowledge', icon: BookOpen,
+                    description: 'The documents, tags and web pages the agent answers from.', content: structured(<AgentKnowledgeFields draft={draft} setDraft={setDraft}
                     catalog={knowledge} loading={knowledgeLoading} error={knowledgeError} readOnly={readOnly} knowledgeScopes={adapter.knowledgeScopes}
                     onRefresh={() => setKnowledgeRevision((value) => value + 1)} />) },
-                { id: 'instructions', label: 'Instructions', content: <AgentInstructionsFields key={draft.agent_type}
+                { id: 'instructions', label: 'Instructions', icon: ScrollText,
+                    description: 'How the agent behaves and responds.', content: <AgentInstructionsFields key={draft.agent_type}
                     draft={draft} setDraft={setDraft} actions={actions} catalog={knowledge} readOnly={readOnly} draftInstructions={adapter.draftInstructions}
                     contextError={actionsError || (readAgentKnowledgeEnabled(draft) ? knowledgeError : null)} /> },
-                { id: 'advanced', label: 'Advanced', content: <AgentAdvancedFields draft={draft} setDraft={setDraft} options={options} original={original} /> },
-                { id: 'templates', label: 'Examples & templates', content: structured(<div ref={templatesAnchor} tabIndex={-1}>
+                { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal,
+                    description: 'Token and reasoning limits, and every setting as JSON.', content: <AgentAdvancedFields draft={draft} setDraft={setDraft} options={options} original={original} /> },
+                { id: 'templates', label: 'Examples & templates', icon: LayoutTemplate,
+                    description: 'Approved examples and templates to start a new agent from.', content: structured(
                     <AgentTemplatesPanel draft={draft} setDraft={setDraft} options={options} actions={actions} isNew={isNew} dirty={dirty} readOnly={readOnly}
-                        submissionAllowed={adapter.allowsTemplateSubmission(options.settings)} scope={adapter.scope.kind} />
-                </div>) },
+                        submissionAllowed={adapter.allowsTemplateSubmission(options.settings)} scope={adapter.scope.kind} />) },
             ]}
         />
     );

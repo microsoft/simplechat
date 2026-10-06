@@ -24,6 +24,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The V2 Call agent target picker always listed the signed-in person's personal targets. It now asks for the targets of the workspace the action belongs to: global agents for a global action, and for a group action the group's agents plus any permitted global ones, which matches what the server accepts when the action is saved.
     *   (Ref: `CallAgentActionConfiguration.tsx`, `/api/plugins/agent-targets`)
 
+#### User Interface Enhancements
+
+*   **Agent and Action Editors Share the Admin Settings Design**
+    *   The full-page agent and action editors, the same ones in My Workspace, group workspaces and Admin Settings, are now laid out as Admin Settings is. Each section is a card headed by an icon, its title and what it holds. Settings are rows with the label and help beside the control on a wide screen, stacked on a narrow one. A setting others depend on, such as **Restrict to assigned knowledge** or **Track secret expiration**, is highlighted with the settings it controls indented beneath it, and collapsible groups and panels match Admin Settings.
+    *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll.
+    *   The Global Agents and Global Actions lists now match AI Connections: an Enabled or Disabled badge, a Default agent badge, and icon buttons to make an agent the default, enable or disable, edit, and delete.
+    *   (Ref: `EditorLayout.tsx`, `WorkspaceEditorFrame.tsx`, `theme.css` `.editor-field`, `AgentFields.tsx`, `ActionFields.tsx`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminListPill.tsx`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
 ### **(v0.261.267)**
 
 #### User Interface Enhancements

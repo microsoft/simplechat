@@ -11,7 +11,8 @@ import {
     updateAgentSetting, type FoundryDiscoveryRecord,
 } from '../../lib/workspaceAgentAuthoring';
 import { normalizeAgentKnowledgeUrl } from '../../lib/workspaceAgentKnowledge';
-import { GlassButton, Toggle } from '../ui/primitives';
+import { GlassButton } from '../ui/primitives';
+import { EditorGroup, EditorRow, EditorSwitch } from '../workspace/EditorLayout';
 import { AgentField, AgentNotice, AgentSecretField, AgentTextField } from './AgentFields';
 
 interface ModelFieldsProps {
@@ -68,27 +69,28 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
             {!choices.length ? <AgentNotice>{neutralReadOnlyCopy
                 ? 'Uses a configured model.'
                 : 'No enabled models are listed. You can retain the saved connection or configure a custom connection below.'}</AgentNotice> : null}
-            <dl className="grid gap-3 rounded-xl border border-edge p-3 text-xs sm:grid-cols-3">
-                <div className="min-w-0"><dt className="text-text-3">Endpoint ID</dt><dd className="break-all text-text-1">{draft.model_endpoint_id || 'Legacy / configured default'}</dd></div>
-                <div className="min-w-0"><dt className="text-text-3">Model ID</dt><dd className="break-all text-text-1">{draft.model_id || draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment || 'Configured default'}</dd></div>
-                <div className="min-w-0"><dt className="text-text-3">Provider</dt><dd className="break-all text-text-1">{draft.model_provider || 'Configured default'}</dd></div>
-            </dl>
-            <details open={customOpen} onToggle={(event) => setCustomOpen(event.currentTarget.open)} className="rounded-xl border border-edge p-3">
-                <summary className="cursor-pointer text-sm font-medium text-text-2">Custom / legacy connection and APIM</summary>
-                <div className="mt-4 space-y-4">
-                    <p className="text-xs text-text-3">A selected endpoint takes precedence. Custom values and stored credentials are retained when you choose a model; they are never copied from app settings.</p>
-                    {!customAllowed ? <AgentNotice>Your administrator has disabled custom-connection changes. Existing values and credentials remain stored.</AgentNotice> : null}
-                    <fieldset disabled={!customAllowed} className="space-y-4">
+            <EditorRow heading="Current selection" help="What the agent calls when it runs.">
+                <dl className="grid gap-3 rounded-lg border border-edge bg-surface-1 p-3 text-xs sm:grid-cols-3">
+                    <div className="min-w-0"><dt className="text-text-3">Endpoint ID</dt><dd className="break-all text-text-1">{draft.model_endpoint_id || 'Legacy / configured default'}</dd></div>
+                    <div className="min-w-0"><dt className="text-text-3">Model ID</dt><dd className="break-all text-text-1">{draft.model_id || draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment || 'Configured default'}</dd></div>
+                    <div className="min-w-0"><dt className="text-text-3">Provider</dt><dd className="break-all text-text-1">{draft.model_provider || 'Configured default'}</dd></div>
+                </dl>
+            </EditorRow>
+            <EditorGroup summary="Custom / legacy connection and APIM" open={customOpen} onToggle={setCustomOpen}>
+                <p className="pt-2 text-[0.8125rem] leading-relaxed text-text-3">A selected endpoint takes precedence. Custom values and stored credentials are retained when you choose a model; they are never copied from app settings.</p>
+                {!customAllowed ? <AgentNotice>Your administrator has disabled custom-connection changes. Existing values and credentials remain stored.</AgentNotice> : null}
+                <fieldset disabled={!customAllowed} className="min-w-0">
                     <legend className="sr-only">Custom connection settings</legend>
                     {draft.model_endpoint_id ? (
-                        <GlassButton type="button" size="sm" onClick={() => setDraft((current) => ({
-                            ...current, model_endpoint_id: '', model_id: '', model_provider: '',
-                        }))}>Use custom connection instead of selected endpoint</GlassButton>
+                        <div className="pb-2">
+                            <GlassButton type="button" size="sm" variant="subtle" onClick={() => setDraft((current) => ({
+                                ...current, model_endpoint_id: '', model_id: '', model_provider: '',
+                            }))}>Use custom connection instead of selected endpoint</GlassButton>
+                        </div>
                     ) : null}
-                    <Toggle label="Use APIM for this agent" checked={draft.enable_agent_gpt_apim === true}
+                    <EditorSwitch label="Use APIM for this agent" checked={draft.enable_agent_gpt_apim === true}
                         description="Switches which custom connection fields are used. Inactive connection values remain in the draft."
                         onChange={(value) => update('enable_agent_gpt_apim', value)} />
-                    <div className="grid gap-4 sm:grid-cols-2">
                         {draft.enable_agent_gpt_apim ? (
                             <>
                                 <AgentTextField label="APIM endpoint" value={draft.azure_agent_apim_gpt_endpoint}
@@ -114,10 +116,8 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                                     onChange={(value) => update('azure_openai_gpt_key', value)} />
                             </>
                         )}
-                    </div>
-                    </fieldset>
-                </div>
-            </details>
+                </fieldset>
+            </EditorGroup>
         </div>
     );
 }
@@ -207,7 +207,7 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
                     {endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || endpoint.id} · {agentText(endpoint.scope) || 'global'}</option>)}
                 </select>
             </AgentField>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3 pb-1">
                 <GlassButton type="button" size="sm" onClick={() => void discover()} disabled={!selectedEndpoint || loading}>
                     <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                     {loading ? 'Discovering…' : type === 'foundry_workflow' ? 'Discover workflows' : type === 'new_foundry' ? 'Discover applications' : 'Discover agents'}
@@ -232,7 +232,7 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
                     </select>
                 </AgentField>
             ) : null}
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
                 <AgentTextField label="Foundry project endpoint" required value={settings.endpoint || draft.azure_openai_gpt_endpoint}
                     onChange={(value) => updateConnection('endpoint', value)} />
                 <AgentTextField label="Foundry project name" value={settings.project_name || draft.azure_openai_gpt_deployment}
@@ -290,7 +290,7 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
                     </>
                 )}
             </div>
-            {type === 'foundry_workflow' ? <Toggle label="Include SimpleChat document context"
+            {type === 'foundry_workflow' ? <EditorSwitch label="Include SimpleChat document context"
                 checked={settings.include_document_context !== false}
                 description="Pack selected or uploaded document context into workflow prompts."
                 onChange={(value) => update('include_document_context', value)} /> : null}

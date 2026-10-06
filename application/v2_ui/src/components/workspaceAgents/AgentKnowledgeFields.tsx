@@ -9,7 +9,8 @@ import {
     readAgentKnowledge, resolvedAgentDocuments, selectedKnowledgeSources, toggleAgentKnowledgeSource,
     toggleString, updateAgentKnowledge, type AgentKnowledgeCatalog, type AgentKnowledgeSource,
 } from '../../lib/workspaceAgentKnowledge';
-import { GlassButton, Toggle } from '../ui/primitives';
+import { GlassButton } from '../ui/primitives';
+import { EditorDependents, EditorFieldset, EditorGroup, EditorPanel, EditorSwitch } from '../workspace/EditorLayout';
 import { SectionSearch } from '../workspace/primitives';
 import { AgentField, AgentNotice, AgentTextField } from './AgentFields';
 
@@ -78,24 +79,23 @@ export function AgentKnowledgeFields({
     }
     return (
         <div className="space-y-4">
-            <Toggle label="Restrict to assigned knowledge" checked={config.enabled}
+            <EditorSwitch lead label="Restrict to assigned knowledge" checked={config.enabled}
                 description="Ground this agent in selected authorized workspaces and URLs. Turning this off retains the configuration for later."
                 onChange={(enabled) => setDraft((current) => updateAgentKnowledge(current, { enabled }))} />
             {!config.enabled && error ? <AgentNotice error>{error} <GlassButton type="button" size="sm" onClick={onRefresh}>Retry knowledge catalogue</GlassButton></AgentNotice> : null}
             {config.enabled ? (
-                <>
-                    <div className="flex flex-wrap items-center gap-3">
+                <EditorDependents>
+                    <div className="flex flex-wrap items-center gap-3 pt-1">
                         <GlassButton type="button" size="sm" disabled={loading} onClick={onRefresh}><RefreshCw size={14} />Refresh knowledge</GlassButton>
                         <span className="text-xs text-text-3">{selectedKeys.size} sources · {config.document_ids.length} explicit documents · {config.tags.length} tags · {config.web_sources.length} URLs</span>
                     </div>
                     {loading ? <p role="status" className="text-sm text-text-3">Loading authorized knowledge sources…</p> : null}
                     {error ? <AgentNotice error>{error} Existing selections are preserved.</AgentNotice> : null}
                     {inputError ? <AgentNotice error>{inputError}</AgentNotice> : null}
-                    <fieldset className="space-y-3">
-                        <legend className="mb-2 text-sm font-medium text-text-1">Source workspaces</legend>
-                        <p className="text-xs text-text-3">{knowledgeScopes.includes('personal') || knowledgeScopes.includes('group')
+                    <EditorFieldset legend="Source workspaces"
+                        help={`${knowledgeScopes.includes('personal') || knowledgeScopes.includes('group')
                             ? 'Only your personal workspace and permitted public workspaces can be newly assigned.'
-                            : 'Only public workspaces can be assigned, because a global agent answers everyone.'} Removing a source does not silently remove stored document references.</p>
+                            : 'Only public workspaces can be assigned, because a global agent answers everyone.'} Removing a source does not silently remove stored document references.`}>
                         <SectionSearch value={sourceQuery} onChange={setSourceQuery} placeholder="Search knowledge workspaces" />
                         <div className="grid gap-2 sm:grid-cols-2">
                             {sources.filter((source) => `${source.label} ${source.id}`.toLowerCase().includes(sourceQuery.toLowerCase())).map((source) => (
@@ -123,17 +123,16 @@ export function AgentKnowledgeFields({
                                 }}>Remove reference</GlassButton> : null}
                             </div>
                         ))}
-                    </fieldset>
-                    <fieldset className="space-y-3">
-                        <legend className="mb-2 text-sm font-medium text-text-1">Documents and tags</legend>
-                        <p className="text-xs text-text-3">With no document or tag limits, all indexed documents in selected sources are active. Otherwise, explicit documents are included alongside documents matching every selected tag.</p>
+                    </EditorFieldset>
+                    <EditorFieldset legend="Documents and tags"
+                        help="With no document or tag limits, all indexed documents in selected sources are active. Otherwise, explicit documents are included alongside documents matching every selected tag.">
                         <SectionSearch value={documentQuery} onChange={(value) => { setDocumentQuery(value); setDocumentLimit(25); }} placeholder="Search knowledge documents" />
                         <div className="space-y-2">
                             {visibleDocuments.slice(0, documentLimit).map((document) => {
                                 const checked = config.document_ids.includes(document.id);
                                 const inSources = selectedKeys.has(`${document.scope}:${document.source_id}`);
                                 return (
-                                    <label key={`${document.scope}:${document.id}`} className="flex items-start gap-2 rounded-xl border border-edge p-3 text-sm text-text-2">
+                                    <label key={`${document.scope}:${document.id}`} className="flex items-start gap-2 rounded-lg border border-edge bg-surface-1 p-3 text-sm text-text-2">
                                         <input type="checkbox" className="mt-1 accent-accent" checked={checked}
                                             disabled={readOnly || (!checked && (config.document_ids.length >= KNOWLEDGE_LIMITS.documents ||
                                                 (!inSources && document.scope === 'public' && config.scopes.public_workspace_ids.length >= KNOWLEDGE_LIMITS.sources)))}
@@ -184,22 +183,21 @@ export function AgentKnowledgeFields({
                                     onClick={() => setDraft((current) => updateAgentKnowledge(current, { tags: readAgentKnowledge(current).tags.filter((item) => item !== tag) }))}>Remove reference</GlassButton> : null}
                             </div>
                         ))}
-                    </fieldset>
-                    <details className="rounded-xl border border-edge p-3" open>
-                        <summary className="cursor-pointer text-sm font-medium text-text-1">Active documents ({active.length})</summary>
-                        <p className="mt-2 text-xs text-text-3">Preview from the authorized catalogue. Catalogue queries are limited to 1000 documents; runtime authorization and indexing determine the final context.</p>
+                    </EditorFieldset>
+                    <EditorGroup summary={`Active documents (${active.length})`} defaultOpen>
+                        <p className="pt-2 text-xs text-text-3">Preview from the authorized catalogue. Catalogue queries are limited to 1000 documents; runtime authorization and indexing determine the final context.</p>
                         {catalog ? (
-                            <ul className="mt-2 space-y-1 text-xs text-text-2">
+                            <ul className="space-y-1 text-xs text-text-2">
                                 {active.slice(0, activeLimit).map((document) => <li key={document.id} className="break-words">{document.title || document.file_name} · {document.source_name}{config.document_ids.includes(document.id) ? ' · explicit' : ''}</li>)}
                             </ul>
-                        ) : <p className="mt-2 text-xs text-text-3">Load the catalogue to resolve active documents.</p>}
+                        ) : <p className="text-xs text-text-3">Load the catalogue to resolve active documents.</p>}
                         {active.length > activeLimit ? <GlassButton type="button" size="sm" onClick={() => setActiveLimit((value) => value + 50)}>Show more active documents</GlassButton> : null}
-                    </details>
-                    <div className="space-y-3 rounded-xl border border-edge p-3">
-                        <Toggle label="Allow user-added workspace context" checked={config.allow_user_workspace_context}
+                    </EditorGroup>
+                    <EditorPanel title="User-added context">
+                        <EditorSwitch label="Allow user-added workspace context" checked={config.allow_user_workspace_context}
                             description="Let chat users supplement the assigned sources within their own permissions."
                             onChange={(value) => setDraft((current) => updateAgentKnowledge(current, { allow_user_workspace_context: value }))} />
-                        <fieldset disabled={!config.allow_user_workspace_context} className="flex flex-wrap gap-4">
+                        <fieldset disabled={!config.allow_user_workspace_context} className="flex flex-wrap gap-4 ps-14">
                             <legend className="mb-2 text-xs text-text-3">Allowed user-added context actions</legend>
                             {USER_KNOWLEDGE_ACTIONS.map((action) => (
                                 <label key={action} className="flex items-center gap-2 text-sm text-text-2">
@@ -211,10 +209,9 @@ export function AgentKnowledgeFields({
                                 </label>
                             ))}
                         </fieldset>
-                    </div>
-                    <fieldset className="space-y-3">
-                        <legend className="mb-2 text-sm font-medium text-text-1">Assigned URLs</legend>
-                        <p className="text-xs text-text-3">URL review targets the assigned page. Deep research allows research from that source. Requests still follow the application’s web access policy.</p>
+                    </EditorPanel>
+                    <EditorFieldset legend="Assigned URLs"
+                        help="URL review targets the assigned page. Deep research allows research from that source. Requests still follow the application’s web access policy.">
                         {!readOnly ? <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
                             <AgentTextField label="Assigned URL" value={url} onChange={setUrl} placeholder="https://example.org/page" />
                             <AgentField id="agent-new-url-mode" label="URL mode">
@@ -225,7 +222,7 @@ export function AgentKnowledgeFields({
                             <GlassButton type="button" size="sm" onClick={addUrl}><Plus size={14} />Add URL</GlassButton>
                         </div> : null}
                         {config.web_sources.map((source, index) => (
-                            <div key={`${source.url}:${index}`} className="grid gap-2 rounded-xl border border-edge p-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
+                            <div key={`${source.url}:${index}`} className="grid items-center gap-2 rounded-lg border border-edge bg-surface-1 p-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
                                 <span className="break-all text-sm text-text-2">{source.url}</span>
                                 <select aria-label={`Mode for ${source.url}`} value={source.mode} className={AGENT_INPUT_CLASS}
                                     onChange={(event) => setDraft((current) => updateAgentKnowledge(current, {
@@ -240,9 +237,9 @@ export function AgentKnowledgeFields({
                                     }))}><Trash2 size={14} /></GlassButton> : null}
                             </div>
                         ))}
-                    </fieldset>
-                </>
-            ) : <p className="text-sm text-text-3">This agent follows the normal chat context policy. Enable the restriction to define its assigned knowledge.</p>}
+                    </EditorFieldset>
+                </EditorDependents>
+            ) : <p className="text-[0.8125rem] text-text-3">This agent follows the normal chat context policy. Enable the restriction to define its assigned knowledge.</p>}
         </div>
     );
 }

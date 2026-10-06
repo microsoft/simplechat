@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, IdCard, KeyRound, Plug, RefreshCw, Settings2, SlidersHorizontal } from 'lucide-react';
 import { GlassButton, GlassPanel, Skeleton } from '../../components/ui/primitives';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { WorkspaceEditorFrame } from '../../components/workspace/WorkspaceEditorFrame';
@@ -291,11 +291,11 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
             {draft.type && !definition && !catalogueLoading && !catalogueError ? <p role="status" className="rounded-xl bg-warn-soft p-3 text-sm text-warn">
                 This action’s type is no longer offered to this workspace. Its configuration is preserved for review. Choose a permitted type before saving.
             </p> : null}
-            {!readOnly && canAuthor ? <ActionField id={`${id}-type-search`} label="Search action types">
+            {!readOnly && canAuthor ? <ActionField id={`${id}-type-search`} label="Search action types" width="standard">
                 <input id={`${id}-type-search`} type="search" className={ACTION_INPUT_CLASS} value={typeSearch}
                     onChange={(event) => setTypeSearch(event.target.value)} />
             </ActionField> : null}
-            <ActionField id={`${id}-type`} label="Action type" required help={displayDefinition.description}
+            <ActionField id={`${id}-type`} label="Action type" required width="standard" help={displayDefinition.description}
                 error={actionFieldError(fieldErrors, '/type')}>
                 <select id={`${id}-type`} className={ACTION_INPUT_CLASS} value={draft.type} required disabled={readOnly || !canAuthor || catalogueLoading}
                     onChange={(event) => {
@@ -314,7 +314,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
                 <input id={`${id}-name`} autoFocus={!readOnly && canAuthor} disabled={!canAuthor} className={ACTION_INPUT_CLASS} value={draft.displayName ?? draft.name ?? ''} required
                     onChange={(event) => setDraft((current) => changeActionDisplayName(current, event.target.value, isNew))} />
             </ActionField>
-            <ActionField id={`${id}-description`} label="Description" help="Explain what this action does and when an agent should use it.">
+            <ActionField id={`${id}-description`} label="Description" width="full" help="Explain what this action does and when an agent should use it.">
                 <textarea id={`${id}-description`} rows={3} disabled={!canAuthor} className={ACTION_INPUT_CLASS} value={draft.description}
                     onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
             </ActionField>
@@ -328,11 +328,15 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         draft.type === 'mcp' ? <McpActionAuthentication {...connectorProps} /> :
             <ActionAuthentication {...connectorProps} definition={displayDefinition} />;
     const sections = [
-        { id: 'identity', label: 'Identity and type', content: identitySection },
+        { id: 'identity', label: 'Identity and type', icon: IdCard,
+            description: 'The kind of connector, the name agents see, and what the action does.', content: identitySection },
         ...(draft.type ? [
-            { id: 'configuration', label: 'Configuration', content: configuration },
-            { id: 'authentication', label: 'Authentication', content: authentication },
-            { id: 'advanced', label: 'Advanced', content: <ActionAdvancedFields {...connectorProps} definition={displayDefinition} hints={hints} hintsError={hintsError} /> },
+            { id: 'configuration', label: 'Configuration', icon: Settings2,
+                description: 'Where the action connects, and what it is allowed to do there.', content: configuration },
+            { id: 'authentication', label: 'Authentication', icon: KeyRound,
+                description: 'How the action signs in to the service it calls.', content: authentication },
+            { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal,
+                description: 'The machine name, metadata, and the full configuration as JSON.', content: <ActionAdvancedFields {...connectorProps} definition={displayDefinition} hints={hints} hintsError={hintsError} /> },
         ] : []),
     ];
     if (loading) return <div role="status" className="space-y-4"><p className="text-sm text-text-3">Loading action…</p><Skeleton className="h-44 w-full" /></div>;
@@ -347,7 +351,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
 
     return (
         <>
-            <WorkspaceEditorFrame title={readOnly ? 'Action details' : isNew ? 'New action' : canAuthor ? 'Edit action' : 'Action details'}
+            <WorkspaceEditorFrame title={readOnly ? 'Action details' : isNew ? 'New action' : canAuthor ? 'Edit action' : 'Action details'} icon={Plug}
                 description={readOnly ? 'This provided action is managed by an administrator.' :
                     isNew ? 'Configure an action, then explicitly save it. Connectors run only when you choose a discovery or test command.' : draft.displayName || draft.name}
                 backTo={returnTo || adapter.basePath} sections={sections.map((section) => ({

@@ -464,6 +464,94 @@ html[data-font-size='xl'] {
         }
     }
 
+    /*
+     * Agent and action editor rows (components/workspace/EditorLayout.tsx).
+     *
+     * The editors reuse the setting row above, but they nest fields in panels, groups and
+     * fieldsets, so a row cannot go by the card's width. Each row measures its own width
+     * and is marked `data-wide` from 50rem, the width at which an Admin Settings row puts
+     * its label beside the control. Neither rows nor editor cards are size containers: in
+     * Chromium a size container can be left with a stale, collapsed layout when React adds
+     * an editor section after it. The stacked rules win over any container query above.
+     */
+    .editor-field {
+        inline-size: 100%;
+        min-inline-size: 0;
+    }
+
+    .editor-field > .admin-field {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        grid-template-areas:
+            'heading'
+            'control'
+            'help';
+        column-gap: 0;
+        row-gap: 0.375rem;
+    }
+
+    .editor-field > .admin-field > .admin-field-heading {
+        padding-top: 0;
+    }
+
+    .editor-field > .admin-field > .admin-field-control {
+        max-width: none;
+    }
+
+    .editor-field[data-wide] > .admin-field {
+        grid-template-columns: minmax(13rem, 26rem) minmax(18rem, 1fr);
+        grid-template-rows: auto 1fr;
+        grid-template-areas:
+            'heading control'
+            'help control';
+        column-gap: 2rem;
+        row-gap: 0.25rem;
+        align-items: start;
+    }
+
+    /* Lines the label up with the text inside a 40px control. */
+    .editor-field[data-wide] > .admin-field > .admin-field-heading {
+        padding-top: 0.625rem;
+    }
+
+    /* A nested row gives its label column the indent, so its control lines up. */
+    [data-setting-emphasis='dependent'] .editor-field[data-wide] > .admin-field {
+        grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='compact'] > .admin-field-control {
+        max-width: 12rem;
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='standard'] > .admin-field-control {
+        max-width: 26rem;
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='wide'] > .admin-field-control {
+        max-width: 42rem;
+    }
+
+    /* Consecutive rows read as one list, separated by a hairline as settings rows are. */
+    .editor-field + .editor-field {
+        border-top: 1px solid var(--edge-strong);
+    }
+
+    .editor-field:has(+ .editor-field) {
+        margin-block-end: 0;
+    }
+
+    .admin-settings-distinct.editor-section {
+        container-type: normal;
+    }
+
+    /* Panels and groups have the solid surface of an Admin Settings group, where the
+       translucent light-theme edge disappears. Rows and outlined buttons inside one use the
+       strong edge so they stay visible; inputs keep the admin field border above. */
+    .editor-panel :is(.border-edge, .glass-flat):not(input, select, textarea),
+    .editor-group :is(.border-edge, .glass-flat):not(input, select, textarea) {
+        border-color: var(--edge-strong);
+    }
+
     /* Relative to the card, not the viewport, so text scaling also triggers wrapping. */
     @container (max-width: 16rem) {
         .admin-settings-distinct .admin-section-body {

@@ -23,7 +23,7 @@ function AdminEditorFrame({ description, children }: { description: string; chil
             <PageHeader title="Admin settings" description={description} />
             {isAdmin ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 lg:px-6">
-                    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">{children}</div>
+                    <div className="flex min-h-0 w-full flex-1 flex-col">{children}</div>
                 </div>
             ) : (
                 <div className="flex flex-1 items-center justify-center p-6">

@@ -1,7 +1,8 @@
 // McpActionConfiguration.tsx
 
 import { useEffect, useRef, useState } from 'react';
-import { GlassButton, GlassPanel, Toggle } from '../ui/primitives';
+import { GlassButton } from '../ui/primitives';
+import { EditorFieldset, EditorGroup, EditorPanel, EditorSwitch } from '../workspace/EditorLayout';
 import { ACTION_INPUT_CLASS, ActionField, ActionJsonInput, ActionSecretInput } from './ActionFields';
 import { ActionSchemaValue } from './ActionSchemaFields';
 import {
@@ -120,20 +121,15 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
     const updateSetting = (key: string, value: unknown) => onChange((current) => updateConnectorFields(current, {
         additionalSettings: { ...connectorObject(current.additionalFields.additionalSettings), [key]: value },
     }));
-    return <GlassPanel elevation="flat" className="space-y-4 p-4">
-        <div>
-            <h3 className="text-sm font-semibold text-text-1">Implementation settings</h3>
-            <p className="mt-1 break-words text-xs text-text-3">
-                {implementationId || 'Custom implementation'}{implementation.schemaVersion ? ` · schema ${connectorText(implementation.schemaVersion)}` : ''}
-            </p>
-            <p className="mt-1 text-xs text-text-3">These settings come from the applied server catalogue entry. Fixed safety requirements are not editable; provider-specific selections remain explicit.</p>
-        </div>
+    return <EditorPanel title="Implementation settings"
+        description={`${implementationId || 'Custom implementation'}${implementation.schemaVersion ? ` · schema ${connectorText(implementation.schemaVersion)}` : ''}`}>
+        <p className="text-xs text-text-3">These settings come from the applied server catalogue entry. Fixed safety requirements are not editable; provider-specific selections remain explicit.</p>
         {fields.map((field) => {
             const id = `mcp-implementation-${field.key}`;
             const value = settings[field.key];
             const errorKey = `additionalFields.additionalSettings.${field.key}`;
             const error = errors[errorKey] || localErrors[errorKey];
-            if (field.kind === 'fixed') return <ActionField key={field.key} id={id} label={field.label} help={field.help} error={error}>
+            if (field.kind === 'fixed') return <ActionField key={field.key} id={id} label={field.label} help={field.help} error={error} width="standard">
                 <input id={id} readOnly className={ACTION_INPUT_CLASS}
                     value={value === undefined ? 'Not configured' : typeof value === 'boolean' ? value ? 'Yes' : 'No' : connectorText(value)} />
                 {!readOnly && value !== field.expected ? <GlassButton type="button" size="sm" variant="subtle"
@@ -141,7 +137,7 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
                     Use {field.optional ? 'recommended' : 'required'} value: {String(field.expected)}
                 </GlassButton> : null}
             </ActionField>;
-            if (field.kind === 'select') return <ActionField key={field.key} id={id} label={field.label} help={field.help} error={error}>
+            if (field.kind === 'select') return <ActionField key={field.key} id={id} label={field.label} help={field.help} error={error} width="standard">
                 <select id={id} className={ACTION_INPUT_CLASS} value={connectorText(value)} disabled={readOnly}
                     onChange={(event) => updateSetting(field.key, event.target.value)}>
                     {!field.options?.some((option) => option.value === value) ? <option value={connectorText(value)} disabled>{value ? `Unavailable — ${connectorText(value)}` : 'Choose a value'}</option> : null}
@@ -152,8 +148,7 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
                 help={field.help} error={error} readOnly={readOnly} onChange={(next) => updateSetting(field.key, next)} />;
             const selected = connectorStrings(value);
             const unavailable = selected.filter((item) => !field.options?.some((option) => option.value === item));
-            return <fieldset key={field.key} className="space-y-2" disabled={readOnly}>
-                <legend className="text-sm font-medium text-text-1">{field.label}</legend>
+            return <EditorFieldset key={field.key} legend={field.label} disabled={readOnly}>
                 {[...(field.options ?? []), ...unavailable.map((item) => ({ value: item, label: `${item} (unavailable — retained)` }))].map((option) =>
                     <label key={option.value} className="flex items-start gap-2 text-sm text-text-2">
                         <input type="checkbox" className="mt-1 accent-accent" checked={selected.includes(option.value)}
@@ -162,7 +157,7 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
                         <span className="break-words">{option.label}</span>
                     </label>)}
                 {error ? <p role="alert" className="text-xs text-danger">{error}</p> : null}
-            </fieldset>;
+            </EditorFieldset>;
         })}
         {extraSettings.length ? <div className="space-y-4 border-t border-edge pt-4">
             <p className="text-xs text-text-3">Additional implementation properties are retained. The server remains authoritative for custom implementation validation.</p>
@@ -171,7 +166,7 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
                 if (value === EDITOR_SECRET_MASK || originalSettings[key] === EDITOR_SECRET_MASK) return <ActionSecretInput key={key}
                     id={id} label={key} value={value} storedValue={originalSettings[key]} disabled={readOnly}
                     onChange={(next) => updateSetting(key, next)} />;
-                if (typeof value === 'boolean') return <Toggle key={key} label={key} checked={value} disabled={readOnly}
+                if (typeof value === 'boolean') return <EditorSwitch key={key} label={key} checked={value} disabled={readOnly}
                     onChange={(next) => updateSetting(key, next)} />;
                 if (typeof value === 'string' || typeof value === 'number') return <ActionField key={key} id={id} label={key}>
                     <input id={id} className={ACTION_INPUT_CLASS} type={typeof value === 'number' ? 'number' : 'text'}
@@ -182,7 +177,7 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
                     path={`/additionalFields/additionalSettings/${pointerPart(key)}`} label={key} />;
             })}
         </div> : null}
-    </GlassPanel>;
+    </EditorPanel>;
 }
 
 export function McpActionConfiguration(props: ActionConnectorProps) {
@@ -236,10 +231,9 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
 
     return (
         <div className="min-w-0 space-y-6" data-testid="mcp-configuration">
-            <p className="text-sm leading-relaxed text-text-2">Connect to a Model Context Protocol server and expose its tools or prompts to agents. Server discovery and connection testing are explicit commands; selecting a template or saving an action never runs either.</p>
-            <GlassPanel elevation="flat" className="space-y-4 p-4">
-                <h3 className="text-sm font-semibold text-text-1">Server starting points</h3>
-                <p className="text-xs text-text-3">Choose a preconfiguration or compatibility preset, review it, then apply its defaults. Existing custom fields, secret state, identity references, and selected tools are retained.</p>
+            <p className="text-[0.8125rem] leading-relaxed text-text-2">Connect to a Model Context Protocol server and expose its tools or prompts to agents. Server discovery and connection testing are explicit commands; selecting a template or saving an action never runs either.</p>
+            <EditorPanel title="Server starting points"
+                description="Choose a preconfiguration or compatibility preset, review it, then apply its defaults. Existing custom fields, secret state, identity references, and selected tools are retained.">
                 {catalogue.loading ? <p role="status" className="text-xs text-text-3">Loading MCP catalogues…</p> : null}
                 {catalogue.presetsError || catalogue.preconfigurationsError ? <div role="alert" className="alert alert-warning space-y-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
                     {catalogue.presetsError ? <p>{catalogue.presetsError} The built-in generic preset remains available.</p> : null}
@@ -262,7 +256,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                 <McpCatalogueDetails entry={chosenPreconfiguration} />
                 {chosenPreconfiguration ? <p className="break-all text-xs text-text-3">Endpoint to apply: {chosenPreconfiguration.endpoint || 'No endpoint default'}</p> : null}
                 {preconfigurationId && !catalogue.preconfigurations.some(({ id }) => id === preconfigurationId) ? <p className="text-xs text-warn">Saved preconfiguration {preconfigurationId} is unavailable. Its implementation settings remain intact.</p> : null}
-                <GlassButton type="button" variant="subtle"
+                <div><GlassButton type="button" variant="subtle"
                     disabled={readOnly || Boolean(busy) || catalogue.loading || Boolean(preconfigurationChoice && !chosenPreconfiguration)}
                     onClick={() => {
                         if (!chosenPreconfiguration) {
@@ -281,9 +275,9 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                         }
                     }}>
                     {preconfigurationChoice ? 'Apply server preconfiguration' : 'Use custom configuration'}
-                </GlassButton>
+                </GlassButton></div>
                 </>)}
-                <div className="space-y-3 border-t border-edge pt-4">
+                <div className="space-y-3 border-t border-edge pt-3">
                     <ActionField id="mcp-preset" label="Compatibility preset">
                         <select id="mcp-preset" className={ACTION_INPUT_CLASS} value={presetChoice} disabled={readOnly || catalogue.loading}
                             onChange={(event) => setPresetChoice(event.target.value)}>
@@ -293,7 +287,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     </ActionField>
                     <McpCatalogueDetails entry={chosenPreset} />
                     {!preset ? <p className="text-xs text-warn">Saved preset {profile} is unavailable. It has not been replaced.</p> : null}
-                    <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || !chosenPreset || catalogue.loading}
+                    <div><GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || !chosenPreset || catalogue.loading}
                         onClick={() => {
                             if (!chosenPreset) return;
                             try {
@@ -303,12 +297,12 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                             } catch (error) {
                                 setApplyError(error instanceof Error ? error.message : 'Could not apply the preset.');
                             }
-                        }}>Apply preset defaults</GlassButton>
+                        }}>Apply preset defaults</GlassButton></div>
                 </div>
                 {applyError ? <p role="alert" className="text-sm text-danger">{applyError}</p> : null}
-            </GlassPanel>
-            <div className="grid gap-4 sm:grid-cols-2">
-                <ActionField id="mcp-transport" label="Transport" required error={fieldError('transport')}
+            </EditorPanel>
+            <div className="min-w-0">
+                <ActionField id="mcp-transport" label="Transport" required width="standard" error={fieldError('transport')}
                     help="MCP actions support remote transports only. Local commands and stdio are no longer supported, including administrator-managed actions.">
                     <select id="mcp-transport" className={ACTION_INPUT_CLASS} value={transport} disabled={readOnly}
                         onChange={(event) => {
@@ -343,15 +337,14 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
             </div> : null}
             {transport === 'websocket' ? <p className="alert alert-warning rounded-xl bg-warn-soft p-3 text-sm text-warn">The current WebSocket connector supports neither authentication headers nor custom headers. Existing credentials and headers are retained until you explicitly change them.</p> : null}
             <McpImplementationConfiguration {...props} />
-            <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-text-1">Tools and prompts</h3>
-                <Toggle label="Load tools" description="Expose tools from this MCP server to agents using this action."
+            <EditorPanel title="Tools and prompts">
+                <EditorSwitch label="Load tools" description="Expose tools from this MCP server to agents using this action."
                     checked={(fields.load_tools ?? true) === true} disabled={readOnly} onChange={(value) => updateField('load_tools', value)} />
-                <Toggle label="Load prompts" description="Load MCP server prompts in addition to any enabled tools."
+                <EditorSwitch label="Load prompts" description="Load MCP server prompts in addition to any enabled tools."
                     checked={(fields.load_prompts ?? false) === true} disabled={readOnly} onChange={(value) => updateField('load_prompts', value)} />
-                <Toggle label="Validate tool arguments" description="Check arguments against cached tool input schemas before invocation. Discover tools to populate the schema cache."
+                <EditorSwitch label="Validate tool arguments" description="Check arguments against cached tool input schemas before invocation. Discover tools to populate the schema cache."
                     checked={(fields.validate_tool_arguments ?? false) === true} disabled={readOnly} onChange={(value) => updateField('validate_tool_arguments', value)} />
-                <ActionField id="mcp-result-policy" label="Large-result policy" error={fieldError('tool_result_policy')}>
+                <ActionField id="mcp-result-policy" label="Large-result policy" width="standard" error={fieldError('tool_result_policy')}>
                     <select id="mcp-result-policy" className={ACTION_INPUT_CLASS} value={connectorText(fields.tool_result_policy ?? 'truncate')} disabled={readOnly}
                         onChange={(event) => updateField('tool_result_policy', event.target.value)}>
                         {!['truncate', 'error_on_limit'].includes(connectorText(fields.tool_result_policy ?? 'truncate')) ? <option value={connectorText(fields.tool_result_policy)} disabled>Unavailable — {connectorText(fields.tool_result_policy)}</option> : null}
@@ -368,8 +361,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution} onClick={() => void doDiscovery()}>Discover MCP tools</GlassButton>
                     <p className="text-xs text-text-3">Discovery connects and lists tools; it does not invoke them.</p>
                 </div>
-                {discovery ? <GlassPanel elevation="flat" className="space-y-2 p-3">
-                    <h4 className="text-sm font-medium text-text-1">Last discovery capabilities</h4>
+                {discovery ? <EditorPanel title="Last discovery capabilities">
                     {!lastDiscoveryMatches ? <p className="text-xs text-warn">The endpoint or transport changed after this discovery. Run discovery again to verify the current server.</p> : null}
                     <dl className="grid gap-2 text-xs text-text-2 sm:grid-cols-2">
                         {Object.entries(connectorObject(discovery.result.capabilities)).map(([key, value]) =>
@@ -381,9 +373,9 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     {discovery.result.warnings?.length ? <ul className="list-disc space-y-1 pl-5 text-xs text-warn">
                         {discovery.result.warnings.map((warning, index) => <li key={index} className="break-words">{warning}</li>)}
                     </ul> : null}
-                </GlassPanel> : null}
+                </EditorPanel> : null}
                 {choices.length ? <div className="space-y-3">
-                    <ActionField id="mcp-tool-search" label="Find a tool">
+                    <ActionField id="mcp-tool-search" label="Find a tool" width="standard">
                         <input id="mcp-tool-search" type="search" className={ACTION_INPUT_CLASS} value={toolSearch}
                             placeholder="Tool name or description" onChange={(event) => { setToolSearch(event.target.value); setToolLimit(30); }} />
                     </ActionField>
@@ -392,7 +384,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                         const id = `mcp-tool-${index}`;
                         const schema = connectorObject(tool?.input_schema);
                         const required = connectorStrings(schema.required);
-                        return <GlassPanel key={name} elevation="flat" className="space-y-2 p-3">
+                        return <div key={name} className="min-w-0 space-y-2 rounded-lg border border-edge bg-surface-1 p-3">
                             <label htmlFor={id} className="flex items-start gap-3">
                                 <input id={id} type="checkbox" className="mt-1 accent-accent" checked={selected} disabled={readOnly}
                                     onChange={(event) => {
@@ -425,34 +417,32 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                                     }, null, 2)}</pre>
                                 </div>
                             </details> : null}
-                        </GlassPanel>;
+                        </div>;
                     })}
                     {!filteredTools.length ? <p className="text-sm text-text-3">No tools match this search.</p> : null}
                     {filteredTools.length > toolLimit ? <GlassButton type="button" variant="subtle" onClick={() => setToolLimit((value) => value + 30)}>Show more tools</GlassButton> : null}
                 </div> : <p className="text-sm text-text-3">No tool metadata is cached. Discover tools when ready, or enter known tool names above.</p>}
-                <details className="space-y-3">
-                    <summary className="cursor-pointer text-sm text-text-2">Advanced cached tool metadata</summary>
+                <EditorGroup summary="Advanced cached tool metadata">
                     <ActionJsonInput id="mcp-tool-metadata" label="Discovered tool metadata JSON" value={fields.mcp_tools ?? []}
                         objectOnly={false} readOnly={readOnly} onValidityChange={props.onValidityChange}
                         protectArraySecrets={actionHasStoredArraySecrets(draft, original, '/additionalFields/mcp_tools')}
                         error={fieldError('mcp_tools')} rows={10}
                         help="Preserve original_name and function_name. Editing cached metadata does not discover or run tools."
                         onChange={(value) => updateField('mcp_tools', value)} />
-                </details>
-            </div>
-            <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-text-1">Timeouts and retry policy</h3>
-                <div className="grid gap-4 sm:grid-cols-2">
-                    {MCP_NUMBER_FIELDS.map((field) => <ActionField key={field.key} id={`mcp-${field.key}`} label={field.label} error={fieldError(field.key)}>
+                </EditorGroup>
+            </EditorPanel>
+            <EditorPanel title="Timeouts and retry policy">
+                <div className="min-w-0">
+                    {MCP_NUMBER_FIELDS.map((field) => <ActionField key={field.key} id={`mcp-${field.key}`} label={field.label} width="compact" error={fieldError(field.key)}>
                         <input id={`mcp-${field.key}`} type="number" inputMode="numeric" step={1} min={field.min} max={field.max}
                             className={ACTION_INPUT_CLASS} disabled={readOnly}
                             value={typeof fields[field.key] === 'number' || typeof fields[field.key] === 'string' ? fields[field.key] as number | string : field.defaultValue}
                             onChange={(event) => updateField(field.key, event.target.value === '' ? '' : Number(event.target.value))} />
                     </ActionField>)}
                 </div>
-            </div>
-            <div className="space-y-3 border-t border-edge pt-4">
-                <p className="text-xs text-text-3">The connection test initializes a server session and lists its tools. It does not invoke tools or save discovered metadata. Authentication is configured in the Authentication section.</p>
+            </EditorPanel>
+            <EditorPanel title="Validate and test"
+                description="The connection test initializes a server session and lists its tools. It does not invoke tools or save discovered metadata. Authentication is configured in the Authentication section.">
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution}
                         onClick={() => void run('Validating MCP configuration…', (signal) => validateApiConnector(draft, original, 'mcp', signal, connectorTestScope(props)))}>Validate MCP configuration</GlassButton>
@@ -463,7 +453,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                 {readOnly ? <p className="text-xs text-text-3">Provided actions are read-only. Discovery and connection testing are disabled.</p> : null}
                 {!readOnly && Object.keys(localErrors).length ? <p className="text-xs text-text-3">Resolve the highlighted configuration errors before validating or connecting.</p> : null}
                 <ConnectorFeedbackPanel feedback={feedback} stale={stale} />
-            </div>
+            </EditorPanel>
         </div>
     );
 }
@@ -501,7 +491,7 @@ export function McpActionAuthentication(props: ActionConnectorProps) {
         <div className="space-y-5" data-testid="mcp-authentication">
             <ConnectorIdentitySelect {...props} identities={transport === 'websocket' ? [] : props.identities} kind="mcp" />
             {catalogue.presetsError ? <p role="alert" className="text-xs text-warn">{catalogue.presetsError} Saved authentication and header values have not been changed.</p> : null}
-            <ActionField id="mcp-auth-method" label="Authentication method" error={fieldError('additionalFields.auth_method')}
+            <ActionField id="mcp-auth-method" label="Authentication method" width="standard" error={fieldError('additionalFields.auth_method')}
                 help={draft.identity_id ? 'The selected identity is resolved on the server; no credentials are copied into the action.' : 'A method change only edits this draft. Inactive credentials are retained until explicitly cleared.'}>
                 <select id="mcp-auth-method" className={ACTION_INPUT_CLASS} value={method} disabled={readOnly || Boolean(draft.identity_id)}
                     onChange={(event) => {
@@ -514,7 +504,7 @@ export function McpActionAuthentication(props: ActionConnectorProps) {
                     {allowedMethods.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
             </ActionField>
-            {(method === 'api_key' || apiKeyIdentity) ? <ActionField id="mcp-api-key-header" label="API key header name" required error={fieldError('additionalFields.api_key_header_name')}>
+            {(method === 'api_key' || apiKeyIdentity) ? <ActionField id="mcp-api-key-header" label="API key header name" required width="standard" error={fieldError('additionalFields.api_key_header_name')}>
                 <input id="mcp-api-key-header" className={ACTION_INPUT_CLASS} disabled={readOnly}
                     value={connectorText(fields.api_key_header_name ?? 'X-API-Key')}
                     onChange={(event) => {
@@ -536,22 +526,19 @@ export function McpActionAuthentication(props: ActionConnectorProps) {
                 value={draft.auth.key} storedValue={original?.record.auth.key} disabled={readOnly}
                 error={fieldError('auth.key')} onChange={(value) => updateAuth('key', value)} /> : null}
             {method === 'identity' && !draft.identity_id ? <p role="alert" className="text-sm text-danger">Choose a compatible reusable identity above before testing or saving.</p> : null}
-            <div className="space-y-4 border-t border-edge pt-4">
-                <div>
-                    <h3 className="text-sm font-semibold text-text-1">Custom HTTP headers</h3>
-                    <p className="mt-1 text-xs leading-relaxed text-text-3">All header values are treated as secrets. Authentication headers override matching custom headers. To rename a stored header, remove it and add the new name with a replacement value.</p>
-                </div>
+            <EditorPanel title="Custom HTTP headers"
+                description="All header values are treated as secrets. Authentication headers override matching custom headers. To rename a stored header, remove it and add the new name with a replacement value.">
                 {!canAddHeaders ? <p className="alert alert-warning rounded-lg bg-warn-soft p-2 text-xs text-warn">This transport or preset does not support custom headers. Existing values are preserved for review; remove them explicitly before connecting, or select a compatible transport/preset.</p> : null}
                 {fieldError('additionalFields.custom_headers') ? <p role="alert" className="text-sm text-danger">{fieldError('additionalFields.custom_headers')}</p> : null}
-                {Object.entries(headers).map(([name, value], index) => <GlassPanel key={name} elevation="flat" className="space-y-2 p-3">
+                {Object.entries(headers).map(([name, value], index) => <div key={name} className="min-w-0 space-y-2 rounded-lg border border-edge bg-surface-1 p-3">
                     <ActionSecretInput id={`mcp-header-value-${index}`} label={name} value={value} storedValue={originalHeaders[name]}
                         disabled={readOnly} error={fieldError(`additionalFields.custom_headers.${name}`)}
                         onChange={(next) => updateHeader(name, next)} />
                     {!readOnly ? <GlassButton type="button" size="sm" variant="danger" onClick={() => removeHeader(name)}>Remove header {name}</GlassButton> : null}
-                </GlassPanel>)}
+                </div>)}
                 {!Object.keys(headers).length ? <p className="text-sm text-text-3">No custom headers configured.</p> : null}
                 {!readOnly ? <div className="space-y-2">
-                    <ActionField id="mcp-new-header-name" label="New header name" error={headerError ?? undefined}>
+                    <ActionField id="mcp-new-header-name" label="New header name" width="standard" error={headerError ?? undefined}>
                         <input id="mcp-new-header-name" className={ACTION_INPUT_CLASS} value={newHeaderName}
                             placeholder="X-Request-Source" disabled={!canAddHeaders || Object.keys(headers).length >= 20}
                             onChange={(event) => { setNewHeaderName(event.target.value); setHeaderError(null); }} />
@@ -567,7 +554,7 @@ export function McpActionAuthentication(props: ActionConnectorProps) {
                         }}>Add custom header</GlassButton>
                     <p className="text-xs text-text-3">{Object.keys(headers).length}/20 headers. Values may contain up to 4096 characters and must not contain line breaks.</p>
                 </div> : null}
-            </div>
+            </EditorPanel>
         </div>
     );
 }

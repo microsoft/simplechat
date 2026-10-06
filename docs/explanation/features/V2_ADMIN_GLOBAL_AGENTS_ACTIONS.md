@@ -119,6 +119,44 @@ asks before leaving for a global editor while settings are unsaved (the same
 **Discard unsaved changes?** prompt the editors use), and the approvals link opens
 in a new tab.
 
+### Shared editor design
+
+The agent and action editors are one implementation for personal, group, and
+global records, so a change to them changes all three. `WorkspaceEditorFrame`
+lays them out as Admin Settings is laid out:
+
+- A section rail on the left, with an icon per section, marks the section in view
+  as the pane scrolls. Below the `lg` breakpoint it becomes the **Jump to section**
+  list. Choosing a section pins it: while it is pinned, the frame keeps it at the
+  top as lists above or inside it finish loading, and scrolling, clicking, or typing
+  in the pane releases it. `initialSection` opens the editor at a section this way,
+  which is how `?templates=1` shows the gallery.
+- Each section is a card with an icon tile, a title, and a line on what it holds.
+  **Advanced** is a collapsible card.
+- The fields are Admin Settings rows, built from `components/workspace/EditorLayout.tsx`:
+  `EditorFieldRow` and `EditorRow` for a setting, `EditorFieldset` for a group of
+  choices, `EditorSwitch` for a switch, with `lead` and `EditorDependents` for a
+  switch and the settings that depend on it, and `EditorGroup`, `EditorPanel`, and
+  `EditorPanelFieldset` for collapsible groups and titled panels. `AgentField` and
+  `ActionField` render through `EditorFieldRow`, so every existing field took the new
+  layout without changing its label, help, or error wiring.
+
+A row puts its label and help beside the control once it is at least 50rem wide, with
+the grid Admin Settings rows use. Unlike an Admin Settings row, an editor row measures
+its own width (one shared `ResizeObserver`, applied before paint) and is marked
+`data-wide`, because editor fields sit inside panels, groups, and fieldsets where the
+card's width would overstate the room a row has. Neither rows nor editor cards are CSS
+size containers: in Chromium 145 a size container could be left with a stale, collapsed
+layout when React added an editor section after it, which hid the **Action type** row
+once a new action's type was chosen. On the solid surface of a panel or group, rows and
+outlined buttons use the strong edge colour so they stay visible in the light theme.
+
+The Global Agents and Global Actions lists use the AI Connections list rows: an
+Enabled or Disabled badge (`AdminListPill`), a Default agent badge, and icon buttons
+whose accessible names are the same as the text buttons they replace, such as
+**Make Policy advisor the default agent** and **Disable Ticket search**. Search
+appears once a list has four or more entries.
+
 ### Classic interoperability
 
 The classic Admin Settings tables and the V2 editors work on the same records, so
@@ -148,6 +186,9 @@ document.
 - `application/v2_ui/src/components/admin/GlobalAgentsManager.tsx` (new)
 - `application/v2_ui/src/components/admin/GlobalActionsManager.tsx` (new)
 - `application/v2_ui/src/components/admin/AgentTemplateApprovalsLink.tsx` (new)
+- `application/v2_ui/src/components/admin/AdminListPill.tsx` (new)
+- `application/v2_ui/src/components/workspace/EditorLayout.tsx` (new)
+- `application/v2_ui/src/components/workspace/WorkspaceEditorFrame.tsx` (redesigned)
 - `application/v2_ui/src/pages/AdminGlobalEditorPages.tsx` (new)
 
 ## Usage instructions
@@ -176,6 +217,7 @@ administrator reference.
 | `functional_tests/test_v2_admin_agents_parity.py`, `test_v2_admin_actions_parity.py` | Section and component declarations |
 | `functional_tests/route_tests/` | Blueprint policy and admin-only access for all 13 routes |
 | `ui_tests/test_v2_admin_global_agents_actions.py` | The built SPA: lists, default, enable/disable, delete, agent creation from scratch and from a template, template publishing, a global Call agent action attached to a global agent, credential-preserving edits, load failures and revision conflicts, the unsaved-settings prompt, and non-administrator refusal |
+| `ui_tests/test_v2_workspace_authoring.py`, `test_v2_workspace_draft_navigation.py`, `test_v2_group_agents.py`, `test_v2_group_actions.py`, `test_v2_cross_scope_journeys.py` | The redesigned editors in personal and group scope: section navigation, every field and connector, draft protection, and saving |
 
 ### Known limitations
 

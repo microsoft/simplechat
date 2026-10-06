@@ -6,7 +6,8 @@ import type { ActionConfiguration, AgentConfiguration, AgentEditorOptions } from
 import {
     agentDraftFromTemplate, agentTemplateSubmission, fetchAgentTemplates, safeAgentTemplateSettings, type AgentTemplate,
 } from '../../lib/workspaceAgentTemplates';
-import { GlassButton, GlassPanel } from '../ui/primitives';
+import { GlassButton } from '../ui/primitives';
+import { EditorGroup } from '../workspace/EditorLayout';
 import { SectionSearch } from '../workspace/primitives';
 import { AgentNotice } from './AgentFields';
 
@@ -96,12 +97,14 @@ export function AgentTemplatesPanel({
         `${template.title} ${template.display_name} ${template.description} ${(template.tags ?? []).join(' ')}`.toLowerCase().includes(query.toLowerCase()));
     return (
         <div className="space-y-4">
-            <p className="text-sm text-text-3">Start a new agent from an approved example or template. Instructions, tags, and recommended actions are copied into a draft, never saved automatically. Connection credentials are excluded.</p>
-            <div className="flex flex-wrap gap-2">
-                <GlassButton type="button" size="sm" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Refresh templates</GlassButton>
-                {submissionsAllowed ? <GlassButton type="button" size="sm" disabled={submitting} onClick={() => void submit()}>
-                    {submitting ? 'Submitting template…' : globalScope ? 'Publish as template' : groupScope ? 'Submit template' : 'Submit personal template'}
-                </GlassButton> : null}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="min-w-0 flex-[1_1_20rem] text-[0.8125rem] leading-relaxed text-text-3">Start a new agent from an approved example or template. Instructions, tags, and recommended actions are copied into a draft, never saved automatically. Connection credentials are excluded.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                    <GlassButton type="button" size="sm" variant="ghost" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Refresh templates</GlassButton>
+                    {submissionsAllowed ? <GlassButton type="button" size="sm" variant="subtle" disabled={submitting} onClick={() => void submit()}>
+                        {submitting ? 'Submitting template…' : globalScope ? 'Publish as template' : groupScope ? 'Submit template' : 'Submit personal template'}
+                    </GlassButton> : null}
+                </div>
             </div>
             {error ? <AgentNotice error>{error}</AgentNotice> : null}
             {notice ? <AgentNotice>{notice}</AgentNotice> : null}
@@ -116,22 +119,25 @@ export function AgentTemplatesPanel({
                     </div>
                 </AgentNotice>
             ) : null}
-            <div className="space-y-3">
+            <ul className="space-y-2" aria-label="Templates">
                 {visible.map((template) => (
-                    <GlassPanel key={template.id} elevation="flat" className="space-y-3 border border-edge p-4">
-                        <h4 className="text-sm font-semibold text-text-1">{template.title || template.display_name}</h4>
-                        <p className="text-sm text-text-3">{template.description || template.helper_text}</p>
-                        {template.tags?.length ? <p className="text-xs text-text-3">{template.tags.join(' · ')}</p> : null}
-                        <details>
-                            <summary className="cursor-pointer text-xs font-medium text-accent">Preview template</summary>
-                            <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-relaxed text-text-2">{template.instructions}</pre>
-                            {template.actions_to_load?.length ? <p className="mt-3 break-words text-xs text-text-3">Recommended actions: {template.actions_to_load.join(', ')}</p> : null}
-                            {template.additional_settings ? <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-edge p-3 text-xs text-text-3">{templateSettingsPreview(template)}</pre> : null}
-                        </details>
-                        {isNew && !readOnly ? <GlassButton type="button" size="sm" onClick={() => dirty ? setPending(template) : apply(template)}>Use template</GlassButton> : null}
-                    </GlassPanel>
+                    <li key={template.id} className="space-y-3 rounded-lg border border-edge bg-surface-1 p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-[1_1_16rem]">
+                                <h4 className="break-words text-sm font-semibold text-text-1">{template.title || template.display_name}</h4>
+                                <p className="mt-0.5 break-words text-xs text-text-3">{template.description || template.helper_text}</p>
+                                {template.tags?.length ? <p className="mt-1 break-words text-[11px] text-text-3">{template.tags.join(' · ')}</p> : null}
+                            </div>
+                            {isNew && !readOnly ? <GlassButton type="button" size="sm" variant="subtle" onClick={() => dirty ? setPending(template) : apply(template)}>Use template</GlassButton> : null}
+                        </div>
+                        <EditorGroup summary="Preview template">
+                            <pre className="whitespace-pre-wrap break-words pt-2 text-xs leading-relaxed text-text-2">{template.instructions}</pre>
+                            {template.actions_to_load?.length ? <p className="break-words text-xs text-text-3">Recommended actions: {template.actions_to_load.join(', ')}</p> : null}
+                            {template.additional_settings ? <pre className="whitespace-pre-wrap break-words rounded-lg border border-edge p-3 text-xs text-text-3">{templateSettingsPreview(template)}</pre> : null}
+                        </EditorGroup>
+                    </li>
                 ))}
-            </div>
+            </ul>
             {!visible.length && !loading && !error ? <p role="status" className="text-sm text-text-3">No approved templates match.</p> : null}
             {!isNew ? <p className="text-xs text-text-3">Templates start new agents; applying one will not overwrite this saved agent.</p> : null}
             {submissionsAllowed ? <p className="text-xs text-text-3">{globalScope

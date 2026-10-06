@@ -333,6 +333,9 @@ def test_a_call_agent_action_is_an_ordinary_global_action(global_ui):
     ).click()
     expect(page).to_have_url(f"{ORIGIN}/v2/admin/actions/new")
     _action_field(page, "Action type").select_option("agent")
+    # Choosing a type adds the other sections; the rows above them must stay laid out.
+    expect(_action_field(page, "Action type")).to_be_visible()
+    expect(_action_field(page, "Action type")).to_have_value("agent")
     _action_field(page, "Action name").fill("Ask the policy advisor")
     page.get_by_label("Description", exact=True).fill("Hand policy questions to the policy advisor.")
     _editor_section(page, "Configuration")

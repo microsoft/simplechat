@@ -8,10 +8,10 @@ import {
     AGENT_ACTION_CAPABILITIES, agentActionCapabilities, agentActionLabel, agentActionUnavailableReason,
     agentHasAction, resolveAgentAction, toggleAgentAction, updateAgentCapability,
 } from '../../lib/workspaceAgentActions';
-import { AGENT_INPUT_CLASS } from '../../lib/workspaceAgentAuthoring';
-import { GlassButton, GlassPanel } from '../ui/primitives';
+import { GlassButton } from '../ui/primitives';
+import { EditorGroup, EditorPanel } from '../workspace/EditorLayout';
 import { Pill, SectionSearch } from '../workspace/primitives';
-import { AgentField, AgentNotice } from './AgentFields';
+import { AgentNotice } from './AgentFields';
 
 export function AgentActionPicker({
     draft, setDraft, actions, targets, loading, error, targetError, ownerId, builtinActions,
@@ -51,7 +51,7 @@ export function AgentActionPicker({
                 {error ? <AgentNotice error>{error} Existing references remain in the draft.</AgentNotice> : null}
                 {targetError ? <AgentNotice error>{targetError}</AgentNotice> : null}
                 {draft.actions_to_load.length ? (
-                    <div className="space-y-3 rounded-xl border border-warn/40 p-3">
+                    <EditorPanel tone="warn" title="Local actions still attached">
                         <p className="text-sm text-text-2">These local actions are still in the draft. Detach them explicitly to save a Foundry agent, or switch back to Local.</p>
                         <ul className="list-inside list-disc text-sm text-text-3">
                             {draft.actions_to_load.map((reference) => {
@@ -71,36 +71,40 @@ export function AgentActionPicker({
                                 </div>
                             </div>
                         ) : <GlassButton type="button" size="sm" onClick={() => setConfirmDetach(true)}>Detach local actions</GlassButton> : null}
-                    </div>
+                    </EditorPanel>
                 ) : null}
             </div>
         );
     }
     return (
         <div className="space-y-4">
-            <p className="text-sm text-text-3">Select actions for this agent. Capability choices apply only to this assignment. Call agent appears here like any other action; its target remains configured on the action.</p>
-            <div className="flex flex-wrap gap-2">
-                {!readOnly && canCreateActions ? <GlassButton type="button" size="sm" onClick={onNewAction}><Plus size={14} />New action</GlassButton> : null}
-                <GlassButton type="button" size="sm" disabled={loading} onClick={onRefresh}><RefreshCw size={14} />Refresh actions</GlassButton>
-                <label className="flex items-center gap-2 text-xs text-text-2">
-                    <input type="checkbox" checked={selectedOnly} onChange={(event) => setSelectedOnly(event.target.checked)} className="accent-accent" />
-                    Selected only
-                </label>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="min-w-0 flex-[1_1_20rem] text-[0.8125rem] leading-relaxed text-text-3">Select actions for this agent. Capability choices apply only to this assignment. Call agent appears here like any other action; its target remains configured on the action.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                    {!readOnly && canCreateActions ? <GlassButton type="button" variant="subtle" size="sm" onClick={onNewAction}><Plus size={14} />New action</GlassButton> : null}
+                    <GlassButton type="button" size="sm" variant="ghost" disabled={loading} onClick={onRefresh}><RefreshCw size={14} />Refresh actions</GlassButton>
+                </div>
             </div>
             {!canCreateActions && !readOnly ? <AgentNotice>Creating actions is unavailable in this workspace. You can still assign permitted existing actions from the authorized catalogue.</AgentNotice> : null}
             {error ? <AgentNotice error>{error} Existing references have not been removed.</AgentNotice> : null}
             {targetError ? <AgentNotice error>{targetError} Call agent targets could not be checked; existing assignments are preserved.</AgentNotice> : null}
             {loading ? <p role="status" className="text-sm text-text-3">Loading available actions…</p> : null}
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
-                <SectionSearch value={query} onChange={setQuery} placeholder="Search actions by name, description or type" />
-                <AgentField id="agent-action-type-filter" label="Action type">
-                    <select id="agent-action-type-filter" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className={AGENT_INPUT_CLASS}>
-                        <option value="">All action types</option>
-                        {types.map((type) => <option key={type} value={type}>{type === 'agent' ? 'Call agent' : type}</option>)}
-                    </select>
-                </AgentField>
+            <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-[1_1_16rem]">
+                    <SectionSearch value={query} onChange={setQuery} placeholder="Search actions by name, description or type" />
+                </div>
+                <label htmlFor="agent-action-type-filter" className="sr-only">Action type</label>
+                <select id="agent-action-type-filter" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}
+                    className="min-w-[11rem] flex-none rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none disabled:opacity-60">
+                    <option value="">All action types</option>
+                    {types.map((type) => <option key={type} value={type}>{type === 'agent' ? 'Call agent' : type}</option>)}
+                </select>
+                <label className="flex items-center gap-2 text-sm text-text-2">
+                    <input type="checkbox" checked={selectedOnly} onChange={(event) => setSelectedOnly(event.target.checked)} className="accent-accent" />
+                    Selected only
+                </label>
             </div>
-            <div className="space-y-2">
+            <ul className="space-y-2" aria-label="Available actions">
                 {visible.map((action) => {
                     const checked = agentHasAction(draft, action, actions);
                     const reason = agentActionUnavailableReason(draft, action, targets, ownerId);
@@ -110,7 +114,8 @@ export function AgentActionPicker({
                     const definitions = AGENT_ACTION_CAPABILITIES[action.type] ?? [];
                     const label = agentActionLabel(action);
                     return (
-                        <GlassPanel key={`${action.is_global ? 'global' : 'personal'}:${action.id}`} elevation="flat" className="space-y-3 border border-edge p-3">
+                        <li key={`${action.is_global ? 'global' : 'personal'}:${action.id}`}
+                            className={`space-y-3 rounded-lg border bg-surface-1 p-3 ${checked ? 'border-accent/50' : 'border-edge'}`}>
                             <label className="flex items-start gap-3">
                                 <input type="checkbox" className="mt-1 accent-accent" checked={checked} aria-label={`Assign ${label}`}
                                     disabled={readOnly || (!checked && (loading || Boolean(error) || Boolean(reason)))}
@@ -130,9 +135,8 @@ export function AgentActionPicker({
                                 </span>
                             </label>
                             {checked && definitions.length ? (
-                                <details className="rounded-lg border border-edge p-3" open>
-                                    <summary className="cursor-pointer text-xs font-medium text-text-2">Capabilities for {label}</summary>
-                                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <EditorGroup summary={`Capabilities for ${label}`} defaultOpen>
+                                    <div className="grid gap-2 pt-2 sm:grid-cols-2">
                                         {definitions.map((capability) => (
                                             <label key={capability.key} className="flex items-start gap-2 text-xs text-text-2">
                                                 <input type="checkbox" className="mt-0.5 accent-accent" checked={Boolean(capabilities[capability.key])}
@@ -142,17 +146,16 @@ export function AgentActionPicker({
                                             </label>
                                         ))}
                                     </div>
-                                </details>
+                                </EditorGroup>
                             ) : null}
-                        </GlassPanel>
+                        </li>
                     );
                 })}
-            </div>
+            </ul>
             {!visible.length && !loading && !error ? <p role="status" className="text-sm text-text-3">No actions match. Adjust the filters or refresh the authorized catalogue.</p> : null}
             {unresolved.length ? (
-                <div className="space-y-2 rounded-xl border border-warn/30 p-3">
-                    <h4 className="text-sm font-medium text-text-1">Saved references to review</h4>
-                    <p className="text-xs text-text-3">Unlisted, ambiguous, and legacy references are kept during unrelated edits. Remove one only when you no longer want it assigned.</p>
+                <EditorPanel tone="warn" title="Saved references to review"
+                    description="Unlisted, ambiguous, and legacy references are kept during unrelated edits. Remove one only when you no longer want it assigned.">
                     {unresolved.map((reference) => (
                         <div key={reference} className="flex flex-wrap items-center justify-between gap-2 text-sm text-text-2">
                             <code className="min-w-0 break-all">{reference}</code>
@@ -162,18 +165,16 @@ export function AgentActionPicker({
                             </GlassButton> : null}
                         </div>
                     ))}
-                </div>
+                </EditorPanel>
             ) : null}
             {builtinActions.length ? (
-                <div className="rounded-xl border border-edge p-3">
-                    <h4 className="text-sm font-medium text-text-2">Enabled built-in tools</h4>
-                    <p className="mt-1 text-xs text-text-3">{globalScope
-                        ? 'Available to every agent; turn them on or off under Built-in Actions in Admin Settings.'
-                        : 'Provided by your administrator; these are not personal settings.'}</p>
-                    <ul className="mt-2 space-y-1 text-xs text-text-2">
+                <EditorPanel title="Enabled built-in tools" description={globalScope
+                    ? 'Available to every agent; turn them on or off under Built-in Actions in Admin Settings.'
+                    : 'Provided by your administrator; these are not personal settings.'}>
+                    <ul className="space-y-1 text-xs text-text-2">
                         {builtinActions.map((action) => <li key={action.id}>{action.label}{action.description ? ` — ${action.description}` : ''}</li>)}
                     </ul>
-                </div>
+                </EditorPanel>
             ) : null}
         </div>
     );

@@ -100,27 +100,31 @@ only agents there are, and everyone chats with the **default agent** you choose
 here. With Workspace Mode on they appear beside people's own agents only when
 **Add Global Agents and Actions to Workspaces** is on.
 
-The list shows each agent's type, model, how many actions it uses, and whether it
-is the default or disabled. Each change on the list saves straight away, because
-these are records rather than settings, so the save bar is not involved. Opening
-an agent replaces this page, so if other settings here are unsaved you are asked
-to keep editing or discard them first:
+Each row shows the agent's type, model, and how many actions it uses, with a badge
+for whether it is enabled and another on the default agent. The icons at the end of
+a row make the agent the default, enable or disable it, open it, and delete it. Each
+change on the list saves straight away, because these are records rather than
+settings, so the save bar is not involved. Opening an agent replaces this page, so
+if other settings here are unsaved you are asked to keep editing or discard them
+first:
 
 - **New agent** opens the same full-page agent editor people use in their
   workspaces: identity, model and connection, actions, assigned knowledge,
-  instructions, advanced settings, and examples and templates. Saving returns you
+  instructions, advanced settings, and examples and templates. The editor is laid
+  out as this page is, a card per section with each setting's label and help beside
+  it, and it looks the same in My Workspace and group workspaces. Saving returns you
   to this list.
 - **Start from a template** opens a new agent with the template gallery in view.
   Applying a template copies its instructions, tags, and recommended actions into
   an unsaved draft; connection credentials are never copied. Choose a model, then
   save. The button appears while **Enable Agent Template Gallery** is on.
-- **Make default** chooses the agent that answers when nobody picks one. A
-  disabled agent cannot be the default.
-- **Disable** keeps an agent's configuration but stops offering it. Disabling the
+- **Make default** (the star) chooses the agent that answers when nobody picks
+  one. A disabled agent cannot be the default.
+- **Disable** (the power icon) keeps an agent's configuration but stops offering it. Disabling the
   default hands the default to another enabled agent, if there is one, and the
   confirmation names which.
-- **Delete** removes an agent after you confirm. The default agent cannot be
-  deleted; choose another default first.
+- **Delete** (the bin) removes an agent after you confirm. The default agent
+  cannot be deleted; choose another default first.
 
 A few things differ from a workspace agent, because a global agent answers
 everyone:
@@ -355,9 +359,9 @@ As with Global Agents, each change saves straight away:
   connector catalogue the deployment provides, MCP presets and the global MCP
   preconfigurations, connection tests, and Key Vault credential handling. Saving
   returns you to this list.
-- **Disable** keeps an action's configuration without loading it, and **Delete**
-  removes it after you confirm. Deleting an action does not edit the agents that
-  used it.
+- **Disable** (the power icon) keeps an action's configuration without loading
+  it, and **Delete** (the bin) removes it after you confirm. Deleting an action
+  does not edit the agents that used it.
 
 Connection tests and MCP tool discovery run in the global scope, so a stored
 credential resolves from the global Key Vault namespace rather than your own. A
