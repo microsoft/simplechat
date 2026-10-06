@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Mixed-Source Admin Settings Fix](MIXED_SOURCE_ADMIN_SETTINGS_FIX.md)
 - [Video Indexer Deployment Region and Permissions Fix](VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md)
 - [Search Result Cache Admin Setting Fix](SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md)
 - [Deleted Messages Shown as Masked Fix](SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md)

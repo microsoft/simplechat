@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for documentation coverage of the application surface.
-Version: 0.260.020
+Version: 0.261.266
 Implemented in: 0.250.230
 
 This test ensures that every user-facing capability of SimpleChat has
@@ -56,7 +56,6 @@ DOC_GLOBS = (
 CAPABILITY_EXEMPTIONS = {
     "enable_analysis_deliverable_contract_telemetry": "Internal telemetry switch for deliverable contract diagnostics.",
     "enable_tabular_parity_contract_telemetry": "Internal telemetry switch for tabular parity diagnostics.",
-    "enable_mixed_source_development_telemetry": "Internal development telemetry switch.",
     "enable_dai_debug": "Internal Document Intelligence debug switch.",
     "enable_tabular_generation_balanced_batches": "Internal tabular batching tuning flag.",
     "enable_tabular_completion_driven_checkpointing": "Internal tabular checkpointing tuning flag.",
@@ -76,8 +75,6 @@ CAPABILITY_EXEMPTIONS = {
     "enable_document_access_index_shadow_validation": "Internal Cosmos access-index rollout flag.",
     "enable_document_access_index_write_through": "Internal Cosmos access-index rollout flag.",
     "enable_startup_document_access_index_backfill": "Internal Cosmos access-index rollout flag.",
-    "enable_mixed_source_manifest": "Internal mixed-source rollout flag.",
-    "enable_mixed_source_relevance_candidates": "Internal mixed-source rollout flag.",
     "enable_default_embedding_model_plugin": "Internal plugin registration default.",
 }
 

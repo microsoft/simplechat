@@ -300,7 +300,6 @@ from functions_settings import (
     get_settings,
     get_user_settings,
     is_mixed_source_chat_search_enabled,
-    is_mixed_source_manifest_enabled,
     is_cross_format_compare_enabled,
     is_cross_format_compare_one_to_many_enabled,
     is_tabular_processing_enabled,
@@ -3630,7 +3629,9 @@ def _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, co
     partitions = partition_source_manifest(manifest)
     if partitions['narrative_sources'] and partitions['tabular_sources']:
         raise ValueError(
-            'Mixed narrative and tabular Compare is temporarily unavailable while cross-format Compare is disabled.'
+            'Comparing a document with a spreadsheet requires spreadsheet processing, which is '
+            'available only while Enhanced Citations is enabled. Ask an administrator to enable '
+            'Enhanced Citations, or compare files of the same kind.'
         )
 
 
@@ -4158,32 +4159,6 @@ def _maybe_execute_tabular_document_action(
     user_id = str(workflow.get('user_id') or '').strip()
     if not user_id:
         return None
-
-    if is_mixed_source_manifest_enabled(settings):
-        requested_source_ids, _ = _get_document_action_source_ids(action_config)
-        if requested_source_ids:
-            try:
-                resolve_authorized_source_manifest(
-                    requested_source_ids,
-                    user_id=user_id,
-                    selection_mode='selected',
-                    conversation_id=conversation_id,
-                    active_group_ids=action_config.get('active_group_ids'),
-                    active_public_workspace_ids=action_config.get('active_public_workspace_id'),
-                    cancel_requested=cancel_requested,
-                    request_correlation_id=request_correlation_id,
-                )
-            except MixedSourceCancellationError:
-                raise
-            except Exception:
-                log_event(
-                    '[MIXED_SOURCE_MANIFEST] Workflow shadow resolution failed.',
-                    extra={
-                        'requested_source_count': len(requested_source_ids),
-                        'selection_mode': 'selected',
-                    },
-                    level=logging.WARNING,
-                )
 
     if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
         return None

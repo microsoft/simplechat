@@ -843,6 +843,41 @@ ADMIN_SETTINGS_FIELDS = {
     # key is what takes it out of that scan, so these five are declared rather
     # than guessed at. Wording is taken from the V1 panes so both interfaces say
     # the same thing.
+    #
+    # Application Insights is declared for the same reason. The scan splits
+    # `enable_appinsights_global_logging` into "appinsights", which matches no
+    # section, and "logging", which matches Debug Logging, so the switch that sends
+    # everything to Application Insights sat under Debug Logging. The mixed-source
+    # telemetry switch, which the scan had filed under Deep Research on the word
+    # "source", reports to the same place and is declared beside it.
+    "application-insights-section": [
+        {
+            "key": "enable_appinsights_global_logging",
+            "type": "switch",
+            "label": "Enable Application Insights Global Logging",
+            "help": (
+                "Sends global logging for all agents and orchestration events to "
+                "Application Insights. Changing this requires an application restart "
+                "to take effect."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_mixed_source_development_telemetry",
+            "type": "switch",
+            "label": "Record mixed document and spreadsheet metrics",
+            "help": (
+                "Logs aggregate counts, timings and token totals for the processing "
+                "behind Chat, Search, Analyze and Compare over workspace documents and "
+                "spreadsheets: how many sources completed, were partial, failed, were "
+                "skipped or were canceled, plus authorization failures and background "
+                "exports. Never records prompts, content, file names, document IDs or "
+                "storage paths. Turn it on while checking how these requests behave; "
+                "each request adds several log entries."
+            ),
+            "default": False,
+        },
+    ],
     "health-check-section": [
         {
             "key": "enable_external_healthcheck",
@@ -2953,7 +2988,10 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Stores original files in an Azure Storage account so citations can "
                 "link to and preview the source document rather than only quoting "
-                "extracted text."
+                "extracted text. It also turns on spreadsheet analysis: CSV and Excel "
+                "files are calculated over row by row instead of searched as text, and "
+                "Chat, Search, Analyze and Compare can combine documents and "
+                "spreadsheets selected together."
             ),
             "default": False,
         },
@@ -3004,6 +3042,22 @@ ADMIN_SETTINGS_FIELDS = {
                     "equals": "managed_identity",
                 },
             ],
+        },
+        {
+            "key": "enable_mixed_source_relevance_candidates",
+            "type": "switch",
+            "label": "Look for relevant spreadsheets when no files are selected",
+            "help": (
+                "When a chat searches workspace documents without specific files "
+                "selected, run a second search aimed at spreadsheet columns and sheets "
+                "and keep up to six spreadsheets that fit the question. A question about "
+                "figures can then be answered from the right file even when its text did "
+                "not rank among the first results. The extra search adds a little time to "
+                "those messages, and a matched spreadsheet that gets analyzed adds model "
+                "calls."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
         },
         {
             "key": "tabular_preview_max_blob_size_mb",
@@ -6573,12 +6627,33 @@ SUPPRESSED_CAPABILITY_KEYS = {
         "administrator-editable."
     ),
     "enable_mixed_source_chat_search": (
-        "Staged rollout flag for mixed-source chat and search, with no control in "
-        "the server-rendered admin form."
+        "Derived, not stored: get_settings() and update_settings() set it to "
+        "enable_enhanced_citations on every read and save, because mixed document and "
+        "spreadsheet Chat and Search needs the spreadsheet engine Enhanced Citations "
+        "provides. A switch here would revert on the next page load. The only override "
+        "is the SIMPLECHAT_DISABLE_MIXED_SOURCE environment kill switch."
     ),
     "enable_mixed_source_conversation_continuity": (
-        "Staged rollout flag gated behind enable_mixed_source_chat_search, with no "
-        "control in the server-rendered admin form."
+        "Derived from enable_enhanced_citations in the same way as "
+        "enable_mixed_source_chat_search, which it extends with reauthorized "
+        "follow-up grounding."
+    ),
+    "enable_cross_format_compare": (
+        "Derived from enable_enhanced_citations in the same way as "
+        "enable_mixed_source_chat_search. Comparing a document with a spreadsheet "
+        "needs the spreadsheet engine, and without it the request is refused rather "
+        "than comparing the spreadsheet as text."
+    ),
+    "enable_cross_format_compare_one_to_many": (
+        "Derived from enable_enhanced_citations alongside enable_cross_format_compare. "
+        "The Comparison document limits under Document Actions already bound how many "
+        "Targets one request may include."
+    ),
+    "enable_mixed_source_analyze_all": (
+        "Gates an Analyze target of every document in scope, which no chat or workflow "
+        "screen can request; only a hand-built API request can reach it. A switch here "
+        "would change nothing an administrator can see. The 0.261.266 settings upgrade "
+        "resets it to off once."
     ),
     # The three tabular durable-preflight switches below are always on by design.
     # normalize_tabular_parity_durable_preflight_defaults() in functions_settings.py

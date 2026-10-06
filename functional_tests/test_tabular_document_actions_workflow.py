@@ -2,8 +2,8 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.250.185
-Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062; generated-output Analyze durable routing added in 0.250.184; model endpoint context added in 0.250.185
+Version: 0.261.266
+Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062; generated-output Analyze durable routing added in 0.250.184; model endpoint context added in 0.250.185; shadow manifest retired in 0.261.266
 
 This test ensures tabular document actions reuse the shared tabular analysis
 path for Analyze and comparison workflows instead of relying only on the
@@ -60,8 +60,8 @@ def test_shared_tabular_document_action_helper_exists() -> None:
     assert 'resolve_authorized_source_manifest(' in workflow_runner_content, (
         "Expected workflow document actions to support the authorized Phase 1 source manifest."
     )
-    assert 'is_mixed_source_manifest_enabled(settings)' in workflow_runner_content, (
-        "Expected Phase 1 workflow manifest production to remain behind its internal flag."
+    assert 'is_mixed_source_manifest_enabled' not in workflow_runner_content, (
+        "The Phase 1 shadow manifest was retired in 0.261.266 and must not return."
     )
     assert 'augment_tabular_invocations_with_related_document_evidence(' in workflow_runner_content, (
         "Expected the shared helper to reuse row-linked related-document augmentation for tabular workflows."
@@ -242,7 +242,6 @@ def test_generated_output_tabular_analyze_queues_direct_output_before_foreground
             "TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION": "foreground_invocation",
             "raise_if_mixed_source_cancelled": orchestration.raise_if_mixed_source_cancelled,
             "is_tabular_processing_enabled": lambda settings: True,
-            "is_mixed_source_manifest_enabled": lambda settings: False,
             "_resolve_tabular_document_action_documents": lambda *args, **kwargs: [{
                 "document_id": "table-1",
                 "document_name": "Bank Treasury Operations Dataset",
@@ -337,8 +336,8 @@ def test_generated_output_tabular_analyze_queues_direct_output_before_foreground
     print("Generated-output tabular Analyze primary durable routing checks passed")
 
 
-def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
-    print("Testing workflow manifest flag behavior equivalence...")
+def test_workflow_dispatch_no_longer_resolves_a_shadow_manifest() -> None:
+    print("Testing that workflow dispatch resolves no shadow manifest...")
 
     workflow_runner_tree = ast.parse(read_text(WORKFLOW_RUNNER_FILE))
     helper_node = next(
@@ -357,13 +356,6 @@ def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
         "DOCUMENT_ACTION_TYPE_COMPARISON": "comparison",
         "raise_if_mixed_source_cancelled": orchestration.raise_if_mixed_source_cancelled,
         "is_tabular_processing_enabled": lambda settings: True,
-        "is_mixed_source_manifest_enabled": lambda settings: bool(
-            settings.get("enable_mixed_source_manifest")
-        ),
-        "_get_document_action_source_ids": lambda action_config: (
-            list(action_config.get("document_ids") or []),
-            {},
-        ),
         "resolve_authorized_source_manifest": lambda *args, **kwargs: (
             manifest_calls.append((args, kwargs)) or []
         ),
@@ -379,18 +371,9 @@ def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
     action_config = {"type": "analyze", "document_ids": ["table-1"]}
     workflow = {"user_id": "user-1"}
 
-    disabled_result = helper(
-        "analyze",
-        workflow,
-        action_config,
-        {"enable_mixed_source_manifest": False},
-        conversation_id="conversation-1",
-        invoke_prompt=lambda *args, **kwargs: None,
-    )
-    disabled_legacy_call = legacy_resolver_calls[-1]
-    assert manifest_calls == []
-
-    enabled_result = helper(
+    # A deployment that saved the retired switch as on must not resolve a manifest
+    # just to throw it away.
+    result = helper(
         "analyze",
         workflow,
         action_config,
@@ -398,15 +381,11 @@ def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
         conversation_id="conversation-1",
         invoke_prompt=lambda *args, **kwargs: None,
     )
-    enabled_legacy_call = legacy_resolver_calls[-1]
-
-    assert disabled_result == enabled_result is None
-    assert disabled_legacy_call == enabled_legacy_call
-    assert len(manifest_calls) == 1
-    assert manifest_calls[0][0] == (["table-1"],)
+    assert result is None
+    assert manifest_calls == []
+    assert len(legacy_resolver_calls) == 1
 
     namespace["is_tabular_processing_enabled"] = lambda settings: False
-    manifest_calls.clear()
     legacy_resolver_calls.clear()
     disabled_tabular_result = helper(
         "analyze",
@@ -417,34 +396,20 @@ def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
         invoke_prompt=lambda *args, **kwargs: None,
     )
     assert disabled_tabular_result is None
-    assert len(manifest_calls) == 1
+    assert manifest_calls == []
     assert legacy_resolver_calls == []
 
-    print("Workflow manifest flag behavior equivalence checks passed")
+    print("Workflow dispatch shadow-manifest retirement checks passed")
 
 
-def test_document_action_chat_does_not_duplicate_shadow_manifest() -> None:
-    print("Testing document-action Chat manifest ownership...")
+def test_chat_no_longer_defines_a_shadow_manifest() -> None:
+    print("Testing that Chat no longer resolves a shadow manifest...")
 
-    route_tree = ast.parse(
-        read_text(ROOT / "application" / "single_app" / "route_backend_chats.py")
-    )
-    document_action_function = next(
-        node
-        for node in ast.walk(route_tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "execute_document_action_chat_request"
-    )
-    manifest_calls = [
-        node
-        for node in ast.walk(document_action_function)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_maybe_resolve_chat_source_manifest"
-    ]
-    assert manifest_calls == []
+    route_source = read_text(ROOT / "application" / "single_app" / "route_backend_chats.py")
+    assert "_maybe_resolve_chat_source_manifest" not in route_source
+    assert "is_mixed_source_manifest_enabled" not in route_source
 
-    print("Document-action Chat manifest ownership checks passed")
+    print("Chat shadow-manifest retirement checks passed")
 
 
 def run_tests() -> bool:
@@ -454,8 +419,8 @@ def run_tests() -> bool:
         test_tabular_document_actions_stream_live_activity,
         test_mixed_sources_preserve_valid_tabular_partition,
         test_generated_output_tabular_analyze_queues_direct_output_before_foreground,
-        test_manifest_flag_does_not_change_workflow_dispatch,
-        test_document_action_chat_does_not_duplicate_shadow_manifest,
+        test_workflow_dispatch_no_longer_resolves_a_shadow_manifest,
+        test_chat_no_longer_defines_a_shadow_manifest,
     ]
     results = []
     setup_module()
