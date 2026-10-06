@@ -56,7 +56,18 @@ The Control Center Access section belongs to the Control Center tab. Use it with
 
 ### Application Insights {#application-insights-section}
 
-The Application Insights section belongs to the Logging & Health tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Global logging sends agent and orchestration events to Application Insights, so a
+request can be traced across the components that handled it. Changing it requires an
+application restart.
+
+*Record mixed document and spreadsheet metrics* adds `[MIXED_SOURCE_TELEMETRY]`
+entries for the processing behind Chat, Search, Analyze and Compare over workspace
+documents and spreadsheets: aggregate counts, timings and token totals showing how
+many sources completed, were partial, failed, were skipped or were canceled, plus
+authorization failures and background exports. The entries never carry prompts,
+content, file names, document IDs or storage paths. Turn it on while checking how
+those requests behave, for example after enabling Enhanced Citations, and off again
+afterwards, because each request adds several log entries.
 
 ### Debug Logging {#debug-logging-section}
 
@@ -82,6 +93,7 @@ The API Documentation section belongs to the Logging & Health tab. Use it with t
 | Enable /external/healthcheckz | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_no_auth_external_healthcheck`; capability toggle |
 | Enable Swagger/OpenAPI Documentation (/swagger) | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_swagger`; capability toggle |
 | Enable Application Insights Global Logging | Sends global application, agent, and orchestration logging events to Application Insights. | Off | `enable_appinsights_global_logging`; capability toggle |
+| Record mixed document and spreadsheet metrics | Logs aggregate counts, timings and token totals for Chat, Search, Analyze and Compare over workspace documents and spreadsheets, with no prompts, content, file names, document IDs or storage paths. | Off | `enable_mixed_source_development_telemetry`; capability toggle |
 | Enable Debug Logging | Captures verbose diagnostic logs for troubleshooting until disabled or the timer turns it off. | Off | `enable_debug_logging`; capability toggle |
 | Enable Time-based Auto Turnoff | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `debug_logging_timer_enabled` |
 | Duration | Defines behavior for the related admin workflow; verify the affected feature after saving. | 1 | `debug_timer_value` |

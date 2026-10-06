@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -45,6 +45,13 @@ are Cosmos maintenance switches and are now declared under
 "storage" in ``data-management-storage-section`` and appeared under Backup &
 Recovery, while ``enable_key_vault_secret_expiration_reminders`` matched nothing at
 all and fell into "Other capabilities".
+
+The mixed-source settings were the next case. Every ``enable_mixed_source_*`` key
+matched only "source" in ``source-review-section``, so five unrelated switches sat
+under Knowledge > Web & Research > Deep Research labelled with their key names, and
+the cross-format Compare pair fell into "Other capabilities". Two of them did nothing
+on their own. The derived ones are now suppressed, the two real choices are declared
+where they belong, and ``test_mixed_source_keys_are_never_guessed`` keeps it that way.
 """
 
 import re
@@ -111,6 +118,13 @@ RELOCATED_CAPABILITIES = {
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
     "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
+    # Matched only "source" and landed in Deep Research, a web research feature. It
+    # extends the spreadsheet analysis Enhanced Citations turns on, so it lives there.
+    "enable_mixed_source_relevance_candidates": ("enhanced-citations-section", "citation"),
+    # Same "source" match. It reports to Application Insights, so it sits beside the
+    # global logging switch, which the scan had filed under Debug Logging on "logging".
+    "enable_mixed_source_development_telemetry": ("application-insights-section", "logging"),
+    "enable_appinsights_global_logging": ("application-insights-section", "logging"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an
@@ -118,9 +132,19 @@ RELOCATED_CAPABILITIES = {
 EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_tabular_processing_plugin",
     "enable_enhanced_citations_mount",
+    # Derived from enable_enhanced_citations on every read and save.
     "enable_mixed_source_chat_search",
     "enable_mixed_source_conversation_continuity",
+    "enable_cross_format_compare",
+    "enable_cross_format_compare_one_to_many",
+    # Gates an Analyze target no chat or workflow screen can request.
+    "enable_mixed_source_analyze_all",
 )
+
+# Every mixed-source key the settings document still carries. Each must be declared
+# or suppressed: the scan filed all of them under Deep Research on the word "source",
+# or under "Other capabilities", with nothing but the key name to explain them.
+MIXED_SOURCE_KEY_PREFIXES = ("enable_mixed_source_", "enable_cross_format_compare")
 
 # Relocations with no server-rendered counterpart to check against. Both are
 # documented in ``V2_ONLY_FIELDS``, which is what the section assertion below reads
@@ -317,6 +341,38 @@ def test_non_editable_capabilities_are_suppressed_not_declared():
     return True
 
 
+def test_mixed_source_keys_are_never_guessed():
+    """Every mixed-source key is declared with a description or deliberately hidden."""
+    print("\nTesting that no mixed-source capability is left to the fallback scan...")
+
+    declared = fields_module.get_declared_setting_keys()
+    suppressed = set(fields_module.get_suppressed_capability_keys())
+    sections = build_sections()
+
+    guessed = []
+    for key in read_capability_keys():
+        if not key.startswith(MIXED_SOURCE_KEY_PREFIXES):
+            continue
+        if key in declared or key in suppressed:
+            continue
+        placement = place_capability(key, sections)
+        where = (
+            f"{placement['group_label']} > {placement['tab_label']} > {placement['section_id']}"
+            if placement
+            else "Other capabilities"
+        )
+        guessed.append(f"{key} -> {where}")
+
+    assert not guessed, (
+        "These mixed-source settings would be drawn by the fallback scan with only "
+        "their key name as a label. Declare each one with help text in the section "
+        "it belongs to, or suppress it with a reason:\n  " + "\n  ".join(guessed)
+    )
+
+    print("  Every mixed-source key is declared or suppressed.")
+    return True
+
+
 def test_suppressed_capabilities_are_real_settings_keys():
     """A suppression for a key that no longer exists hides nothing and misleads."""
     print("\nTesting that suppressed keys still exist in the settings document...")
@@ -435,6 +491,7 @@ if __name__ == "__main__":
         test_ported_heuristic_still_matches_the_renderer,
         test_described_groups_receive_no_guessed_capabilities,
         test_non_editable_capabilities_are_suppressed_not_declared,
+        test_mixed_source_keys_are_never_guessed,
         test_suppressed_capabilities_are_real_settings_keys,
         test_relocated_capabilities_are_declared_where_they_belong,
         test_v2_only_relocations_are_documented,

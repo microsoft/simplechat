@@ -2,8 +2,8 @@
 # test_mixed_source_conversation_continuity.py
 """
 Functional test for Phase 5 mixed-source conversation continuity.
-Version: 0.250.107
-Implemented in: 0.250.068; updated in 0.250.107
+Version: 0.261.260
+Implemented in: 0.250.068; updated in 0.250.107; derived from Enhanced Citations in 0.261.260
 
 This test ensures #1060 preserves compact source continuity only as a
 reauthorization hint for #1055 and prerequisite phases #1056, #1057, #1058,
@@ -103,14 +103,28 @@ def test_explicit_selection_overrides_and_history_requires_reauthorization():
     print('PASS: selection precedence and reauthorization')
 
 
+def _derived_mixed_source_keys(settings_source):
+    """Read MIXED_SOURCE_DERIVED_SETTING_KEYS without importing configuration."""
+    for node in ast.parse(settings_source).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == 'MIXED_SOURCE_DERIVED_SETTING_KEYS'
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError('MIXED_SOURCE_DERIVED_SETTING_KEYS is missing from functions_settings.py')
+
+
 def test_flag_and_standard_streaming_wiring_are_present():
-    """Both Chat paths retain flag-off rollback and only use fresh manifest results."""
+    """Both Chat paths retain the derived-flag rollback and only use fresh manifest results."""
     print('Testing flag and Chat parity wiring...')
     settings_source = _read_file(SETTINGS_FILE)
     route_source = _read_file(ROUTE_FILE)
     metadata_source = _read_file(METADATA_FILE)
     config_source = _read_file(CONFIG_FILE)
-    assert "'enable_mixed_source_conversation_continuity': False" in settings_source
+    # Continuity follows Enhanced Citations with Chat and Search, so it is not a stored switch.
+    derived_keys = _derived_mixed_source_keys(settings_source)
+    assert 'enable_mixed_source_conversation_continuity' in derived_keys
+    assert 'enable_mixed_source_chat_search' in derived_keys
     assert 'def is_mixed_source_conversation_continuity_enabled(settings):' in settings_source
     assert route_source.count('is_mixed_source_conversation_continuity_enabled(settings)') == 5
     assert route_source.count('_build_reauthorized_continuity_decision(') == 4

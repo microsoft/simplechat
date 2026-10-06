@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Mixed-Source Admin Settings Fix](MIXED_SOURCE_ADMIN_SETTINGS_FIX.md)
 - [Deleted Messages Shown as Masked Fix](SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md)
 - [Shared Conversation Diagram Editing Fix](SHARED_CONVERSATION_DIAGRAM_EDITING_FIX.md)
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)

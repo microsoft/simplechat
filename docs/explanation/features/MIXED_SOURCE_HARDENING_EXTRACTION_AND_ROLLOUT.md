@@ -110,3 +110,7 @@ The release validation also includes Python compilation, Pylance/editor diagnost
 - Analyze All remains a staged backend capability and is not default on or newly exposed in the selector.
 - Richer relational joins and persistent computed evidence caches remain future work.
 - Production telemetry evidence and explicit approval are still required before enabling mixed-source behavior by default.
+
+## Settings Update (0.261.260)
+
+The staged rollout above is complete. Mixed-source Chat and Search, conversation continuity, cross-format Compare and its one-to-many stage now follow `enable_enhanced_citations` on every settings load and save, because each needs the spreadsheet engine that Enhanced Citations provides; `SIMPLECHAT_DISABLE_MIXED_SOURCE` is the read-time rollback. `enable_mixed_source_relevance_candidates` (default on) and `enable_mixed_source_development_telemetry` (default off) are administrator switches with descriptions, `enable_mixed_source_analyze_all` stays off and hidden, and `enable_mixed_source_analyze` and `enable_mixed_source_manifest` are retired. See `docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.

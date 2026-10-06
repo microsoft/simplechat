@@ -2,8 +2,8 @@
 # test_cross_format_compare_workflow.py
 """
 Functional test for Phase 4 cross-format Compare.
-Version: 0.250.067
-Implemented in: 0.250.067
+Version: 0.261.260
+Implemented in: 0.250.067; derived from Enhanced Citations in 0.261.260
 
 This test ensures #1059 retains one Source and ordered Targets, uses bounded
 native evidence, and preserves failed Targets during pairwise reduction.
@@ -107,16 +107,29 @@ def test_cross_format_coordinator_uses_native_partitions_and_rollout_guards():
     assert "'computed tabular facts'" in helper_source
     assert "'narrative document analysis'" in helper_source
     assert 'is_cross_format_compare_one_to_many_enabled(settings)' in helper_source
-    assert 'Mixed narrative and tabular Compare is temporarily unavailable while cross-format Compare is disabled.' in source
+    assert 'Comparing a document with a spreadsheet requires spreadsheet processing' in source
+    assert 'temporarily unavailable while cross-format Compare is disabled' not in source
 
 
-def test_phase_4_flags_default_off_and_all_runner_paths_use_them():
-    """Model and agent Compare retain flag-off rollback and staged one-to-many rollout."""
+def _derived_mixed_source_keys(settings_source):
+    """Read MIXED_SOURCE_DERIVED_SETTING_KEYS without importing configuration."""
+    for node in ast.parse(settings_source).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == 'MIXED_SOURCE_DERIVED_SETTING_KEYS'
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError('MIXED_SOURCE_DERIVED_SETTING_KEYS is missing from functions_settings.py')
+
+
+def test_phase_4_flags_follow_enhanced_citations_and_all_runner_paths_use_them():
+    """Compare follows Enhanced Citations; model and agent paths keep the rollback check."""
     settings_source = SETTINGS.read_text(encoding='utf-8')
     workflow_source = WORKFLOW.read_text(encoding='utf-8')
 
-    assert "'enable_cross_format_compare': False" in settings_source
-    assert "'enable_cross_format_compare_one_to_many': False" in settings_source
+    derived_keys = _derived_mixed_source_keys(settings_source)
+    assert 'enable_cross_format_compare' in derived_keys
+    assert 'enable_cross_format_compare_one_to_many' in derived_keys
     assert 'def is_cross_format_compare_enabled(settings):' in settings_source
     assert 'def is_cross_format_compare_one_to_many_enabled(settings):' in settings_source
     assert workflow_source.count('mixed_comparison_enabled = is_cross_format_compare_enabled(settings)') == 2
@@ -126,5 +139,5 @@ def test_phase_4_flags_default_off_and_all_runner_paths_use_them():
 if __name__ == '__main__':
     test_pairwise_reducer_preserves_target_order_and_partial_failure()
     test_cross_format_coordinator_uses_native_partitions_and_rollout_guards()
-    test_phase_4_flags_default_off_and_all_runner_paths_use_them()
+    test_phase_4_flags_follow_enhanced_citations_and_all_runner_paths_use_them()
     print('Phase 4 cross-format Compare tests passed.')
