@@ -111,6 +111,7 @@ def settings_functions(**overrides):
         "normalize_public_workspace_display_settings", "normalize_key_vault_reminder_settings",
         "normalize_model_endpoint_identity_header_settings",
         "normalize_retired_orchestration_settings",
+        "normalize_mixed_source_derived_settings",
     ):
         namespace[name] = lambda _settings: None
     namespace.update(overrides)

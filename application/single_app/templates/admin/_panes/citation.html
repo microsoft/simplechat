@@ -115,6 +115,26 @@
                             </div>
                         </div>
 
+                        <!-- Spreadsheets in Chat -->
+                        <div class="card mb-3 p-3" id="enhanced-citations-spreadsheets-card">
+                            <h6><strong>Spreadsheets in Chat</strong></h6>
+                            <p class="text-muted small mb-3">
+                                With Enhanced Citations on, CSV and Excel files are calculated over row by row instead of searched as text,
+                                and Chat, Search, Analyze and Compare can combine documents and spreadsheets selected together.
+                                Those behaviors follow this setting automatically.
+                            </p>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_mixed_source_relevance_candidates" name="enable_mixed_source_relevance_candidates" aria-describedby="enable_mixed_source_relevance_candidates_help" {% if settings.enable_mixed_source_relevance_candidates | default(true) %}checked{% endif %}>
+                                <label class="form-check-label" for="enable_mixed_source_relevance_candidates">Look for relevant spreadsheets when no files are selected</label>
+                                <div class="form-text" id="enable_mixed_source_relevance_candidates_help">
+                                    When a chat searches workspace documents without specific files selected, run a second search aimed at spreadsheet columns and sheets
+                                    and keep up to six spreadsheets that fit the question. A question about figures can then be answered from the right file even when
+                                    its text did not rank among the first results. The extra search adds a little time to those messages, and a matched spreadsheet that
+                                    gets analyzed adds model calls.
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="card mb-3 p-3">
                             <h6><strong>Tabular Preview Limits</strong></h6>
                             <div class="mb-3">

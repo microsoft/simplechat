@@ -1,7 +1,7 @@
 # test_v2_collaboration_ux.py
 """
 UI test for the V2 shared conversation experience.
-Version: 0.261.255
+Version: 0.261.262
 Implemented in: 0.261.255
 
 This test ensures that, in a shared conversation, a message names the people and the agent it
@@ -90,6 +90,10 @@ class CollaborationApi:
             return
         if path.startswith("/captures/"):
             route.fulfill(status=200, body=PIXEL, content_type="image/png")
+            return
+        # The drawer's clip tile loads the clip's first frame; an unplayable clip shows as unavailable.
+        if path.startswith("/clips/"):
+            route.fulfill(status=404, body="Media not found.", content_type="text/plain")
             return
         if request.method == "POST" and path == f"{base}/typing":
             route.fulfill(json={"success": True})

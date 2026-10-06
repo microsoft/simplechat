@@ -97,6 +97,24 @@ export interface AdminFieldGroup {
     label?: string;
     variant?: 'connection' | 'behavior' | 'limits' | 'access' | 'advanced';
     help?: string;
+    /**
+     * Settings key of the ungrouped switch this group sits beneath.
+     *
+     * An anchored group is drawn as a panel directly under that switch rather than at the
+     * foot of the card, which is how each File Sync workspace type keeps its Access panel
+     * beside its own toggle. Every field in it depends on the anchor, so the panel never
+     * shows while the switch is off.
+     */
+    anchor?: string;
+    /**
+     * A key in this group whose blank value opens the group while the section's
+     * capability is on.
+     *
+     * For an optional connection an administrator most likely wants next -- Content
+     * Understanding under Enhanced extraction -- which cannot be marked `required`
+     * because the capability works without it.
+     */
+    open_until_set?: string;
 }
 
 /** Normalise either declared group shape into the object form. */
@@ -138,6 +156,20 @@ export interface AdminFieldAcknowledgement {
     when: 'enabled';
     title: string;
     message: string;
+}
+
+/**
+ * Companion values a switch sets when it is turned on.
+ *
+ * Mirrors `on_enable` in `admin_settings_fields.py`. Turning Enhanced extraction on
+ * while the extraction mode still reads Standard would change nothing, so the mode
+ * moves to Auto. The page applies this to the draft as the switch flips, so the new
+ * value is on screen before saving, and only while `when` holds against the current
+ * values. The server applies the same rule to a save that omits the companion.
+ */
+export interface AdminFieldEnableEffect {
+    set: Record<string, string | number | boolean>;
+    when?: AdminFieldDependency;
 }
 
 export interface AdminField {
@@ -262,6 +294,8 @@ export interface AdminField {
      */
     scale?: number;
     requires_acknowledgement?: AdminFieldAcknowledgement;
+    /** Switch fields only: companion values to set when it is turned on. */
+    on_enable?: AdminFieldEnableEffect;
 }
 
 /** Section id -> ordered fields. Section ids come from `admin_settings_nav.py`. */
@@ -419,17 +453,7 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
         return draft[field.key];
     }
 
-    // Two descriptors name a nested home: `settings_path` as segments, `paths` as
-    // dotted strings. The draft is always keyed flat, because that is what the PATCH
-    // sends and what the server unpacks; only the stored read follows the path.
-    let stored: unknown;
-    if (field.settings_path) {
-        stored = readNestedValue(settings, field.settings_path);
-    } else if (field.paths?.length) {
-        stored = readNestedSetting(settings, field.paths[0]);
-    } else {
-        stored = settings[field.key];
-    }
+    const stored = readStoredFieldValue(field, settings);
 
     if (stored !== undefined && stored !== null && field.scale) {
         // Stored in one unit, edited in another. File Sync's per-run limit is held
@@ -440,6 +464,26 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
     }
 
     return stored === undefined || stored === null ? field.default : stored;
+}
+
+/**
+ * Read a field's saved value from where it is actually stored.
+ *
+ * Two descriptors name a nested home: `settings_path` as segments, `paths` as dotted
+ * strings. The draft is always keyed flat, because that is what the PATCH sends and what
+ * the server unpacks; only the stored read follows the path.
+ *
+ * Kept apart from `readFieldValue` because the connection tests, the dependency checks
+ * and the section status need the same lookup without the display default.
+ */
+export function readStoredFieldValue(field: AdminField, settings: Json): unknown {
+    if (field.settings_path) {
+        return readNestedValue(settings, field.settings_path);
+    }
+    if (field.paths?.length) {
+        return readNestedSetting(settings, field.paths[0]);
+    }
+    return field.key ? settings[field.key] : undefined;
 }
 
 /** Walk a dotted path into the settings document, or undefined if it is not there. */
@@ -472,6 +516,10 @@ export interface RenderedFieldGroup {
      * always-on built-in actions out of the way.
      */
     collapsed?: boolean;
+    /** The switch the group is drawn beneath. See `AdminFieldGroup.anchor`. */
+    anchor?: string;
+    /** A key whose blank value opens the group while the capability is on. */
+    openUntilSet?: string;
     fields: AdminField[];
 }
 
@@ -499,10 +547,16 @@ export function groupFields(fields: AdminField[]): RenderedFieldGroup[] {
                 variant: declared?.variant,
                 help: declared?.help,
                 collapsed: Boolean(field.collapsed),
+                anchor: declared?.anchor,
+                openUntilSet: declared?.open_until_set,
                 fields: [],
             };
             byId.set(id, group);
             groups.push(group);
+        } else if (!group.openUntilSet && declared?.open_until_set) {
+            // Declared once, usually on the group's first field, which may be the one
+            // a dependency is hiding.
+            group.openUntilSet = declared.open_until_set;
         }
         group.fields.push(field);
     }
@@ -591,13 +645,21 @@ export function buildFieldIndex(schema: AdminFieldSchema): Map<string, AdminFiel
 }
 
 /**
- * Read the current value of a key another field depends on.
+ * Read a settings key's current value, preferring an unsaved edit over the stored one.
  *
- * A gate may itself be stored inside a nested object -- the document action limits are
- * gated by an `enabled` flag that lives in the same container -- so the key alone is not
- * enough to find the saved value.
+ * The key alone is not always enough to find the saved value. A declared field may be
+ * stored inside a nested object -- the document action limits are gated by an `enabled`
+ * flag that lives in their container, and the Web Search Foundry connection is kept inside
+ * `web_search_agent` -- so the saved value is read through the field that declares the
+ * key whenever the index knows one. Read as a top-level key instead, a saved Foundry
+ * endpoint comes back blank, and a connection test reports it missing while it is plainly
+ * on screen.
+ *
+ * Unlike `readFieldValue`, no schema default is substituted. A select shows its default
+ * before anything is stored, but a condition on that select must not hold until a value
+ * really is stored or chosen.
  */
-function readDependencyValue(
+export function readSettingValue(
     key: string,
     settings: Json,
     draft: Json,
@@ -606,8 +668,8 @@ function readDependencyValue(
     if (Object.prototype.hasOwnProperty.call(draft, key)) {
         return draft[key];
     }
-    const gate = fieldsByKey?.get(key);
-    return gate?.settings_path ? readNestedValue(settings, gate.settings_path) : settings[key];
+    const declared = fieldsByKey?.get(key);
+    return declared ? readStoredFieldValue(declared, settings) : settings[key];
 }
 
 /**
@@ -631,7 +693,7 @@ export function isFieldVisible(
     runtimeFlags?: Record<string, boolean>,
 ): boolean {
     return !field.legacy && evaluateDependency(field.depends_on, (key) =>
-        readDependencyValue(key, settings, draft, fieldsByKey),
+        readSettingValue(key, settings, draft, fieldsByKey),
     runtimeFlags);
 }
 
@@ -704,6 +766,57 @@ function dependencyValueMatches(current: unknown, expected: boolean | string): b
 }
 
 /**
+ * Write a value at a dotted path, creating intermediate objects.
+ *
+ * Payload shapes are nested -- `direct.endpoint`, `apim.subscription_key` -- because that
+ * is what the existing test handlers expect. Declaring them flat and expanding here keeps
+ * the schema readable.
+ */
+function assignPath(target: Json, path: string, value: unknown): void {
+    const parts = path.split('.');
+    let cursor = target as Record<string, unknown>;
+
+    for (const part of parts.slice(0, -1)) {
+        if (typeof cursor[part] !== 'object' || cursor[part] === null) {
+            cursor[part] = {};
+        }
+        cursor = cursor[part] as Record<string, unknown>;
+    }
+
+    cursor[parts[parts.length - 1]] = value;
+}
+
+/**
+ * Build the request body a `connection-test` field declares, from the values on screen.
+ *
+ * Each source is read as an unsaved edit first and then as the saved value, found
+ * wherever its field declares it is stored. The Web Search Foundry connection is saved
+ * inside `web_search_agent`, so reading its keys as top-level settings would test a
+ * saved connection with blanks.
+ *
+ * A payload entry can be conditional, which is how one declaration covers both sides of
+ * an APIM-or-direct choice without sending the branch that is not in use.
+ */
+export function buildConnectionTestPayload(
+    field: AdminField,
+    settings: Json,
+    draft: Json,
+    fieldsByKey: Map<string, AdminField>,
+): Json {
+    const read = (key: string): unknown => readSettingValue(key, settings, draft, fieldsByKey);
+
+    const payload: Json = { test_type: field.test_type };
+    for (const [path, source] of Object.entries(field.test_payload ?? {})) {
+        if (!evaluateDependency(source.when, read)) {
+            continue;
+        }
+        const value = source.key !== undefined ? read(source.key) : source.value;
+        assignPath(payload, path, value ?? '');
+    }
+    return payload;
+}
+
+/**
  * Whether a field's cross-section prerequisite is satisfied.
  *
  * Unlike `depends_on`, an unmet requirement does not hide the field. Hiding it would
@@ -726,6 +839,47 @@ export function isRequirementSatisfied(
 }
 
 /**
+ * Apply a switch's `on_enable` companions to a draft, returning the new draft.
+ *
+ * Only a transition counts, as on the server: a switch that is already on when saved
+ * brings nothing with it. Turning it on sets each companion that the administrator has not
+ * already edited, while `when` holds against the values on screen. Turning it back off
+ * before saving takes back any companion still holding the value it set, so the draft only
+ * carries what the administrator chose. A key that has never been saved reads as its
+ * declared default, which is what the server would have merged in.
+ */
+export function applyEnableEffect(
+    draft: Json,
+    settings: Json,
+    field: AdminField,
+    next: boolean,
+    fieldsByKey?: Map<string, AdminField>,
+): Json {
+    const effect = field.on_enable;
+    if (!field.key || !effect || asBoolean(settings[field.key])) {
+        return draft;
+    }
+
+    const read = (key: string): unknown => {
+        const value = readSettingValue(key, settings, draft, fieldsByKey);
+        return value === undefined ? fieldsByKey?.get(key)?.default : value;
+    };
+
+    const updated: Json = { ...draft };
+    for (const [companion, value] of Object.entries(effect.set ?? {})) {
+        const edited = Object.prototype.hasOwnProperty.call(draft, companion);
+        if (next) {
+            if (!edited && evaluateDependency(effect.when, read)) {
+                updated[companion] = value;
+            }
+        } else if (edited && draft[companion] === value) {
+            delete updated[companion];
+        }
+    }
+    return updated;
+}
+
+/**
  * Whether a navigation section's `condition` holds.
  *
  * A condition names either a settings key or a server-resolved runtime flag.
@@ -745,7 +899,7 @@ export function isSectionVisible(
     if (Object.prototype.hasOwnProperty.call(runtimeFlags, condition)) {
         return runtimeFlags[condition];
     }
-    return asBoolean(readDependencyValue(condition, settings, draft, fieldsByKey));
+    return asBoolean(readSettingValue(condition, settings, draft, fieldsByKey));
 }
 
 /**

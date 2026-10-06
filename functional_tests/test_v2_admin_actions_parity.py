@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning V1/V2 parity for the Admin Settings Actions tab.
-Version: 0.261.260
+Version: 0.261.268
 Implemented in: 0.261.074
-Global actions list in actions-config: 0.261.260
+Global actions list in actions-config: 0.261.268
 
 Two things in this tab are not ordinary settings, and both fail silently.
 
@@ -156,7 +156,7 @@ def test_removing_a_section_did_not_orphan_its_settings():
     """A section can be emptied, but not at the cost of losing a setting.
 
     `actions-config` is declared by ``ADMIN_NAV`` and by the V1 pane, but the
-    schema deliberately gives it no setting: since 0.261.260 it holds only the
+    schema deliberately gives it no setting: since 0.261.268 it holds only the
     global actions list, a component with no key. That is only safe while
     everything it used to hold is declared somewhere else, and "everything it used
     to hold" is not fixed: the Chat work moved a second toggle into it after this
@@ -168,7 +168,7 @@ def test_removing_a_section_did_not_orphan_its_settings():
     """
     print("\nTesting that the emptied section orphaned nothing...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.268")
     schema = fields_module.get_admin_settings_fields()
     section_fields = schema.get("actions-config") or []
     declared_settings = [field["key"] for field in section_fields if field.get("key")]

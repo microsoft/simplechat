@@ -140,6 +140,7 @@ from functions_settings import (
     is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
     is_chat_workflow_results_enabled_for_user,
+    is_content_understanding_supported_environment,
     is_user_workflows_enabled_for_user,
     is_workflow_assistant_enabled_for_user,
     merge_model_endpoint_payload,
@@ -1409,7 +1410,14 @@ def register_route_backend_v2_admin(bp):
                         # rather than a stored setting. Inbound MCP is gated by an
                         # App Service application setting, so its value cannot be
                         # read out of the settings document the SPA already holds.
-                        "runtime_flags": {"mcp_ui_enabled": is_mcp_ui_enabled()},
+                        # Content Understanding is not offered in every Azure cloud,
+                        # which only the server's AZURE_ENVIRONMENT can say.
+                        "runtime_flags": {
+                            "mcp_ui_enabled": is_mcp_ui_enabled(),
+                            "content_understanding_supported": (
+                                is_content_understanding_supported_environment()
+                            ),
+                        },
                         "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
                     }

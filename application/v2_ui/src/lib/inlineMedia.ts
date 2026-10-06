@@ -104,6 +104,16 @@ export function formatMediaTime(seconds: number): string {
     return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${secs}` : `${minutes}:${secs}`;
 }
 
+/**
+ * A clip's address for a still tile: a media fragment asking for the frame just after the start.
+ *
+ * Without one, some browsers leave a clip that has loaded only its metadata blank. The fragment
+ * never reaches the server, so a signed link's signature is untouched.
+ */
+export function posterFrameUrl(url: string | null): string | undefined {
+    return url ? `${url.split('#')[0]}#t=0.1` : undefined;
+}
+
 let activeMedia: HTMLMediaElement | null = null;
 
 /**

@@ -30,7 +30,7 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Beyond a field's type, four optional descriptors shape how a section reads:
+Beyond a field's type, five optional descriptors shape how a section reads:
 
 ``group``
     Names the cluster a field belongs to, either as a label or with a variant
@@ -39,6 +39,19 @@ Beyond a field's type, four optional descriptors shape how a section reads:
     endpoint before the tuning knobs. Without this, a section like Document
     Intelligence is a flat run of forty controls in which the credential that
     makes the rest work is simply the last one.
+
+    A group may also name an ``anchor``: the key of an ungrouped switch declared
+    earlier in the same section. The renderer then draws the group as a panel
+    directly beneath that switch instead of at the foot of the card, which is
+    how each File Sync workspace type keeps its Access panel beside its own
+    toggle. Every field in an anchored group depends on the anchor, so the
+    panel can never show while its switch is off.
+
+    A group may also name ``open_until_set``: a key in the same group whose
+    blank value opens the group while the section's capability is on. That is
+    for an optional connection the administrator most likely wants next --
+    Content Understanding under Enhanced extraction -- which cannot be marked
+    ``required`` because the capability works without it.
 
 ``depends_on``
     Shows a field only while a condition holds. See ``evaluate_dependency`` for
@@ -58,6 +71,17 @@ Beyond a field's type, four optional descriptors shape how a section reads:
     built into ``web_search_agent`` -- so a field whose key matches the V1 form
     input would otherwise save to a top-level key nothing reads. See
     ``_apply_nested_paths``.
+
+``on_enable``
+    Companion values a switch sets when it is turned on, as
+    ``{"set": {key: value}, "when": <condition>}``. Enhanced extraction is the
+    case: the extraction mode only matters while it is on, and turning it on
+    with the mode still on Standard would change nothing, so the mode moves to
+    Auto, which is what the server-rendered form has always done. The browser
+    applies it to the draft as the switch flips, so the new value is visible
+    before saving; ``_apply_enable_defaults`` applies it to a save that turns
+    the switch on without naming the companion, so an API client gets the same
+    result. A value named in the same save always wins.
 
 The Appearance, Agents & Actions, Chat, Knowledge, Workflow, Workspaces and
 Security groups are described in full. Sections with no entry here fall back to the V2 surface's
@@ -819,6 +843,41 @@ ADMIN_SETTINGS_FIELDS = {
     # key is what takes it out of that scan, so these five are declared rather
     # than guessed at. Wording is taken from the V1 panes so both interfaces say
     # the same thing.
+    #
+    # Application Insights is declared for the same reason. The scan splits
+    # `enable_appinsights_global_logging` into "appinsights", which matches no
+    # section, and "logging", which matches Debug Logging, so the switch that sends
+    # everything to Application Insights sat under Debug Logging. The mixed-source
+    # telemetry switch, which the scan had filed under Deep Research on the word
+    # "source", reports to the same place and is declared beside it.
+    "application-insights-section": [
+        {
+            "key": "enable_appinsights_global_logging",
+            "type": "switch",
+            "label": "Enable Application Insights Global Logging",
+            "help": (
+                "Sends global logging for all agents and orchestration events to "
+                "Application Insights. Changing this requires an application restart "
+                "to take effect."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_mixed_source_development_telemetry",
+            "type": "switch",
+            "label": "Record mixed document and spreadsheet metrics",
+            "help": (
+                "Logs aggregate counts, timings and token totals for the processing "
+                "behind Chat, Search, Analyze and Compare over workspace documents and "
+                "spreadsheets: how many sources completed, were partial, failed, were "
+                "skipped or were canceled, plus authorization failures and background "
+                "exports. Never records prompts, content, file names, document IDs or "
+                "storage paths. Turn it on while checking how these requests behave; "
+                "each request adds several log entries."
+            ),
+            "default": False,
+        },
+    ],
     "health-check-section": [
         {
             "key": "enable_external_healthcheck",
@@ -1092,6 +1151,55 @@ ADMIN_SETTINGS_FIELDS = {
                 },
             },
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        # Declared here because the fallback scan matched "search" and filed the
+        # switch under Web Search, which reaches the public internet. This cache sits
+        # in front of the workspace indexes configured above.
+        {
+            "key": "enable_search_result_caching",
+            "type": "switch",
+            "label": "Cache workspace search results",
+            "help": (
+                "Reuses the results of a recent identical search, so a repeated question "
+                "returns faster, cites the same sources, and skips the query embedding and "
+                "the semantic-ranked Azure AI Search queries. Results are reused only while "
+                "the query, scope, filters, embedding model and the documents in scope, "
+                "including their versions, still match, and they are re-checked against the "
+                "requesting user's access before they are returned. Leave it on; turn it off "
+                "only to make every search run fresh while you troubleshoot relevance."
+            ),
+            "default": True,
+            "group": {
+                "id": "search-result-cache",
+                "label": "Search result cache",
+                "variant": "behavior",
+                "help": (
+                    "Applies to the workspace document searches behind grounded chat, "
+                    "agents and workflows, not to web search. Cached results are kept in "
+                    "the search_cache Cosmos DB container, so Redis is not required."
+                ),
+            },
+        },
+        {
+            "key": "search_cache_ttl_seconds",
+            "type": "number",
+            "label": "Cache lifetime (seconds)",
+            "help": (
+                "How long a cached result set can be reused. Adding, deleting, re-sharing "
+                "or re-versioning a document forces a fresh search straight away. Other "
+                "changes, such as a document that finishes processing after the search ran "
+                "or an edit made directly in Azure AI Search, can take up to this long to "
+                "appear. 300 seconds (5 minutes) by default."
+            ),
+            "default": 300,
+            "min": 60,
+            "max": 3600,
+            "group": {
+                "id": "search-result-cache",
+                "label": "Search result cache",
+                "variant": "behavior",
+            },
+            "depends_on": {"key": "enable_search_result_caching", "equals": True},
         },
     ],
     # ------------------------------------------------------------------
@@ -1795,9 +1903,11 @@ ADMIN_SETTINGS_FIELDS = {
     # and then scrolls past everything that depends on the connection before
     # reaching the connection itself.
     #
-    # Here the connection comes first and the behaviour that needs it follows,
-    # declaring `requires` so a toggle flipped without a configured endpoint says
-    # so rather than silently doing nothing.
+    # Here Document Intelligence is the connection and nothing else. It is needed
+    # whatever else is configured -- Standard extraction is its Read model, and
+    # Enhanced falls back to its Layout model -- so it comes first, and the
+    # settings that only matter once Enhanced extraction is on live in the
+    # section after it.
     # ------------------------------------------------------------------
     "document-intelligence-section": [
         {
@@ -1815,8 +1925,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "label": "Connection",
                 "variant": "connection",
                 "help": (
-                    "Document Intelligence reads PDFs and images. Nothing else in this "
-                    "tab works until it is reachable."
+                    "Document Intelligence reads PDFs and images. Standard extraction "
+                    "is its Read model and Enhanced extraction falls back to its Layout "
+                    "model, so nothing else in this tab works until it is reachable."
                 ),
             },
         },
@@ -1886,11 +1997,15 @@ ADMIN_SETTINGS_FIELDS = {
             "test_type": "azure_doc_intelligence",
             "test_payload": {
                 "enable_apim": {"key": "enable_document_intelligence_apim"},
+                # With Enhanced extraction off every document uses Standard,
+                # whatever mode is stored, so the test exercises Read too.
                 "document_intelligence_pdf_image_extraction_mode": {
-                    "key": "document_intelligence_pdf_image_extraction_mode"
+                    "key": "document_intelligence_pdf_image_extraction_mode",
+                    "when": {"key": "enable_enhanced_extraction", "equals": True},
                 },
                 "document_intelligence_auto_sample_pages": {
-                    "key": "document_intelligence_auto_sample_pages"
+                    "key": "document_intelligence_auto_sample_pages",
+                    "when": {"key": "enable_enhanced_extraction", "equals": True},
                 },
                 "direct.endpoint": {
                     "key": "azure_document_intelligence_endpoint",
@@ -1915,15 +2030,61 @@ ADMIN_SETTINGS_FIELDS = {
             },
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
         },
+    ],
+    # ------------------------------------------------------------------
+    # Knowledge / Document Extraction / Enhanced Extraction
+    #
+    # One card for the capability and everything it governs. Enhanced extraction
+    # used to be a switch inside the collapsed Extraction group of Document
+    # Intelligence, while Content Understanding -- the engine behind it -- was a
+    # card of its own that could be filled in with Enhanced off, where it is
+    # never called. The switch now leads this card, and every setting that only
+    # means something while it is on sits beneath it and is hidden while it is
+    # off, so the relationship is shown rather than remembered.
+    #
+    # Content Understanding stays optional: without it Enhanced uses Document
+    # Intelligence Layout, which still captures tables and checkbox states but
+    # does not describe figures. The engine notice says which applies. Its
+    # fields are also gated on the cloud, because the service is not offered in
+    # Azure Government or custom clouds; the server-rendered pane does the same
+    # with ``content_understanding_supported``.
+    # ------------------------------------------------------------------
+    "enhanced-extraction-section": [
+        {
+            "key": "enable_enhanced_extraction",
+            "type": "switch",
+            "label": "Enable Enhanced extraction",
+            "help": (
+                "Extracts tables, page structure, forms and checkbox states from PDFs "
+                "and images, and with Azure AI Content Understanding connected, "
+                "descriptions of figures and charts. The extraction mode and the "
+                "Content Understanding connection appear here once it is on. While it "
+                "is off, every document uses Standard extraction (Document "
+                "Intelligence Read)."
+            ),
+            "default": False,
+            "role": "capability",
+            "on_enable": {
+                # Enhanced with the mode still on Standard would change nothing.
+                # The server-rendered form moves to Auto at this point as well.
+                "set": {"document_intelligence_pdf_image_extraction_mode": "auto"},
+                "when": {
+                    "key": "document_intelligence_pdf_image_extraction_mode",
+                    "equals": "read",
+                },
+            },
+        },
         {
             "key": "document_intelligence_pdf_image_extraction_mode",
             "type": "select",
             "label": "PDF and Image Extraction Mode",
             "help": (
-                "Standard is Document Intelligence Read: fastest and cheapest for plain "
-                "text. Enhanced captures tables, page structure, forms and checkbox "
-                "states, at roughly six times the cost per thousand pages. Auto samples "
-                "the first pages and picks."
+                "What new PDF and image uploads use. Standard is Document Intelligence "
+                "Read: fastest and cheapest for plain text. Enhanced captures tables, "
+                "page structure, forms and checkbox states, at roughly six times the "
+                "cost per thousand pages. Auto samples the first pages and picks. With "
+                "Standard selected, a document can still be extracted again as "
+                "Enhanced from its workspace."
             ),
             "default": "read",
             "options": [
@@ -1937,7 +2098,7 @@ ADMIN_SETTINGS_FIELDS = {
                     "label": "Auto — sample first pages, then choose",
                 },
             ],
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": {"key": "enable_enhanced_extraction", "equals": True},
         },
         {
             "key": "document_intelligence_auto_sample_pages",
@@ -1951,53 +2112,63 @@ ADMIN_SETTINGS_FIELDS = {
             "default": 3,
             "min": 1,
             "max": 20,
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
-            "depends_on": {
-                "key": "document_intelligence_pdf_image_extraction_mode",
-                "equals": "auto",
-            },
-        },
-        {
-            "key": "enable_enhanced_extraction",
-            "type": "switch",
-            "label": "Enable Enhanced extraction",
-            "help": (
-                "Uses Azure AI Content Understanding, which returns tables, page "
-                "structure, checkbox states and descriptions of figures and charts. "
-                "Falls back to Document Intelligence Layout where Content Understanding "
-                "is unavailable or unconfigured."
-            ),
-            "default": False,
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"key": "document_intelligence_pdf_image_extraction_mode", "equals": "auto"},
+            ],
         },
         {
             "key": "enable_document_intelligence_formula_extraction",
             "type": "switch",
             "label": "Extract mathematical formulas",
             "help": (
-                "Captures equations as LaTeX rather than approximate OCR text. This is a "
-                "billed Document Intelligence add-on that adds per-page cost to every "
-                "Enhanced extraction, and it has no effect while extraction is Standard."
+                "Captures equations as LaTeX rather than approximate OCR text. It is a "
+                "billed add-on to the Document Intelligence Layout model, so it adds "
+                "per-page cost wherever Layout runs: Auto's page sampling, and Enhanced "
+                "extraction without Content Understanding. Standard and Content "
+                "Understanding extractions do not use it."
             ),
             "default": False,
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": {"key": "enable_enhanced_extraction", "equals": True},
         },
-    ],
-    # Its own section now. The card has always been in the extraction pane but
-    # was missing from ADMIN_NAV, so neither interface could navigate to it.
-    "content-understanding-section": [
+        {
+            "type": "component",
+            "component": "enhanced-extraction-engine",
+            "label": "Extraction engine",
+            "help": (
+                "Which engine runs when a document is extracted as Enhanced, judged "
+                "from the settings on this page. Test the Content Understanding "
+                "connection to confirm it is reachable."
+            ),
+            "depends_on": {"key": "enable_enhanced_extraction", "equals": True},
+        },
         {
             "key": "azure_content_understanding_endpoint",
             "type": "text",
             "label": "Foundry Endpoint",
             "help": (
                 "The Microsoft Foundry resource endpoint, with no trailing path. Leave "
-                "blank and Enhanced extraction falls back to Document Intelligence "
-                "Layout."
+                "it blank to use Document Intelligence Layout instead."
             ),
             "default": "",
             "placeholder": "https://your-resource.services.ai.azure.com",
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
+                "help": (
+                    "Optional. Azure AI Content Understanding backs Enhanced extraction "
+                    "and adds descriptions of figures and charts. Without it, Enhanced "
+                    "uses Document Intelligence Layout."
+                ),
+                # Starts open while unconnected, because it is the step most
+                # administrators want next after turning Enhanced on.
+                "open_until_set": "azure_content_understanding_endpoint",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
         },
         {
             "key": "azure_content_understanding_authentication_type",
@@ -2012,42 +2183,31 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "key", "label": "Key"},
                 {"value": "managed_identity", "label": "Managed Identity"},
             ],
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
         },
         {
             "key": "azure_content_understanding_key",
             "type": "secret",
             "default": "",
             "label": "Content Understanding Key",
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
-            "depends_on": {
-                "key": "azure_content_understanding_authentication_type",
-                "equals": "key",
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
             },
-        },
-        {
-            "key": "azure_content_understanding_api_version",
-            "type": "text",
-            "label": "API Version",
-            "default": "",
-            "fallback_when_empty": True,
-            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
-        },
-        {
-            "key": "azure_content_understanding_analyzer_id",
-            "type": "text",
-            "label": "Document Analyzer",
-            "default": "",
-            "fallback_when_empty": True,
-            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
-        },
-        {
-            "key": "azure_content_understanding_image_analyzer_id",
-            "type": "text",
-            "label": "Image Analyzer",
-            "default": "",
-            "fallback_when_empty": True,
-            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+                {"key": "azure_content_understanding_authentication_type", "equals": "key"},
+            ],
         },
         {
             "type": "component",
@@ -2066,10 +2226,66 @@ ADMIN_SETTINGS_FIELDS = {
                     "key": "azure_content_understanding_image_analyzer_id"
                 },
             },
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_content_understanding_api_version",
+            "type": "text",
+            "label": "API Version",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {
+                "id": "analyzers",
+                "label": "Content Understanding analyzers",
+                "variant": "advanced",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_content_understanding_analyzer_id",
+            "type": "text",
+            "label": "Document Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {
+                "id": "analyzers",
+                "label": "Content Understanding analyzers",
+                "variant": "advanced",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_content_understanding_image_analyzer_id",
+            "type": "text",
+            "label": "Image Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {
+                "id": "analyzers",
+                "label": "Content Understanding analyzers",
+                "variant": "advanced",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
         },
     ],
-    # Also promoted out of the extraction card into a section of its own. It is
+    # Promoted out of the extraction card into a section of its own. It is
     # independent of Enhanced extraction despite sitting inside it in the V1
     # markup, which is what made it read as part of that feature.
     "office-embedded-image-section": [
@@ -2772,7 +2988,10 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Stores original files in an Azure Storage account so citations can "
                 "link to and preview the source document rather than only quoting "
-                "extracted text."
+                "extracted text. It also turns on spreadsheet analysis: CSV and Excel "
+                "files are calculated over row by row instead of searched as text, and "
+                "Chat, Search, Analyze and Compare can combine documents and "
+                "spreadsheets selected together."
             ),
             "default": False,
         },
@@ -2823,6 +3042,22 @@ ADMIN_SETTINGS_FIELDS = {
                     "equals": "managed_identity",
                 },
             ],
+        },
+        {
+            "key": "enable_mixed_source_relevance_candidates",
+            "type": "switch",
+            "label": "Look for relevant spreadsheets when no files are selected",
+            "help": (
+                "When a chat searches workspace documents without specific files "
+                "selected, run a second search aimed at spreadsheet columns and sheets "
+                "and keep up to six spreadsheets that fit the question. A question about "
+                "figures can then be answered from the right file even when its text did "
+                "not rank among the first results. The extra search adds a little time to "
+                "those messages, and a matched spreadsheet that gets analyzed adds model "
+                "calls."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
         },
         {
             "key": "tabular_preview_max_blob_size_mb",
@@ -2918,8 +3153,19 @@ ADMIN_SETTINGS_FIELDS = {
     # `requires` descriptor: without it an administrator turns File Sync on and
     # nothing happens, with no visible reason until a flash message after saving.
     #
-    # The three scope sections share one shape -- enable, access, assignment --
-    # so learning Personal is enough to read Group and Public.
+    # Everything File Sync governs is one card. A workspace type is only live
+    # while File Sync and its own switch are both on (functions_file_sync.py),
+    # so the three type switches follow the capability and depend on it, which
+    # is what draws them nested beneath it. Keep them contiguous:
+    # deriveFieldHierarchy nests an uninterrupted run, so a field declared
+    # between them would leave the switches after it un-nested.
+    #
+    # Each type's access rules form an Access panel anchored under that type's
+    # switch. Visibility is not transitive, so every field in those panels
+    # repeats the enable_file_sync condition; without it a panel would stay
+    # visible with File Sync off. The three panels share one shape -- who
+    # manages sources, then the type's own restriction -- so learning Personal
+    # is enough to read Group and Public.
     # ------------------------------------------------------------------
     "file-sync-section": [
         {
@@ -2942,6 +3188,194 @@ ADMIN_SETTINGS_FIELDS = {
                     "until Redis Cache is enabled and configured."
                 ),
             },
+        },
+        {
+            "key": "enable_file_sync_personal",
+            "type": "switch",
+            "label": "Personal workspaces",
+            "default": True,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "enable_file_sync_group",
+            "type": "switch",
+            "label": "Group workspaces",
+            "default": True,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "enable_file_sync_public",
+            "type": "switch",
+            "label": "Public workspaces",
+            "default": False,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_personal_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "help": "Users keep their synced documents but cannot add or edit a source.",
+            "default": False,
+            "group": {
+                "id": "personal-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_personal",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_personal", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_personal_require_app_role",
+            "type": "switch",
+            "label": "Require the PersonalFileSyncUser app role",
+            "help": (
+                "Required app role value: PersonalFileSyncUser. Assign it in the "
+                "Enterprise App before turning this on, or no user will be able to "
+                "manage a personal source."
+            ),
+            "default": False,
+            "group": {
+                "id": "personal-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_personal",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_personal", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_group_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+            ],
+        },
+        {
+            "key": "require_group_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned groups",
+            "help": "Only the groups listed below may use File Sync.",
+            "default": False,
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_allowed_group_ids",
+            "type": "id_list",
+            "label": "Assigned groups",
+            "help": (
+                "Leaving this empty while the restriction is on means no group can use "
+                "File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search groups by name",
+            "search_endpoint": "/api/admin/file-sync/groups/search",
+            "search_param": "q",
+            "results_key": "groups",
+            "item_noun": "group",
+            "item_noun_plural": "groups",
+            # Group ids are canonical UUIDs, and the shared normalizer drops
+            # anything else, matching what the server-rendered form stores.
+            "id_kind": "group",
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+                {"key": "require_group_assignment_for_file_sync", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_public_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+            ],
+        },
+        {
+            "key": "require_public_workspace_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned public workspaces",
+            "help": "Only the public workspaces listed below may use File Sync.",
+            "default": False,
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_allowed_public_workspace_ids",
+            "type": "id_list",
+            "label": "Assigned public workspaces",
+            "help": (
+                "Leaving this empty while the restriction is on means no public "
+                "workspace can use File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search public workspaces by name",
+            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "search_param": "q",
+            "results_key": "workspaces",
+            "item_noun": "public workspace",
+            "item_noun_plural": "public workspaces",
+            # Public workspace ids are not UUID-constrained, so they are only
+            # trimmed and deduplicated.
+            "id_kind": "opaque",
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+                {
+                    "key": "require_public_workspace_assignment_for_file_sync",
+                    "equals": True,
+                },
+            ],
         },
         {
             "key": "file_sync_max_sources_per_scope",
@@ -3010,8 +3444,6 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
         },
-    ],
-    "file-sync-source-types-section": [
         {
             "key": "file_sync_visible_source_types",
             "type": "checkbox_set",
@@ -3053,145 +3485,8 @@ ADMIN_SETTINGS_FIELDS = {
                     "disabled": True,
                 },
             ],
+            "group": {"id": "source-types", "label": "Source types", "variant": "behavior"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
-        },
-    ],
-    "file-sync-personal-section": [
-        {
-            "key": "enable_file_sync_personal",
-            "type": "switch",
-            "label": "Enable sync for personal workspaces",
-            "default": True,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_personal_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "help": "Users keep their synced documents but cannot add or edit a source.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
-        },
-        {
-            "key": "file_sync_personal_require_app_role",
-            "type": "switch",
-            "label": "Require the PersonalFileSyncUser app role",
-            "help": (
-                "Required app role value: PersonalFileSyncUser. Assign it in the "
-                "Enterprise App before turning this on, or no user will be able to "
-                "manage a personal source."
-            ),
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
-        },
-    ],
-    "file-sync-group-section": [
-        {
-            "key": "enable_file_sync_group",
-            "type": "switch",
-            "label": "Enable sync for group workspaces",
-            "default": True,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_group_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_group", "equals": True},
-        },
-        {
-            "key": "require_group_assignment_for_file_sync",
-            "type": "switch",
-            "label": "Restrict to assigned groups",
-            "help": "Only the groups listed below may use File Sync.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_group", "equals": True},
-        },
-        {
-            "key": "file_sync_allowed_group_ids",
-            "type": "id_list",
-            "label": "Assigned groups",
-            "help": (
-                "Leaving this empty while the restriction is on means no group can use "
-                "File Sync."
-            ),
-            "default": [],
-            "placeholder": "Search groups by name",
-            "search_endpoint": "/api/admin/file-sync/groups/search",
-            "search_param": "q",
-            "results_key": "groups",
-            "item_noun": "group",
-            "item_noun_plural": "groups",
-            # Group ids are canonical UUIDs, and the shared normalizer drops
-            # anything else, matching what the server-rendered form stores.
-            "id_kind": "group",
-            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
-            "depends_on": {
-                "all_of": [
-                    {"key": "enable_file_sync_group", "equals": True},
-                    {"key": "require_group_assignment_for_file_sync", "equals": True},
-                ]
-            },
-        },
-    ],
-    "file-sync-public-section": [
-        {
-            "key": "enable_file_sync_public",
-            "type": "switch",
-            "label": "Enable sync for public workspaces",
-            "default": False,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_public_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_public", "equals": True},
-        },
-        {
-            "key": "require_public_workspace_assignment_for_file_sync",
-            "type": "switch",
-            "label": "Restrict to assigned public workspaces",
-            "help": "Only the public workspaces listed below may use File Sync.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_public", "equals": True},
-        },
-        {
-            "key": "file_sync_allowed_public_workspace_ids",
-            "type": "id_list",
-            "label": "Assigned public workspaces",
-            "help": (
-                "Leaving this empty while the restriction is on means no public "
-                "workspace can use File Sync."
-            ),
-            "default": [],
-            "placeholder": "Search public workspaces by name",
-            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
-            "search_param": "q",
-            "results_key": "workspaces",
-            "item_noun": "public workspace",
-            "item_noun_plural": "public workspaces",
-            # Public workspace ids are not UUID-constrained, so they are only
-            # trimmed and deduplicated.
-            "id_kind": "opaque",
-            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
-            "depends_on": {
-                "all_of": [
-                    {"key": "enable_file_sync_public", "equals": True},
-                    {
-                        "key": "require_public_workspace_assignment_for_file_sync",
-                        "equals": True,
-                    },
-                ]
-            },
         },
     ],
     "permissions-section": [
@@ -6289,6 +6584,17 @@ V2_ONLY_FIELDS = {
         "Same as enable_app_maintenance: no server-rendered control, and misfiled "
         "into Security by the fallback scan until it was declared."
     ),
+    "enable_search_result_caching": (
+        "The classic Azure AI Search card showed this switch briefly in late 2025, "
+        "but the classic save handler never stored it and the control was removed. "
+        "Declared under Azure AI Search so the fallback scan stops filing it under "
+        "Web Search, which it matched on the shared word stem 'search'."
+    ),
+    "search_cache_ttl_seconds": (
+        "Read by utils_cache.get_cache_settings() but editable in neither interface "
+        "since the classic control was removed alongside the caching switch. "
+        "Declared with that switch so the cache lifetime can be tuned."
+    ),
 }
 
 
@@ -6369,12 +6675,65 @@ SUPPRESSED_CAPABILITY_KEYS = {
         "administrator-editable."
     ),
     "enable_mixed_source_chat_search": (
-        "Staged rollout flag for mixed-source chat and search, with no control in "
-        "the server-rendered admin form."
+        "Derived, not stored: get_settings() and update_settings() set it to "
+        "enable_enhanced_citations on every read and save, because mixed document and "
+        "spreadsheet Chat and Search needs the spreadsheet engine Enhanced Citations "
+        "provides. A switch here would revert on the next page load. The only override "
+        "is the SIMPLECHAT_DISABLE_MIXED_SOURCE environment kill switch."
     ),
     "enable_mixed_source_conversation_continuity": (
-        "Staged rollout flag gated behind enable_mixed_source_chat_search, with no "
-        "control in the server-rendered admin form."
+        "Derived from enable_enhanced_citations in the same way as "
+        "enable_mixed_source_chat_search, which it extends with reauthorized "
+        "follow-up grounding."
+    ),
+    "enable_cross_format_compare": (
+        "Derived from enable_enhanced_citations in the same way as "
+        "enable_mixed_source_chat_search. Comparing a document with a spreadsheet "
+        "needs the spreadsheet engine, and without it the request is refused rather "
+        "than comparing the spreadsheet as text."
+    ),
+    "enable_cross_format_compare_one_to_many": (
+        "Derived from enable_enhanced_citations alongside enable_cross_format_compare. "
+        "The Comparison document limits under Document Actions already bound how many "
+        "Targets one request may include."
+    ),
+    "enable_mixed_source_analyze_all": (
+        "Gates an Analyze target of every document in scope, which no chat or workflow "
+        "screen can request; only a hand-built API request can reach it. A switch here "
+        "would change nothing an administrator can see. The 0.261.266 settings upgrade "
+        "resets it to off once."
+    ),
+    # The three tabular durable-preflight switches below are always on by design.
+    # normalize_tabular_parity_durable_preflight_defaults() in functions_settings.py
+    # resets each one to True on every settings read and persists the correction, and
+    # _apply_tabular_parity_env_kill_switch() forces them off only while the
+    # SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is set.
+    # A switch would therefore revert in either direction. The word "shared" in the
+    # first key also filed it under Shared Conversation File Approvals, where it had
+    # nothing to do with the cards around it.
+    "enable_tabular_search_shared_preflight": (
+        "Always on. Routes an exhaustive row-by-row request against a CSV or XLSX file, "
+        "made from a regular chat message (Search), through the shared tabular planner, "
+        "so it can run as a durable background job over every row rather than a "
+        "bounded foreground answer that covers only the first few. get_settings() "
+        "resets it to True on every read, so a switch would revert; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is "
+        "the only way to turn it off."
+    ),
+    "enable_tabular_analyze_durable_preflight": (
+        "Always on. The Analyze counterpart of enable_tabular_search_shared_preflight: "
+        "an Analyze request against a single CSV or XLSX file goes through the same "
+        "shared planner and can run as a durable background job. get_settings() resets "
+        "it to True on every read; the SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT "
+        "environment variable is the only way to turn it off."
+    ),
+    "enable_tabular_hierarchical_analysis": (
+        "Always on. Lets the durable tabular job take exhaustive per-row and per-line "
+        "requests, including narrative ones that ask for written answers rather than a "
+        "CSV, JSON or XML export; without it they fall back to a bounded foreground "
+        "answer. get_settings() resets it to True on every read; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is the "
+        "only way to turn it off."
     ),
 }
 
@@ -6543,23 +6902,30 @@ def get_nested_path_fields():
     }
 
 
-def evaluate_dependency(dependency, read_value):
+def evaluate_dependency(dependency, read_value, runtime_flags=None):
     """Whether a ``depends_on`` condition holds, given a value reader.
 
     ``read_value`` takes a settings key and returns its current value, so the
     same rules apply whether the caller is reading a stored document or a draft
     that has not been saved yet.
 
-    Four shapes are supported, and they compose:
+    Five shapes are supported, and they compose:
 
     ``{"key": k, "equals": v}``      k currently equals v
     ``{"key": k, "not_equals": v}``  k currently differs from v
+    ``{"flag": f, "equals": b}``     runtime flag f is b
     ``{"any_of": [...]}``            at least one nested condition holds
     ``{"all_of": [...]}``            every nested condition holds
 
     ``equals`` against a boolean compares truthiness rather than identity,
     because a settings document written by the server-rendered form stores
     checkbox state as the string ``"on"``.
+
+    A runtime flag is resolved by the server rather than read from the settings
+    document -- whether Content Understanding is offered in this cloud, say.
+    ``runtime_flags`` supplies them. Without it a flag condition counts as met,
+    as ``_dependency_is_satisfied`` treats it, so validation is never suppressed
+    for a field behind a gate the caller cannot see.
     """
     if not dependency:
         return True
@@ -6567,17 +6933,27 @@ def evaluate_dependency(dependency, read_value):
     # A list means every condition has to hold. It is the shorthand the Security
     # and Workspaces sections declare, and is equivalent to ``all_of``.
     if isinstance(dependency, list):
-        return all(evaluate_dependency(nested, read_value) for nested in dependency)
+        return all(
+            evaluate_dependency(nested, read_value, runtime_flags) for nested in dependency
+        )
 
     if "any_of" in dependency:
         return any(
-            evaluate_dependency(nested, read_value) for nested in dependency["any_of"]
+            evaluate_dependency(nested, read_value, runtime_flags)
+            for nested in dependency["any_of"]
         )
 
     if "all_of" in dependency:
         return all(
-            evaluate_dependency(nested, read_value) for nested in dependency["all_of"]
+            evaluate_dependency(nested, read_value, runtime_flags)
+            for nested in dependency["all_of"]
         )
+
+    if dependency.get("flag"):
+        if runtime_flags is None:
+            return True
+        expected = _coerce_bool(dependency.get("equals", True))
+        return bool(runtime_flags.get(dependency["flag"])) is expected
 
     current = read_value(dependency["key"])
 
@@ -7529,6 +7905,10 @@ def normalize_admin_settings_updates(updates, current_settings=None):
 
     _check_acknowledgements(updates, current, errors)
 
+    # A switch turned on may bring companion values with it. Applied before the
+    # checks below so they judge the state that will actually be stored.
+    _apply_enable_defaults(normalized, current, warnings)
+
     # "At least one" style constraints can only be judged once the whole payload
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
@@ -7624,6 +8004,58 @@ def _check_planner_model_selection(normalized, current_settings, errors):
     if problem:
         key, message = problem
         errors[key] = message
+
+
+def _apply_enable_defaults(normalized, current_settings, warnings):
+    """Set the companion values a switch declares through ``on_enable``.
+
+    The browser does this to its draft as the switch flips. Doing it here as
+    well means a save that turns Enhanced extraction on through the API without
+    naming a mode still moves Standard to Auto, rather than enabling a
+    capability that then changes nothing.
+
+    Only a transition counts: re-saving a switch that is already on leaves its
+    companions alone, and a companion named in the same save is the
+    administrator's explicit choice and always wins.
+    """
+    def merged(key):
+        if key in normalized:
+            return normalized[key]
+        if key in current_settings:
+            return current_settings[key]
+        # A key that has never been saved reads as its declared default, which
+        # is what get_settings would have merged in.
+        definition = get_field_definition(key) or {}
+        return definition.get("default")
+
+    for _section_id, field in iter_fields():
+        key = field.get("key")
+        effect = field.get("on_enable")
+        if not key or not effect or field.get("readonly"):
+            continue
+        if key not in normalized or not _coerce_bool(normalized[key]):
+            continue
+        if _coerce_bool(current_settings.get(key)):
+            continue
+        if not evaluate_dependency(effect.get("when"), merged):
+            continue
+
+        for companion, value in (effect.get("set") or {}).items():
+            if companion in normalized:
+                continue
+            normalized[companion] = value
+            companion_field = get_field_definition(companion) or {}
+            shown = next(
+                (
+                    option.get("label", value)
+                    for option in companion_field.get("options", [])
+                    if option.get("value") == value
+                ),
+                value,
+            )
+            warnings[companion] = (
+                f'Set to "{shown}" because {field.get("label", key)} was turned on.'
+            )
 
 
 def _apply_cross_field_rules(normalized, current_settings, warnings):

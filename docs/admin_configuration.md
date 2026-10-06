@@ -197,11 +197,11 @@ For model endpoint identity details, see [Configure model endpoint identity]({{ 
 
 
 
-### Mixed-source rollout controls
+### Mixed documents and spreadsheets
 
 
 
-Mixed-source rollout is independently reversible. Keep `enable_mixed_source_manifest`, `enable_mixed_source_chat_search`, `enable_mixed_source_analyze`, `enable_cross_format_compare`, and `enable_mixed_source_conversation_continuity` off until the preceding stage is validated. The subordinate relevance, Analyze All, one-to-many Compare (`enable_cross_format_compare_one_to_many`), and development telemetry stages also default off. `enable_mixed_source_development_telemetry` records aggregate counts and latency only; it must never capture prompts, evidence, source identifiers, filenames, or storage paths.
+Mixed document and spreadsheet behavior follows Enhanced Citations, because that is what provides the spreadsheet engine. `enable_mixed_source_chat_search`, `enable_mixed_source_conversation_continuity`, `enable_cross_format_compare`, and `enable_cross_format_compare_one_to_many` are rewritten to match `enable_enhanced_citations` on every settings load and save and have no admin control; set the `SIMPLECHAT_DISABLE_MIXED_SOURCE` environment variable to turn them off during an incident without changing stored settings. `enable_mixed_source_relevance_candidates` is the one administrator choice, under Chat > Citations > Enhanced, and defaults on. `enable_mixed_source_development_telemetry`, under Operations > Logging & Health > Application Insights, records aggregate counts and latency only and never captures prompts, evidence, source identifiers, filenames, or storage paths. `enable_mixed_source_analyze_all` gates an Analyze target of every document in scope that no chat or workflow screen can request, so it is not shown and stays off. The former `enable_mixed_source_analyze` and `enable_mixed_source_manifest` switches no longer exist and are removed from stored settings when they load.
 
 
 

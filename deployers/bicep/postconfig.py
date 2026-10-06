@@ -412,7 +412,8 @@ if not var_redisCacheKind and var_redisCacheHostName:
         else "classic"
     )
 var_videoIndexerName = os.getenv("var_videoIndexerName")
-var_videoIndexerLocation = os.getenv("var_deploymentLocation")
+# Older deployments did not report a separate Video Indexer region; it matched the deployment region.
+var_videoIndexerLocation = os.getenv("var_videoIndexerLocation") or os.getenv("var_deploymentLocation")
 var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
 var_speechServiceEndpoint = os.getenv("var_speechServiceEndpoint")
 var_speechServiceLocation = os.getenv("var_deploymentLocation")
@@ -544,16 +545,17 @@ if var_authenticationType == "key":
     item["azure_document_intelligence_key"] = core_service_keys["azure_document_intelligence_key"]
 
 # Search and Extract > Multimedia Support
-# Video Indexer Configuration
+# Video Indexer Configuration. Write these only when this deployment created the account, so a
+# manually configured Video Indexer account survives later provisioning runs.
 if var_videoIndexerName and var_videoIndexerName.strip():
     item["enable_video_file_support"] = True
-item["video_indexer_resource_group"] = var_rgName
-item["video_indexer_subscription_id"] = var_subscriptionId
-item["video_indexer_account_name"] = var_videoIndexerName
-item["video_indexer_endpoint"] = os.getenv("var_videoIndexerEndpoint", item.get("video_indexer_endpoint", ""))
-item["video_indexer_location"] = var_videoIndexerLocation
-item["video_indexer_account_id"] = var_videoIndexerAccountId
-item["video_indexer_arm_api_version"] = os.getenv("var_videoIndexerArmApiVersion", item.get("video_indexer_arm_api_version", "2024-01-01"))
+    item["video_indexer_resource_group"] = var_rgName
+    item["video_indexer_subscription_id"] = var_subscriptionId
+    item["video_indexer_account_name"] = var_videoIndexerName
+    item["video_indexer_endpoint"] = os.getenv("var_videoIndexerEndpoint", item.get("video_indexer_endpoint", ""))
+    item["video_indexer_location"] = var_videoIndexerLocation
+    item["video_indexer_account_id"] = var_videoIndexerAccountId
+    item["video_indexer_arm_api_version"] = os.getenv("var_videoIndexerArmApiVersion", item.get("video_indexer_arm_api_version", "2024-01-01"))
 
 # Speech Service Configuration
 if var_speechServiceEndpoint and var_speechServiceEndpoint.strip():

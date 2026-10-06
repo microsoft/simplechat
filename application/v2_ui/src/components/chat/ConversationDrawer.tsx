@@ -199,7 +199,7 @@ function DocumentsMode() {
                 documents={generated.documents}
                 error={generated.error}
             />
-            <MediaSection items={media} />
+            <MediaSection items={media} onLocate={scrollToMessage} />
         </>
     ) : null;
 
@@ -267,13 +267,14 @@ export function ConversationDrawer() {
         ),
     );
 
-    // Close on Escape, matching the dismissal behaviour of the rest of the app.
+    // Close on Escape, matching the dismissal behaviour of the rest of the app. A dialog opened
+    // from the drawer, such as the media viewer or a document preview, takes that Escape itself.
     useEffect(() => {
         if (!drawerMode) {
             return;
         }
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
+            if (event.key === 'Escape' && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
                 setDrawerMode(null);
             }
         };

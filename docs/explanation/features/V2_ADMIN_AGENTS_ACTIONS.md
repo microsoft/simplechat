@@ -14,7 +14,7 @@ the Appearance group never exercised.
 
 **Implemented in version:** 0.261.074
 
-**Current documentation version:** 0.261.260 (`application/single_app/config.py`).
+**Current documentation version:** 0.261.268 (`application/single_app/config.py`).
 
 **Dependencies:** `admin_settings_fields.py`, `admin_settings_nav.py`,
 `route_backend_v2.py`, `application/v2_ui`.
@@ -76,7 +76,7 @@ server-rendered page. Every id below already exists in `templates/admin/_panes/`
 `agents-config` and `actions-config` resolve to the V1 card ids
 `agents-configuration` and `actions-configuration` through the existing
 `sectionMap` alias in `admin_sidebar_nav.js`. `organization-agents-section`
-(0.261.260) is the id of the V1 Global Agents heading inside the Agent Runtime
+(0.261.268) is the id of the V1 Global Agents heading inside the Agent Runtime
 card. It avoids the word `global`, because the capability fallback matches
 section-id words and would otherwise claim `enable_appinsights_global_logging`.
 See [V2 Admin Global Agents and Actions](V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md).
@@ -224,7 +224,7 @@ exactly the shape the server keeps — `catalog_key`, `display_name`,
 promoted, because the server drops duplicate catalog keys on save.
 
 **`global-agents-manager`**, **`global-actions-manager`**, and
-**`agent-template-approvals-link`** (0.261.260) list and manage the global agents
+**`agent-template-approvals-link`** (0.261.268) list and manage the global agents
 and actions and link to the approvals queue. They save records, not settings, so
 they bypass the settings draft. See
 [V2 Admin Global Agents and Actions](V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md).
@@ -264,7 +264,7 @@ Enable Agents  (enable_semantic_kernel, default off)
 
 ## Known limitations
 
-- Since **0.261.260**, global agents and actions are authored in V2 with the
+- Since **0.261.268**, global agents and actions are authored in V2 with the
   same editors workspaces use, and the separate **Global agent delegation** card
   is gone: a **Call agent** action is an ordinary global action. Duplicating a
   global agent or action, which the classic tables offer, is not yet available

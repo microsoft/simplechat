@@ -265,11 +265,21 @@ def normalize_public_workspace_display_settings(settings):
 
 
 # Switches that no longer exist. A stored value is removed on load so it is not echoed to
-# the browser. Earlier releases already left it out of a saved run's settings fingerprint,
-# so removing it does not change that fingerprint.
+# the browser, and so the V2 admin page stops drawing a switch that changes nothing.
 RETIRED_SETTING_KEYS = (
-    # Gather / Reason / Render became the only chat orchestration plan contract.
+    # Gather / Reason / Render became the only chat orchestration plan contract. Earlier
+    # releases already left it out of a saved run's settings fingerprint, so removing it
+    # does not change that fingerprint.
     "enable_chat_orchestration_harness",
+    # Combined Analyze has always routed a mixed narrative and tabular selection natively
+    # since 0.250.071; nothing has read this switch since then. Unlike the harness toggle it
+    # was part of a saved run's settings fingerprint, so removing it changes that fingerprint
+    # once, exactly as any administrator save does.
+    "enable_mixed_source_analyze",
+    # Phase 1 shadow manifests: resolved in the background and discarded. Analyze, Compare and
+    # mixed-source Chat and Search all resolve their manifests for real now. Same one-time
+    # fingerprint change as above.
+    "enable_mixed_source_manifest",
 )
 
 
@@ -561,23 +571,24 @@ def is_fact_memory_enabled(settings):
     return bool((settings or {}).get('enable_fact_memory_plugin', False))
 
 
-def is_mixed_source_manifest_enabled(settings):
-    """Return whether Phase 1 mixed-source manifest diagnostics are enabled."""
-    return bool((settings or {}).get('enable_mixed_source_manifest', False))
-
-
 def is_mixed_source_development_telemetry_enabled(settings):
     """Return whether aggregate-only mixed-source development telemetry is enabled."""
     return bool((settings or {}).get('enable_mixed_source_development_telemetry', False))
 
 
 def is_mixed_source_chat_search_enabled(settings):
-    """Return whether Phase 2 mixed-source Chat and Search behavior is enabled."""
+    """Return whether mixed-source Chat and Search behavior is active.
+
+    Derived from Enhanced Citations by normalize_mixed_source_derived_settings().
+    """
     return bool((settings or {}).get('enable_mixed_source_chat_search', False))
 
 
 def is_mixed_source_conversation_continuity_enabled(settings):
-    """Return whether Phase 5 reauthorized source-continuity metadata is enabled."""
+    """Return whether reauthorized source-continuity metadata is active.
+
+    Derived from Enhanced Citations, and effective only with mixed-source Chat and Search.
+    """
     return bool(
         (settings or {}).get('enable_mixed_source_chat_search', False)
         and (settings or {}).get('enable_mixed_source_conversation_continuity', False)
@@ -585,12 +596,18 @@ def is_mixed_source_conversation_continuity_enabled(settings):
 
 
 def is_cross_format_compare_enabled(settings):
-    """Return whether Phase 4 native mixed-source Compare behavior is enabled."""
+    """Return whether native mixed narrative and tabular Compare is active.
+
+    Derived from Enhanced Citations by normalize_mixed_source_derived_settings().
+    """
     return bool((settings or {}).get('enable_cross_format_compare', False))
 
 
 def is_cross_format_compare_one_to_many_enabled(settings):
-    """Return whether the separately staged one-to-many mixed-target rollout is enabled."""
+    """Return whether a mixed-format Compare may have more than one Target.
+
+    Derived from Enhanced Citations, and effective only with cross-format Compare.
+    """
     return bool(
         (settings or {}).get('enable_cross_format_compare', False)
         and (settings or {}).get('enable_cross_format_compare_one_to_many', False)
@@ -598,11 +615,91 @@ def is_cross_format_compare_one_to_many_enabled(settings):
 
 
 def is_mixed_source_relevance_candidates_enabled(settings):
-    """Return whether Phase 2 relevance-mode table candidates are enabled."""
+    """Return whether relevance-mode spreadsheet candidates are enabled.
+
+    An administrator choice, effective only while mixed-source Chat and Search is active.
+    """
     return bool(
         (settings or {}).get('enable_mixed_source_chat_search', False)
         and (settings or {}).get('enable_mixed_source_relevance_candidates', False)
     )
+
+
+# Mixed-source behaviors hand CSV and Excel files to the native tabular engine, and that engine
+# only exists while Enhanced Citations is on (is_tabular_processing_enabled). With it off, those
+# files are indexed row by row and answered from search chunks, while the mixed-source path would
+# report them as unavailable, because a table never falls back to narrative processing. So these
+# are not stored choices: they follow Enhanced Citations and are rewritten on every load and save.
+MIXED_SOURCE_DERIVED_SETTING_KEYS = (
+    'enable_mixed_source_chat_search',
+    'enable_mixed_source_conversation_continuity',
+    'enable_cross_format_compare',
+    'enable_cross_format_compare_one_to_many',
+)
+# The only rollback path for the derived behaviors. Applied to every settings read, never stored.
+MIXED_SOURCE_KILL_SWITCH_ENV = 'SIMPLECHAT_DISABLE_MIXED_SOURCE'
+MIXED_SOURCE_SETTINGS_VERSION_KEY = 'mixed_source_settings_version'
+MIXED_SOURCE_SETTINGS_VERSION = 1
+
+
+def normalize_mixed_source_derived_settings(settings):
+    """Set each derived mixed-source behavior to whether native spreadsheet processing exists.
+
+    Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    available = is_tabular_processing_enabled(settings)
+    changed = False
+    for key in MIXED_SOURCE_DERIVED_SETTING_KEYS:
+        if settings.get(key) is not available:
+            settings[key] = available
+            changed = True
+    return changed
+
+
+def normalize_mixed_source_settings_upgrade(settings):
+    """Apply the one-time mixed-source settings upgrade.
+
+    Before version 1 the V2 admin page drew these two switches in Deep Research with no
+    description, because nothing declared them:
+
+    - ``enable_mixed_source_relevance_candidates`` had no effect at all, because the Chat and
+      Search behavior it extends had no control anywhere. It now defaults on, and a stored off
+      was never a working choice, so it is turned on.
+    - ``enable_mixed_source_analyze_all`` gates an Analyze target that no chat or workflow
+      screen can request. It is reset to off and is no longer drawn.
+
+    The version is stored, so an administrator who turns relevance candidates off afterwards
+    keeps that choice. Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    stored_version = settings.get(MIXED_SOURCE_SETTINGS_VERSION_KEY)
+    if type(stored_version) is int and stored_version >= MIXED_SOURCE_SETTINGS_VERSION:
+        return False
+
+    settings['enable_mixed_source_relevance_candidates'] = True
+    settings['enable_mixed_source_analyze_all'] = False
+    settings[MIXED_SOURCE_SETTINGS_VERSION_KEY] = MIXED_SOURCE_SETTINGS_VERSION
+    return True
+
+
+def _apply_mixed_source_env_kill_switch(settings_payload):
+    """Force the derived mixed-source behaviors off when the emergency env kill switch is set.
+
+    They follow Enhanced Citations and have no admin switch, so this environment variable is
+    the only way to roll them back during an operator incident. It applies to each settings
+    read and is never persisted, so removing it restores the derived values immediately.
+    """
+    if not isinstance(settings_payload, dict):
+        return settings_payload
+    if _env_flag_enabled(MIXED_SOURCE_KILL_SWITCH_ENV):
+        for key in MIXED_SOURCE_DERIVED_SETTING_KEYS:
+            settings_payload[key] = False
+    return settings_payload
 
 
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
@@ -1476,12 +1573,17 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_generation_systemic_failure_threshold': 0.5,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_development_telemetry': False,
-        'enable_mixed_source_manifest': False,
+        # The next four follow enable_enhanced_citations on every load and save; see
+        # normalize_mixed_source_derived_settings(). False matches its default.
         'enable_mixed_source_chat_search': False,
-        'enable_mixed_source_relevance_candidates': False,
         'enable_mixed_source_conversation_continuity': False,
         'enable_cross_format_compare': False,
         'enable_cross_format_compare_one_to_many': False,
+        'enable_mixed_source_relevance_candidates': True,
+        # Backend-only Analyze target with no chat or workflow control; not drawn in admin.
+        'enable_mixed_source_analyze_all': False,
+        # One-time upgrade marker for normalize_mixed_source_settings_upgrade().
+        'mixed_source_settings_version': 0,
 
         # Chat orchestration. Deliberately prefixed `chat_orchestration_*` rather than
         # `orchestration_*`, because `orchestration_type` and
@@ -2112,6 +2214,7 @@ def get_settings(use_cosmos=False, include_source=False):
     def _format_result(settings_payload, source):
         if isinstance(settings_payload, dict):
             settings_payload = _apply_tabular_parity_env_kill_switch(settings_payload)
+            settings_payload = _apply_mixed_source_env_kill_switch(settings_payload)
         if include_source:
             return settings_payload, source
         return settings_payload
@@ -2165,6 +2268,8 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_image_connection_api_version_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
+        normalize_mixed_source_derived_settings(merged)
+        normalize_mixed_source_settings_upgrade(merged)
 
         return merged
 
@@ -2379,6 +2484,7 @@ def update_settings(new_settings, *, expected_etag=None):
             settings_item.get('enable_multi_model_endpoints', False),
         )
         settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
+        normalize_mixed_source_derived_settings(settings_item)
         return settings_item
 
     try:

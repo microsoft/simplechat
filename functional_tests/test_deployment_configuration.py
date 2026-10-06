@@ -1,8 +1,9 @@
 # test_deployment_configuration.py
 """Postconfig environment, cache publication and create-only Search regressions.
 
-Version: 0.261.028
+Version: 0.261.264
 Implemented in: 0.261.028
+Video Indexer settings preservation and region coverage added in: 0.261.264
 Uses the real settings store with fake services; never contacts Azure.
 """
 
@@ -325,6 +326,80 @@ def test_real_postconfig_entrypoint_writes_once_and_initializes_search(monkeypat
     assert json.loads(world.redis.raw)["document"] == world.cosmos.document
     assert set(search.indexes) == {"simplechat-user-index", "simplechat-group-index", "simplechat-public-index"}
     cosmos.close.assert_called_once()
+
+
+POSTCONFIG_VIDEO_BASE_ENVIRONMENT = {
+    "AZURE_TENANT_ID": "tenant", "var_authenticationType": "managed_identity",
+    "var_openAIEndpoint": "https://example.openai.azure.com/",
+    "var_subscriptionId": "subscription", "var_rgName": "group",
+    "var_openAIGPTModels": '[{"modelName":"gpt"}]',
+    "var_openAIEmbeddingModels": '[{"modelName":"embedding"}]',
+    "var_blobStorageEndpoint": "https://example.blob.core.windows.net",
+    "var_searchServiceEndpoint": "https://example.search.windows.net",
+    "var_deploymentLocation": "northcentralus",
+    "var_videoIndexerEndpoint": "https://api.videoindexer.ai",
+    "var_videoIndexerArmApiVersion": "2025-04-01",
+}
+MANUAL_VIDEO_INDEXER_SETTINGS = {
+    "enable_video_file_support": True,
+    "video_indexer_resource_group": "manual-group",
+    "video_indexer_subscription_id": "manual-subscription",
+    "video_indexer_account_name": "manual-video",
+    "video_indexer_account_id": "manual-account-id",
+    "video_indexer_location": "centralus",
+    "video_indexer_endpoint": "https://custom.videoindexer.example",
+    "video_indexer_arm_api_version": "2024-01-01",
+}
+
+
+def run_postconfig_entrypoint(monkeypatch, world, environment):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(MODULE, "load_deployment_environment", lambda: environment)
+    search = FakeSearch()
+    monkeypatch.setattr(MODULE, "configure_search", lambda *_: MODULE.ensure_search_indexes(search))
+    cosmos = Mock()
+    cosmos.get_database_client.return_value.get_container_client.return_value = world.cosmos
+    monkeypatch.setitem(sys.modules, "deployment_cosmos", SimpleNamespace(create_deployment_cosmos_client=lambda: cosmos))
+    monkeypatch.setitem(sys.modules, "deployment_configuration", MODULE)
+    runpy.run_path(str(ROOT / "deployers" / "bicep" / "postconfig.py"), run_name="__main__")
+
+
+def test_postconfig_preserves_manual_video_indexer_settings(monkeypatch, world):
+    """A provision without Video Indexer must not blank an administrator-configured account (0.261.264)."""
+    world.cosmos.document.update(MANUAL_VIDEO_INDEXER_SETTINGS)
+    environment = {
+        **POSTCONFIG_VIDEO_BASE_ENVIRONMENT,
+        "var_videoIndexerName": "", "var_videoIndexerAccountId": "", "var_videoIndexerLocation": "",
+    }
+    run_postconfig_entrypoint(monkeypatch, world, environment)
+    assert world.cosmos.writes == 1
+    for key, value in MANUAL_VIDEO_INDEXER_SETTINGS.items():
+        assert world.cosmos.document[key] == value, key
+
+
+@pytest.mark.parametrize("reported_location,expected_location", [
+    ("centralus", "centralus"),
+    ("", "northcentralus"),
+])
+def test_postconfig_writes_deployed_video_indexer_region(monkeypatch, world, reported_location, expected_location):
+    """A deployed account is written with its own region; older outputs fall back to the deployment region."""
+    environment = {
+        **POSTCONFIG_VIDEO_BASE_ENVIRONMENT,
+        "var_videoIndexerName": "app-env-video",
+        "var_videoIndexerAccountId": "deployed-account-id",
+        "var_videoIndexerLocation": reported_location,
+    }
+    run_postconfig_entrypoint(monkeypatch, world, environment)
+    document = world.cosmos.document
+    assert document["enable_video_file_support"] is True
+    assert document["video_indexer_account_name"] == "app-env-video"
+    assert document["video_indexer_account_id"] == "deployed-account-id"
+    assert document["video_indexer_location"] == expected_location
+    assert document["video_indexer_resource_group"] == "group"
+    assert document["video_indexer_subscription_id"] == "subscription"
+    assert document["video_indexer_endpoint"] == "https://api.videoindexer.ai"
+    assert document["video_indexer_arm_api_version"] == "2025-04-01"
 
 
 @pytest.mark.parametrize("failure", [False, True])

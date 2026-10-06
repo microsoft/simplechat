@@ -2,8 +2,8 @@
 # test_v2_admin_global_editor_backend.py
 """
 Functional test for the V2 Admin Settings global agent and action editor backend.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.268
+Implemented in: 0.261.268
 
 Global agents and actions used to be authored only through the classic
 ``/api/admin/agents`` and ``/api/admin/plugins`` routes, which save whole documents
@@ -231,7 +231,7 @@ def agent_body(**updates):
 
 
 def test_version_at_least_implementation():
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.268")
 
 
 def test_global_secrets_use_the_classic_global_namespace(engine):
