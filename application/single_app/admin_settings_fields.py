@@ -7994,8 +7994,12 @@ def _validate_control_center_refresh_time(value):
     would otherwise save as a different time with no word said.
     """
     candidate = str(value if value is not None else "").strip()
+    if not candidate:
+        # A cleared time picker sends an empty value; the picker itself shows the
+        # reader's own clock format, so the 24-hour wording below would not match it.
+        return None, "Choose the time the refresh starts each day."
     if not is_valid_control_center_auto_refresh_time(candidate):
-        return None, "Enter a time on a 24-hour clock, such as 02:00."
+        return None, "Enter the time as HH:MM on a 24-hour clock, such as 02:00."
     return normalize_control_center_auto_refresh_time(candidate)["time"], None
 
 

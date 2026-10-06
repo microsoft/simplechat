@@ -211,6 +211,11 @@ def test_refresh_time_and_timezone_are_validated_rather_than_replaced():
     for bad_time in ("25:00", "2am", "", "02:60"):
         _normalized, errors, _ = normalize({"control_center_auto_refresh_time": bad_time}, stored_settings())
         assert "control_center_auto_refresh_time" in errors, bad_time
+    # A cleared picker is asked for a time, not told about clock formats it never showed.
+    _normalized, errors, _ = normalize({"control_center_auto_refresh_time": ""}, stored_settings())
+    assert "24-hour" not in errors["control_center_auto_refresh_time"], errors
+    _normalized, errors, _ = normalize({"control_center_auto_refresh_time": "2am"}, stored_settings())
+    assert "HH:MM" in errors["control_center_auto_refresh_time"], errors
     for bad_zone in ("Mars/Olympus", "", "../etc/passwd"):
         _normalized, errors, _ = normalize({"control_center_auto_refresh_timezone": bad_zone}, stored_settings())
         assert "control_center_auto_refresh_timezone" in errors, bad_zone
