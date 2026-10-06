@@ -2,10 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional regression for group conversation source storage.
-Version: 0.261.253
+Version: 0.261.256
 Implemented in: 0.261.024
 Ported to the React branch in: 0.261.106
-Soft-delete helper seeded in the harness in: 0.261.253
+Soft-delete helper seeded in the harness in: 0.261.256
 Related issue: microsoft/simplechat#1472
 
 Exercise production conversion and route helpers against isolated Cosmos stores.

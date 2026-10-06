@@ -2,8 +2,8 @@
 # test_chat_soft_deleted_message_visibility_fix.py
 """
 Functional test for deleted chat messages that came back as masked messages.
-Version: 0.261.253
-Implemented in: 0.261.253
+Version: 0.261.256
+Implemented in: 0.261.256
 
 With conversation archiving enabled, deleting a chat message keeps its document with
 ``metadata.is_deleted`` set, and masks it only as a fail-safe. This test ensures such a
@@ -686,7 +686,7 @@ def test_v2_client_and_personal_grounding_contracts():
     sys.path.insert(0, str(ROOT / "functional_tests"))
     from test_support.versioning import assert_app_version_at_least
 
-    assert_app_version_at_least("0.261.253")
+    assert_app_version_at_least("0.261.256")
 
     helper = (V2_SRC / "lib" / "deletedMessages.ts").read_text(encoding="utf-8")
     check("message?.metadata?.is_deleted === true" in helper, "isDeletedMessage must test is_deleted === true")

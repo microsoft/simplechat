@@ -1,11 +1,11 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.253
+Version: 0.261.256
 Implemented in: 0.261.109
 Container-only saved-result access covered in: 0.261.232
 Message family constants added to the chat harness in: 0.261.234
-Soft-deleted message filter added to the chat harness in: 0.261.253
+Soft-deleted message filter added to the chat harness in: 0.261.256
 
 Real adapter, artifact, history, chat route and shared section-reader functions
 run against serialized storage, Flask requests and deterministic model doubles.

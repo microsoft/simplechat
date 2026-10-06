@@ -1,8 +1,8 @@
 # test_v2_chat_deleted_messages.py
 """
 UI test for deleted messages in the V2 chat.
-Version: 0.261.253
-Implemented in: 0.261.253
+Version: 0.261.256
+Implemented in: 0.261.256
 
 With conversation archiving enabled, deleting a message keeps its stored document with
 `metadata.is_deleted` set and masks it as a fail-safe. The V2 chat rendered those documents
