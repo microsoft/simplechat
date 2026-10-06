@@ -1,6 +1,6 @@
 # Deleted Messages Shown as Masked Fix
 
-Fixed in version: **0.261.256**
+Fixed in version: **0.261.257**
 
 Related issue: [#1649](https://github.com/microsoft/simplechat/issues/1649). Gaps in regular masking found while fixing it are tracked in [#1650](https://github.com/microsoft/simplechat/issues/1650).
 
@@ -38,7 +38,7 @@ Two related defects in the same flow were also fixed:
 - `application/single_app/functions_mcp_server_tools.py`: inbound MCP message reads.
 - `application/single_app/functions_orchestration_context.py`: orchestration history projection.
 - `application/v2_ui/src/lib/deletedMessages.ts` (new), `application/v2_ui/src/stores/chatStore.ts`, `application/v2_ui/src/lib/threads.ts`.
-- `application/single_app/config.py`: version `0.261.256`.
+- `application/single_app/config.py`: version `0.261.257`.
 
 ### Behavior after the fix
 
