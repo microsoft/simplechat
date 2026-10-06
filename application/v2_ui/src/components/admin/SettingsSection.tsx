@@ -106,6 +106,13 @@ export interface SettingsSectionProps {
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * Server-resolved runtime flags, such as whether Content Understanding is offered in
+     * this cloud. A field gated on one has to be judged the way the page judged it;
+     * without the flags its condition reads as unmet and the field is dropped from the
+     * card even though the page decided to show it.
+     */
+    runtimeFlags?: Record<string, boolean>;
     children?: ReactNode;
 }
 
@@ -287,6 +294,7 @@ export function SettingsSection({
     renderCapability,
     forceExpanded,
     appearance,
+    runtimeFlags,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -316,8 +324,10 @@ export function SettingsSection({
     const requirements = useMemo(() => collectRequirements(fields, settings, draft), [fields, settings, draft]);
 
     const groups = useMemo(
-        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft))),
-        [bodyFields, settings, draft],
+        () => groupFields(
+            bodyFields.filter((field) => isFieldVisible(field, settings, draft, undefined, runtimeFlags)),
+        ),
+        [bodyFields, settings, draft, runtimeFlags],
     );
 
     const presentation = presentSectionStatus(status);
@@ -446,7 +456,12 @@ export function SettingsSection({
                     <FieldGroup
                         key={group.id || '__ungrouped'}
                         group={group}
-                        startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
+                        startOpen={shouldGroupStartOpen(
+                            group,
+                            status,
+                            capabilityOn,
+                            (key) => readSectionValue(settings, draft, key),
+                        )}
                         forceExpanded={forceExpanded}
                         renderFields={renderFields}
                     />

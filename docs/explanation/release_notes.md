@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.260)**
+
+#### User Interface Enhancements
+
+*   **Enhanced Extraction Leads Its Own Admin Section**
+    *   In V2 Admin Settings, **Enable Enhanced extraction** now leads a new **Enhanced Extraction** section under Knowledge › Document Extraction instead of sitting in a collapsed group of the Document Intelligence card. The extraction mode, Auto sample pages, formula extraction and the Azure AI Content Understanding connection sit beneath it and are hidden while it is off, so Content Understanding can no longer be filled in while it could never run. Document Intelligence now holds only its connection.
+    *   The section names the engine Enhanced extraction will use with the settings on screen: Azure AI Content Understanding, or Document Intelligence Layout with the reason. The Content Understanding connection opens on its own while Enhanced is on and no endpoint is set.
+    *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `SettingsSection.tsx`, `EnhancedExtractionEngine.tsx`, `enhancedExtraction.ts`, [V2 Enhanced Extraction Admin Section](features/V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md))
+
+#### Bug Fixes
+
+*   **Turning On Enhanced Extraction in V2 Now Takes Effect**
+    *   Turning Enhanced extraction on in V2 left the extraction mode on Standard, so new uploads never used Enhanced and Content Understanding never ran. Turning it on now moves a Standard mode to Auto, as the classic page always has. The change shows on screen before saving, and the server applies it to a save that omits the mode. An explicit Standard choice is kept.
+    *   Content Understanding settings are hidden in Azure clouds that do not offer it, matching the classic page, through a new `content_understanding_supported` runtime flag. V2 cards now receive runtime flags, so settings gated on one, including the Inbound MCP settings, are no longer dropped by the card's own visibility check.
+    *   The Document Intelligence connection test sends the extraction mode only while Enhanced is on, so with Enhanced off it tests Read, which is what documents then use.
+    *   (Ref: `on_enable`, `_apply_enable_defaults`, `applyEnableEffect`, `route_backend_v2.py`, `test_v2_admin_enhanced_extraction_section.py`, `ui_tests/test_v2_admin_enhanced_extraction_section.py`)
+
 ### **(v0.261.259)**
 
 #### Bug Fixes

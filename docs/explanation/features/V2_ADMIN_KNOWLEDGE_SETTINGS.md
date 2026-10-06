@@ -32,6 +32,11 @@ and then scrolled past everything depending on the connection before reaching it
 `office-embedded-image-section` existed in the markup but were absent from `ADMIN_NAV`, so
 neither interface could navigate to them and neither was documented.
 
+> **Later change (0.261.260):** Content Understanding is no longer a section of its own. It
+> is the connection group of the **Enhanced Extraction** section, which is led by the
+> Enhanced switch and hides everything it governs while it is off. See
+> [V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md](V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md).
+
 **The completion chime was filed under AI Voice.** `enable_chat_completion_audio_cues` plays
 a bundled local sound; its own help text says it does not require Azure Speech Service, yet
 it was the first control in the AI Voice Conversations card, above the Speech resource

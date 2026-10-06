@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.084
+Runtime flag evaluation, open_until_set and on_enable added in: 0.261.260
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed
@@ -303,6 +304,12 @@ def test_declared_groups_and_requires_are_well_formed():
     print("\nTesting group and requires descriptors...")
 
     problems = []
+    group_keys = {}
+    for section_id, field in fields_module.iter_fields():
+        group = field.get("group")
+        if isinstance(group, dict) and field.get("key"):
+            group_keys.setdefault((section_id, group.get("id")), set()).add(field["key"])
+
     for section_id, field in fields_module.iter_fields():
         group = field.get("group")
         if isinstance(group, dict):
@@ -311,6 +318,15 @@ def test_declared_groups_and_requires_are_well_formed():
                 problems.append(
                     f"{section_id}.{field.get('key')}: group variant {variant!r} "
                     f"is not one of {fields_module.GROUP_VARIANTS}"
+                )
+            # The renderer opens the group while this key is blank, so it has to
+            # be a key the group itself holds; anything else never opens or
+            # never closes.
+            waits_on = group.get("open_until_set")
+            if waits_on and waits_on not in group_keys.get((section_id, group.get("id")), set()):
+                problems.append(
+                    f"{section_id}.{field.get('key')}: open_until_set {waits_on!r} is not "
+                    f"a field of group {group.get('id')!r}"
                 )
 
         requires = field.get("requires")
@@ -329,6 +345,82 @@ def test_declared_groups_and_requires_are_well_formed():
     assert not problems, "\n  ".join(["Malformed descriptors:"] + problems)
 
     print("  All declared groups and prerequisites are well formed.")
+    return True
+
+
+def test_on_enable_effects_are_well_formed():
+    """A companion naming a missing key or option would be saved and never read."""
+    print("\nTesting on_enable descriptors...")
+
+    declared = fields_module.get_declared_setting_keys()
+    problems = []
+    checked = 0
+
+    for section_id, field in fields_module.iter_fields():
+        effect = field.get("on_enable")
+        if not effect:
+            continue
+        checked += 1
+        identity = f"{section_id}.{field.get('key')}"
+
+        # Only a switch has an "on", and a mirror cannot be turned on from here.
+        if field.get("type") != "switch" or field.get("readonly"):
+            problems.append(f"{identity}: on_enable needs an editable switch")
+        # The acknowledgement path sets the switch after a dialog, past the place
+        # the page applies companions, so the two are not combined.
+        if field.get("requires_acknowledgement"):
+            problems.append(f"{identity}: on_enable cannot be combined with an acknowledgement")
+
+        companions = effect.get("set") or {}
+        if not companions:
+            problems.append(f"{identity}: on_enable sets nothing")
+        for companion, value in companions.items():
+            target = fields_module.get_field_definition(companion)
+            if companion not in declared or target is None:
+                problems.append(f"{identity}: sets undeclared key {companion!r}")
+                continue
+            options = [option["value"] for option in target.get("options", [])]
+            if options and value not in options:
+                problems.append(
+                    f"{identity}: sets {companion}={value!r}, which is not one of {options}"
+                )
+
+        when = effect.get("when")
+        for condition in ([when] if isinstance(when, dict) else when or []):
+            if condition.get("key") and condition["key"] not in declared:
+                problems.append(f"{identity}: when reads undeclared key {condition['key']!r}")
+
+    assert not problems, "\n  ".join(["Malformed on_enable descriptors:"] + problems)
+    assert checked, "No on_enable descriptor was checked; Enhanced extraction should declare one."
+
+    print(f"  {checked} on_enable descriptor(s) are well formed.")
+    return True
+
+
+def test_runtime_flag_conditions_follow_the_flags_given():
+    """The server must judge a flag the way the browser does, or not at all."""
+    print("\nTesting runtime flag evaluation...")
+
+    evaluate = fields_module.evaluate_dependency
+    gated = [
+        {"key": "enable_thing", "equals": True},
+        {"flag": "content_understanding_supported", "equals": True},
+    ]
+    read = {"enable_thing": True}.get
+
+    assert evaluate(gated, read, {"content_understanding_supported": True}) is True
+    assert evaluate(gated, read, {"content_understanding_supported": False}) is False
+    assert evaluate(gated, read, {}) is False, "an absent flag reads as off, as in the browser"
+    assert evaluate(
+        {"flag": "content_understanding_supported", "equals": False}, read, {}
+    ) is True
+
+    # Without flags the server cannot judge the condition, so it does not let it
+    # suppress anything -- the same answer _dependency_is_satisfied gives.
+    assert evaluate(gated, read) is True
+    assert evaluate({"any_of": [{"flag": "mcp_ui_enabled", "equals": True}]}, read) is True
+
+    print("  Flag conditions follow the flags given, and count as met without them.")
     return True
 
 
@@ -373,6 +465,8 @@ if __name__ == "__main__":
         test_id_list_accepts_both_stored_and_edited_shapes,
         test_dependency_evaluation_supports_every_declared_shape,
         test_declared_groups_and_requires_are_well_formed,
+        test_on_enable_effects_are_well_formed,
+        test_runtime_flag_conditions_follow_the_flags_given,
         test_secret_keys_are_discoverable_for_redaction,
         test_undeclared_keys_still_pass_through,
     ]

@@ -2,8 +2,9 @@
 # test_v2_admin_knowledge_extraction.py
 """
 Functional test for the Knowledge group's Document Extraction tab in V2.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.084
+Enhanced Extraction section added in: 0.261.260
 
 The server-rendered extraction pane is inside out. "Enable Enhanced extraction"
 is its first control, at line 13, and the Document Intelligence endpoint and key
@@ -12,20 +13,21 @@ extraction, the Content Understanding card and the Office image card. An
 administrator turns a feature on and then scrolls past everything that depends
 on the connection before reaching the connection itself.
 
-Two of those cards were also missing from ``ADMIN_NAV`` entirely, so neither
-interface could navigate to Content Understanding or to the Office embedded
-image options even though both have existed in the markup for some time.
+The Office embedded image card was also missing from ``ADMIN_NAV`` entirely, so
+neither interface could navigate to it even though it has existed in the markup
+for some time.
 
 The checks here pin the corrected shape:
 
 ordering
-    The connection group is declared before the behaviour that depends on it.
-    This is the whole reason the section was described, so it is asserted rather
-    than left to review.
+    Document Intelligence is the connection and nothing else, and the Enhanced
+    Extraction section that depends on it follows it. This is the whole reason
+    the tab was described, so it is asserted rather than left to review.
 
 navigation
-    Both previously unreachable cards are sections, with the ids the existing
-    markup already uses so the server-rendered sidebar resolves them.
+    The previously unreachable Office card is a section, with the id the
+    existing markup already uses, and the Enhanced Extraction section resolves
+    to the Enhanced switch in the server-rendered pane.
 
 storage
     Chunk sizes live inside one ``chunk_size`` object and are clamped to what an
@@ -57,7 +59,7 @@ PANE = (
 
 EXTRACTION_SECTIONS = (
     "document-intelligence-section",
-    "content-understanding-section",
+    "enhanced-extraction-section",
     "office-embedded-image-section",
     "chunk-size-section",
     # Both workspace upload paths feed the document extraction pipeline.
@@ -69,7 +71,7 @@ EXTRACTION_SECTIONS = (
 # Described so far. Multi-modal vision arrives with the model capability work.
 DESCRIBED_SECTIONS = (
     "document-intelligence-section",
-    "content-understanding-section",
+    "enhanced-extraction-section",
     "office-embedded-image-section",
     "chunk-size-section",
     "metadata-extraction-section",
@@ -96,10 +98,10 @@ def section_fields(section_id):
 
 
 def test_the_previously_unreachable_cards_are_navigable():
-    """Two cards existed in the markup but in no navigation, in either interface."""
+    """Every extraction section resolves to an element in the server-rendered pane."""
     print("Testing Document Extraction sections against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.084")
+    assert_app_version_at_least("0.261.260")
 
     nav_sections = [
         section["id"]
@@ -115,22 +117,23 @@ def test_the_previously_unreachable_cards_are_navigable():
         f"  ADMIN_NAV: {nav_sections}\n  test: {list(EXTRACTION_SECTIONS)}"
     )
 
-    # The ids have to be the ones already on the cards, or the server-rendered
-    # sidebar links resolve to nothing.
+    # The ids have to be on elements in the pane, or the classic page's sidebar
+    # links resolve to nothing. Enhanced Extraction lands on the Enhanced switch,
+    # which is where that section starts in the server-rendered layout.
     markup = PANE.read_text(encoding="utf-8")
-    for section_id in ("content-understanding-section", "office-embedded-image-section"):
+    for section_id in ("enhanced-extraction-section", "office-embedded-image-section"):
         assert f'id="{section_id}"' in markup, (
-            f"{section_id} is in ADMIN_NAV but no card in extraction.html carries "
+            f"{section_id} is in ADMIN_NAV but no element in extraction.html carries "
             "that id, so the classic page would link to nothing."
         )
 
-    print(f"  All {len(nav_sections)} section(s) navigable, including the two added.")
+    print(f"  All {len(nav_sections)} section(s) navigable.")
     return True
 
 
 def test_the_connection_is_declared_before_what_depends_on_it():
-    """This ordering is the reason the section was described at all."""
-    print("\nTesting Document Intelligence field order...")
+    """This ordering is the reason the tab was described at all."""
+    print("\nTesting Document Intelligence and Enhanced Extraction order...")
 
     fields = section_fields("document-intelligence-section")
     assert fields, "document-intelligence-section declares no fields."
@@ -138,27 +141,28 @@ def test_the_connection_is_declared_before_what_depends_on_it():
     order = [field.get("key") or field.get("component") for field in fields]
     groups = [(field.get("group") or {}).get("id") for field in fields]
 
-    endpoint = order.index("azure_document_intelligence_endpoint")
-    enhanced = order.index("enable_enhanced_extraction")
-    formula = order.index("enable_document_intelligence_formula_extraction")
-    mode = order.index("document_intelligence_pdf_image_extraction_mode")
-
-    assert endpoint < enhanced, (
-        "Enhanced extraction is declared before the Document Intelligence "
-        "endpoint it needs. That is the V1 ordering, and it is what this "
-        f"section exists to fix.\n  order: {order}"
+    # Document Intelligence is the connection alone, so the whole section
+    # collapses as one unit and nothing that needs it is declared ahead of it.
+    assert set(groups) == {"connection"}, (
+        "Document Intelligence should hold its connection and nothing else; the "
+        f"settings that need Enhanced extraction belong in the next section.\n  groups: {groups}"
     )
-    assert endpoint < formula, f"Formula extraction precedes the endpoint.\n  order: {order}"
-    assert endpoint < mode, f"The extraction mode precedes the endpoint.\n  order: {order}"
+    for behaviour in (
+        "enable_enhanced_extraction",
+        "enable_document_intelligence_formula_extraction",
+        "document_intelligence_pdf_image_extraction_mode",
+    ):
+        assert behaviour not in order, (
+            f"{behaviour} is back in Document Intelligence, where it sat in a "
+            f"collapsed group away from what it governs.\n  order: {order}"
+        )
 
-    # The connection group is contiguous and first, so it collapses as one unit.
-    connection_positions = [index for index, group in enumerate(groups) if group == "connection"]
-    assert connection_positions == list(range(len(connection_positions))), (
-        "The connection fields are not contiguous at the top of the section, so "
-        f"they cannot be disclosed as one group.\n  groups: {groups}"
-    )
+    sections = list(EXTRACTION_SECTIONS)
+    assert sections.index("document-intelligence-section") < sections.index(
+        "enhanced-extraction-section"
+    ), "Enhanced Extraction is navigated to before the connection it falls back to."
 
-    print("  The connection is declared first, contiguously, before its dependants.")
+    print("  Document Intelligence is the connection, and Enhanced Extraction follows it.")
     return True
 
 
@@ -258,20 +262,29 @@ def test_apim_and_direct_are_never_shown_together():
 
 
 def test_auto_sample_pages_appears_only_for_auto():
-    """A sample-page count is meaningless unless Auto is selected."""
+    """A sample-page count is meaningless unless Enhanced is on and Auto is selected."""
     print("\nTesting the auto sample pages dependency...")
 
     field = fields_module.get_field_definition("document_intelligence_auto_sample_pages")
     assert field, "document_intelligence_auto_sample_pages is not declared."
 
     evaluate = fields_module.evaluate_dependency
-    for mode, expected in (("auto", True), ("read", False), ("layout", False)):
-        state = {"document_intelligence_pdf_image_extraction_mode": mode}
+    for enhanced, mode, expected in (
+        (True, "auto", True),
+        (True, "read", False),
+        (True, "layout", False),
+        # Enhanced off means Standard, whatever mode is stored.
+        (False, "auto", False),
+    ):
+        state = {
+            "enable_enhanced_extraction": enhanced,
+            "document_intelligence_pdf_image_extraction_mode": mode,
+        }
         assert evaluate(field["depends_on"], state.get) is expected, (
-            f"Sample pages visibility is wrong for mode {mode!r}."
+            f"Sample pages visibility is wrong for Enhanced={enhanced}, mode {mode!r}."
         )
 
-    print("  Sample pages show only in Auto mode.")
+    print("  Sample pages show only for Auto while Enhanced is on.")
     return True
 
 
@@ -348,12 +361,12 @@ def test_every_chunk_size_field_declares_its_path():
     return True
 
 
-def test_content_understanding_is_its_own_section():
-    """It was a nested card, which read as part of Enhanced extraction."""
-    print("\nTesting the Content Understanding section...")
+def test_content_understanding_is_nested_under_enhanced_extraction():
+    """It was a card of its own, which could be filled in while it could never run."""
+    print("\nTesting where Content Understanding lives...")
 
-    fields = section_fields("content-understanding-section")
-    keys = {field.get("key") for field in fields}
+    fields = section_fields("enhanced-extraction-section")
+    by_key = {field.get("key"): field for field in fields if field.get("key")}
 
     for expected in (
         "azure_content_understanding_endpoint",
@@ -363,7 +376,16 @@ def test_content_understanding_is_its_own_section():
         "azure_content_understanding_analyzer_id",
         "azure_content_understanding_image_analyzer_id",
     ):
-        assert expected in keys, f"{expected} is not declared in its own section."
+        assert expected in by_key, f"{expected} is not declared under Enhanced Extraction."
+        conditions = list(fields_module.iter_field_dependencies(by_key[expected]))
+        assert {"key": "enable_enhanced_extraction", "equals": True} in conditions, (
+            f"{expected} can be edited while Enhanced extraction is off, which is "
+            "the only time Content Understanding is never called."
+        )
+
+    assert "content-understanding-section" not in fields_module.get_admin_settings_fields(), (
+        "Content Understanding is declared as its own section again."
+    )
 
     secret = fields_module.get_field_definition("azure_content_understanding_key")
     assert secret["type"] == "secret", (
@@ -371,7 +393,7 @@ def test_content_understanding_is_its_own_section():
         "browser in plain text."
     )
 
-    print(f"  {len(keys)} field(s) declared in the Content Understanding section.")
+    print(f"  {len(by_key)} field(s) declared under Enhanced Extraction, all gated on it.")
     return True
 
 
@@ -385,7 +407,7 @@ if __name__ == "__main__":
         test_auto_sample_pages_appears_only_for_auto,
         test_chunk_sizes_are_written_into_the_chunk_size_object,
         test_every_chunk_size_field_declares_its_path,
-        test_content_understanding_is_its_own_section,
+        test_content_understanding_is_nested_under_enhanced_extraction,
     ]
 
     results = []
