@@ -41,6 +41,46 @@ export interface WorkflowProposalTask {
     inputs: string[];
     /** The task's full standing instructions, shown as plain text. */
     instructions: string;
+    /** Present when the task merges files with code instead of running a model or agent. */
+    merge?: WorkflowProposalMerge;
+}
+
+export const MERGE_FILES = ['inputs', 'changed', 'all', 'recent'] as const;
+export const MERGE_OUTPUT_FORMATS = ['csv', 'xlsx', 'pdf', 'docx', 'pptx'] as const;
+export const MERGE_KINDS = ['tabular', 'workbook', 'pdf', 'docx', 'pptx'] as const;
+
+export interface WorkflowProposalMerge {
+    /** Older proposals were all row merges, so a missing kind reads as tabular. */
+    kind: typeof MERGE_KINDS[number];
+    files: typeof MERGE_FILES[number];
+    output_format: typeof MERGE_OUTPUT_FORMATS[number];
+}
+
+const MERGE_FILE_NOUNS: Record<WorkflowProposalMerge['kind'], [string, string]> = {
+    tabular: ['CSV and Excel file', 'CSV and Excel files'],
+    workbook: ['CSV and Excel file', 'CSV and Excel files'],
+    pdf: ['PDF', 'PDFs'],
+    docx: ['Word document', 'Word documents'],
+    pptx: ['PowerPoint deck', 'PowerPoint decks'],
+};
+
+/** How a proposed merge task runs: code merges files into one file, with no model or agent. */
+export function workflowProposalMergeText(task: Pick<WorkflowProposalTask, 'merge'>): string {
+    const merge = task.merge;
+    if (!merge) return '';
+    const [one, many] = MERGE_FILE_NOUNS[merge.kind];
+    const files = {
+        inputs: 'the input files below, in order,',
+        changed: 'the files each sync adds or changes',
+        all: `every ${one} in your personal workspace`,
+        recent: `the ${many} added or changed recently in your personal workspace`,
+    }[merge.files];
+    const output = merge.kind === 'workbook' ? 'one Excel workbook, a sheet per file,'
+        : merge.kind === 'pdf' ? 'one PDF'
+            : merge.kind === 'docx' ? 'one Word document'
+                : merge.kind === 'pptx' ? 'one PowerPoint deck'
+                    : `one ${merge.output_format === 'xlsx' ? 'Excel' : 'CSV'} file`;
+    return `Merges ${files} into ${output} with code. No model runs.`;
 }
 
 export interface WorkflowProposalSummary {
@@ -179,6 +219,8 @@ function countOf(value: unknown): number | null {
 
 function taskOf(value: unknown): WorkflowProposalTask {
     if (!isRecord(value)) invalid();
+    const merge = value.merge;
+    if (merge !== undefined && !isRecord(merge)) invalid();
     return {
         title: textOf(value.title),
         runner: oneOf(['agent', 'model'] as const, value.runner),
@@ -187,6 +229,13 @@ function taskOf(value: unknown): WorkflowProposalTask {
         requested_actions: textsOf(value.requested_actions),
         inputs: textsOf(value.inputs),
         instructions: textOf(value.instructions),
+        ...(isRecord(merge) ? {
+            merge: {
+                kind: merge.kind === undefined ? 'tabular' : oneOf(MERGE_KINDS, merge.kind),
+                files: oneOf(MERGE_FILES, merge.files),
+                output_format: oneOf(MERGE_OUTPUT_FORMATS, merge.output_format),
+            },
+        } : {}),
     };
 }
 

@@ -97,6 +97,11 @@ separate.
 5. Upload bytes and create an immutable file message privately. Reauthorize
    ownership, the retained result's producer and run, capability, deadline, and
    lease throughout. The documents behind the retained result are not reread.
+   A merged document (profile `assembled_document_v1`, **0.261.245**) is the one
+   exception: its file is assembled from the original files when it renders, so
+   those files are read with the user's current access and the file is delivered
+   only if it matches the bytes the merge step checked. See
+   [V2 File Merge — Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md).
 6. Verify the staged message and complete blob, then reauthorize again. A
    same-partition conditional batch compares the parent run and output ETags
    and commits **one output's** exact intent.

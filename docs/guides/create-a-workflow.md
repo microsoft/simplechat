@@ -84,7 +84,10 @@ The card shows what the workflow would do:
   whether it can send email or calendar invitations, and whose account it uses.
 - Each task, with the agent or model that runs it and the documents it reads.
   Expand **Instructions** to read exactly what the task is told to do on every
-  run.
+  run. From version **0.261.241**, a task that merges spreadsheets says so
+  instead, for example "Merges the input files below, in order, into one Excel
+  file with code. No model runs.", and lists the files under **Files to merge,
+  in order**.
 - Similar workflows you already have, so you don't create a duplicate.
 
 A proposed task reads only documents you named in that request: the documents
@@ -199,7 +202,9 @@ sources to choose from:
   or interval workflow. **Wait for File Sync** and **Continue the workflow**
   decide whether the workflow waits, and whether it runs when nothing changed.
 - **Use changed files as Analyze targets** lets an Analyze task with no
-  selected documents work on the files each sync changed.
+  selected documents work on the files each sync changed. From version
+  **0.261.241**, it also lets a **Merge files** task merge them; see
+  [Merge files in a workflow](#merge-files-in-a-workflow).
 
 A group workflow uses between 1 and 10 of the group's own sources. A source the
 group no longer offers is marked **No longer available**; remove it before
@@ -219,6 +224,87 @@ and sources the workflow already uses stay selected so you can keep or remove
 them. The save checks every source again: a deleted source is refused with the
 same message as for a group, and a source you're no longer allowed to use with
 "Workflow settings or sources are not allowed for this account."
+
+## Merge files in a workflow
+
+From version **0.261.241**, a task can merge many CSV and Excel files into one CSV
+or Excel file, from **0.261.242** it can also join PDFs into one PDF or put
+several spreadsheets on separate sheets of one workbook, from **0.261.243** it
+can append Word documents into one Word document, and from **0.261.244** it can
+append PowerPoint decks into one deck. Use it for a merge that's
+too big for one chat turn, such as a year of weekly exports, or one that should
+happen on its own, such as every Monday or whenever a synced folder gets a new
+export. A merge task runs with code, not a model or agent: rows and pages are
+copied exactly and the task's answer summarizes what was merged.
+
+1. Add a task and choose **Merge files** as its **Document action**. Write a
+   short note in **Instructions** describing the merge; the merge itself
+   doesn't read it. **Merge files** isn't offered while your administrator has
+   Merge turned off.
+2. Choose a **Merge type**:
+   - **Combine rows (CSV/Excel)** stacks the rows of CSV and Excel files into
+     one table.
+   - **One workbook, a sheet per file** keeps each CSV or Excel file as its own
+     sheet of one Excel workbook, named after the file.
+   - **Combine PDFs** joins PDFs into one PDF, with a bookmark for each file.
+   - **Combine Word documents** appends Word documents into one Word document,
+     each keeping its own styles, numbering and images.
+   - **Combine PowerPoint decks** appends the slides of PowerPoint decks into one
+     deck, with a section for each deck.
+3. Under **Files to merge**, choose:
+   - **Selected files, in this order** to merge files you pick, at least two.
+     Set their order under **Merge order**.
+   - **All matching files in scope** to merge every file of that type in the
+     workflow's workspace when the run starts.
+   - **Recently added or updated files** to merge those added or changed within
+     **Recent window in minutes** before the run, 60 by default.
+   - **Files changed by File Sync** to merge the files each sync adds or
+     changes. It's offered when File Sync is on and **Use changed files as
+     Analyze targets** is selected.
+
+   Files found when the run starts are merged in file-name order.
+4. For row merges, choose **Output format**, CSV or Excel workbook. Workbook
+   merges create an Excel workbook, PDF merges a PDF, Word merges a Word
+   document and PowerPoint merges a deck. Optionally set an **Output file name**
+   without an extension.
+5. Open **More merge options**. For row merges, decide how columns are matched,
+   add column aliases, choose sheets or a header row, leave out files whose
+   columns don't match, remove duplicates, or sort; these are the same settings
+   you can ask for in a [chat merge]({{ '/guides/merge-files/' | relative_url }}).
+   For workbooks, choose the first sheet, every sheet, or a named sheet of each
+   file. For PDFs, turn **Add bookmarks** off if you don't want a bookmark per
+   file. For Word documents, **Word formatting** keeps each document's look or
+   uses the first document's styles for all of them; **Page break between
+   documents** starts each one on a new page; and **Add source headings** puts a
+   heading with the file name before each one. For PowerPoint decks,
+   **PowerPoint formatting** keeps each deck's look or puts every slide on the
+   first deck's theme, and **Create one section per deck** groups each deck's
+   slides.
+
+Each run attaches the merged file to the run's conversation, and later tasks
+can read the merge task's summary. A workflow merges up to 100 files and
+1,000,000 rows by default; your administrator sets these limits under
+[Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card).
+A PDF, Word or PowerPoint merge reads at most 300 MB of files in total. Merged
+PDFs keep links to pages and to web and email addresses, but not scripts, form
+actions, or links that open other files or programs, and the task's answer says
+when any were removed. A merged Word document uses the first document's headers,
+footers and page setup, and leaves out comments. A merged deck uses the first
+deck's slide size and leaves out slide comments.
+
+A run with nothing to merge finishes and says so without creating a file.
+Files that can't be merged are handled by how they were chosen:
+
+- For **Selected files**, a file that's no longer available, or isn't a CSV or
+  Excel file, fails the task and says which.
+- For files found at run time, those files are skipped and named in the
+  task's answer.
+- When more files match than the limit allows, the task fails rather than
+  merging only some of them. Narrow the files, or ask your administrator to
+  raise the limit.
+
+A merge failure caused by the files or settings is shown on the task and isn't
+retried, because the same merge would fail the same way.
 
 ## Set up alerts
 
@@ -871,7 +957,7 @@ by a workflow**. See
 | Save is blocked after moving or removing a block | A retained reference is now missing or out of scope | Use the affected-selector diagnostics to repair each consumer explicitly. |
 | Save is refused with "This schedule runs more often than the administrator allows." | The new or changed interval is shorter than the administrator's minimum | Choose the interval the message names or longer, or use a calendar schedule. |
 | A calendar schedule's time zone isn't accepted | The name isn't an exact IANA time zone that the server offers; names are case-sensitive | Choose a zone from the **Time zone** list, such as `America/New_York`. |
-| The classic editor won't open a workflow | It uses a calendar schedule or advanced data flow, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
+| The classic editor won't open a workflow | It uses a calendar schedule, advanced data flow, or a **Merge files** task, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
 | The V2 editor has no **Ask AI** tab | The assistant is turned off, the workflow belongs to a group, or the editor can't change the workflow, for example because it's running or you can only view it | Ask an admin to turn on **Enable AI Workflow Assistant**, or open a personal workflow you can edit. |
 | Ask AI says the saved workflow changed | Someone saved the workflow after you opened it | Choose **Reload workflow**. Reloading discards your unsaved changes, so copy anything you need first. |
 

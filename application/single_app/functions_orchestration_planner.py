@@ -304,6 +304,26 @@ Its arguments are {"blueprint":{...},"task_actions":[[...],...]}. The blueprint 
   words such as "this week" can stay relative.
 - optionally "alerts" {"mode":"every_run"|"failures_only","severity":"info"|"low"}, "run_as"
   "self"|"none", and "durable": true.
+- A task can merge files with code instead of a model by adding "merge": {"kind","files",
+  "output_format","file_name","options"} and no agent runner. kind "tabular" (the default) appends
+  the rows of CSV and Excel files into one "csv" or "xlsx" file; "workbook" puts each CSV or Excel
+  file on its own sheet of one "xlsx" workbook; "pdf" joins PDFs into one "pdf"; "docx" appends
+  Word documents into one "docx"; "pptx" appends the slides of PowerPoint decks into one "pptx".
+  When the user wants spreadsheets merged into one Excel file, or names no format, and has not
+  said whether every row goes on one sheet (kind "tabular" with "xlsx") or each file keeps its
+  own sheet (kind "workbook"), ask before proposing: one required single-choice string enum of
+  exactly "All rows on one sheet" and "Each file on its own sheet". "csv" output always means
+  one sheet.
+  files "inputs"
+  merges the task's two or more input documents in order; "changed" merges the files a file_sync
+  trigger added or changed; "all" merges every matching file in the user's personal workspace;
+  "recent" merges those added or changed in the last "recent_window_minutes". For tabular,
+  "options" takes tabular_merge's column, sheet, duplicate and sort settings, with
+  "column_aliases" written as [{"column","aliases":[...]}]; workbook takes "sheets" and "sheet";
+  pdf takes "bookmarks"; docx takes "formatting", "page_breaks" and "source_headings"; pptx takes
+  "formatting" and "sections". Propose one when the user wants files merged on a schedule or on
+  every sync, or more files than one chat merge allows; a one-time merge of a few files runs in
+  chat with tabular_merge or document_merge. It needs no task_actions.
 Refer to agents, documents and File Sync sources only by their workflow_planning.catalog handles,
 and never write a record id, model or endpoint into a blueprint. "task_actions" lists, for each task
 in order, the action kinds it needs from the capability's input schema, or [] when it needs none.
@@ -475,7 +495,11 @@ Only name a document ID that appears in candidate_documents or that the user sel
 invent one. If the user already selected documents, plan around those documents.
 Use each candidate's server-resolved source_kind, not its display label, to choose compatible
 work. Never send tabular source IDs to document_analyze or document_compare: those steps
-do not admit native tabular inputs. For mixed narrative/tabular comparisons, prepare each
+do not admit native tabular inputs. To combine the rows of several tabular sources into one
+table or file, use tabular_merge with every one of those sources, never compose; it appends
+rows and cannot match rows on a key, so ask when the user may mean that. When their columns
+may differ, choose union, aliases or exclusion, or inspect them with tabular_inspect first.
+For mixed narrative/tabular comparisons, prepare each
 source with compatible offered capabilities and compose their named results. Ask each
 preparation step only for its own sources' contribution, such as values, periods, units and
 identifiers. A preparation step sees only its own sources, so never ask it to compare them
@@ -631,8 +655,10 @@ prompt expanded for that answer only. Read "clarifications" and "user_request" a
 user's request, without replacing the original "message" or user selections. Plan around
 accepted source identities and explanations, including on repeated questions. Do not repeat a
 question that clarifications or earlier runs already answered or declined. Only ask when you
-truly cannot proceed; a reasonable assumption about what the user means, stated in
-"assumptions", is better than a question.
+truly cannot proceed, or when a capability's when_to_use, a fact in
+capability_availability.deliverables or the workflow instructions say to ask; otherwise a
+reasonable assumption about what the user means, stated in "assumptions", is better than a
+question.
 """
 
 def build_planner_messages(
