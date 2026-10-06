@@ -19,7 +19,7 @@
 
 import { ApiError, api } from './apiClient';
 import {
-    buildEditorWrite, isRecord,
+    buildEditorWrite, GLOBAL_ACTIONS_BASE_PATH, isRecord, withoutServerStampedFields,
     type ActionConfiguration, type ActionTypeDefinition, type AuthoringResource,
 } from './workspaceAuthoring';
 import {
@@ -29,13 +29,15 @@ import {
 import {
     fetchActionEditorHints, fetchActionIdentities, testWorkspaceAction, type ActionEditorHints,
 } from './workspaceActionServices';
-import type { ActionIdentity, ActionTestGroupScope } from './workspaceActionTypes';
+import type { ActionIdentity, ActionTestScope } from './workspaceActionTypes';
+import { GLOBAL_ACTION_TEST_SCOPE, type ActionTestGroupScope } from './workspaceActionTypes';
 import type { EditorWorkspaceScope } from './workspaceEditorDrafts';
 import { requireWorkspaceId, workspaceBasePath } from './workspaceContext';
 
 export type ActionScope =
     | { kind: 'personal' }
-    | { kind: 'group'; id: string; name: string };
+    | { kind: 'group'; id: string; name: string }
+    | { kind: 'global' };
 
 export const ACTION_OPERATIONS = ['create', 'edit', 'delete', 'test'] as const;
 export type ActionOperation = typeof ACTION_OPERATIONS[number];
@@ -59,8 +61,8 @@ export interface ActionWorkbenchAdapter {
     basePath: string;
     /** Draft-cache partition, so a group A draft never restores into group B or personal. */
     draftScope: EditorWorkspaceScope;
-    /** Group test scope threaded into connection tests; undefined for personal. */
-    testScope?: ActionTestGroupScope;
+    /** The scope connector commands run in: a group's, or global; undefined for personal. */
+    testScope?: ActionTestScope;
     supported: ReadonlySet<ActionOperation>;
     allows: (operation: ActionOperation, action?: ActionConfiguration) => boolean;
     listActions: (signal?: AbortSignal) => Promise<ActionConfiguration[]>;
@@ -95,11 +97,13 @@ export function advertisedActionOperations(value: unknown): ReadonlySet<ActionOp
 /**
  * Whether an operation is allowed in a scope.
  *
- * Personal scope allows everything, exactly as the section did before it was scoped. Group scope
- * requires the workspace-level `action_management` hint to offer the operation, and edit, delete
- * and test additionally require the specific action to belong to this group and to carry the
- * operation in its own `action_actions`. Create is workspace-level with no per-action subject.
- * There is deliberately no fallback that enables an action when the hint is empty or absent.
+ * Personal scope allows everything, exactly as the section did before it was scoped. Global scope
+ * does too: it is reachable only from Admin Settings, and every global route requires the Admin
+ * role on the server. Group scope requires the workspace-level `action_management` hint to offer
+ * the operation, and edit, delete and test additionally require the specific action to belong to
+ * this group and to carry the operation in its own `action_actions`. Create is workspace-level with
+ * no per-action subject. There is deliberately no fallback that enables an action when the hint is
+ * empty or absent.
  */
 export function actionOperationAllowed(
     scope: ActionScope,
@@ -107,7 +111,7 @@ export function actionOperationAllowed(
     operation: ActionOperation,
     action?: ActionConfiguration,
 ): boolean {
-    if (scope.kind === 'personal') {
+    if (scope.kind === 'personal' || scope.kind === 'global') {
         return true;
     }
     if (!supported.has(operation)) {
@@ -202,13 +206,13 @@ function withoutActionProjectionFields<T extends ActionConfiguration>(record: T)
 }
 
 /**
- * Map the group `action-options` envelope onto ActionEditorHints. The group editor needs only the
- * five tenant-level Key Vault reminder defaults; unlike the personal `/api/user/agent/settings`
+ * Map an `action-options` envelope onto ActionEditorHints. The group and global editors need only
+ * the five tenant-level Key Vault reminder defaults; unlike the personal `/api/user/agent/settings`
  * read it carries no personal flags and no personal model endpoints. The envelope is validated
  * strictly, so a drifted shape throws rather than silently rendering blank defaults, and `canAuthor`
  * comes from the adapter gate, never from a server flag on this response.
  */
-function groupEditorHints(value: unknown, canAuthor: boolean): ActionEditorHints {
+function actionOptionsHints(value: unknown, canAuthor: boolean): ActionEditorHints {
     if (!isRecord(value) || !isRecord(value.secret_reminders)) {
         throw new Error('The workspace returned invalid action options. Reload before trying again.');
     }
@@ -264,7 +268,7 @@ export function createGroupActionWorkbench(
         fetchEditorHints: async (signal) => {
             const response = await api.get<unknown>(
                 `/api/groups/${encodeURIComponent(groupId)}/action-options`, signal);
-            return groupEditorHints(response, allows('create'));
+            return actionOptionsHints(response, allows('create'));
         },
         fetchEditor: async (id, _providedScope, signal) => {
             const response = await api.get<AuthoringResource<ActionConfiguration>>(groupActionsUrl(groupId, id), signal);
@@ -335,3 +339,103 @@ export function createGroupActionWorkbench(
         test: (draft, original, definition, signal) => testWorkspaceAction(draft, original, definition, signal, testScope),
     };
 }
+
+const GLOBAL_ACTIONS_API = '/api/v2/admin/actions';
+
+function globalActionUrl(actionId?: string): string {
+    return actionId ? `${GLOBAL_ACTIONS_API}/${encodeURIComponent(requireWorkspaceId(actionId))}` : GLOBAL_ACTIONS_API;
+}
+
+/**
+ * Prove a returned action is the organisation's: marked global and claiming no group, as the
+ * server's global projection always is. Anything else is refused rather than rendered.
+ */
+function assertGlobalActionScope(action: ActionConfiguration, id?: string): void {
+    if (!action || typeof action.id !== 'string' || !action.id
+        || (id !== undefined && action.id !== id)
+        || action.is_global !== true || Boolean(action.group_id)) {
+        throw new Error('The action response is not a global action. Refresh and try again.');
+    }
+}
+
+/** The editor contract for a global action, which an administrator always edits. */
+function assertGlobalEditorResource(
+    response: AuthoringResource<ActionConfiguration>, id?: string,
+): AuthoringResource<ActionConfiguration> {
+    if (!isRecord(response) || !isRecord(response.record) || response.read_only !== false
+        || typeof response.revision !== 'string' || !response.revision
+        || !Array.isArray(response.secret_paths)
+        || !response.secret_paths.every((path) => typeof path === 'string' && path.startsWith('/'))) {
+        throw new Error('Admin Settings returned an invalid action editor resource. Reload before trying again.');
+    }
+    assertGlobalActionScope(response.record, id);
+    return response;
+}
+
+/** The global actions, read for the editor and the Admin Settings list. */
+export async function fetchGlobalActions(signal?: AbortSignal): Promise<ActionConfiguration[]> {
+    const actions = actionsFromResponse(await api.get<unknown>(GLOBAL_ACTIONS_API, signal));
+    actions.forEach((action) => assertGlobalActionScope(action));
+    return actions;
+}
+
+/**
+ * The administrator's global actions, edited from Admin Settings with the same editor workspaces
+ * use. Every route it calls requires the Admin role. Identities are the global ones, and connector
+ * commands run in the global scope so stored credentials resolve from the global namespace.
+ */
+export const GLOBAL_ACTION_WORKBENCH: ActionWorkbenchAdapter = {
+    scope: { kind: 'global' },
+    basePath: GLOBAL_ACTIONS_BASE_PATH,
+    draftScope: { kind: 'global' },
+    testScope: GLOBAL_ACTION_TEST_SCOPE,
+    supported: new Set(ACTION_OPERATIONS),
+    allows: () => true,
+    listActions: (signal) => fetchGlobalActions(signal),
+    fetchTypes: async (signal) => {
+        const response = await api.get<unknown>(`${GLOBAL_ACTIONS_API}/types`, signal);
+        if (!isRecord(response) || !Array.isArray(response.types) || !response.types.every(isRecord)) {
+            throw new Error('Admin Settings returned an invalid action type list.');
+        }
+        return response.types as unknown as ActionTypeDefinition[];
+    },
+    fetchEditorHints: async (signal) => actionOptionsHints(await api.get<unknown>('/api/v2/admin/action-options', signal), true),
+    fetchEditor: async (id, _providedScope, signal) =>
+        assertGlobalEditorResource(await api.get<AuthoringResource<ActionConfiguration>>(globalActionUrl(id), signal), id),
+    save: async (draft, original) => {
+        const write = buildEditorWrite(
+            withoutServerStampedFields(draft),
+            original ? { ...original, record: withoutServerStampedFields(original.record) } : null,
+        );
+        if (!original) delete write.updates.id;
+        const response = original
+            ? await api.patch<AuthoringResource<ActionConfiguration>>(globalActionUrl(original.record.id), write)
+            : await api.post<AuthoringResource<ActionConfiguration>>(GLOBAL_ACTIONS_API, write);
+        return assertGlobalEditorResource(response, original?.record.id);
+    },
+    deleteAction: async (action) => {
+        await api.delete<{ success: boolean }>(globalActionUrl(action.id));
+    },
+    listIdentities: async (signal) => {
+        // The global identities an action may bind, exactly as the group reader filters its own:
+        // only identities the server marks usable for actions are offered, with no client default.
+        const response = await api.get<unknown>('/api/admin/workspace-identities/global/identities', signal);
+        if (!isRecord(response) || !Array.isArray(response.identities)) {
+            throw new Error('The identity response was malformed. Refresh and try again.');
+        }
+        return response.identities.filter(isRecord).filter((identity) =>
+            Array.isArray(identity.usage_contexts) && identity.usage_contexts.includes('action'),
+        ).map((identity) => {
+            const credentials = isRecord(identity.credentials) ? identity.credentials : {};
+            return {
+                id: String(identity.id ?? ''),
+                name: String(identity.name ?? ''),
+                auth_type: String(credentials.auth_type ?? ''),
+                description: identity.description ? String(identity.description) : undefined,
+                scope_type: 'global',
+                scope_id: 'global',
+            } satisfies ActionIdentity;
+        });
+    },
+    test: (draft, original, definition, signal) => testWorkspaceAction(draft, original, definition, signal, GLOBAL_ACTION_TEST_SCOPE),
+};

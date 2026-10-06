@@ -17,7 +17,7 @@ import {
 import { McpActionAuthentication, McpActionConfiguration } from '../../components/workspaceActions/McpActionConfiguration';
 import { ApiError } from '../../lib/apiClient';
 import {
-    agentEditorReturnPath, type ActionConfiguration, type ActionTypeDefinition,
+    agentEditorReturnPath, GLOBAL_AGENT_RETURN_SCOPE, type ActionConfiguration, type ActionTypeDefinition,
 } from '../../lib/workspaceAuthoring';
 import { queueCreatedWorkspaceAction, useWorkspaceEditorDraft } from '../../lib/workspaceEditorDrafts';
 import {
@@ -32,6 +32,7 @@ import {
     connectorFeedback, validateConnectorAuthentication, validateConnectorConfiguration, type ConnectorFeedback,
 } from '../../lib/workspaceActionConnectors';
 import type { ActionConnectorProps, ActionIdentity } from '../../lib/workspaceActionTypes';
+import { isGroupActionTestScope } from '../../lib/workspaceActionTypes';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 export function ActionEditorPage({ adapter = PERSONAL_ACTION_WORKBENCH }: { adapter?: ActionWorkbenchAdapter }) {
@@ -40,15 +41,18 @@ export function ActionEditorPage({ adapter = PERSONAL_ACTION_WORKBENCH }: { adap
     const location = useLocation();
     const query = new URLSearchParams(location.search);
     const scope = query.get('scope') === 'global' ? 'global' : 'personal';
-    const returnTo = resourceId === 'new'
-        ? agentEditorReturnPath(query.get('returnTo'), adapter.scope.kind === 'group' ? adapter.scope.id : undefined)
-        : null;
+    const returnScope = adapter.scope.kind === 'group' ? adapter.scope.id
+        : adapter.scope.kind === 'global' ? GLOBAL_AGENT_RETURN_SCOPE : undefined;
+    const returnTo = resourceId === 'new' ? agentEditorReturnPath(query.get('returnTo'), returnScope) : null;
     return <ActionEditor key={JSON.stringify([owner, adapter.basePath, resourceId, scope, returnTo])}
         resourceId={resourceId} scope={scope} returnTo={returnTo} adapter={adapter} />;
 }
 
 function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: string; scope: string; returnTo: string | null; adapter: ActionWorkbenchAdapter }) {
     const isGroup = adapter.scope.kind === 'group';
+    // In Admin Settings global actions are the administrator's own; everywhere else a global
+    // ("provided") action is read-only.
+    const isGlobal = adapter.scope.kind === 'global';
     const navigate = useNavigate();
     const location = useLocation();
     const id = useId();
@@ -131,7 +135,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         void adapter.fetchEditor(resourceId, scope, controller.signal).then((resource) => {
             if (controller.signal.aborted) return;
             if (!resource?.record || !hasUsableActionRevision(resource, scope)) throw new Error('The action editor returned an invalid resource.');
-            setLatestReadOnly(resource.read_only || Boolean(resource.record.is_global));
+            setLatestReadOnly(resource.read_only || (!isGlobal && Boolean(resource.record.is_global)));
             // A return from New action must not overwrite a draft or silently rebase its revision.
             if ((!restored && !hasLoadedDraft.current) || replaceDraft.current) {
                 loadRef.current(resource);
@@ -152,7 +156,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         };
     }, []);
 
-    const readOnly = scope === 'global' || latestReadOnly || original?.read_only === true || draft.is_global === true;
+    const readOnly = scope === 'global' || latestReadOnly || original?.read_only === true || (!isGlobal && draft.is_global === true);
     // Personal authoring is the tenant plugin permission; group authoring is the server's per-scope
     // and per-action hint on the adapter, never the personal capability. Creating is workspace-level;
     // editing an existing action additionally needs the loaded record to advertise the edit operation.
@@ -186,7 +190,8 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         readOnly: readOnly || !canAuthor || saving || catalogueLoading || Boolean(catalogueError) || Boolean(loadError) || !definition,
         errors: expandActionFieldErrors(fieldErrors), onValidityChange, identities, identitiesLoading, identitiesError,
         identitiesResolvable,
-        groupScope: adapter.testScope,
+        groupScope: isGroupActionTestScope(adapter.testScope) ? adapter.testScope : undefined,
+        globalScope: isGlobal,
     };
 
     const validateLocally = () => {

@@ -25,8 +25,9 @@
 // saving per keystroke would mint a version per character.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBlocker } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Loader2, Network, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { Loader2, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -59,8 +60,9 @@ import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { OrchestrationPlannerModelPicker } from '../components/admin/OrchestrationPlannerModelPicker';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
-import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
-import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
+import { AgentTemplateApprovalsLink } from '../components/admin/AgentTemplateApprovalsLink';
+import { GlobalActionsManager } from '../components/admin/GlobalActionsManager';
+import { GlobalAgentsManager } from '../components/admin/GlobalAgentsManager';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
@@ -68,6 +70,7 @@ import { SettingsIndex, type SettingsIndexEntry } from '../components/admin/Sett
 import { agentSectionAppearances } from '../components/admin/agentSectionAppearance';
 import { ALL_SETTINGS_ICON, resolveAdminNavIcon } from '../components/admin/adminSectionIcons';
 import { SettingField } from '../components/admin/fields';
+import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
 import {
     ClassificationBannerPreview,
     UserAgreementPreview,
@@ -130,6 +133,9 @@ interface RenderedSection {
 
 /** Synthetic field definitions used to read a sibling's current value for a preview. */
 const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: '' });
+
+/** The global agent and action editors, which open in place of this page. */
+const GLOBAL_EDITOR_PATH = /^\/admin\/(?:agents|actions)\/[^/]+$/;
 
 /**
  * Associate each undeclared `enable_*` setting with a section.
@@ -212,7 +218,14 @@ function buildCapabilityIndex(
     });
 }
 
-export function AdminSettingsPage() {
+/**
+ * The Admin Settings page.
+ *
+ * `focusSection` opens the page on one section's category with that section in view. The
+ * global agent and action editors return through it, at /admin/agents and /admin/actions,
+ * so finishing an edit lands back on the list it started from.
+ */
+export function AdminSettingsPage({ focusSection }: { focusSection?: string } = {}) {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
     const bootstrapVersion = useBootstrapStore((state) => state.data?.version);
 
@@ -234,7 +247,8 @@ export function AdminSettingsPage() {
     const [checkingForUpdates, setCheckingForUpdates] = useState(true);
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
-    const [delegationDirty, setDelegationDirty] = useState(false);
+    /** Counts category choices, so each one restarts the page index at the top. */
+    const [categoryVisit, setCategoryVisit] = useState(0);
 
     const [draft, setDraft] = useState<Json>({});
     const [saving, setSaving] = useState(false);
@@ -625,6 +639,19 @@ export function AdminSettingsPage() {
         setFieldWarnings({});
     }, []);
 
+    // Opening a global agent or action editor replaces this page, and its unsaved settings
+    // with it. Ask first, as the editors themselves do when they are left with changes.
+    const unsavedSettings = dirtyKeys.length > 0 || saving;
+    const leaveForEditor = useBlocker(
+        ({ nextLocation }) => unsavedSettings && GLOBAL_EDITOR_PATH.test(nextLocation.pathname),
+    );
+    useEffect(() => {
+        // A save that finishes while the question is open leaves nothing to lose.
+        if (leaveForEditor.state === 'blocked' && !unsavedSettings) {
+            leaveForEditor.proceed();
+        }
+    }, [leaveForEditor, unsavedSettings]);
+
     const save = useCallback(async () => {
         if (!Object.keys(draft).length) {
             return;
@@ -707,6 +734,20 @@ export function AdminSettingsPage() {
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
     /**
+     * Show a category from its first section.
+     *
+     * Every category shares one scroll pane, so changing the filter alone kept the offset
+     * the previous category was left at: leaving Knowledge near its end opened Security
+     * near its end too. Choosing a category -- including the one already shown -- now
+     * starts at the top, and the index is restarted so it marks that first section.
+     */
+    const selectCategory = useCallback((groupId: string | null) => {
+        setActiveGroup(groupId);
+        setCategoryVisit((visit) => visit + 1);
+        scrollRef.current?.scrollTo({ top: 0 });
+    }, []);
+
+    /**
      * Move the page to a section, from a cross-reference elsewhere on it.
      *
      * The target has to be on screen to scroll to, so a filter that hides it is changed: a
@@ -720,16 +761,27 @@ export function AdminSettingsPage() {
         if (!shown) {
             const target = sections.find((section) => section.sectionId === sectionId);
             const nextGroup = !target ? null : activeGroup && target.groupId !== activeGroup ? target.groupId : activeGroup;
-            if (nextGroup !== activeGroup && delegationDirty) {
-                // Changing category would unmount the delegation manager and its edits.
-                toast.error('Save or cancel Call agent changes before changing settings categories.');
-                return;
-            }
             setQuery('');
             setActiveGroup(nextGroup);
         }
         setPendingScroll(sectionId);
-    }, [visibleSections, sections, activeGroup, delegationDirty]);
+    }, [visibleSections, sections, activeGroup]);
+
+    // Open a deep-linked section once its section exists: its own category, with it in view.
+    // Only once per link, so choosing another category afterwards is not undone.
+    const focusedSectionRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!focusSection || focusedSectionRef.current === focusSection) {
+            return;
+        }
+        const target = sections.find((section) => section.sectionId === focusSection);
+        if (!target) {
+            return;
+        }
+        focusedSectionRef.current = focusSection;
+        setActiveGroup(target.groupId);
+        setPendingScroll(focusSection);
+    }, [focusSection, sections]);
 
     useEffect(() => {
         if (!pendingScroll) {
@@ -1009,6 +1061,19 @@ export function AdminSettingsPage() {
                     );
                 case 'global-identities-list':
                     return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'global-agents-manager':
+                    // The editor's template gallery reads the saved setting, so the shortcut does too.
+                    return (
+                        <GlobalAgentsManager
+                            key={key}
+                            help={field.help}
+                            templatesEnabled={asBoolean(settings['enable_agent_template_gallery'])}
+                        />
+                    );
+                case 'global-actions-manager':
+                    return <GlobalActionsManager key={key} help={field.help} />;
+                case 'agent-template-approvals-link':
+                    return <AgentTemplateApprovalsLink key={key} help={field.help} />;
                 case 'promoted-popular-agents':
                     return (
                         <PromotedAgentsEditor
@@ -1158,9 +1223,6 @@ export function AdminSettingsPage() {
         (section) =>
             section.capabilities.length > 0 && (!activeGroup || section.groupId === activeGroup),
     );
-    const showDelegationManager = !loading && Boolean(data) && !error &&
-        (activeGroup === 'agents-actions' ||
-            (activeGroup === null && /call agent|delegation/i.test(query)));
 
     // The index needs at least two sections to be worth the width it takes.
     const showIndex = !loading && !error && indexEntries.length > 1;
@@ -1239,9 +1301,8 @@ export function AdminSettingsPage() {
                                 <button
                                     key={category.id ?? '__all'}
                                     type="button"
-                                    disabled={delegationDirty}
                                     aria-pressed={active}
-                                    onClick={() => setActiveGroup(category.id)}
+                                    onClick={() => selectCategory(category.id)}
                                     className={clsx(
                                         'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors',
                                         'disabled:cursor-not-allowed disabled:opacity-60',
@@ -1267,8 +1328,8 @@ export function AdminSettingsPage() {
                         <div className="mx-auto w-full max-w-[112rem]">
                             <div className="mb-3 max-w-md lg:hidden">
                                 <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
-                                <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
-                                    onChange={(event) => setActiveGroup(event.target.value || null)}
+                                <select id="admin-settings-category" value={activeGroup ?? ''}
+                                    onChange={(event) => selectCategory(event.target.value || null)}
                                     className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
                                     <option value="">All settings</option>
                                     {(data?.admin_nav ?? []).map((group) => (
@@ -1288,7 +1349,6 @@ export function AdminSettingsPage() {
                                     onChange={(event) => setQuery(event.target.value)}
                                     placeholder="Search every setting…  (press / to focus)"
                                     aria-label="Search settings"
-                                    disabled={delegationDirty}
                                     className={clsx(
                                         'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
                                         'text-sm text-text-1 placeholder:text-text-3',
@@ -1324,37 +1384,7 @@ export function AdminSettingsPage() {
                                     </div>
                                 )}
 
-                                {showDelegationManager ? (
-                                    <GlassPanel
-                                        edge
-                                        role="region"
-                                        aria-labelledby="global-agent-delegation-title"
-                                        className="admin-settings-distinct border-edge-strong"
-                                    >
-                                        <div className="flex items-start gap-3 rounded-t-2xl border-b border-edge-strong bg-surface-2 p-4 sm:px-5">
-                                            <span
-                                                aria-hidden="true"
-                                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-edge-strong bg-surface-solid text-text-2"
-                                            >
-                                                <Network size={20} />
-                                            </span>
-                                            <div className="min-w-0">
-                                                <h2 id="global-agent-delegation-title" className="text-lg leading-snug font-semibold text-text-1">
-                                                    Global agent delegation
-                                                </h2>
-                                                <p className="mt-1 text-xs text-text-3">Agents &amp; Actions · Call agent</p>
-                                            </div>
-                                        </div>
-                                        <div className="space-y-3 p-4 sm:p-5">
-                                            <AgentDelegationManager scope={GLOBAL_DELEGATION_SCOPE}
-                                                allowManage={isAdmin} onDirtyChange={setDelegationDirty} />
-                                            {delegationDirty ? <p className="text-xs text-warn">Save or cancel Call agent changes before changing settings categories.</p> : null}
-                                            <p className="text-xs text-text-3">These resources save separately from settings. Full global agent and other connector management remains on the <a href="/admin/settings" className="text-accent underline">classic admin page</a>.</p>
-                                        </div>
-                                    </GlassPanel>
-                                ) : null}
-
-                                {!loading && !showDelegationManager && visibleSections.length === 0 && (
+                                {!loading && visibleSections.length === 0 && (
                                     <p className="py-12 text-center text-sm text-text-3">
                                         No settings match “{query}”.
                                     </p>
@@ -1436,6 +1466,9 @@ export function AdminSettingsPage() {
 
                             {showIndex ? (
                                 <SettingsIndex
+                                    // A fresh index per category choice, so a section pinned
+                                    // from the index cannot stay marked after the jump to the top.
+                                    key={categoryVisit}
                                     className="hidden @min-[76rem]:block"
                                     entries={indexEntries}
                                     grouped={activeGroup === null || Boolean(query.trim())}
@@ -1447,6 +1480,17 @@ export function AdminSettingsPage() {
                     </div>
                 </div>
             </div>
+
+            {leaveForEditor.state === 'blocked' ? (
+                <WorkspaceLeavePrompt
+                    saving={saving}
+                    onStay={() => leaveForEditor.reset()}
+                    onDiscard={() => {
+                        discard();
+                        leaveForEditor.proceed();
+                    }}
+                />
+            ) : null}
 
             {pendingAck?.requires_acknowledgement ? (
                 <AdminModal

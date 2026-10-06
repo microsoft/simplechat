@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning V1/V2 parity for the Admin Settings Actions tab.
-Version: 0.261.074
+Version: 0.261.260
 Implemented in: 0.261.074
+Global actions list in actions-config: 0.261.260
 
 Two things in this tab are not ordinary settings, and both fail silently.
 
@@ -49,8 +50,8 @@ ACTIONS_SECTIONS = (
 
 # Built-in action toggles that used to be declared under `actions-config` and now
 # live with the rest of them in `core-plugin-toggles`. `actions-config` therefore
-# declares no fields at all, which is deliberate -- what belongs there is the
-# global actions table, still authored in the classic interface.
+# declares no setting at all, which is deliberate -- what belongs there is the
+# global actions list, a component that saves through its own routes.
 #
 # The pairing matters during a merge. `enable_text_plugin` moved in 0.261.061 and
 # `enable_default_embedding_model_plugin` was moved into `actions-config` by the
@@ -155,10 +156,11 @@ def test_removing_a_section_did_not_orphan_its_settings():
     """A section can be emptied, but not at the cost of losing a setting.
 
     `actions-config` is declared by ``ADMIN_NAV`` and by the V1 pane, but the
-    schema deliberately gives it no fields. That is only safe while everything it
-    used to hold is declared somewhere else, and "everything it used to hold" is
-    not fixed: the Chat work moved a second toggle into it after this branch had
-    already emptied it.
+    schema deliberately gives it no setting: since 0.261.260 it holds only the
+    global actions list, a component with no key. That is only safe while
+    everything it used to hold is declared somewhere else, and "everything it used
+    to hold" is not fixed: the Chat work moved a second toggle into it after this
+    branch had already emptied it.
 
     So the invariant is checked rather than remembered. If a later merge restores
     the section, the registry integrity test catches the resulting duplicate; if
@@ -166,11 +168,17 @@ def test_removing_a_section_did_not_orphan_its_settings():
     """
     print("\nTesting that the emptied section orphaned nothing...")
 
+    assert_app_version_at_least("0.261.260")
     schema = fields_module.get_admin_settings_fields()
-    assert not schema.get("actions-config"), (
-        "actions-config declares fields again. If that is intended, the built-in "
+    section_fields = schema.get("actions-config") or []
+    declared_settings = [field["key"] for field in section_fields if field.get("key")]
+    assert not declared_settings, (
+        "actions-config declares settings again. If that is intended, the built-in "
         "action toggles must not also be declared in core-plugin-toggles, or the "
-        "same key ends up with two controls."
+        f"same key ends up with two controls: {declared_settings}"
+    )
+    assert [field.get("component") for field in section_fields] == ["global-actions-manager"], (
+        "actions-config should hold exactly the global actions list."
     )
 
     declared = fields_module.get_declared_setting_keys()

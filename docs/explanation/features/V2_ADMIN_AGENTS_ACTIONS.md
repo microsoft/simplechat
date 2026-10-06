@@ -14,7 +14,7 @@ the Appearance group never exercised.
 
 **Implemented in version:** 0.261.074
 
-**Current documentation version:** 0.261.095 (`application/single_app/config.py`).
+**Current documentation version:** 0.261.260 (`application/single_app/config.py`).
 
 **Dependencies:** `admin_settings_fields.py`, `admin_settings_nav.py`,
 `route_backend_v2.py`, `application/v2_ui`.
@@ -64,6 +64,7 @@ server-rendered page. Every id below already exists in `templates/admin/_panes/`
 | Tab | Section id | Label | Condition |
 |---|---|---|---|
 | Agents | `agents-config` | Agent Runtime | — |
+| Agents | `organization-agents-section` | Global Agents | — |
 | Agents | `agent-toggles-card` | Workspace Agent Permissions | `per_user_semantic_kernel` |
 | Agents | `agents-page-customization-card` | Agents Page | — |
 | Agents | `agent-template-approvals-section` | Agent Template Approvals | `enable_agent_template_gallery` |
@@ -74,7 +75,11 @@ server-rendered page. Every id below already exists in `templates/admin/_panes/`
 
 `agents-config` and `actions-config` resolve to the V1 card ids
 `agents-configuration` and `actions-configuration` through the existing
-`sectionMap` alias in `admin_sidebar_nav.js`.
+`sectionMap` alias in `admin_sidebar_nav.js`. `organization-agents-section`
+(0.261.260) is the id of the V1 Global Agents heading inside the Agent Runtime
+card. It avoids the word `global`, because the capability fallback matches
+section-id words and would otherwise claim `enable_appinsights_global_logging`.
+See [V2 Admin Global Agents and Actions](V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md).
 
 ### Schema additions
 
@@ -218,6 +223,12 @@ exactly the shape the server keeps — `catalog_key`, `display_name`,
 `scope_label`, `scope_type`, `window` — and never offers an agent that is already
 promoted, because the server drops duplicate catalog keys on save.
 
+**`global-agents-manager`**, **`global-actions-manager`**, and
+**`agent-template-approvals-link`** (0.261.260) list and manage the global agents
+and actions and link to the approvals queue. They save records, not settings, so
+they bypass the settings draft. See
+[V2 Admin Global Agents and Actions](V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md).
+
 ## Usage
 
 Admin Settings → Agents & Actions → Agents in the V2 interface (`/v2`).
@@ -226,6 +237,8 @@ The dependency chain an administrator now sees:
 
 ```
 Enable Agents  (enable_semantic_kernel, default off)
+├─ Global Agents section  (create, edit, default, enable, delete)
+├─ Global Actions section  (create, edit, enable, delete)
 ├─ Workspace Mode  (per_user_semantic_kernel)
 │   ├─ Add Global Agents and Actions to Workspaces
 │   └─ Workspace Agent Permissions section
@@ -247,14 +260,15 @@ Enable Agents  (enable_semantic_kernel, default off)
 | `functional_tests/test_v2_admin_agents_logic.mjs` | Executes group layout, dependency chains, string and flag dependencies, section conditions, nested value reads, field-index ownership, allowlist normalization, orchestration visibility, and promotion normalization |
 | `functional_tests/test_v2_admin_settings_schema.py` | Field shape, defaults matching the application, key ownership, dependency references including string comparisons and runtime flags |
 | `functional_tests/test_v2_admin_field_renderer_coverage.py` | Every field type and every named component has a renderer branch |
+| `ui_tests/test_v2_admin_global_agents_actions.py` | Global Agents and Global Actions in the built SPA, category scroll reset, and non-administrator refusal |
 
 ## Known limitations
 
-- General global agent and connector authoring remains in the classic interface.
-  From version **0.261.093**, focused V2 controls can create/edit **Call agent**
-  actions and attach them to existing global agents. These are resource updates
-  through the agent/action APIs, not fields in the settings draft. See
-  [Agent delegation actions](AGENT_DELEGATION_ACTION.md).
+- Since **0.261.260**, global agents and actions are authored in V2 with the
+  same editors workspaces use, and the separate **Global agent delegation** card
+  is gone: a **Call agent** action is an ordinary global action. Duplicating a
+  global agent or action, which the classic tables offer, is not yet available
+  in V2.
 - `functions_document_actions` reaches `config.py` and a live Cosmos client, so
   its normalizer is imported lazily and cannot be exercised in a test process.
   The tests read its bounds from source and pin the delegation instead.

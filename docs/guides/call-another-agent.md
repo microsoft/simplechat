@@ -54,15 +54,17 @@ implemented in **0.261.096**, recorded in `application/single_app/config.py`;
 see the [workspace guide]({{ '/guides/workspace-agents-and-actions/' | relative_url }}).
 
 The Groups page still provides focused delegation management without switching
-the active workspace. The admin Agents & Actions area retains the equivalent
-controls for global agents. Broader group/global authoring is unchanged.
+the active workspace. For global agents, V2 Admin Settings now works like My
+Workspace: create the Call agent action under **Global Actions** with **New
+action**, then attach it in the global agent's editor. The focused **Global agent
+delegation** card was removed in **0.261.260**.
 
 Owned Call agent actions can also be deleted in V2 after confirmation. Deleting
 an action stops future calls through that action; it does not rewrite agents or
 roll back work the target already performed.
 
-The personal editor saves the configuration you changed and preserves unedited
-settings and references. The focused group/global binding controls change only
+The personal and global editors save the configuration you changed and preserve
+unedited settings and references. The focused group binding controls change only
 the selected Call agent actions. If someone changes the agent while it is open,
 review the current configuration before saving again.
 

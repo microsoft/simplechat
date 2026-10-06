@@ -5,7 +5,8 @@ import { RefreshCw } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { ActionField, ACTION_INPUT_CLASS } from './ActionFields';
 import {
-    actionTarget, fetchAgentTargets, PERSONAL_DELEGATION_SCOPE, referenceKey, type AgentTargetCatalog,
+    actionTarget, fetchAgentTargets, GLOBAL_DELEGATION_SCOPE, PERSONAL_DELEGATION_SCOPE, referenceKey,
+    type AgentTargetCatalog, type DelegationScope,
 } from '../../lib/agentDelegation';
 import { actionFieldError, withActionValue } from '../../lib/workspaceActionLogic';
 import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
@@ -20,10 +21,17 @@ export function CallAgentActionConfiguration(props: ActionConnectorProps) {
     const [version, setVersion] = useState(0);
     const callback = useRef(props.onValidityChange);
     callback.current = props.onValidityChange;
+    // Targets come from the action's own workspace, because the server only accepts a target
+    // there (or a permitted global agent): a global action calls global agents, and a group
+    // action calls its group's agents, never the author's personal ones.
+    const scopeType = props.globalScope ? 'global' : props.groupScope ? 'group' : 'personal';
+    const groupId = props.groupScope?.id ?? '';
     useEffect(() => {
         const controller = new AbortController();
+        const scope: DelegationScope = scopeType === 'global' ? GLOBAL_DELEGATION_SCOPE
+            : scopeType === 'group' ? { type: 'group', groupId } : PERSONAL_DELEGATION_SCOPE;
         setLoading(true); setError(null);
-        void fetchAgentTargets(PERSONAL_DELEGATION_SCOPE, controller.signal).then((result) => {
+        void fetchAgentTargets(scope, controller.signal).then((result) => {
             if (controller.signal.aborted) return;
             if (!result || !Array.isArray(result.targets)) throw new Error('The target catalogue returned an invalid response.');
             setCatalogue(result);
@@ -31,7 +39,7 @@ export function CallAgentActionConfiguration(props: ActionConnectorProps) {
             if (!controller.signal.aborted) setError(errorMessage(cause, 'Could not load permitted target agents.'));
         }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => controller.abort();
-    }, [version]);
+    }, [version, scopeType, groupId]);
     const target = actionTarget(props.draft);
     const selectedKey = target ? referenceKey(target) : '';
     const targets = catalogue?.targets ?? [];

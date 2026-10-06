@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { ActionField, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
-import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
+import { connectorTestScope, type ActionConnectorProps } from '../../lib/workspaceActionTypes';
 import { EDITOR_SECRET_MASK, type ActionConfiguration } from '../../lib/workspaceAuthoring';
 import {
     applyOpenApiSpecification, changeConnectorAuthMethod, changeOpenApiBasicCredential,
@@ -327,11 +327,11 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                 <p className="text-xs leading-relaxed text-text-3">Validation checks the manifest without running it. Connection testing parses the specification and probes the authenticated base URL; it does not invoke an individual API operation.</p>
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal, props.groupScope))}>
+                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal, connectorTestScope(props)))}>
                         Validate OpenAPI configuration
                     </GlassButton>
                     <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal, props.groupScope))}>
+                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal, connectorTestScope(props)))}>
                         Test OpenAPI connection
                     </GlassButton>
                     {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}

@@ -15,7 +15,7 @@ import { AgentField, AgentNotice } from './AgentFields';
 
 export function AgentActionPicker({
     draft, setDraft, actions, targets, loading, error, targetError, ownerId, builtinActions,
-    canCreateActions, onRefresh, onNewAction, readOnly,
+    canCreateActions, onRefresh, onNewAction, readOnly, scopeKind = 'personal',
 }: {
     draft: AgentConfiguration;
     setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
@@ -30,7 +30,10 @@ export function AgentActionPicker({
     onRefresh: () => void;
     onNewAction: () => void;
     readOnly: boolean;
+    /** Which kind of agent is being edited. A global agent's actions are all the organisation's own. */
+    scopeKind?: 'personal' | 'group' | 'global';
 }) {
+    const globalScope = scopeKind === 'global';
     const [query, setQuery] = useState('');
     const [typeFilter, setTypeFilter] = useState('');
     const [selectedOnly, setSelectedOnly] = useState(false);
@@ -115,7 +118,8 @@ export function AgentActionPicker({
                                 <span className="min-w-0 flex-1">
                                     <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-text-1">
                                         {label}<Pill>{action.type === 'agent' ? 'Call agent' : action.type}</Pill>
-                                        {action.is_global ? <Pill tone="accent">Provided</Pill> : <Pill>Personal</Pill>}
+                                        {globalScope ? <Pill tone="accent">Global</Pill>
+                                            : action.is_global ? <Pill tone="accent">Provided</Pill> : <Pill>Personal</Pill>}
                                     </span>
                                     <span className="mt-1 block break-words text-xs text-text-3">{action.description}</span>
                                     <span className="mt-1 block break-all text-[11px] text-text-3">ID: {action.id}</span>
@@ -163,7 +167,9 @@ export function AgentActionPicker({
             {builtinActions.length ? (
                 <div className="rounded-xl border border-edge p-3">
                     <h4 className="text-sm font-medium text-text-2">Enabled built-in tools</h4>
-                    <p className="mt-1 text-xs text-text-3">Provided by your administrator; these are not personal settings.</p>
+                    <p className="mt-1 text-xs text-text-3">{globalScope
+                        ? 'Available to every agent; turn them on or off under Built-in Actions in Admin Settings.'
+                        : 'Provided by your administrator; these are not personal settings.'}</p>
                     <ul className="mt-2 space-y-1 text-xs text-text-2">
                         {builtinActions.map((action) => <li key={action.id}>{action.label}{action.description ? ` — ${action.description}` : ''}</li>)}
                     </ul>

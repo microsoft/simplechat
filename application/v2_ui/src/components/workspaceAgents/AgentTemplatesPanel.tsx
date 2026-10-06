@@ -20,12 +20,16 @@ function templateSettingsPreview(template: AgentTemplate): string {
 }
 
 export function AgentTemplatesPanel({
-    draft, setDraft, actions, options, isNew, dirty, readOnly, submissionAllowed, groupScope,
+    draft, setDraft, actions, options, isNew, dirty, readOnly, submissionAllowed, scope = 'personal',
 }: {
     draft: AgentConfiguration; setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
     actions: ActionConfiguration[]; options: AgentEditorOptions; isNew: boolean; dirty: boolean; readOnly: boolean;
-    submissionAllowed: boolean; groupScope: boolean;
+    submissionAllowed: boolean;
+    /** Which kind of agent this is. A global agent publishes straight to the gallery. */
+    scope?: 'personal' | 'group' | 'global';
 }) {
+    const groupScope = scope === 'group';
+    const globalScope = scope === 'global';
     const enabled = options.settings.enable_agent_template_gallery === true;
     const submissionsAllowed = enabled && submissionAllowed && !readOnly;
     const [templates, setTemplates] = useState<AgentTemplate[]>([]);
@@ -75,11 +79,11 @@ export function AgentTemplatesPanel({
         setError(null);
         setNotice(null);
         try {
-            const payload = await api.post<{ template: AgentTemplate }>('/api/agent-templates', agentTemplateSubmission(draft), controller.signal);
+            const payload = await api.post<{ template: AgentTemplate }>('/api/agent-templates', agentTemplateSubmission(draft, globalScope ? 'global' : 'personal'), controller.signal);
             if (!payload.template) throw new Error('The template service returned an invalid response.');
             if (!controller.signal.aborted) setNotice(payload.template.status === 'approved'
                 ? 'Template published to the approved gallery.'
-                : groupScope ? 'Template submitted for review.' : 'Personal template submitted for review.');
+                : groupScope || globalScope ? 'Template submitted for review.' : 'Personal template submitted for review.');
         } catch (cause) {
             if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not submit this template.');
         } finally {
@@ -96,7 +100,7 @@ export function AgentTemplatesPanel({
             <div className="flex flex-wrap gap-2">
                 <GlassButton type="button" size="sm" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Refresh templates</GlassButton>
                 {submissionsAllowed ? <GlassButton type="button" size="sm" disabled={submitting} onClick={() => void submit()}>
-                    {submitting ? 'Submitting template…' : groupScope ? 'Submit template' : 'Submit personal template'}
+                    {submitting ? 'Submitting template…' : globalScope ? 'Publish as template' : groupScope ? 'Submit template' : 'Submit personal template'}
                 </GlassButton> : null}
             </div>
             {error ? <AgentNotice error>{error}</AgentNotice> : null}
@@ -130,7 +134,9 @@ export function AgentTemplatesPanel({
             </div>
             {!visible.length && !loading && !error ? <p role="status" className="text-sm text-text-3">No approved templates match.</p> : null}
             {!isNew ? <p className="text-xs text-text-3">Templates start new agents; applying one will not overwrite this saved agent.</p> : null}
-            {submissionsAllowed ? <p className="text-xs text-text-3">Submission publishes a reusable recipe under the current gallery approval policy, not your connection credentials. {Object.keys(safeAgentTemplateSettings(draft.other_settings)).length ? 'Non-secret additional settings are included.' : ''}</p> : null}
+            {submissionsAllowed ? <p className="text-xs text-text-3">{globalScope
+                ? 'Publishing adds a reusable recipe to the approved gallery straight away, not your connection credentials.'
+                : 'Submission publishes a reusable recipe under the current gallery approval policy, not your connection credentials.'} {Object.keys(safeAgentTemplateSettings(draft.other_settings)).length ? 'Non-secret additional settings are included.' : ''}</p> : null}
         </div>
     );
 }

@@ -93,7 +93,9 @@ export function AgentKnowledgeFields({
                     {inputError ? <AgentNotice error>{inputError}</AgentNotice> : null}
                     <fieldset className="space-y-3">
                         <legend className="mb-2 text-sm font-medium text-text-1">Source workspaces</legend>
-                        <p className="text-xs text-text-3">Only your personal workspace and permitted public workspaces can be newly assigned. Removing a source does not silently remove stored document references.</p>
+                        <p className="text-xs text-text-3">{knowledgeScopes.includes('personal') || knowledgeScopes.includes('group')
+                            ? 'Only your personal workspace and permitted public workspaces can be newly assigned.'
+                            : 'Only public workspaces can be assigned, because a global agent answers everyone.'} Removing a source does not silently remove stored document references.</p>
                         <SectionSearch value={sourceQuery} onChange={setSourceQuery} placeholder="Search knowledge workspaces" />
                         <div className="grid gap-2 sm:grid-cols-2">
                             {sources.filter((source) => `${source.label} ${source.id}`.toLowerCase().includes(sourceQuery.toLowerCase())).map((source) => (

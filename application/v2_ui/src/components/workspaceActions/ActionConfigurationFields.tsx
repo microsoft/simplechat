@@ -15,7 +15,7 @@ import {
 import { nativeActionDefinition, sqlConnectionMethod, usesDirectBlobConnectionString } from '../../lib/workspaceActionRegistry';
 import { EDITOR_SECRET_MASK, isRecord, type ActionTypeDefinition } from '../../lib/workspaceAuthoring';
 import { testWorkspaceAction } from '../../lib/workspaceActionServices';
-import type { ActionConnectorProps, ActionFieldDescriptor } from '../../lib/workspaceActionTypes';
+import { connectorTestScope, type ActionConnectorProps, type ActionFieldDescriptor } from '../../lib/workspaceActionTypes';
 
 export function ActionDescriptorField({ props, descriptor }: { props: ActionConnectorProps; descriptor: ActionFieldDescriptor }) {
     const id = useId();
@@ -141,7 +141,7 @@ export function ActionConfigurationFields(props: ActionConnectorProps & { defini
                     Saving does not run this test.
                 </p>
                 <GlassButton type="button" size="sm" disabled={readOnly || Boolean(request.busy)}
-                    onClick={() => void request.run('Testing connection…', (signal) => testWorkspaceAction(draft, props.original, definition, signal, props.groupScope))}>
+                    onClick={() => void request.run('Testing connection…', (signal) => testWorkspaceAction(draft, props.original, definition, signal, connectorTestScope(props)))}>
                     <FlaskConical size={15} />{request.busy || 'Test connection'}
                 </GlassButton>
                 <ConnectorFeedbackPanel feedback={request.feedback} stale={request.stale} />

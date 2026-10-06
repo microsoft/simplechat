@@ -1495,6 +1495,82 @@ def _prepare_group_action_payload(user_id, group_id, plugin, settings, existing)
     return plugin_to_save, None
 
 
+def _prepare_global_action_payload(user_id, plugin, settings, existing):
+    """Clean, default and validate one global action for the V2 admin editor routes.
+
+    Mirrors ``_prepare_group_action_payload`` with the checks the classic
+    ``/api/admin/plugins`` routes apply to a global action: the type must be one the
+    deployment provides (a legacy type only when editing a record that already has
+    it), the identity and the MCP destination policy resolve against the global
+    scope, and per-type workspace governance does not apply, because an administrator
+    authors the organisation's actions. Returns ``(plugin_to_save, error_response)``
+    with exactly one set; the signature matches ``apply_global_action_write``.
+    """
+    validate_legacy_action_update(plugin, existing)
+    plugin_to_save = dict(plugin)
+    if 'is_global' in plugin_to_save:
+        del plugin_to_save['is_global']
+    if 'is_group' in plugin_to_save:
+        del plugin_to_save['is_group']
+
+    plugin_to_save.setdefault('name', '')
+    plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+    plugin_to_save.setdefault('description', '')
+    plugin_to_save.setdefault('metadata', {})
+    plugin_to_save.setdefault('additionalFields', {})
+
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        if field == 'id':
+            continue
+        plugin_to_save.pop(field, None)
+    for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
+        plugin_to_save.pop(field, None)
+
+    plugin_to_save.setdefault('endpoint', '')
+    _apply_plugin_runtime_defaults(plugin_to_save)
+    plugin_type = plugin_to_save['type']
+    allowed_types = discover_plugin_types(include_legacy=existing is not None)
+    if allowed_types is not None and plugin_type not in allowed_types:
+        return None, (jsonify({'error': 'This action type is not available.'}), 400)
+    try:
+        _validate_action_identity_for_scope(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+        )
+    except (ValueError, LookupError, PermissionError):
+        return None, (jsonify({'error': 'Action identity configuration is invalid.'}), 400)
+
+    if 'auth' not in plugin_to_save:
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif not isinstance(plugin_to_save['auth'], dict):
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif 'type' not in plugin_to_save['auth']:
+        plugin_to_save['auth']['type'] = 'identity'
+
+    validation_error = validate_editor_action_manifest(plugin_to_save)
+    if validation_error:
+        return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+    if not is_valid:
+        return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+
+    try:
+        _enforce_mcp_destination_policy(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            operation='global_action_save',
+            user_id=user_id,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403)
+    except ValueError:
+        return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
+
+    return plugin_to_save, None
+
+
 def _save_personal_action_or_error(user_id, plugin_to_save, legacy_locator=None):
     """Persist one personal action, mapping the storage failures onto HTTP responses."""
     try:

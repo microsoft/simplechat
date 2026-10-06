@@ -35,7 +35,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const location = useLocation();
     const ownerId = useBootstrapStore((state) => state.data?.user?.id ?? '');
     const personalCanCreateActions = useBootstrapStore((state) => state.data?.workspace?.sections.actions?.enabled === true);
-    const canCreateActions = adapter.scope.kind === 'group' ? adapter.canCreateActions : personalCanCreateActions;
+    const canCreateActions = adapter.scope.kind === 'personal' ? personalCanCreateActions : adapter.canCreateActions;
     const refreshBootstrap = useBootstrapStore((state) => state.refresh);
     const isNew = resourceId === 'new';
     const { draft, setDraft: setStoredDraft, original, load, clear, dirty, restored } =
@@ -235,6 +235,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                 { id: 'actions', label: 'Actions', content: structured(<AgentActionPicker draft={draft} setDraft={setDraft}
                     actions={actions} targets={targets} loading={actionsLoading} error={actionsError} targetError={targetError}
                     builtinActions={options.builtin_actions} ownerId={ownerId} canCreateActions={canCreateActions} readOnly={readOnly}
+                    scopeKind={adapter.scope.kind}
                     onRefresh={() => setActionsRevision((value) => value + 1)}
                     onNewAction={() => navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`, { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } })} />) },
                 { id: 'knowledge', label: 'Assigned knowledge', content: structured(<AgentKnowledgeFields draft={draft} setDraft={setDraft}
@@ -246,7 +247,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                 { id: 'advanced', label: 'Advanced', content: <AgentAdvancedFields draft={draft} setDraft={setDraft} options={options} original={original} /> },
                 { id: 'templates', label: 'Examples & templates', content: structured(<div ref={templatesAnchor} tabIndex={-1}>
                     <AgentTemplatesPanel draft={draft} setDraft={setDraft} options={options} actions={actions} isNew={isNew} dirty={dirty} readOnly={readOnly}
-                        submissionAllowed={adapter.allowsTemplateSubmission(options.settings)} groupScope={adapter.scope.kind === 'group'} />
+                        submissionAllowed={adapter.allowsTemplateSubmission(options.settings)} scope={adapter.scope.kind} />
                 </div>) },
             ]}
         />

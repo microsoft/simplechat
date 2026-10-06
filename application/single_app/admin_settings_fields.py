@@ -4352,6 +4352,25 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_semantic_kernel", "equals": True},
         },
     ],
+    # The organisation's agents themselves, rather than settings about them. The
+    # component reads and writes through the global editor routes
+    # (/api/v2/admin/agents) and the classic enable and default-agent routes, never
+    # the settings draft, so each change saves on its own.
+    "organization-agents-section": [
+        {
+            "type": "component",
+            "component": "global-agents-manager",
+            "label": "Global Agents",
+            "help": (
+                "Agents the organisation provides. Everyone uses the default agent while "
+                "Workspace Mode is off; with it on, these appear beside people's own agents "
+                "only when global agents are added to workspaces. Create one from scratch "
+                "or from an approved template, and disable one to keep it without offering "
+                "it."
+            ),
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+    ],
     # Rendered by V1 only while Workspace Mode is on, which ``ADMIN_NAV`` now
     # states as a section condition, so V2 hides the section on the same terms.
     "agent-toggles-card": [
@@ -4579,6 +4598,17 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": True,
             "depends_on": {"key": "agent_templates_allow_user_submission", "equals": True},
+        },
+        {
+            # Reviewing submissions happens in the shared approvals queue, which
+            # the classic Approvals page serves; this only points there.
+            "type": "component",
+            "component": "agent-template-approvals-link",
+            "label": "Approvals queue",
+            "help": (
+                "Review, approve and remove submitted templates in the approvals queue, "
+                "beside the other requests an administrator handles."
+            ),
         },
     ],
     # --- Actions ----------------------------------------------------------
@@ -4931,6 +4961,24 @@ ADMIN_SETTINGS_FIELDS = {
             "readonly": True,
             "managed_by": "Chat \u203a Citations \u203a Enhanced",
             "group": "Managed elsewhere",
+        },
+    ],
+    # The organisation's actions themselves. The built-in toggles that used to sit
+    # here live in core-plugin-toggles, so this section holds no setting at all:
+    # the component reads and writes through the global editor routes
+    # (/api/v2/admin/actions) and the classic enable route, never the settings draft.
+    "actions-config": [
+        {
+            "type": "component",
+            "component": "global-actions-manager",
+            "label": "Global Actions",
+            "help": (
+                "Connections to APIs, databases, MCP servers and other services that "
+                "global agents can call. Workspaces see them too when global agents and "
+                "actions are added to workspaces. Disable one to keep its configuration "
+                "without loading it."
+            ),
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
         },
     ],
     # --- Inbound MCP ------------------------------------------------------
