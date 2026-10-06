@@ -1045,94 +1045,78 @@ def register_route_backend_documents(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json() or {}  # new metadata values from the client
-        chunk_sync_state = data.get('_metadata_chunk_sync') if isinstance(data.get('_metadata_chunk_sync'), dict) else {}
-        try:
-            chunk_sync_offset = max(int(chunk_sync_state.get('next_offset', 0) or 0), 0)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'Invalid metadata chunk sync state'}), 400
-        chunk_sync_fields = chunk_sync_state.get('fields') if isinstance(chunk_sync_state.get('fields'), list) else []
-        is_chunk_sync_continuation = chunk_sync_offset > 0 and bool(chunk_sync_fields)
 
         # Track which fields were updated
         updated_fields = {}
         document_updates = {}
 
-        # Update allowed fields
-        # You can decide which fields can be updated from the client
-        if 'title' in data:
-            document_updates['title'] = data['title']
-            updated_fields['title'] = data['title']
-        if 'abstract' in data:
-            document_updates['abstract'] = data['abstract']
-            updated_fields['abstract'] = data['abstract']
-        if 'keywords' in data:
-            # Expect a list or a comma-delimited string
-            if isinstance(data['keywords'], list):
-                document_updates['keywords'] = data['keywords']
-                updated_fields['keywords'] = data['keywords']
-            else:
-                # if client sends a comma-separated string of keywords
-                keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
-                document_updates['keywords'] = keywords_list
-                updated_fields['keywords'] = keywords_list
-        if 'publication_date' in data:
-            document_updates['publication_date'] = data['publication_date']
-            updated_fields['publication_date'] = data['publication_date']
-        if 'document_classification' in data:
-            document_updates['document_classification'] = data['document_classification']
-            updated_fields['document_classification'] = data['document_classification']
-        # Add authors if you want to allow editing that
-        if 'authors' in data:
-            # if you want a list, or just store a string
-            # here is one approach:
-            if isinstance(data['authors'], list):
-                document_updates['authors'] = data['authors']
-                updated_fields['authors'] = data['authors']
-            else:
-                authors_list = [data['authors']]
-                document_updates['authors'] = authors_list
-                updated_fields['authors'] = authors_list
-
-        # Handle tags with validation and chunk propagation
-        if 'tags' in data:
-            from functions_documents import validate_tags, get_or_create_tag_definition
-            
-            # Validate and normalize tags
-            tags_input = data['tags'] if isinstance(data['tags'], list) else []
-            is_valid, error_msg, normalized_tags = validate_tags(tags_input)
-            
-            if not is_valid:
-                return jsonify({'error': error_msg}), 400
-            
-            # Ensure tag definitions exist for new tags
-            for tag in normalized_tags:
-                get_or_create_tag_definition(user_id, tag, workspace_type='personal')
-            
-            # Update document with normalized tags
-            document_updates['tags'] = normalized_tags
-            updated_fields['tags'] = normalized_tags
-
-        # Save updates back to Cosmos
         try:
-            update_result = {'chunk_sync': {'complete': True}}
+            # Update allowed fields
+            # You can decide which fields can be updated from the client
+            if 'title' in data:
+                document_updates['title'] = data['title']
+                updated_fields['title'] = data['title']
+            if 'abstract' in data:
+                document_updates['abstract'] = data['abstract']
+                updated_fields['abstract'] = data['abstract']
+            if 'keywords' in data:
+                # Expect a list or a comma-delimited string
+                if isinstance(data['keywords'], list):
+                    document_updates['keywords'] = data['keywords']
+                    updated_fields['keywords'] = data['keywords']
+                else:
+                    # if client sends a comma-separated string of keywords
+                    keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
+                    document_updates['keywords'] = keywords_list
+                    updated_fields['keywords'] = keywords_list
+            if 'publication_date' in data:
+                document_updates['publication_date'] = data['publication_date']
+                updated_fields['publication_date'] = data['publication_date']
+            if 'document_classification' in data:
+                document_updates['document_classification'] = data['document_classification']
+                updated_fields['document_classification'] = data['document_classification']
+            # Add authors if you want to allow editing that
+            if 'authors' in data:
+                # if you want a list, or just store a string
+                # here is one approach:
+                if isinstance(data['authors'], list):
+                    document_updates['authors'] = data['authors']
+                    updated_fields['authors'] = data['authors']
+                else:
+                    authors_list = [data['authors']]
+                    document_updates['authors'] = authors_list
+                    updated_fields['authors'] = authors_list
+
+            # Handle tags with validation; chunk and blob propagation runs in the background sync
+            if 'tags' in data:
+                from functions_documents import validate_tags, get_or_create_tag_definition
+
+                # Validate and normalize tags
+                tags_input = data['tags'] if isinstance(data['tags'], list) else []
+                is_valid, error_msg, normalized_tags = validate_tags(tags_input)
+
+                if not is_valid:
+                    return jsonify({'error': error_msg}), 400
+
+                # Ensure tag definitions exist for new tags
+                for tag in normalized_tags:
+                    get_or_create_tag_definition(user_id, tag, workspace_type='personal')
+
+                # Update document with normalized tags
+                document_updates['tags'] = normalized_tags
+                updated_fields['tags'] = normalized_tags
+
+            # Save every change in one update; search chunks are synced in the background
+            update_result = {}
             if document_updates:
                 update_result = update_document(
                     document_id=document_id,
                     user_id=user_id,
-                    chunk_sync_limit=75,
-                    chunk_sync_offset=chunk_sync_offset,
-                    chunk_sync_fields=chunk_sync_fields,
                     **document_updates,
-                ) or update_result
-
-            if 'tags' in updated_fields and not is_chunk_sync_continuation:
-                try:
-                    propagate_tags_to_blob_metadata(document_id, updated_fields['tags'], user_id)
-                except Exception as blob_metadata_error:
-                    debug_print(f"Warning: Failed to propagate tags to blob metadata: {blob_metadata_error}")
+                ) or {}
 
             # Log the metadata update transaction if any fields were updated
-            if updated_fields and not is_chunk_sync_continuation:
+            if updated_fields:
                 # Get document details for logging
                 doc_response = get_document(user_id, document_id)
                 doc = None
@@ -1155,10 +1139,9 @@ def register_route_backend_documents(bp):
                         file_type=doc.get('file_type')
                     )
 
-            chunk_sync = update_result.get('chunk_sync', {}) if isinstance(update_result, dict) else {}
             response_payload = {'message': 'Document metadata updated successfully'}
-            if chunk_sync.get('required'):
-                response_payload['metadata_chunk_sync'] = chunk_sync
+            if isinstance(update_result, dict) and update_result.get('search_sync'):
+                response_payload['search_sync'] = update_result['search_sync']
 
             return jsonify(response_payload), 200
         except Exception as e:
@@ -1630,7 +1613,7 @@ def register_route_backend_documents(bp):
         
         from functions_documents import (
             validate_tags, get_document, update_document, 
-            propagate_tags_to_chunks, get_or_create_tag_definition
+            get_or_create_tag_definition
         )
         
         # Validate and normalize tags
@@ -1703,18 +1686,12 @@ def register_route_backend_documents(bp):
                     
                     debug_print(f"[BULK_TAG] New tags for doc {doc_id}: {new_tags}")
                     
-                    # Update document
+                    # Update document; search chunks and blob tags sync in the background
                     update_document(
                         document_id=doc_id,
                         user_id=user_id,
                         tags=new_tags
                     )
-                    
-                    # Propagate to chunks
-                    try:
-                        propagate_tags_to_chunks(doc_id, new_tags, user_id)
-                    except Exception as propagate_error:
-                        debug_print(f"Warning: Failed to propagate tags for doc {doc_id}: {propagate_error}")
                     
                     results['success'].append({
                         'document_id': doc_id,
@@ -1773,7 +1750,7 @@ def register_route_backend_documents(bp):
         
         from functions_documents import (
             normalize_tag, validate_tag_color, validate_tags, get_documents,
-            update_document, propagate_tags_to_chunks
+            update_document
         )
         from functions_settings import get_user_settings, update_user_settings
         from utils_cache import invalidate_personal_search_cache
@@ -1833,17 +1810,12 @@ def register_route_backend_documents(bp):
                         current_tags = doc['tags']
                         new_tags = [normalized_new_tag if t == normalized_old_tag else t for t in current_tags]
                         
+                        # Search chunks and blob tags sync in the background
                         update_document(
                             document_id=doc['id'],
                             user_id=user_id,
                             tags=new_tags
                         )
-                        
-                        # Propagate to chunks
-                        try:
-                            propagate_tags_to_chunks(doc['id'], new_tags, user_id)
-                        except Exception as propagate_error:
-                            debug_print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
                         
                         updated_count += 1
                 
@@ -1940,8 +1912,7 @@ def register_route_backend_documents(bp):
             return jsonify({'error': 'User not authenticated'}), 401
         
         from functions_documents import (
-            normalize_tag, update_document, 
-            propagate_tags_to_chunks
+            normalize_tag, update_document
         )
         from functions_settings import get_user_settings, update_user_settings
         
@@ -1985,17 +1956,12 @@ def register_route_backend_documents(bp):
                     # Remove tag
                     new_tags = [t for t in doc['tags'] if t != normalized_tag]
                     
+                    # Search chunks and blob tags sync in the background
                     update_document(
                         document_id=doc['id'],
                         user_id=user_id,
                         tags=new_tags
                     )
-                    
-                    # Propagate to chunks
-                    try:
-                        propagate_tags_to_chunks(doc['id'], new_tags, user_id)
-                    except Exception as propagate_error:
-                        debug_print(f"Warning: Failed to propagate tags for doc {doc['id']}: {propagate_error}")
                     
                     updated_count += 1
             
@@ -2270,6 +2236,13 @@ def register_route_backend_documents(bp):
                 else:
                     new_shared_user_ids.append(entry)
             if updated:
+                # Project the approval to every chunk before saving it, so a failed search update
+                # leaves the share pending and a retry can complete it.
+                project_document_acl_to_chunks(
+                    document_id,
+                    {'shared_user_ids': new_shared_user_ids},
+                    document_item.get('user_id'),
+                )
                 document_item['shared_user_ids'] = new_shared_user_ids
                 document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
                 persisted_document = cosmos_user_documents_container.upsert_item(document_item)
@@ -2278,25 +2251,6 @@ def register_route_backend_documents(bp):
                     document_for_sync,
                     operation='document_share_approved',
                 )
-                # Update all chunks with the new shared_user_ids
-                try:
-                    chunks = get_all_chunks(document_id, document_for_sync.get('user_id'))
-                    for chunk in chunks:
-                        chunk_id = chunk.get('id')
-                        if chunk_id:
-                            try:
-                                update_chunk_metadata(
-                                    chunk_id=chunk_id,
-                                    user_id=document_for_sync.get('user_id'),
-                                    group_id=None,
-                                    public_workspace_id=None,
-                                    document_id=document_id,
-                                    shared_user_ids=new_shared_user_ids
-                                )
-                            except Exception as chunk_e:
-                                debug_print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
-                except Exception as e:
-                    debug_print(f"Warning: Failed to update chunks for document {document_id}: {e}")
             
             # Invalidate cache for user who approved (their search results changed)
             if updated:
@@ -2305,7 +2259,18 @@ def register_route_backend_documents(bp):
                 invalidate_personal_search_cache(user_id)
             
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
+        except DocumentSearchAclProjectionDeferredError as exc:
+            response = jsonify({'error': str(exc)})
+            response.headers['Retry-After'] = '150'
+            return response, 503
+        except DocumentSearchAclProjectionError as exc:
+            return jsonify({'error': str(exc)}), 500
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
-            return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to approve a shared personal document',
+                {'document_id': document_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to approve the shared document'}), 500

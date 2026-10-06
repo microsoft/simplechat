@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.052)**
+
+#### Bug Fixes
+
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, or classification on a document no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Group and public workspace saves no longer time out with "invalid JSON" errors, and the personal workspace dialog sends a single request again.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   The search index update sends only the changed fields instead of re-downloading and re-uploading every chunk with its embedding. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with far fewer Cosmos write-fence operations, which sharply reduces Search and Cosmos load.
+    *   Failed or interrupted updates retry automatically with backoff until every chunk matches the document, so chat tag filters and citation titles and classifications converge instead of staying partially stale. A brief notice tells users when the search index is still updating.
+    *   (Ref: `functions_documents.py`, `background_tasks.py`, document metadata routes, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share now updates the search index before the change is saved. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Personal share approvals now also update the search index before they are saved, so a failed update can simply be retried instead of reporting "Already approved".
+    *   When the search index cannot apply a sharing change, the change is not saved and users get a clear, retryable error.
+    *   Group shares approved before this update become searchable the next time that document's sharing changes.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, group and personal sharing routes, #1657)
+
 ### **(v0.261.051)**
 
 #### Bug Fixes
