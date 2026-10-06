@@ -40,6 +40,13 @@ Beyond a field's type, five optional descriptors shape how a section reads:
     Intelligence is a flat run of forty controls in which the credential that
     makes the rest work is simply the last one.
 
+    A group may also name an ``anchor``: the key of an ungrouped switch declared
+    earlier in the same section. The renderer then draws the group as a panel
+    directly beneath that switch instead of at the foot of the card, which is
+    how each File Sync workspace type keeps its Access panel beside its own
+    toggle. Every field in an anchored group depends on the anchor, so the
+    panel can never show while its switch is off.
+
     A group may also name ``open_until_set``: a key in the same group whose
     blank value opens the group while the section's capability is on. That is
     for an optional connection the administrator most likely wants next --
@@ -3092,8 +3099,19 @@ ADMIN_SETTINGS_FIELDS = {
     # `requires` descriptor: without it an administrator turns File Sync on and
     # nothing happens, with no visible reason until a flash message after saving.
     #
-    # The three scope sections share one shape -- enable, access, assignment --
-    # so learning Personal is enough to read Group and Public.
+    # Everything File Sync governs is one card. A workspace type is only live
+    # while File Sync and its own switch are both on (functions_file_sync.py),
+    # so the three type switches follow the capability and depend on it, which
+    # is what draws them nested beneath it. Keep them contiguous:
+    # deriveFieldHierarchy nests an uninterrupted run, so a field declared
+    # between them would leave the switches after it un-nested.
+    #
+    # Each type's access rules form an Access panel anchored under that type's
+    # switch. Visibility is not transitive, so every field in those panels
+    # repeats the enable_file_sync condition; without it a panel would stay
+    # visible with File Sync off. The three panels share one shape -- who
+    # manages sources, then the type's own restriction -- so learning Personal
+    # is enough to read Group and Public.
     # ------------------------------------------------------------------
     "file-sync-section": [
         {
@@ -3116,6 +3134,194 @@ ADMIN_SETTINGS_FIELDS = {
                     "until Redis Cache is enabled and configured."
                 ),
             },
+        },
+        {
+            "key": "enable_file_sync_personal",
+            "type": "switch",
+            "label": "Personal workspaces",
+            "default": True,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "enable_file_sync_group",
+            "type": "switch",
+            "label": "Group workspaces",
+            "default": True,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "enable_file_sync_public",
+            "type": "switch",
+            "label": "Public workspaces",
+            "default": False,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_personal_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "help": "Users keep their synced documents but cannot add or edit a source.",
+            "default": False,
+            "group": {
+                "id": "personal-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_personal",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_personal", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_personal_require_app_role",
+            "type": "switch",
+            "label": "Require the PersonalFileSyncUser app role",
+            "help": (
+                "Required app role value: PersonalFileSyncUser. Assign it in the "
+                "Enterprise App before turning this on, or no user will be able to "
+                "manage a personal source."
+            ),
+            "default": False,
+            "group": {
+                "id": "personal-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_personal",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_personal", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_group_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+            ],
+        },
+        {
+            "key": "require_group_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned groups",
+            "help": "Only the groups listed below may use File Sync.",
+            "default": False,
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_allowed_group_ids",
+            "type": "id_list",
+            "label": "Assigned groups",
+            "help": (
+                "Leaving this empty while the restriction is on means no group can use "
+                "File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search groups by name",
+            "search_endpoint": "/api/admin/file-sync/groups/search",
+            "search_param": "q",
+            "results_key": "groups",
+            "item_noun": "group",
+            "item_noun_plural": "groups",
+            # Group ids are canonical UUIDs, and the shared normalizer drops
+            # anything else, matching what the server-rendered form stores.
+            "id_kind": "group",
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+                {"key": "require_group_assignment_for_file_sync", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_public_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+            ],
+        },
+        {
+            "key": "require_public_workspace_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned public workspaces",
+            "help": "Only the public workspaces listed below may use File Sync.",
+            "default": False,
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_allowed_public_workspace_ids",
+            "type": "id_list",
+            "label": "Assigned public workspaces",
+            "help": (
+                "Leaving this empty while the restriction is on means no public "
+                "workspace can use File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search public workspaces by name",
+            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "search_param": "q",
+            "results_key": "workspaces",
+            "item_noun": "public workspace",
+            "item_noun_plural": "public workspaces",
+            # Public workspace ids are not UUID-constrained, so they are only
+            # trimmed and deduplicated.
+            "id_kind": "opaque",
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+                {
+                    "key": "require_public_workspace_assignment_for_file_sync",
+                    "equals": True,
+                },
+            ],
         },
         {
             "key": "file_sync_max_sources_per_scope",
@@ -3184,8 +3390,6 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
         },
-    ],
-    "file-sync-source-types-section": [
         {
             "key": "file_sync_visible_source_types",
             "type": "checkbox_set",
@@ -3227,145 +3431,8 @@ ADMIN_SETTINGS_FIELDS = {
                     "disabled": True,
                 },
             ],
+            "group": {"id": "source-types", "label": "Source types", "variant": "behavior"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
-        },
-    ],
-    "file-sync-personal-section": [
-        {
-            "key": "enable_file_sync_personal",
-            "type": "switch",
-            "label": "Enable sync for personal workspaces",
-            "default": True,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_personal_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "help": "Users keep their synced documents but cannot add or edit a source.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
-        },
-        {
-            "key": "file_sync_personal_require_app_role",
-            "type": "switch",
-            "label": "Require the PersonalFileSyncUser app role",
-            "help": (
-                "Required app role value: PersonalFileSyncUser. Assign it in the "
-                "Enterprise App before turning this on, or no user will be able to "
-                "manage a personal source."
-            ),
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
-        },
-    ],
-    "file-sync-group-section": [
-        {
-            "key": "enable_file_sync_group",
-            "type": "switch",
-            "label": "Enable sync for group workspaces",
-            "default": True,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_group_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_group", "equals": True},
-        },
-        {
-            "key": "require_group_assignment_for_file_sync",
-            "type": "switch",
-            "label": "Restrict to assigned groups",
-            "help": "Only the groups listed below may use File Sync.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_group", "equals": True},
-        },
-        {
-            "key": "file_sync_allowed_group_ids",
-            "type": "id_list",
-            "label": "Assigned groups",
-            "help": (
-                "Leaving this empty while the restriction is on means no group can use "
-                "File Sync."
-            ),
-            "default": [],
-            "placeholder": "Search groups by name",
-            "search_endpoint": "/api/admin/file-sync/groups/search",
-            "search_param": "q",
-            "results_key": "groups",
-            "item_noun": "group",
-            "item_noun_plural": "groups",
-            # Group ids are canonical UUIDs, and the shared normalizer drops
-            # anything else, matching what the server-rendered form stores.
-            "id_kind": "group",
-            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
-            "depends_on": {
-                "all_of": [
-                    {"key": "enable_file_sync_group", "equals": True},
-                    {"key": "require_group_assignment_for_file_sync", "equals": True},
-                ]
-            },
-        },
-    ],
-    "file-sync-public-section": [
-        {
-            "key": "enable_file_sync_public",
-            "type": "switch",
-            "label": "Enable sync for public workspaces",
-            "default": False,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_public_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_public", "equals": True},
-        },
-        {
-            "key": "require_public_workspace_assignment_for_file_sync",
-            "type": "switch",
-            "label": "Restrict to assigned public workspaces",
-            "help": "Only the public workspaces listed below may use File Sync.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_public", "equals": True},
-        },
-        {
-            "key": "file_sync_allowed_public_workspace_ids",
-            "type": "id_list",
-            "label": "Assigned public workspaces",
-            "help": (
-                "Leaving this empty while the restriction is on means no public "
-                "workspace can use File Sync."
-            ),
-            "default": [],
-            "placeholder": "Search public workspaces by name",
-            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
-            "search_param": "q",
-            "results_key": "workspaces",
-            "item_noun": "public workspace",
-            "item_noun_plural": "public workspaces",
-            # Public workspace ids are not UUID-constrained, so they are only
-            # trimmed and deduplicated.
-            "id_kind": "opaque",
-            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
-            "depends_on": {
-                "all_of": [
-                    {"key": "enable_file_sync_public", "equals": True},
-                    {
-                        "key": "require_public_workspace_assignment_for_file_sync",
-                        "equals": True,
-                    },
-                ]
-            },
         },
     ],
     "permissions-section": [

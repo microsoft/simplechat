@@ -98,6 +98,15 @@ export interface AdminFieldGroup {
     variant?: 'connection' | 'behavior' | 'limits' | 'access' | 'advanced';
     help?: string;
     /**
+     * Settings key of the ungrouped switch this group sits beneath.
+     *
+     * An anchored group is drawn as a panel directly under that switch rather than at the
+     * foot of the card, which is how each File Sync workspace type keeps its Access panel
+     * beside its own toggle. Every field in it depends on the anchor, so the panel never
+     * shows while the switch is off.
+     */
+    anchor?: string;
+    /**
      * A key in this group whose blank value opens the group while the section's
      * capability is on.
      *
@@ -507,6 +516,8 @@ export interface RenderedFieldGroup {
      * always-on built-in actions out of the way.
      */
     collapsed?: boolean;
+    /** The switch the group is drawn beneath. See `AdminFieldGroup.anchor`. */
+    anchor?: string;
     /** A key whose blank value opens the group while the capability is on. */
     openUntilSet?: string;
     fields: AdminField[];
@@ -536,6 +547,7 @@ export function groupFields(fields: AdminField[]): RenderedFieldGroup[] {
                 variant: declared?.variant,
                 help: declared?.help,
                 collapsed: Boolean(field.collapsed),
+                anchor: declared?.anchor,
                 openUntilSet: declared?.open_until_set,
                 fields: [],
             };

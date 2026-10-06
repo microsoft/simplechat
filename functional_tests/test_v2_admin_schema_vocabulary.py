@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.265
+Version: 0.261.266
 Implemented in: 0.261.084
 Runtime flag evaluation, open_until_set and on_enable added in: 0.261.265
+Anchored group coverage added in: 0.261.266
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed
@@ -29,6 +30,11 @@ list coercion
     Domain lists and assignment lists have to round-trip through the shapes the
     server-rendered panes already store, or a value saved in one interface is
     unreadable in the other.
+
+anchored groups
+    A group may name the switch it is drawn beneath. An anchor that names nothing,
+    or a panel that does not depend on its switch, leaves the panel either with no
+    row to sit under or visible beneath a switch that is off.
 """
 
 import sys
@@ -348,6 +354,88 @@ def test_declared_groups_and_requires_are_well_formed():
     return True
 
 
+def _required_conditions(dependency):
+    """Conditions that must all hold for a dependency to hold, as (key, expected).
+
+    Branches of an ``any_of`` are left out, because none of them is individually
+    required, and so is ``not_equals``, which says what a value is not.
+    """
+    if not dependency:
+        return set()
+    if isinstance(dependency, list):
+        return set().union(*(_required_conditions(item) for item in dependency))
+    if "all_of" in dependency:
+        return set().union(
+            *(_required_conditions(item) for item in dependency["all_of"])
+        )
+    if "any_of" in dependency or "not_equals" in dependency or not dependency.get("key"):
+        return set()
+    return {(dependency["key"], repr(dependency.get("equals", True)))}
+
+
+def test_anchored_groups_hang_off_a_switch_above_them():
+    """An anchored panel needs a switch to sit under, and must vanish with it."""
+    print("\nTesting anchored groups...")
+
+    problems = []
+    anchored = 0
+    for section_id, fields in fields_module.get_admin_settings_fields().items():
+        anchors_by_group = {}
+        for index, field in enumerate(fields):
+            group = field.get("group")
+            if not isinstance(group, dict):
+                continue
+            anchor = group.get("anchor")
+            anchors_by_group.setdefault(group.get("id"), set()).add(anchor)
+            if not anchor:
+                continue
+
+            anchored += 1
+            name = f"{section_id}.{field.get('key') or field.get('label')}"
+            lead = next(
+                (earlier for earlier in fields[:index] if earlier.get("key") == anchor),
+                None,
+            )
+            if lead is None:
+                problems.append(
+                    f"{name}: anchor {anchor!r} is not a field declared earlier in "
+                    f"{section_id}, so the panel has no row to sit under"
+                )
+                continue
+            if lead.get("type") != "switch" or lead.get("readonly"):
+                problems.append(f"{name}: anchor {anchor!r} is not an editable switch")
+            if lead.get("group"):
+                problems.append(
+                    f"{name}: anchor {anchor!r} is itself grouped; the renderer only "
+                    "anchors panels under ungrouped switches"
+                )
+
+            # The panel must disappear whenever its switch is off or hidden, and
+            # visibility is not transitive, so it carries the switch's own
+            # conditions as well as the switch itself.
+            required = _required_conditions(field.get("depends_on"))
+            expected = {(anchor, repr(True))} | _required_conditions(lead.get("depends_on"))
+            missing = sorted(expected - required)
+            if missing:
+                problems.append(
+                    f"{name}: does not require {missing}, so it could show while "
+                    f"{anchor!r} is off or hidden"
+                )
+
+        for group_id, anchors in anchors_by_group.items():
+            if len(anchors) > 1:
+                problems.append(
+                    f"{section_id}: group {group_id!r} names different anchors "
+                    f"{sorted(str(anchor) for anchor in anchors)}, so the panel would "
+                    "split depending on which field is read first"
+                )
+
+    assert not problems, "\n  ".join(["Malformed anchored groups:"] + problems)
+
+    print(f"  {anchored} anchored field(s) sit under a switch they depend on.")
+    return True
+
+
 def test_on_enable_effects_are_well_formed():
     """A companion naming a missing key or option would be saved and never read."""
     print("\nTesting on_enable descriptors...")
@@ -465,6 +553,7 @@ if __name__ == "__main__":
         test_id_list_accepts_both_stored_and_edited_shapes,
         test_dependency_evaluation_supports_every_declared_shape,
         test_declared_groups_and_requires_are_well_formed,
+        test_anchored_groups_hang_off_a_switch_above_them,
         test_on_enable_effects_are_well_formed,
         test_runtime_flag_conditions_follow_the_flags_given,
         test_secret_keys_are_discoverable_for_redaction,
