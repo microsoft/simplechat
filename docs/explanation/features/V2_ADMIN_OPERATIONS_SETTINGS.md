@@ -45,10 +45,11 @@ background tasks previously implemented separately or not at all. Neither import
 | `functions_logging_timers.py` | `LOGGING_TIMERS` key map, per-unit limits, clamping, `calculate_logging_turnoff_time`, `parse_logging_turnoff_time`, `is_logging_turnoff_due`, `resolve_logging_timer_settings` |
 | `functions_control_center_schedule.py` | Schedule helpers moved from `functions_control_center.py` (re-exported there), time and timezone validation, `resolve_control_center_auto_refresh_settings` |
 
-`resolve_logging_timer_settings` recalculates a turnoff time only when the timer, duration
-or unit changed, the log was newly enabled, or no usable time is stored, so saving an
-unrelated setting no longer restarts a timer. `resolve_control_center_auto_refresh_settings`
-does the same for the next scheduled refresh.
+The helpers keep the classic page's rules rather than changing them, and give V2 saves the
+same ones. `resolve_logging_timer_settings` recalculates a turnoff time only when the timer,
+duration or unit changed, the log was newly enabled, or no usable time is stored, so saving
+an unrelated setting does not restart a timer from either page.
+`resolve_control_center_auto_refresh_settings` does the same for the next scheduled refresh.
 
 ### Turnoff times in UTC
 
