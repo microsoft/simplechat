@@ -32,6 +32,7 @@ import {
     normalizeImageReferences,
     type ImageReferenceRequest,
 } from './imageReferences';
+import { prefixComposerMentions, type ComposerMention } from './mentions';
 import type { Json, PromptOption } from './types';
 import type { PromptAiValue } from './usePromptVariableValues';
 
@@ -70,10 +71,15 @@ export interface ComposerDraft {
     promptInstance?: number;
     uploads: ComposerUpload[];
     imageReferences?: ImageReferenceRequest[];
+    /** People and the AI target picked from the `@` menu in a shared conversation. */
+    mentions?: ComposerMention[];
 }
 
 export function createComposerDraft(): ComposerDraft {
-    return { text: '', contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [], imageReferences: [] };
+    return {
+        text: '', contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [], imageReferences: [],
+        mentions: [],
+    };
 }
 
 export function attachPromptToDraft(
@@ -312,9 +318,14 @@ export function composerDraftUserPromptValues(draft: ComposerDraft): Record<stri
 }
 
 export function buildComposerDraftSubmission(
-    draft: ComposerDraft,
+    composed: ComposerDraft,
     context: PromptResolutionContext,
 ): { message: string; promptInfo: Json | null; references: ComposerReference[] } {
+    // Mention chips count as typed text: they lead the message, and a prompt that uses
+    // `{{composer}}` receives them with the rest of what was written.
+    const draft = composed.mentions?.length
+        ? { ...composed, text: prefixComposerMentions(composed.text, composed.mentions) }
+        : composed;
     const references = composerDraftReferences(draft);
     const typed = draft.text.trim();
     const attached = draft.attachedPrompt;

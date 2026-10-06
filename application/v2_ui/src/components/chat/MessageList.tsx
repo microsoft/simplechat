@@ -6,6 +6,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     BookOpen,
+    Bot,
     Brain,
     ChevronDown,
     EyeOff,
@@ -75,8 +76,17 @@ import {
     isOwnMessage,
     isSupersededByWorkflowReply,
     messageAuthorName,
+    readMessageMentionPills,
     resolveReplyContext,
 } from '../../lib/sharedMessage';
+import { stripMentionText } from '../../lib/mentions';
+import {
+    describeAiActivityRun,
+    formatAiActivityElapsed,
+    localAiRun,
+    visibleAiRuns,
+} from '../../lib/aiActivity';
+import { MessageMentionPills } from './MentionPills';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
@@ -841,6 +851,15 @@ function MessageBubbleInner({
         () => resolveReplyContext(message, messages, currentUserId),
         [message, messages, currentUserId],
     );
+    /**
+     * Who the message was addressed to, drawn as pills above its text. The `@Name` text stays in
+     * the stored message for the AI and the classic client, and is taken out of what is shown.
+     */
+    const mentionPills = useMemo(
+        () => readMessageMentionPills(message, currentUserId),
+        [message, currentUserId],
+    );
+    const mentionNames = useMemo(() => mentionPills.map((pill) => pill.label), [mentionPills]);
 
     /**
      * Files this turn produced, and whether they replace its text.
@@ -891,10 +910,14 @@ function MessageBubbleInner({
     ));
 
     // A user message is plain text, so its masked spans can be cut straight out of the
-    // content rather than going through the markdown placeholder path.
+    // content rather than going through the markdown placeholder path. Mentions are only
+    // taken out when nothing is masked, because mask ranges are offsets into the stored text.
     const maskedUserContent = useMemo(() => {
-        if (!isUser || masks.ranges.length === 0) {
+        if (!isUser) {
             return message.content;
+        }
+        if (masks.ranges.length === 0) {
+            return mentionNames.length > 0 ? stripMentionText(message.content, mentionNames) : message.content;
         }
         const applied = applyMasks(message.content, masks.ranges);
         return applied.text.split(MASK_PLACEHOLDER_PATTERN).map((part, index) =>
@@ -904,7 +927,7 @@ function MessageBubbleInner({
                 part
             ),
         );
-    }, [isUser, message.content, masks.ranges]);
+    }, [isUser, message.content, masks.ranges, mentionNames]);
 
     /**
      * The prompt this message was written with, recovered from its metadata.
@@ -916,6 +939,9 @@ function MessageBubbleInner({
         () => (isUser && masks.ranges.length === 0 ? readMessagePrompt(message) : null),
         [isUser, message, masks.ranges.length],
     );
+    const promptUserText = promptUsed?.userText
+        ? stripMentionText(promptUsed.userText, mentionNames)
+        : '';
     const referenceProvenance = useMemo(
         () => (isUser ? readImageReferenceProvenance(message.metadata) : []),
         [isUser, message.metadata],
@@ -1011,6 +1037,9 @@ function MessageBubbleInner({
                 )}
             >
                 {replyContext && <ReplyQuote context={replyContext} />}
+                {isUser && !masks.fullyMasked && (
+                    <MessageMentionPills pills={mentionPills} onAccent={alignRight && !agentPosted} />
+                )}
                 {masks.fullyMasked ? (
                     // The whole message is masked, so none of it is rendered. The server
                     // also withholds it from the model.
@@ -1056,9 +1085,9 @@ function MessageBubbleInner({
                                 edited={promptUsed.edited}
                                 variableCount={promptUsed.variableCount}
                             />
-                            {promptUsed.userText && (
+                            {promptUserText && (
                                 <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-                                    {promptUsed.userText}
+                                    {promptUserText}
                                 </p>
                             )}
                             {referenceProvenance.length > 0 && (
@@ -1067,9 +1096,11 @@ function MessageBubbleInner({
                         </>
                     ) : (
                         <>
-                            <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
-                                {maskedUserContent}
-                            </p>
+                            {maskedUserContent !== '' && (
+                                <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                                    {maskedUserContent}
+                                </p>
+                            )}
                             {referenceProvenance.length > 0 && (
                                 <ReferenceImagesRow references={referenceProvenance} onAccent={alignRight} />
                             )}
@@ -1250,6 +1281,7 @@ function StreamingBubble() {
         orchestrationSurface,
         activeConversationId,
     } = useChatStore();
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
     const chatWidth = useUiStore((state) => state.chatWidth);
     const runCardShowsProgress = useOrchestrationStore((state) =>
         selectActiveTurnRunInFlight(state, activeConversationId ?? ''));
@@ -1271,6 +1303,12 @@ function StreamingBubble() {
     const activityLabel = orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';
 
     if (runShownOnCard && !streamingContent) {
+        return null;
+    }
+
+    // In a shared conversation the activity line says the request is running, for everyone
+    // in it, so the bubble only appears once there is an answer to show.
+    if (collaborative && !streamingContent) {
         return null;
     }
 
@@ -1311,6 +1349,66 @@ function StreamingBubble() {
                 )}
             </div>
         </div>
+    );
+}
+
+/**
+ * Which AI requests are running in a shared conversation, one slim line each.
+ *
+ * Every participant sees the same lines, from the activity events the stream route publishes,
+ * so a long agent run reads as work in progress rather than silence. Several can run at once.
+ * Only the sentence is announced to screen readers; the step and the timer change too often.
+ */
+function AgentActivityIndicator() {
+    const runs = useCollaborationStore((state) => state.aiRuns);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const streaming = useChatStore((state) => state.streaming);
+    const answering = useChatStore((state) => state.streamingContent.length > 0);
+    const messages = useChatStore((state) => state.messages);
+    const [now, setNow] = useState(() => Date.now());
+    const waitingOnOwnRequest = collaborative && streaming && !answering;
+    const active = runs.length > 0 || waitingOnOwnRequest;
+
+    useEffect(() => {
+        if (!active) {
+            return;
+        }
+        setNow(Date.now());
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [active]);
+
+    const local = waitingOnOwnRequest ? localAiRun({ messages, currentUserId, now }) : null;
+    const visible = visibleAiRuns(runs, local, currentUserId, now);
+    if (visible.length === 0) {
+        return null;
+    }
+
+    return (
+        <ul aria-label="AI activity" className="space-y-1" data-ai-activity="">
+            {visible.map((run) => (
+                <li key={run.run_id} data-ai-run={run.run_id}
+                    className="flex min-w-0 items-center gap-1.5 px-1 text-[12px] text-text-3">
+                    <span aria-hidden="true" className={clsx(
+                        'h-1.5 w-1.5 shrink-0 rounded-full motion-safe:animate-pulse',
+                        run.target_type === 'agent' ? 'bg-warn' : run.target_type === 'model' ? 'bg-info' : 'bg-text-3',
+                    )} />
+                    {run.target_type === 'agent' ? (
+                        <Bot size={12} className="shrink-0" aria-hidden="true" />
+                    ) : (
+                        <Sparkles size={12} className="shrink-0" aria-hidden="true" />
+                    )}
+                    <span className="shrink-0 text-text-2">{describeAiActivityRun(run, currentUserId)}</span>
+                    <span aria-hidden="true" className="shrink-0 tabular-nums">
+                        · {formatAiActivityElapsed(now - run.startedAt)}
+                    </span>
+                    {run.step && (
+                        <span aria-hidden="true" title={run.step} className="min-w-0 truncate">· {run.step}</span>
+                    )}
+                </li>
+            ))}
+        </ul>
     );
 }
 
@@ -1563,6 +1661,7 @@ export function MessageList() {
                     {activeConversationId && (
                         <ActiveOrchestrationCard conversationId={activeConversationId} />
                     )}
+                    <AgentActivityIndicator />
                     <TypingIndicator />
                 </div>
 

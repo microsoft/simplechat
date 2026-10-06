@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional regression for prompt attachments at actual message persistence boundaries.
-Version: 0.261.213
+Version: 0.261.255
 Implemented in: 0.261.096
 Turn-reuse integration coverage expanded in: 0.261.097
 Frozen turn-context persistence integration: 0.261.099
 Harness namespace re-synced with the routes in: 0.261.213
+Shared stream activity events added to the harness in: 0.261.255
 
 Execute the shipping metadata helper, chat persistence statements, orchestration writer,
 and shared post/stream routes against in-memory Cosmos containers. Importing the full chat
@@ -110,6 +111,20 @@ def _load_functions(filename, namespace, *names):
     for function in functions:
         function.decorator_list = []
     exec(compile(ast.Module(body=functions, type_ignores=[]), filename, "exec"), namespace)
+
+
+def _load_module_definitions(filename, namespace, *names):
+    """Compile module-level classes and constants by name, alongside `_load_functions`."""
+    wanted = set(names)
+    nodes = [
+        deepcopy(node) for node in _tree(filename).body
+        if (isinstance(node, ast.ClassDef) and node.name in wanted)
+        or (isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id in wanted for target in node.targets
+        ))
+    ]
+    assert len(nodes) == len(wanted), f"Expected {sorted(wanted)} in {filename}"
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), filename, "exec"), namespace)
 
 
 def _assigns(statement, name):
@@ -446,6 +461,7 @@ def _shared_boundary(path, info, content):
         "is_personal_collaboration_conversation": lambda document: True,
         "get_collaboration_visibility_mode": lambda document: "explicit_participants",
         "invalidate_conversation_cache_for_item": Mock(), "log_chat_activity": Mock(),
+        "uuid": uuid,
         "COLLABORATION_EVENT_REGISTRY": SimpleNamespace(
             publish=lambda identifier, event: events.append(deepcopy(event)),
         ),
@@ -459,6 +475,11 @@ def _shared_boundary(path, info, content):
     _load_functions(
         "route_backend_collaboration.py", namespace, route_name,
         "_build_collaboration_event", "_build_collaboration_stream_request_payload",
+        "_describe_collaboration_ai_target",
+    )
+    _load_module_definitions(
+        "route_backend_collaboration.py", namespace, "CollaborationAiActivity",
+        "AI_ACTIVITY_STEP_MAX_LENGTH", "AI_ACTIVITY_NAME_MAX_LENGTH",
     )
     data = {
         "content": content, "prompt_info": deepcopy(info), "reply_to_message_id": "earlier-message",
@@ -480,6 +501,10 @@ def _shared_boundary(path, info, content):
     assert authorized == [conversation["id"]]
     assert len(storage.rows) == 1
     stored = next(iter(storage.rows.values()))
+    # A shared stream also brackets the AI request with activity events (0.261.255).
+    activity = [event["event_type"] for event in events if event["event_type"].startswith("collaboration.ai.")]
+    assert activity == (["collaboration.ai.started", "collaboration.ai.finished"] if path == "shared-stream" else [])
+    events = [event for event in events if not event["event_type"].startswith("collaboration.ai.")]
     assert len(events) == 1
     event_message = events[0]["payload"]["message"]
     assert event_message["metadata"] == stored["metadata"]

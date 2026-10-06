@@ -2,7 +2,7 @@
 """
 Functional test for the V2 prompts workbench.
 
-Version: 0.261.099
+Version: 0.261.255
 Implemented in: 0.261.053
 Shared composer editor implemented in: 0.261.096
 Shared picker and prototype-key memory coverage expanded in: 0.261.096
@@ -433,10 +433,11 @@ def test_an_attached_prompt_is_resolved_when_the_message_is_sent():
         "taken when it was picked"
     )
     # A prompt is a complete message on its own, so the send gate cannot require typed text.
-    assert "if (!text.trim() && !attachedPrompt)" in composer, (
+    # Mention chips (0.261.255) are the other thing that makes a turn sendable without it.
+    assert "if (!text.trim() && !attachedPrompt && !hasMentionChips)" in composer, (
         "a turn carrying only a prompt must be sendable"
     )
-    assert "(!text.trim() && !attachedPrompt) || !canPost" in composer, (
+    assert "(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost" in composer, (
         "the send button must stay enabled for a prompt-only turn"
     )
 

@@ -25,6 +25,13 @@ import {
     type InviteResult,
 } from '../lib/collaboration';
 import { conversationFactsOnly } from '../lib/collaborationEvents';
+import {
+    applyAiActivityEvent,
+    finishAiRunsAnsweredBy,
+    pruneStaleAiRuns,
+    type AiActivityEvent,
+    type AiActivityRun,
+} from '../lib/aiActivity';
 import { toast } from './toastStore';
 import { useUserSettingsStore } from './userSettingsStore';
 import type {
@@ -95,6 +102,9 @@ interface CollaborationState {
 
     typingUsers: TypingUser[];
 
+    /** AI requests running in the open shared conversation, oldest first. */
+    aiRuns: AiActivityRun[];
+
     /** The message the composer is replying to, or null when it is not. */
     replyTo: CollaborationReplyContext | null;
 
@@ -133,6 +143,11 @@ interface CollaborationState {
         expiresAt: string | undefined,
         currentUserId: string | undefined,
     ) => void;
+
+    /** Apply an AI activity event from the open conversation's event stream. */
+    applyAiActivity: (event: AiActivityEvent) => void;
+    /** Drop the runs an arrived answer belongs to, in case their `finished` event was lost. */
+    finishAiRunsAnsweredBy: (message: { role?: string; reply_to_message_id?: unknown }) => void;
 
     setReplyTo: (reply: CollaborationReplyContext | null) => void;
 
@@ -262,6 +277,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => {
         panelConversation: null,
         panelLoading: false,
         typingUsers: [],
+        aiRuns: [],
         replyTo: null,
         panelTarget: null,
         approvals: [],
@@ -328,6 +344,7 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => {
                 conversationLoading: false,
                 conversationError: null,
                 typingUsers: [],
+                aiRuns: [],
                 replyTo: null,
             });
         },
@@ -363,6 +380,20 @@ export const useCollaborationStore = create<CollaborationState>((set, get) => {
         },
 
         setReplyTo: (replyTo) => set({ replyTo }),
+
+        applyAiActivity: (event) => {
+            const now = Date.now();
+            set((state) => ({
+                aiRuns: pruneStaleAiRuns(applyAiActivityEvent(state.aiRuns, event, now), now),
+            }));
+        },
+
+        finishAiRunsAnsweredBy: (message) => {
+            set((state) => {
+                const remaining = finishAiRunsAnsweredBy(state.aiRuns, message);
+                return remaining.length === state.aiRuns.length ? state : { aiRuns: remaining };
+            });
+        },
 
         openPanel: (panelTarget) => {
             set({ panelTarget, panelConversation: null });

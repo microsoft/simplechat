@@ -245,6 +245,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const [draft, setDraft] = useState(createComposerDraft);
     const { text, attachedPrompt } = draft;
+    // A message made only of mention chips is a ping, which typing `@Name` alone always allowed.
+    const hasMentionChips = (draft.mentions?.length ?? 0) > 0;
     const promptInstance = draft.promptInstance ?? 0;
     const contextItems = composerDraftContextItems(draft);
     const imageCapability = useImageEditCapability();
@@ -620,10 +622,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         imageReferenceConversationRef.current = activeConversationId;
         setDraft((current) => {
             const clearReferences = conversationChanged && Boolean(current.imageReferences?.length);
-            if (!current.uploads.length && !clearReferences) {
+            // Mention chips name the people and agents of the conversation being left.
+            const clearMentions = conversationChanged && Boolean(current.mentions?.length);
+            if (!current.uploads.length && !clearReferences && !clearMentions) {
                 return current;
             }
-            return { ...current, uploads: [], ...(clearReferences ? { imageReferences: [] } : {}) };
+            return {
+                ...current,
+                uploads: [],
+                ...(clearReferences ? { imageReferences: [] } : {}),
+                ...(clearMentions ? { mentions: [] } : {}),
+            };
         });
     }, [activeConversationId]);
 
@@ -1001,7 +1010,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         // An attached prompt is a complete message on its own, so a turn carrying one may be
         // sent without anything typed under it.
-        if (!text.trim() && !attachedPrompt) {
+        if (!text.trim() && !attachedPrompt && !hasMentionChips) {
             return;
         }
         if (attachedPrompt && !allowUnfilled && composerDraftUnfilledVariables(draft, promptContext()).length > 0) {
@@ -1935,7 +1944,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
+                                    disabled={(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'
