@@ -32,7 +32,7 @@ from content_screening.contracts import ScreeningError
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_appinsights import log_event
 from functions_workflow_handoff_builder import HANDOFF_REPORT_NODE_ID, HANDOFF_REPORT_OUTPUT
-from functions_workflow_node_results import load_node_result, result_selectors
+from functions_workflow_node_results import authorize_workflow_node_result_read, load_node_result, result_selectors
 from functions_workflow_result_masking import WORKFLOW_RESULT_VERSION
 from functions_workflow_result_store import (
     MAX_PAGE_BYTES,
@@ -388,7 +388,7 @@ def _handoff_receipt(workflow, run, workflow_id, user_id):
     return receipt
 
 
-def _read_handoff_result(workflow, run, workflow_id, run_id, receipt, *, expected_sha256,
+def _read_handoff_result(workflow, run, workflow_id, run_id, receipt, *, user_id, expected_sha256,
                          include_excerpts, budget, load_result, read_page):
     """Describe (or excerpt) a hand-off's report, the workflow's one output, by its exact selectors."""
     status = run.get("status")
@@ -416,6 +416,12 @@ def _read_handoff_result(workflow, run, workflow_id, run_id, receipt, *, expecte
     ):
         raise _closed("workflow_result_invalid", "manifest")
     _guarded("manifest", lambda: _require_completed_result(manifest, allow_partial=allow_partial))
+    # Re-prove the report's lineage against the saved flow, as the general path does for every
+    # task row: each consumed-input receipt must chain to a real parent result of this run.
+    _guarded("authorize", lambda: authorize_workflow_node_result_read(
+        workflow, run_id, producer, receipt["result_ref"], reader_user_id=user_id,
+        manifest=manifest, load_result=loader, include_sources=False,
+    ))
     result = {
         "descriptor": _descriptor(workflow, run, workflow_id, run_id, digest), "partial": allow_partial,
         "output_count": 1, "excerpts": [], "saved_inputs": [], "truncated": False,
@@ -819,7 +825,7 @@ def read_workflow_result(
         if receipt is None:
             raise _closed("workflow_result_unsupported", "run")
         return _read_handoff_result(
-            workflow, run, workflow_id, run_id, receipt, expected_sha256=expected_sha256,
+            workflow, run, workflow_id, run_id, receipt, user_id=user_id, expected_sha256=expected_sha256,
             include_excerpts=include_excerpts, budget=excerpt_budget_bytes,
             load_result=load_result, read_page=read_page,
         )
