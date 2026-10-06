@@ -2,8 +2,8 @@
 # test_workflow_handoff_result_reader.py
 """
 Functional test for reading a one-time hand-off's report in the workflow result reader.
-Version: 0.261.250
-Implemented in: 0.261.250
+Version: 0.261.252
+Implemented in: 0.261.250 (the report's lineage re-proof: 0.261.252)
 
 This test ensures that the result reader, which keeps structured (v3) runs closed, opens exactly
 one shape: a one-time chat hand-off run whose single workflow output is the report node's text.
@@ -11,13 +11,17 @@ one shape: a one-time chat hand-off run whose single workflow output is the repo
 * The run must come from chat orchestration, its workflow must be the hand-off's one-time
   workflow under the deterministic id, and its one receipt must name the report node, its text
   output and a well-formed reference. Every other structured shape stays closed with no read.
-* The report is read through its exact node selectors, its lineage is re-proved against the saved
-  flow, so an edited or re-enabled definition fails closed, and the result is bound to a digest.
+* The report is read through its exact node selectors and bound to a digest. An edited or
+  re-enabled definition fails closed before any load.
+* Before the result is described or excerpted, the shared node lineage authorizer re-proves the
+  report's lineage against the saved flow: every consumed-input receipt must chain to a real
+  parent result of this run. A malformed receipt, a missing parent or a corrupt parent closes
+  the read, and the report's text is never loaded.
 * Excerpts stay bounded, carry no store references or ids, and page a large report once.
 
 It uses fake containers and an in-memory canonical result store; the hand-off builder, the result
-contract, the node identity and the reader are real. Checks use explicit raises, so they hold
-under ``python -O``.
+contract, the node identity, the lineage authorizer and the reader are real. Checks use explicit
+raises, so they hold under ``python -O``.
 """
 
 import json
@@ -36,28 +40,41 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 import functions_workflow_result_reader as reader  # noqa: E402
 from functions_workflow_execution import workflow_execution_scope  # noqa: E402
 from functions_workflow_handoff_builder import build_handoff_definition  # noqa: E402
-from functions_workflow_identity import workflow_execution_id  # noqa: E402
-from functions_workflow_result_store import MAX_PAGE_BYTES  # noqa: E402
-from functions_workflow_results import build_workflow_task_result, persist_workflow_task_result  # noqa: E402
+from functions_workflow_identity import workflow_execution_id, workflow_node_identity  # noqa: E402
+from functions_workflow_node_results import open_workflow_record_input, result_selectors  # noqa: E402
+# _verify_payload is the real store's size and digest check; _build_task_result is how the
+# structured runner builds an engine node's (collect's) result, which has no task.
+from functions_workflow_result_store import MAX_PAGE_BYTES, _verify_payload  # noqa: E402
+from functions_workflow_results import (  # noqa: E402
+    _build_task_result,
+    build_workflow_task_result,
+    persist_workflow_task_result,
+)
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from test_support.workflow_result_chat import (  # noqa: E402
     USER,
     CanonicalStore,
     FakeContainer,
+    RunFixture,
     accepted_partial,
+    analysis_result,
+    canonical,
     closed,
 )
 
 
 MINIMUM_VERSION = "0.261.250"
+LINEAGE_VERSION = "0.261.252"
 HANDOFF_ID = "handoff-7f3"
 RUN = "run-handoff-41"
 CONVERSATION = "conversation-9"
 COMPLETED_AT = "2026-01-05T14:02:00+00:00"
 REQUESTED_AT = "2026-01-05T13:00:00+00:00"
 REPORT_TEXT = "The review found two contracts that need an owner."
+COLLECTED = [{"finding": "Contract A needs an owner."}, {"finding": "Contract B needs an owner."}]
 WID = reader._handoff_workflow_id(USER, HANDOFF_ID)
 DEFAULT_BUDGET = reader.DEFAULT_EXCERPT_BUDGET_BYTES
+UNAVAILABLE = "[WorkflowResults] Workflow result unavailable"
 
 
 def _require(condition, message):
@@ -107,9 +124,14 @@ class NodeStore(CanonicalStore):
 
 
 class HandoffFixture:
-    """A finished hand-off run whose report was saved through the real v3 result contract."""
+    """A finished hand-off run whose report was saved through the real v3 result contract.
 
-    def __init__(self, *, status="completed", title="Board summary", result=None, partial=False):
+    ``lineage``, when given, saves the report's parents and returns its consumed-input receipts. It
+    gets only the saved workflow and the store, so no hook runs on a half-built fixture. Without it
+    the report consumed nothing, so there's no lineage to walk.
+    """
+
+    def __init__(self, *, status="completed", title="Board summary", result=None, partial=False, lineage=None):
         self.store = NodeStore()
         blueprint = {
             "name": "Contract review",
@@ -146,6 +168,8 @@ class HandoffFixture:
         envelope["workflow_validation"] = {"version": 1, "status": "valid", "eligible": True}
         if partial:
             accepted_partial(envelope)
+        if lineage is not None:
+            envelope["consumed_inputs"] = lineage(workflow, self.store)
         self.manifest, self.reference = persist_workflow_task_result(
             envelope, workflow=workflow, run_id=RUN, task_id=self.task_id, save_result=self.store.save,
         )
@@ -199,6 +223,89 @@ class HandoffFixture:
         }])
 
 
+class CollectedParent:
+    """The report's ``collect`` parent: a real records result, saved the way the runner saves it.
+
+    The collect node is an engine node with no task, so its result is built the way the runner
+    builds a control node's result and saved through the real v2 contract. The report's receipt
+    is the one the runner records for a records input: the real record reader proves the parent
+    and names the exact output, and the runner adds the input name. ``tamper``, when given, may
+    then change the receipt; it gets the parent's manifest and a way to save another parent.
+    """
+
+    def __init__(self, tamper=None):
+        self.tamper = tamper
+        self.identity = self.manifest = self.reference = None
+
+    def receipts(self, workflow, store):
+        identity = workflow_node_identity(workflow, RUN, "collect", workflow_execution_id(workflow, RUN, "collect"), 1)
+        collected = _build_task_result({
+            "reply": "Collected two findings.",
+            "authoritative_result": {"kind": "records", "value": deepcopy(COLLECTED)},
+        }, identity, "workflow-result-v2")
+        collected["consumed_inputs"] = []
+        collected["workflow_validation"] = {"version": 1, "status": "valid", "eligible": True}
+        self.identity = identity
+        self.manifest, self.reference = persist_workflow_task_result(
+            collected, workflow=workflow, run_id=RUN, task_id=None, save_result=store.save,
+        )
+        records = open_workflow_record_input(
+            workflow, RUN, identity, self.reference, output_name="records",
+            reader_user_id=USER, load_result=store.load,
+        )
+        receipt = {**records.receipt, "input_name": "findings"}
+        if self.tamper is not None:
+            self.tamper(receipt, self.manifest, lambda parent: store.save(workflow, RUN, None, parent))
+        return [receipt]
+
+
+class LineageFixture(HandoffFixture):
+    """A hand-off whose report consumed a real ``collect`` result, through the runner's contract."""
+
+    def __init__(self, *, tamper=None, **options):
+        parent = CollectedParent(tamper)
+        super().__init__(lineage=parent.receipts, **options)
+        self.collect_identity = parent.identity
+        self.collect_manifest = parent.manifest
+        self.collect_reference = parent.reference
+        self.reset()
+
+
+def _repoint(fixture, manifest):
+    """Save an edited report manifest under its own valid hash and point the run's receipt at it."""
+    reference = fixture.store.save(fixture.workflow, RUN, fixture.task_id, manifest)
+    fixture.receipt["result_ref"] = reference
+    return reference
+
+
+def _digest_for(fixture, reference, status="completed"):
+    return reader.workflow_result_digest(WID, RUN, status, [{
+        "task_id": fixture.task_id, "workflow_result": {"authoritative_output": "text", "result_ref": reference},
+    }])
+
+
+def _closed_stages(monkeypatch):
+    """Record the reader's closed-reason log entries, which name the stage that closed the read."""
+    logged = []
+
+    def record(message, extra=None, **kwargs):
+        if message == UNAVAILABLE:
+            logged.append(dict(extra or {}))
+
+    monkeypatch.setattr(reader, "log_event", record)
+    return logged
+
+
+def _verifying(store):
+    """The canonical store's loader with the real result store's size and digest check."""
+    def load(workflow, run_id, task_id, reference, **selectors):
+        value = store.load(workflow, run_id, task_id, reference, **selectors)
+        _verify_payload(store.contents[reference["sha256"]].encode("ascii"), reference)
+        return value
+
+    return load
+
+
 def _refused(fixture, code, **options):
     error = closed(lambda: fixture.read(**options))
     _same(error.code, code, "the closed reason")
@@ -212,6 +319,10 @@ def _unread(fixture, label):
 
 def test_version_is_at_least_the_handoff_release():
     assert_app_version_at_least(MINIMUM_VERSION)
+
+
+def test_version_is_at_least_the_lineage_release():
+    assert_app_version_at_least(LINEAGE_VERSION)
 
 
 def test_the_handoff_workflow_id_matches_the_draft_service():
@@ -577,6 +688,217 @@ def test_a_chat_run_of_a_proposed_structured_workflow_stays_closed():
     _refused(fixture, "workflow_result_unsupported", include_excerpts=True)
 
     _unread(fixture, "a proposed workflow")
+
+
+_READS = (("excerpts", {"include_excerpts": True}), ("descriptor", {}))
+_LINEAGE_INVALID = {"code": "workflow_result_invalid", "stage": "authorize", "error_type": "AnalysisResultUnavailable"}
+
+
+def test_a_malformed_consumed_input_receipt_is_refused_before_the_report_is_read(monkeypatch):
+    # Saved under its own valid hash, so the identity, output and completion checks all pass.
+    fixture = HandoffFixture()
+    manifest = deepcopy(fixture.manifest)
+    manifest["consumed_inputs"] = [{"malformed_receipt": True}]
+    reference = _repoint(fixture, manifest)
+    fixture.reset()
+    logged = _closed_stages(monkeypatch)
+
+    for label, options in _READS:
+        _refused(fixture, "workflow_result_invalid", **options)
+        _same(fixture.store.loads, [reference["sha256"]], f"{label}: the loads")
+        _require(fixture.text_reference["sha256"] not in fixture.store.loads, f"{label}: the report's text was loaded.")
+        _same(fixture.store.pages, [], f"{label}: the page reads")
+        _same(logged, [_LINEAGE_INVALID], f"{label}: the closed stage")
+        fixture.reset()
+        logged.clear()
+
+    context = {"workflow_id": WID, "run_id": RUN, "result_sha256": _digest_for(fixture, reference)}
+    error = closed(lambda: reader.authorize_workflow_result_context(
+        USER, context, containers=fixture.containers, load_result=fixture.store.load, read_page=fixture.store.read_page,
+    ))
+    _same(error.code, "workflow_result_invalid", "the stored context's closed reason")
+    _same(fixture.store.loads, [reference["sha256"]], "the stored context's loads")
+    _same(fixture.store.pages, [], "the stored context's page reads")
+    _same(logged, [_LINEAGE_INVALID], "the stored context's closed stage")
+
+    # Without the walk the same manifest reads as a normal report, so the refusal is the walk's.
+    monkeypatch.setattr(reader, "authorize_workflow_node_result_read", lambda *args, **kwargs: None)
+    fixture.reset()
+    unwalked = fixture.read(include_excerpts=True)
+    _same(unwalked["descriptor"]["available"], True, "availability without the walk")
+    _same(unwalked["excerpts"][0]["text"], REPORT_TEXT, "the report text without the walk")
+
+
+def test_a_report_with_real_lineage_reads_after_walking_its_parent(monkeypatch):
+    fixture = LineageFixture()
+    report, collect, text = (
+        fixture.reference["sha256"], fixture.collect_reference["sha256"], fixture.text_reference["sha256"],
+    )
+    _same(fixture.manifest["consumed_inputs"], [{
+        "producer": fixture.collect_identity, "output_name": "records", "result_ref": fixture.collect_reference,
+        "output_ref": fixture.collect_manifest["outputs"]["records"]["result_ref"], "input_name": "findings",
+    }], "the report's consumed-input receipt")
+    _same(fixture.collect_identity["node_id"], "collect", "the parent node")
+
+    result = fixture.read(include_excerpts=True)
+
+    _same(result["descriptor"]["available"], True, "availability")
+    _same(result["descriptor"]["result_sha256"], fixture.digest(), "the digest")
+    _same(result["excerpts"], [{
+        "label": "Board summary", "kind": "text", "final": True, "text": REPORT_TEXT, "truncated": False, "note": None,
+    }], "the excerpts")
+    _same(fixture.store.loads, [report, collect, text], "the loads: the manifest, its lineage, then the text section")
+    _same(fixture.store.pages, [], "the page reads")
+    _same(fixture.store.selectors, [
+        ("load", report, fixture.selectors),
+        ("load", collect, result_selectors(fixture.collect_identity)),
+        ("load", text, fixture.selectors),
+    ], "the selectors")
+
+    # Without the walk the result is identical and only the parent's load disappears, so this
+    # control passes by walking real lineage, not because there was nothing to walk.
+    calls = []
+
+    def skip_walk(workflow, run_id, identity, reference, **options):
+        calls.append({
+            "run_id": run_id, "identity": identity, "reference": reference,
+            "reader_user_id": options.get("reader_user_id"), "manifest": options.get("manifest"),
+        })
+
+    monkeypatch.setattr(reader, "authorize_workflow_node_result_read", skip_walk)
+    fixture.reset()
+    _same(fixture.read(include_excerpts=True), result, "the result without the walk")
+    _same(fixture.store.loads, [report, text], "the loads without the walk")
+    _same(calls, [{
+        "run_id": RUN, "identity": fixture.manifest["identity"], "reference": fixture.reference,
+        "reader_user_id": USER, "manifest": fixture.manifest,
+    }], "the walk's arguments")
+
+
+def test_a_descriptor_alone_walks_the_lineage_but_reads_no_section():
+    fixture = LineageFixture()
+    expected = [fixture.reference["sha256"], fixture.collect_reference["sha256"]]
+
+    result = fixture.read()
+
+    _same(result["excerpts"], [], "the excerpts")
+    _same(result["descriptor"]["available"], True, "availability")
+    _same(result["descriptor"]["result_sha256"], fixture.digest(), "the digest")
+    _same(fixture.store.loads, expected, "the loads")
+    _same(fixture.store.pages, [], "the page reads")
+
+    fixture.reset()
+    descriptor = reader.authorize_workflow_result_context(
+        USER, reader.workflow_result_context(result["descriptor"]), containers=fixture.containers,
+        load_result=fixture.store.load, read_page=fixture.store.read_page,
+    )
+    _same(descriptor, result["descriptor"], "the authorized descriptor")
+    _same(fixture.store.loads, expected, "the stored context's loads")
+    _same(fixture.store.pages, [], "the stored context's page reads")
+
+
+def test_a_missing_parent_is_refused_with_the_general_paths_code(monkeypatch):
+    fixture = LineageFixture()
+    del fixture.store.contents[fixture.collect_reference["sha256"]]
+    logged = _closed_stages(monkeypatch)
+    missing = {"code": "workflow_result_not_found", "stage": "authorize", "error_type": "CosmosResourceNotFoundError"}
+    walked = [fixture.reference["sha256"], fixture.collect_reference["sha256"]]
+
+    for label, options in _READS:
+        error = _refused(fixture, "workflow_result_not_found", **options)
+        _same(error.status, 404, f"{label}: the status")
+        _same(fixture.store.loads, walked, f"{label}: the loads")
+        _same(fixture.store.pages, [], f"{label}: the page reads")
+        _same(logged, [missing], f"{label}: the closed stage")
+        fixture.reset()
+        logged.clear()
+
+    # The general path walks the same lineage for each task row. This report consumed a parent
+    # whose row and stored result are both gone, so only the walk can reach the missing parent.
+    general = RunFixture()
+    _, parent = general.add_task("task-collect-1", analysis_result(), order=1)
+    general.add_task("task-report-2", {"reply": REPORT_TEXT}, order=2, consumed=[
+        general.receipt("task-collect-1", parent),
+    ])
+    general.items[:] = [item for item in general.items if item["task_id"] != "task-collect-1"]
+    del general.store.contents[parent["sha256"]]
+    general.reset_counters()
+
+    error = closed(lambda: general.read(include_excerpts=True))
+
+    _same(error.code, "workflow_result_not_found", "the general path's closed reason")
+    _same(error.status, 404, "the general path's status")
+    _same(general.store.loads[-1:], [parent["sha256"]], "the general path's last load, the missing parent")
+    _same(logged, [missing], "the general path's closed stage")
+
+
+def _wrong_receipt_output(receipt, parent, save):
+    receipt["output_ref"] = {"sha256": "c" * 64, "size_bytes": 10}
+
+
+def _wrong_parent_output(receipt, parent, save):
+    # A parent saved under its own valid hash whose records output names another section.
+    altered = deepcopy(parent)
+    altered["outputs"]["records"]["result_ref"] = deepcopy(altered["outputs"]["text"]["result_ref"])
+    receipt["result_ref"] = save(altered)
+
+
+@pytest.mark.parametrize("tamper", [_wrong_receipt_output, _wrong_parent_output], ids=["receipt", "parent"])
+def test_a_parent_whose_output_disagrees_with_the_receipt_is_refused(tamper, monkeypatch):
+    fixture = LineageFixture(tamper=tamper)
+    parent = fixture.manifest["consumed_inputs"][0]["result_ref"]["sha256"]
+    logged = _closed_stages(monkeypatch)
+
+    for label, options in _READS:
+        _refused(fixture, "workflow_result_invalid", **options)
+        _same(fixture.store.loads, [fixture.reference["sha256"], parent], f"{label}: the loads")
+        _same(fixture.store.pages, [], f"{label}: the page reads")
+        _same(logged, [_LINEAGE_INVALID], f"{label}: the closed stage")
+        fixture.reset()
+        logged.clear()
+
+
+def test_a_parent_whose_bytes_do_not_match_its_hash_is_refused(monkeypatch):
+    fixture = LineageFixture()
+    load = _verifying(fixture.store)
+    verified = fixture.read(include_excerpts=True, load_result=load)
+    _same(verified["excerpts"][0]["text"], REPORT_TEXT, "the verified read")
+    # Same length, different bytes: only the digest disagrees.
+    altered = deepcopy(fixture.collect_manifest)
+    altered["summary"] = altered["summary"].replace("two", "six")
+    _require(altered != fixture.collect_manifest, "The parent wasn't altered.")
+    _same(len(canonical(altered)), fixture.collect_reference["size_bytes"], "the altered parent's size")
+    fixture.store.contents[fixture.collect_reference["sha256"]] = canonical(altered)
+    fixture.reset()
+    logged = _closed_stages(monkeypatch)
+    walked = [fixture.reference["sha256"], fixture.collect_reference["sha256"]]
+
+    for label, options in _READS:
+        _refused(fixture, "workflow_result_invalid", load_result=load, **options)
+        _same(fixture.store.loads, walked, f"{label}: the loads")
+        _same(fixture.store.pages, [], f"{label}: the page reads")
+        _same(logged, [{
+            "code": "workflow_result_invalid", "stage": "authorize", "error_type": "WorkflowResultIntegrityError",
+        }], f"{label}: the closed stage")
+        fixture.reset()
+        logged.clear()
+
+
+@pytest.mark.parametrize("variant", ["definition_edit", "enable_toggle", "alert_edit", "run_as"])
+def test_an_edited_or_re_enabled_definition_with_lineage_fails_closed(variant):
+    fixture = LineageFixture()
+    if variant == "definition_edit":
+        fixture.workflow["tasks"][1]["instructions"] = "Write a different report."
+    elif variant == "enable_toggle":
+        fixture.workflow["is_enabled"] = True
+    elif variant == "alert_edit":
+        fixture.workflow["alert_mode"] = "always"
+    else:
+        fixture.workflow["m365_run_as_user_id"] = "user-other-2"
+
+    for label, options in _READS:
+        _refused(fixture, "workflow_result_invalid", **options)
+        _unread(fixture, f"{variant}, {label}")
 
 
 if __name__ == "__main__":

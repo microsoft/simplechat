@@ -564,11 +564,26 @@ hand-off run only when all of these hold:
 - The run id is the one the hand-off derives.
 - The run has exactly one output, the report node's text, with a well-formed
   SHA-256 result reference.
-- The node lineage still matches the saved flow. An edited or re-enabled
-  workflow fails closed.
 
-Anything else is `workflow_result_unsupported`. Excerpts are bounded and carry
-no references or ids, and a large report is paged once.
+Anything else is `workflow_result_unsupported`. Before it describes or excerpts
+the report, the reader checks the report itself:
+
+- The report's node identity still matches the saved flow. An edited or
+  re-enabled workflow fails closed with `workflow_result_invalid` before
+  anything is loaded.
+- The report's lineage is re-proved with the shared node lineage authorizer,
+  the same walk the general path runs for every task row. Each consumed-input
+  receipt must chain to a real parent result of this run, with matching hashes
+  and references. A receipt that doesn't chain, or a damaged parent, is
+  `workflow_result_invalid`, and a missing parent is
+  `workflow_result_not_found`. The walk uses the saved flow and never
+  re-resolves sources.
+
+Both checks apply to a descriptor-only read, such as re-checking a stored chat
+context, as well as to an excerpt read. Excerpts are bounded and carry no
+references or ids, and a large report is paged once. The lineage re-proof was
+added in 0.261.252; see the
+[Workflow hand-off result lineage fix](../fixes/WORKFLOW_HANDOFF_RESULT_LINEAGE_FIX.md).
 
 A cancelled hand-off posts its note once. A paused hand-off that's never
 resumed gets the expired notice when its delivery window, the run's deadline
@@ -654,7 +669,7 @@ All paths are under `application/single_app/`.
 | `functions_workflow_drafts.py` | The blueprint schema and checks, the hand-off dry run and create, and edited payload checks. |
 | `functions_workflow_definitions.py`, `functions_workflow_definition_store.py` | `origin.one_time` as a server-only field, and `one_time_status` outside the revision. |
 | `functions_workflow_runtime.py` | Recording `one_time_status` when the hand-off's run ends. |
-| `functions_workflow_result_reader.py` | Opening only a hand-off's own report. |
+| `functions_workflow_result_reader.py` | Opening only a hand-off's own report, after re-proving its lineage. |
 | `functions_workflow_limits.py` | The hand-off limits. |
 | `functions_personal_workflows.py` | Counting recent hand-offs, and leaving them out of the workflows-per-user count. |
 | `functions_orchestration_workflow_context.py` | The gates and the hand-off planning context. |
@@ -716,7 +731,7 @@ See [Orchestration settings](../../admin/orchestration.md).
 | `functional_tests/test_workflow_handoff_builder.py` | The v3 For each, the disclosure, every refusal, ids that never match a proposal's, creating at most once, and edited payloads building what a save builds. |
 | `functional_tests/test_workflow_handoff_origin.py` | `origin.one_time` as a server-only field on every client path, and hand-off and proposal creates never adopting each other's workflow. |
 | `functional_tests/test_workflow_handoff_lifecycle.py` | `one_time_status` on every terminal transition, the over-limit pause, and cancelled and expired hand-offs in chat. |
-| `functional_tests/test_workflow_handoff_result_reader.py` | The reader opening only a hand-off's own report, lineage, digests and paging. |
+| `functional_tests/test_workflow_handoff_result_reader.py` | The reader opening only a hand-off's own report; re-proving its lineage against a real parent result, and refusing a malformed receipt, a missing or damaged parent, or an edited definition before the report's text is read; digests and paging. |
 | `functional_tests/test_workflow_handoff_end_to_end.py` | 3-document and 200-document workspace queries through the real durable runtime and runner, ending with one summary posted to chat and no private values in any response or log. |
 | `functional_tests/route_tests/test_route_blueprint_policy_inventory.py`, `functional_tests/route_tests/test_route_unauthenticated_policy_contract.py` | The four routes in the route policy. |
 
@@ -728,7 +743,9 @@ workspaces in scope, at most 100. The step dry-runs once. An accept rebuilds the
 workflow, counts the user's recent hand-offs with one query, creates one
 workflow and queues one run. The status route reads each hand-off's workflow,
 and its run once queued. The report reads saved findings in pages; the
-200-document test checks pages of at most 100 records and 128 KiB.
+200-document test checks pages of at most 100 records and 128 KiB. Each read of
+the finished report walks its lineage again, about seven result-store loads per
+document; the 200-document read makes 1,409.
 
 ### Known limitations
 

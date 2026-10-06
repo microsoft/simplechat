@@ -28,7 +28,7 @@ not compared with the setting on. The browser's capability list is resolved with
 so it lists ``workflow_handoff`` for a missing role or a shared conversation exactly as it lists
 ``workflow_propose``; that one entry is checked, then left out of the comparison.
 
-The fixture was captured on the unmodified base (f1aeef13d, 0.261.233, before workflow hand-off).
+The fixture was captured on the unmodified base (a5a5b1c5, 0.261.248, before workflow hand-off).
 
 Never regenerate the fixture to make this test pass. After merging an upstream planner or route
 change, regenerate it from the upstream commit itself (without this feature):
@@ -111,7 +111,7 @@ from test_support.versioning import assert_app_version_at_least
 
 
 GOLDEN = Path(__file__).resolve().parent / "test_support" / "orchestration_workflow_handoff_off_golden.json"
-CAPTURED_FROM = "f1aeef13d (0.261.233, before workflow hand-off)"
+CAPTURED_FROM = "a5a5b1c5 (0.261.248, before workflow hand-off)"
 HANDOFF = "enable_chat_orchestration_workflow_handoff"
 RESULTS = "enable_chat_workflow_results"
 HANDOFF_CAPABILITY = "workflow_handoff"

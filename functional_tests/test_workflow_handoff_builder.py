@@ -148,8 +148,11 @@ DRAFT_SERVER_FIELDS = frozenset({
 RECORDS_SCHEMA = {"type": "array", "items": {"type": "object"}}
 
 # The Phase 4 blueprint schema, payloads, validation and dry run, captured before hand-off existed.
+# The schema digest was refreshed after #1641 (merged into Phase 7a at b8e47302b) added the merge
+# task schema. It equals the value at V2 a5a5b1c53, before hand-off merged, so this test still
+# proves hand-off left the Phase 4 schema unchanged.
 PHASE4_DIGESTS = {
-    "schema": "ab12fb1d29c7eaa028a534efa4f610795a31e25638643f30a8ec399b493d9b26",
+    "schema": "520139cbce120ca017106bf200832712913e395c6cd3e6fa9b530eae01cbd66e",
     "payload_email": "44aced826054039a54ae63588ef6f1a4b5d22447a80d26c2af0f7cfb891739fc",
     "payload_review": "1f93a59c2c6870eaad04a324b4b86262c0f0da6eea745b5a91835b7d0bb73531",
     "validate": "36537c8af7af0882ab7615b0e1014b5eca1181235af439c919ebf7692993197f",
