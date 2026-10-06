@@ -74,6 +74,15 @@ export interface UserSettings {
     v2WorkspaceRailCollapsed?: boolean;
 
     /**
+     * Whether the Admin Settings categories rail shows icons only.
+     *
+     * Its own key rather than `v2WorkspaceRailCollapsed` or `v2RailCollapsed`: making room for
+     * the settings cards should not also change how the workspace pages or the application
+     * shell are laid out.
+     */
+    v2AdminRailCollapsed?: boolean;
+
+    /**
      * How the workspace documents explorer is presented, and the views pinned in its rail.
      *
      * Namespaced like the shell preferences above. The classic interface stores its own
@@ -208,6 +217,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     // Separate from v2RailCollapsed, which is the rail of the application shell:
     // collapsing one should not collapse the other.
     'v2WorkspaceRailCollapsed',
+    // Whether the Admin Settings categories rail is showing icons only. Separate from the
+    // shell and workspace rails for the same reason they are separate from each other.
+    'v2AdminRailCollapsed',
     // Workspace documents explorer: how the list is presented, and the saved filter
     // combinations pinned in its navigation rail.
     'v2DocumentsPrefs',

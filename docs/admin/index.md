@@ -73,6 +73,23 @@ the target, the page clears the search or switches to the target's category firs
 
 This layout was implemented in **0.261.258**.
 
+### Collapsing the category list
+
+The category list on the left can shrink to a strip of icons, giving its width to the
+settings cards. That matters most at larger text sizes, where the list grows with the
+text, and on mid-sized screens, where the extra width can leave room for the **On this
+page** list. Select **Collapse** at the top of the list to shrink it, and the expand
+icon in the same place to bring the labels back.
+
+Collapsed, each icon still switches category, shows its category name as a tooltip,
+and is announced by name to screen readers. The choice is saved with your user
+preferences, so it applies wherever you sign in, and it is kept separately from the
+workspace section rail and the main navigation, so collapsing one leaves the others
+alone. On narrower windows the page offers a category drop-down instead of the list,
+whichever way the list was left.
+
+The collapsible category list was added in **0.261.267**.
+
 ## Settings groups
 
 | Group | What it controls | Tabs | Link |

@@ -34,7 +34,8 @@ packages, settings, routes, or browser asset sources are required.
 container. At 76rem and above it becomes a grid of the cards and a 15rem index; the
 whole frame stays within 112rem so an ultra-wide monitor does not stretch it. The
 search bar aligns with the content instead of floating in the middle. The category
-rail shows each group's icon from the navigation definition.
+rail shows each group's icon from the navigation definition, and can be collapsed to
+those icons; see [V2 Admin Settings Rail Collapse](V2_ADMIN_SETTINGS_RAIL_COLLAPSE.md).
 
 ### Section presentation
 

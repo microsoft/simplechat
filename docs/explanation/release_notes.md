@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.267)**
+
+#### User Interface Enhancements
+
+*   **Collapsible Category List in V2 Admin Settings**
+    *   The category list on the left of V2 Admin Settings can now collapse to a strip of icons, as the workspace section rail does, giving its width to the settings cards. **Collapse** sits at the top of the list. Collapsed, each icon still switches category, shows its name as a tooltip, and is announced by name to screen readers.
+    *   The choice is remembered per administrator in a new `v2AdminRailCollapsed` user preference, kept separate from the workspace section rail and the main navigation so collapsing one leaves the others alone. Narrower windows keep the category drop-down.
+    *   (Ref: `AdminSettingsPage.tsx`, `userSettings.ts`, `route_backend_users.py`, `test_v2_admin_settings_rail_collapse.py`, `ui_tests/test_v2_admin_settings_rail_collapse.py`, [V2 Admin Settings Rail Collapse](features/V2_ADMIN_SETTINGS_RAIL_COLLAPSE.md))
+
 ### **(v0.261.265)**
 
 #### User Interface Enhancements
