@@ -23,7 +23,7 @@ classic Azure AI Search card briefly offered both controls in late 2025, but the
 handler never stored them and they were removed, so neither key has had a working control
 since.
 
-## Fixed in version: **0.261.262**
+## Fixed in version: **0.261.263**
 
 The application version is maintained in `application/single_app/config.py`.
 
@@ -34,7 +34,7 @@ The application version is maintained in `application/single_app/config.py`.
 | File | Change |
 | --- | --- |
 | `application/single_app/admin_settings_fields.py` | Declares both settings in a **Search result cache** group of `azure-ai-search-section`, and records them in `V2_ONLY_FIELDS`. |
-| `application/single_app/config.py` | Version 0.261.262. |
+| `application/single_app/config.py` | Version 0.261.263. |
 | `functional_tests/test_v2_admin_capability_placement.py` | Pins the relocation in `RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD`. |
 | `functional_tests/test_search_result_cache_admin_setting.py` | New. |
 | `ui_tests/test_v2_admin_search_result_cache.py` | New. |
