@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.254)**
+
+#### User Interface Enhancements
+
+*   **V2 Admin Settings Use the Full Width**
+    *   Admin Settings now fills the screen instead of a 768px column. On wide screens an **On this page** list sits beside the cards with each section's status (Configured, Needs configuration, Off, or Prerequisite missing), a count of sections that need attention, and a marker for the section you are reading. Select an entry to jump to it.
+    *   Every section uses the card the Agents settings introduced: an icon from the navigation, a larger title, and stronger group boundaries. The switch a section depends on is highlighted, and settings that only apply while a switch is on are indented beneath it. That nesting is read from the field schema, so it appears in every section that declares it.
+    *   On a wide card each setting's label and description sit beside its control, and independent switches pair up in two columns. Narrow screens and larger text sizes keep the stacked layout.
+    *   (Ref: `AdminSettingsPage.tsx`, `SettingsSection.tsx`, `SettingsIndex.tsx`, `adminSections.ts`, `fields.tsx`, `theme.css`, [V2 Admin Settings Layout and Hierarchy](features/V2_ADMIN_SETTINGS_LAYOUT_AND_HIERARCHY.md))
+
+*   **Model Catalog Workbench in V2**
+    *   The V2 Model Catalog is now drawn natively as a workbench. Each profile is one line, with its name, publisher, and the number of global models connected to it, and the list and the selected profile scroll separately.
+    *   A profile's detail is split into **Overview**, **Capabilities**, **Connections**, and **Evidence** tabs, with **Favorite** and **Priority** in its header. Selecting the connected-model count opens the Connections tab, and **Open in AI Connections** opens that model's connection editor with the model outlined.
+    *   The admin catalog response now includes each linked model's connection and model ids. The classic catalog is unchanged.
+    *   (Ref: `ModelCatalogManager.tsx`, `ModelCatalogDetail.tsx`, `ModelCatalogEditor.tsx`, `modelCatalog.ts`, `ModelConnectionsManager.tsx`, `route_backend_models.py`, [V2 Model Catalog Workbench](features/V2_MODEL_CATALOG_WORKBENCH.md))
+
+#### Bug Fixes
+
+*   **V2 Admin Settings Links Scroll to Their Target**
+    *   **Go to setting** in App Role Requirements and other links between settings cleared the search and category but never scrolled, because they looked up an id the cards no longer rendered. They now scroll to the section and focus its heading, keep the current category when it already shows the target, and respect reduced motion.
+    *   (Ref: `AdminSettingsPage.tsx`, `test_v2_admin_settings_layout.py`, [V2 Admin Section Jump Fix](fixes/V2_ADMIN_SECTION_JUMP_FIX.md))
+
 ### **(v0.261.253)**
 
 #### Bug Fixes
