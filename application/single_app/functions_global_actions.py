@@ -31,6 +31,7 @@ from functions_legacy_action_management import (
     validate_scoped_mcp_action,
 )
 from functions_settings import get_settings
+from functions_mcp_tool_pinning import validate_mcp_tool_pinning_for_save
 
 
 def _clean_action(action, return_type, action_id=None):
@@ -165,6 +166,7 @@ def save_global_action(action_data, user_id=None):
             existing_action = None
 
         validate_legacy_action_update(submitted_action, existing_action)
+        validate_mcp_tool_pinning_for_save(action_data, existing_action)
         legacy_type = is_legacy_msgraph_type(action_data.get('type'))
         if legacy_type:
             action_data['type'] = 'msgraph'

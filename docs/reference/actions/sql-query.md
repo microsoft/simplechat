@@ -1,7 +1,7 @@
 ---
 layout: page
-title: "SQL Query"
-description: "Full guide for the SQL Query SimpleChat action."
+title: "SQL Database"
+description: "Full guide for the SQL Database SimpleChat action."
 section: "Reference"
 audience: user
 ---
@@ -12,11 +12,11 @@ audience: user
 
 ## What this action does
 
-SQL Query executes SQL against configured SQL Server, Azure SQL, PostgreSQL, MySQL, or SQLite databases. It can validate a query, run row-returning queries, run scalar queries, and answer database questions with supplied SQL. **Max Rows** and **Timeout (seconds)** limit result size and execution time.
+SQL Database executes SQL against configured SQL Server, Azure SQL, PostgreSQL, MySQL, or SQLite databases. It can validate a query, run row-returning queries, run scalar queries, and answer database questions with supplied SQL. **Max Rows** and **Timeout (seconds)** limit result size and execution time.
 
 ## Why and when to use it
 
-Use SQL Query when the answer depends on exact relational data: joins, filters, counts, current rows, or scalar values. Pair it with SQL Schema when the agent needs table and column discovery before writing SQL. Do not use it for Snowflake or Databricks warehouses; those have dedicated actions. Do not use it for spreadsheets; use Tabular Processing. Keep **Read Only Mode** set to **Yes (Recommended)** unless writes have been separately reviewed.
+Use SQL Database when the answer depends on exact relational data: joins, filters, counts, current rows, or scalar values. Schema discovery is included automatically for agents that need table context before writing SQL. Do not use it for Snowflake or Databricks warehouses; those have dedicated actions. Do not use it for spreadsheets; use Tabular Processing. Keep **Read Only Mode** set to **Yes (Recommended)** unless writes have been separately reviewed.
 
 ## Before you start
 
@@ -27,14 +27,14 @@ Use SQL Query when the answer depends on exact relational data: joins, filters, 
 
 ## Configure the action
 
-1. Choose **SQL Query**. If the combined SQL panel opens, select **Plugin Type** > **Query Plugin**.
+1. Choose **SQL Database**. Existing manifests still use the `sql_query` type internally, and the combined SQL panel selects **Query Plugin** for row-returning queries.
 2. Choose **Database Type**: **SQL Server**, **Azure SQL**, **PostgreSQL**, **MySQL**, or **SQLite**.
 3. Choose **Connection Method**: **Connection String** or **Individual Parameters**.
 4. Fill **Connection String**, or fill **Server**, **Database**, optional **Port**, and **ODBC Driver** when shown.
 5. Choose **Authentication Type** and fill the shown credential fields, or choose **Reusable Identity** when available.
 6. Under **Query Plugin Settings**, leave **Read Only Mode** at **Yes (Recommended)** unless writes are approved.
 7. Set **Max Rows** and **Timeout (seconds)**.
-8. Use **Test Connection**, then save.
+8. Use the connection check in **Authentication**, then save.
 
 ## Example prompts
 
@@ -50,9 +50,15 @@ Use SQL Query when the answer depends on exact relational data: joins, filters, 
 | The agent writes invalid SQL | It does not know the schema. | Pair the agent with SQL Schema or provide table and column names in instructions. |
 | Results are truncated | **Max Rows** is lower than the result size. | Ask for a grouped or filtered result, or raise **Max Rows** within governance limits. |
 
+
+## V2 naming and schema discovery
+
+The V2 action picker labels this action **SQL Database** so owners can distinguish it from warehouse-specific actions. The stored type remains `sql_query` for compatibility. Schema discovery is included automatically for agents that need table context, so the separate `sql_schema` creation card is hidden while existing `sql_schema` actions remain editable.
+
+Connection testing appears in **Authentication**, after credentials. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
+
 ## Related
 
 - [SQL Schema](../sql-schema/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
 - [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
-

@@ -12,6 +12,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.279)**
 
+#### Bug Fixes
+
+*   **MCP Fingerprint Import Cycle**
+    *   Shared MCP fingerprint metadata normalization now lives in a dependency-neutral module, avoiding cyclic imports during action loading and notification delivery.
+    *   (Ref: `functions_mcp_fingerprint_metadata.py`, `functions_mcp_operations.py`, `functions_mcp_tool_pinning.py`)
+
 #### New Features
 
 *   **V2 Control Center Dashboard**
@@ -47,6 +53,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Action Configuration Pane Cleanup**
+    *   The V2 action editor now hides empty configuration sections, removes ad hoc custom fields, keeps unknown legacy values in Advanced JSON, and moves connection checks into Authentication where credentials are visible.
+    *   Action-specific configuration now reflects the actual supported settings: Document Search scopes and summary targets, Microsoft 365 capability switches and read-only Graph endpoint, OpenAPI spec-derived base URL and operation switches, MCP server templates and tool fingerprint approval, and Yamcs reverse proxy authentication.
+    *   (Ref: `ActionEditorPage.tsx`, `ActionConfigurationFields.tsx`, `ActionAuthentication.tsx`, `DocumentSearchActionConfiguration.tsx`, `McpActionConfiguration.tsx`, `OpenApiActionConfiguration.tsx`, [Action Configuration Pane Cleanup](features/ACTION_CONFIGURATION_PANE_CLEANUP.md))
+
+#### Bug Fixes
+
+*   **Action Catalogue Deduplication and Legacy Type Hiding**
+    *   Databricks no longer appears multiple times in the new-action picker, SQL actions display as SQL Database with schema discovery included, and legacy/internal-only types are hidden from new-action creation while existing actions remain editable.
+    *   (Ref: `route_backend_plugins.py`, `functions_workspace_authoring.py`, action reference docs)
+
+#### User Interface Enhancements
+
+*   **Safer Action Validation and Review Badges**
+    *   MCP actions now require discovery approval before saving new or changed server manifests, runtime calls block changed tools, and Actions/Agents lists flag drift with a "Tools changed — review" badge.
+    *   OpenAPI actions show the chosen spec file name, offer explicit operation enablement, and reject disabled operations before an HTTP request is sent.
+    *   (Ref: `functions_mcp_tool_pinning.py`, `mcp_plugin_factory.py`, `openapi_plugin.py`, `ActionsSection.tsx`, `AgentsSection.tsx`)
+
 *   **V2 Admin Help Group Matches the Classic Page**
     *   **Support** now offers the Menu Name, the Send Feedback destination and its Support Recipient Email, nested under the Support menu switch. The card reads **Needs configuration** while Send Feedback is on with no recipient, and the empty recipient field is marked **Required**. A malformed address is refused beside the field instead of being cleared, and turning the menu on no longer switches Send Feedback off.
     *   **Send Feedback** has an Overview and the **Report a Bug** and **Request a Feature** forms. They prefill your name and email, check each field, record the submission, and open a text-only email draft to the SimpleChat team, with a link to open it again. The overview explains how this differs from your users' own Send Feedback and links to the Support settings.
@@ -54,12 +78,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Admin Latest Features** is now a V2 card marked **New**, and the Help category carries the same marker. Each release opens to details, why it matters, rollout notes, screenshots, and shortcuts. Shortcuts jump to the matching V2 card, or open the classic tab when V2 does not show it yet. Page search finds announcements by their content.
     *   The **Registered** / **Unregistered** release notifications badge now sits beside the version in V2 and opens the registration dialog.
     *   (Ref: `admin_settings_fields.py`, `functions_support_latest_features.py`, `GET /api/v2/admin/latest-features`, `AdminSettingsPage.tsx`, `SendFeedback.tsx`, `LatestFeaturesVisibility.tsx`, `AdminLatestFeatures.tsx`, `ReleaseNotificationsBadge.tsx`, [V2 Admin Help Settings](features/V2_ADMIN_HELP_SETTINGS.md))
-
-#### Bug Fixes
-
-*   **Application Title No Longer Doubles in Latest Features**
-    *   An application title containing "SimpleChat", such as "SimpleChat Contoso", was substituted twice in Latest Features copy and showed up as "SimpleChat Contoso Contoso". The title is now applied once, on both the classic pages and V2.
-    *   (Ref: `support_menu_config.py`, `test_v2_admin_latest_features_api.py`)
 
 ### **(v0.261.275)**
 

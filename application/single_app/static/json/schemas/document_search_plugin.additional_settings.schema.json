@@ -13,6 +13,37 @@
       ],
       "default": "all"
     },
+    "allowed_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "personal",
+          "group",
+          "public"
+        ]
+      },
+      "uniqueItems": true,
+      "default": [
+        "personal",
+        "group",
+        "public"
+      ]
+    },
+    "allowed_group_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "allowed_public_workspace_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
     "default_top_n": {
       "type": "integer",
       "minimum": 1,

@@ -1,22 +1,19 @@
 // ActionConfigurationFields.tsx
 
 import { useId, useState } from 'react';
-import { FlaskConical } from 'lucide-react';
-import { GlassButton } from '../ui/primitives';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { EditorFieldset, EditorPanel, EditorSwitch, type EditorFieldWidth } from '../workspace/EditorLayout';
+import { EditorFieldset, EditorSwitch, type EditorFieldWidth } from '../workspace/EditorLayout';
 import { ActionField, ActionJsonInput, ActionLinesInput, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
 import { ActionSchemaFields } from './ActionSchemaFields';
 import { CallAgentActionConfiguration } from './CallAgentActionConfiguration';
-import { ConnectorFeedbackPanel, useConnectorRequest } from './OpenApiActionConfiguration';
+import { DocumentSearchActionConfiguration } from './DocumentSearchActionConfiguration';
 import {
     actionFieldError, actionHasStoredArraySecrets, actionText, actionValueAt, changeActionField,
     changeSqlConnectionMethod, deriveBlobEndpoint, displayedActionValue,
 } from '../../lib/workspaceActionLogic';
 import { nativeActionDefinition, sqlConnectionMethod, usesDirectBlobConnectionString } from '../../lib/workspaceActionRegistry';
-import { EDITOR_SECRET_MASK, isRecord, type ActionTypeDefinition } from '../../lib/workspaceAuthoring';
-import { testWorkspaceAction } from '../../lib/workspaceActionServices';
-import { connectorTestScope, type ActionConnectorProps, type ActionFieldDescriptor } from '../../lib/workspaceActionTypes';
+import { EDITOR_SECRET_MASK, isRecord, pointerPart, type ActionTypeDefinition } from '../../lib/workspaceAuthoring';
+import type { ActionCapability, ActionConnectorProps, ActionFieldDescriptor } from '../../lib/workspaceActionTypes';
 
 export function ActionDescriptorField({ props, descriptor }: { props: ActionConnectorProps; descriptor: ActionFieldDescriptor }) {
     const id = useId();
@@ -64,30 +61,73 @@ export function ActionDescriptorField({ props, descriptor }: { props: ActionConn
     );
 }
 
+function capabilityDefinition(definition: ActionTypeDefinition, native = nativeActionDefinition(definition.type)) {
+    if (native.capabilities) return native.capabilities;
+    if (!definition.capabilities?.length) return undefined;
+    const defaults = isRecord(definition.defaults) ? definition.defaults : {};
+    const savedDefaults = isRecord(defaults.m365_capabilities) ? defaults.m365_capabilities : {};
+    const options: ActionCapability[] = definition.capabilities.map((capability) => ({
+        key: capability.key,
+        label: capability.label,
+        description: capability.description,
+        defaultEnabled: typeof savedDefaults[capability.key] === 'boolean' ? savedDefaults[capability.key] === true : capability.default !== false,
+    }));
+    return { path: '/additionalFields/m365_capabilities', options };
+}
+
+function configurationCoveredPaths(definition: ActionTypeDefinition) {
+    const native = nativeActionDefinition(definition.type);
+    const sql = ['sql_query', 'sql_schema'].includes(definition.type);
+    const capabilities = capabilityDefinition(definition, native);
+    return [
+        ...native.fields.map(({ path }) => path),
+        '/additionalFields/identity_auth_type',
+        ...(sql ? ['/additionalFields/auth_type', '/additionalFields/username', '/additionalFields/password', '/additionalFields/identity_uses_connection_string'] : []),
+        ...(['databricks', 'databricks_table', 'snowflake', 'tableau', 'yamcs'].includes(definition.type) ? ['/additionalFields/auth_method'] : []),
+        ...(['databricks', 'databricks_table'].includes(definition.type) ? ['/additionalFields/workspace_url'] : []),
+        ...(['tableau', 'yamcs'].includes(definition.type) ? ['/additionalFields/server_url'] : []),
+        ...(definition.type === 'tableau' ? ['/additionalFields/pat_name'] : []),
+        ...(definition.type === 'snowflake' ? ['/additionalFields/private_key_passphrase'] : []),
+        ...(definition.type === 'rocksdb' ? ['/additionalFields/auth_scheme', '/additionalFields/api_key_header', '/additionalFields/base_url'] : []),
+        ...(definition.type === 'log_analytics' ? ['/additionalFields/query_history'] : []),
+        ...(definition.type === 'yamcs' ? [
+            '/additionalFields/enable_basic_auth', '/additionalFields/basic_auth_username',
+            '/additionalFields/basic_auth_password', '/additionalFields/basic_auth_identity_id',
+        ] : []),
+        ...(capabilities ? [capabilities.path] : []),
+    ];
+}
+
+function schemaHasVisibleProperties(definition: ActionTypeDefinition) {
+    const coveredPaths = configurationCoveredPaths(definition);
+    const properties = definition.additional_fields_schema.properties ?? {};
+    return Object.keys(properties).some((key) => {
+        const pointer = `/additionalFields/${pointerPart(key)}`;
+        return !coveredPaths.some((known) =>
+            pointer === known || pointer.startsWith(`${known}/`) || known.startsWith(`${pointer}/`));
+    });
+}
+
+export function hasActionConfigurationFields(definition: ActionTypeDefinition) {
+    if (definition.type === 'agent' || definition.type === 'document_search' || definition.type === 'search' ||
+        definition.type === 'openapi' || definition.type === 'mcp') return true;
+    const native = nativeActionDefinition(definition.type);
+    return native.fields.length > 0 || Boolean(capabilityDefinition(definition, native)) || schemaHasVisibleProperties(definition);
+}
+
 export function ActionConfigurationFields(props: ActionConnectorProps & { definition: ActionTypeDefinition }) {
     const { draft, onChange, readOnly, definition } = props;
     const id = useId();
     const [confirmParameters, setConfirmParameters] = useState(false);
     const native = nativeActionDefinition(draft.type);
-    const request = useConnectorRequest(props);
     if (draft.type === 'agent') return <CallAgentActionConfiguration {...props} />;
+    if (draft.type === 'document_search' || draft.type === 'search') return <DocumentSearchActionConfiguration {...props} />;
     const sql = ['sql_query', 'sql_schema'].includes(draft.type);
-    const capabilities = native.capabilities;
+    const capabilities = capabilityDefinition(definition, native);
     const rawCapabilities = capabilities ? actionValueAt(draft, capabilities.path) : undefined;
     const capabilityValues = isRecord(rawCapabilities) ? rawCapabilities : {};
     const derivedEndpoint = draft.type === 'blob_storage' ? deriveBlobEndpoint(actionText(draft.auth.key)) : '';
-    const coveredPaths = [
-        ...native.fields.map(({ path }) => path),
-        '/additionalFields/identity_auth_type',
-        ...(sql ? ['/additionalFields/auth_type', '/additionalFields/username', '/additionalFields/password', '/additionalFields/identity_uses_connection_string'] : []),
-        ...(['databricks', 'databricks_table', 'snowflake', 'tableau', 'yamcs'].includes(draft.type) ? ['/additionalFields/auth_method'] : []),
-        ...(['databricks', 'databricks_table'].includes(draft.type) ? ['/additionalFields/workspace_url'] : []),
-        ...(['tableau', 'yamcs'].includes(draft.type) ? ['/additionalFields/server_url'] : []),
-        ...(draft.type === 'tableau' ? ['/additionalFields/pat_name'] : []),
-        ...(draft.type === 'snowflake' ? ['/additionalFields/private_key_passphrase'] : []),
-        ...(draft.type === 'rocksdb' ? ['/additionalFields/auth_scheme', '/additionalFields/api_key_header', '/additionalFields/base_url'] : []),
-        ...(capabilities ? [capabilities.path] : []),
-    ];
+    const coveredPaths = configurationCoveredPaths(definition);
 
     return (
         <div className="min-w-0 space-y-5" data-testid="action-configuration" data-action-type={draft.type}>
@@ -105,6 +145,10 @@ export function ActionConfigurationFields(props: ActionConnectorProps & { defini
                 </select>
             </ActionField> : null}
             {native.fields.map((descriptor) => <ActionDescriptorField key={descriptor.path} props={props} descriptor={descriptor} />)}
+            {draft.type.startsWith('m365_') && definition.graph_endpoint ? <ActionField id={`${id}-graph-endpoint`} label="Microsoft Graph endpoint"
+                help="Derived from this deployment’s Azure cloud. Agents cannot change it.">
+                <input id={`${id}-graph-endpoint`} className={ACTION_INPUT_CLASS} value={definition.graph_endpoint} readOnly />
+            </ActionField> : null}
             {usesDirectBlobConnectionString(draft) ? (
                 <div className="space-y-2 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-xs text-text-3">
                     <p>The blob service endpoint is derived automatically when saving or testing. A stored connection string keeps the saved endpoint.</p>
@@ -129,16 +173,6 @@ export function ActionConfigurationFields(props: ActionConnectorProps & { defini
             </EditorFieldset> : null}
             <ActionSchemaFields props={props} schema={definition.additional_fields_schema} coveredPaths={coveredPaths}
                 allowCustom={definition.additional_fields_schema.additionalProperties !== false} />
-            {native.testPath ? <EditorPanel title="Connection check"
-                description="Test connection makes a small request using this draft. An edited action uses its owned stored credentials when their masked values are unchanged. Saving does not run this test.">
-                <div>
-                    <GlassButton type="button" size="sm" variant="subtle" disabled={readOnly || Boolean(request.busy)}
-                        onClick={() => void request.run('Testing connection…', (signal) => testWorkspaceAction(draft, props.original, definition, signal, connectorTestScope(props)))}>
-                        <FlaskConical size={15} />{request.busy || 'Test connection'}
-                    </GlassButton>
-                </div>
-                <ConnectorFeedbackPanel feedback={request.feedback} stale={request.stale} />
-            </EditorPanel> : null}
             {confirmParameters ? <ConfirmDialog title="Use individual connection parameters?" tone="primary"
                 description="The saved connection string will be explicitly cleared when you save. Server, database, and authentication fields are kept for you to review."
                 confirmLabel="Use parameters" onClose={() => setConfirmParameters(false)}
