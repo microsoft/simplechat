@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.280)**
+
+#### Bug Fixes
+
+*   **Dashboard Date-Range Error Safety**
+    *   Dashboard summary and insights APIs now return a generic validation message for invalid date ranges instead of returning exception text.
+    *   (Ref: `route_backend_control_center.py`, `DASHBOARD_INVALID_RANGE_ERROR`)
+
 ### **(v0.261.279)**
 
 #### New Features
