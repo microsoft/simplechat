@@ -165,7 +165,8 @@ class OpenApiPlugin(BasePlugin):
                  auth: Optional[Dict[str, Any]] = None,
                  manifest: Optional[Dict[str, Any]] = None,
                  openapi_spec_path: Optional[str] = None,
-                 openapi_spec_content: Optional[Dict[str, Any]] = None):
+                 openapi_spec_content: Optional[Dict[str, Any]] = None,
+                 allowed_operations: Optional[List[str]] = None):
         """
         Initialize the OpenAPI plugin with user-provided configuration.
         
@@ -175,6 +176,8 @@ class OpenApiPlugin(BasePlugin):
             manifest: Additional manifest configuration
             openapi_spec_path: Path to the OpenAPI specification file (YAML or JSON) - DEPRECATED
             openapi_spec_content: OpenAPI specification content as parsed dict (preferred)
+            allowed_operations: Optional list of operation IDs/function names to expose.
+                Missing or empty lists allow every operation for backward compatibility.
         """
         import logging
         logging.info(f"[OPEN_API_PLUGIN] Initializing plugin with base_url: {base_url}")
@@ -189,6 +192,11 @@ class OpenApiPlugin(BasePlugin):
         self.base_url = base_url.rstrip('/')  # Remove trailing slash
         self.auth = auth or {}
         self.manifest = manifest or {}
+        self.allowed_operations = {
+            str(operation).strip()
+            for operation in (allowed_operations or [])
+            if str(operation).strip()
+        }
         
         # Track function calls for citations
         self.function_calls = []
@@ -209,6 +217,22 @@ class OpenApiPlugin(BasePlugin):
             import traceback
             logging.error(f"[OPEN_API_PLUGIN] Traceback: {traceback.format_exc()}")
             raise
+
+    def _operation_function_name(self, method: str, path: str, operation: Dict[str, Any]) -> str:
+        """Return the function name used for an OpenAPI operation."""
+        operation_id = operation.get("operationId")
+        if operation_id:
+            return operation_id
+        return f"{method}_{path.replace('/', '_').replace('{', '').replace('}', '')}"
+
+    def _is_operation_allowed(self, operation_id: str) -> bool:
+        """Return whether an operation is enabled for this plugin."""
+        return not self.allowed_operations or operation_id in self.allowed_operations
+
+    def _reject_disallowed_operation(self, operation_id: str) -> None:
+        """Raise a stable error when an operation is present but disabled."""
+        if not self._is_operation_allowed(operation_id):
+            raise PermissionError(f"OpenAPI operation '{operation_id}' is not enabled for this action.")
     
     def _load_openapi_spec(self) -> Dict[str, Any]:
         """Load OpenAPI specification from content or file."""
@@ -298,7 +322,11 @@ class OpenApiPlugin(BasePlugin):
         methods = []
         for path, ops in paths.items():
             for method, op in ops.items():
-                op_id = op.get("operationId", f"{method}_{path.replace('/', '_')}")
+                if not isinstance(op, dict):
+                    continue
+                op_id = self._operation_function_name(method, path, op)
+                if not self._is_operation_allowed(op_id):
+                    continue
                 description = op.get("description", "")
                 parameters = []
                 # Path/query parameters - resolve $ref references first
@@ -435,10 +463,10 @@ class OpenApiPlugin(BasePlugin):
                 if not isinstance(operation, dict):
                     continue
                     
-                operation_id = operation.get("operationId")
-                if not operation_id:
-                    # Generate operation ID if not provided
-                    operation_id = f"{method}_{path.replace('/', '_').replace('{', '').replace('}', '')}"
+                operation_id = self._operation_function_name(method, path, operation)
+                if not self._is_operation_allowed(operation_id):
+                    logging.info(f"[OPEN_API_PLUGIN] Skipping disabled operation: {operation_id}")
+                    continue
                 
                 logging.info(f"[OPEN_API_PLUGIN] Creating function: {operation_id} for {method.upper()} {path}")
                 
@@ -805,6 +833,8 @@ class OpenApiPlugin(BasePlugin):
         import logging
         import datetime
         import time
+
+        self._reject_disallowed_operation(operation_id)
         
         # Log the function call
         logging.info(f"[OPEN_API_PLUGIN] Calling operation: {operation_id} ({method.upper()} {path})")
@@ -1292,19 +1322,28 @@ class OpenApiPlugin(BasePlugin):
         # Try exact match first
         for path, ops in self.openapi.get("paths", {}).items():
             for method, op in ops.items():
-                if op.get("operationId") == operation_id:
+                if not isinstance(op, dict):
+                    continue
+                candidate_operation_id = self._operation_function_name(method, path, op)
+                if candidate_operation_id == operation_id:
+                    self._reject_disallowed_operation(candidate_operation_id)
                     operation_found = True
                     operation_data = op
                     operation_path = path
                     operation_method = method
+                    operation_id = candidate_operation_id
                     break
             if operation_found:
                 break
         
         # If not found, try common operation name variations
         if not operation_found:
-            available_ops = [op.get("operationId") for path_ops in self.openapi.get("paths", {}).values() 
-                           for op in path_ops.values() if op.get("operationId")]
+            available_ops = [
+                self._operation_function_name(method, path, op)
+                for path, path_ops in self.openapi.get("paths", {}).items()
+                for method, op in path_ops.items()
+                if isinstance(op, dict) and self._is_operation_allowed(self._operation_function_name(method, path, op))
+            ]
             
             # Try removing common prefixes/suffixes
             variations = [
@@ -1328,7 +1367,9 @@ class OpenApiPlugin(BasePlugin):
                         # Find the matched operation
                         for path, ops in self.openapi.get("paths", {}).items():
                             for method, op in ops.items():
-                                if op.get("operationId") == available_op:
+                                if not isinstance(op, dict):
+                                    continue
+                                if self._operation_function_name(method, path, op) == available_op:
                                     operation_found = True
                                     operation_data = op
                                     operation_path = path
@@ -1343,8 +1384,12 @@ class OpenApiPlugin(BasePlugin):
         if not operation_found:
             error_msg = f"Operation '{operation_id}' not found in OpenAPI specification"
             logging.error(f"[OPEN_API_PLUGIN] {error_msg}")
-            available_ops = [op.get("operationId") for path_ops in self.openapi.get("paths", {}).values() 
-                           for op in path_ops.values() if op.get("operationId")]
+            available_ops = [
+                self._operation_function_name(method, path, op)
+                for path, path_ops in self.openapi.get("paths", {}).items()
+                for method, op in path_ops.items()
+                if isinstance(op, dict) and self._is_operation_allowed(self._operation_function_name(method, path, op))
+            ]
             logging.error(f"[OPEN_API_PLUGIN] Available operations: {available_ops}")
             raise ValueError(error_msg)
         

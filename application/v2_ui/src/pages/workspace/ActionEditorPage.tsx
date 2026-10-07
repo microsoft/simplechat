@@ -9,7 +9,7 @@ import { WorkspaceEditorFrame } from '../../components/workspace/WorkspaceEditor
 import { errorMessage } from '../../components/workspace/useSectionResource';
 import { ActionField, ACTION_INPUT_CLASS } from '../../components/workspaceActions/ActionFields';
 import { ActionAuthentication } from '../../components/workspaceActions/ActionAuthentication';
-import { ActionConfigurationFields } from '../../components/workspaceActions/ActionConfigurationFields';
+import { ActionConfigurationFields, hasActionConfigurationFields } from '../../components/workspaceActions/ActionConfigurationFields';
 import { ActionAdvancedFields } from '../../components/workspaceActions/ActionAdvancedFields';
 import {
     ConnectorFeedbackPanel, OpenApiActionAuthentication, OpenApiActionConfiguration,
@@ -168,7 +168,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         : (hintsError || ACTION_AUTHORING_UNAVAILABLE);
     const definition = catalogue.find((type) => type.type === draft.type);
     const visibleTypes = useMemo(() => catalogue.filter((type) => type.type === draft.type ||
-        `${type.display} ${type.type} ${type.description}`.toLowerCase().includes(typeSearch.trim().toLowerCase()))
+        (!type.hidden && !type.legacy && `${type.display} ${type.type} ${type.description}`.toLowerCase().includes(typeSearch.trim().toLowerCase())))
         .sort((left, right) => left.display.localeCompare(right.display)), [catalogue, draft.type, typeSearch]);
     const fallbackDefinition: ActionTypeDefinition = {
         type: draft.type, display: actionTypeLabel(draft.type), description: '',
@@ -324,6 +324,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
     const configuration = draft.type === 'openapi' ? <OpenApiActionConfiguration {...connectorProps} /> :
         draft.type === 'mcp' ? <McpActionConfiguration {...connectorProps} /> :
             <ActionConfigurationFields {...connectorProps} definition={displayDefinition} />;
+    const showConfiguration = Boolean(draft.type && hasActionConfigurationFields(displayDefinition));
     const authentication = draft.type === 'openapi' ? <OpenApiActionAuthentication {...connectorProps} /> :
         draft.type === 'mcp' ? <McpActionAuthentication {...connectorProps} /> :
             <ActionAuthentication {...connectorProps} definition={displayDefinition} />;
@@ -331,8 +332,8 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         { id: 'identity', label: 'Identity and type', icon: IdCard,
             description: 'The kind of connector, the name agents see, and what the action does.', content: identitySection },
         ...(draft.type ? [
-            { id: 'configuration', label: 'Configuration', icon: Settings2,
-                description: 'Where the action connects, and what it is allowed to do there.', content: configuration },
+            ...(showConfiguration ? [{ id: 'configuration', label: 'Configuration', icon: Settings2,
+                description: 'Where the action connects, and what it is allowed to do there.', content: configuration }] : []),
             { id: 'authentication', label: 'Authentication', icon: KeyRound,
                 description: 'How the action signs in to the service it calls.', content: authentication },
             { id: 'advanced', label: 'Advanced', icon: SlidersHorizontal,
@@ -365,7 +366,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
                         onClick={() => void validate()}><CheckCircle2 size={14} />{validating ? 'Validating…' : 'Validate configuration'}</GlassButton>
                 </> : undefined} />
             {pendingType ? <ConfirmDialog title="Change action type?" tone="primary" confirmLabel="Change type"
-                description="Configuration and authentication will switch to the selected connector. The previous type’s draft stays in this tab if you switch back; it is not sent as configuration for the new type."
+                description="Configuration and authentication will switch to the selected connector, and the current settings for this action type will be cleared."
                 onClose={() => setPendingType(null)} onConfirm={() => applyType(pendingType)}>
                 <p className="text-sm text-text-2">The name, description, ID, and metadata are kept. Review configuration before saving.</p>
             </ConfirmDialog> : null}

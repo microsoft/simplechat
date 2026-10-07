@@ -149,6 +149,10 @@ from functions_mcp_operations import (
     get_mcp_error_http_status,
     normalize_mcp_additional_fields,
 )
+from functions_mcp_tool_pinning import (
+    build_mcp_tool_fingerprints,
+    validate_mcp_tool_pinning_for_save,
+)
 from functions_mcp_destinations import (
     McpDestinationPolicyError,
     assert_mcp_destination_allowed,
@@ -406,7 +410,7 @@ def discover_plugin_types(include_legacy=False):
                     isinstance(obj, type)
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
-                    and (module_name.replace('_plugin', '') not in M365_PLUGIN_TYPES or obj.__module__ == module.__name__)
+                    and obj.__module__ == module.__name__
                     and not getattr(obj, 'internal_only', False)
                 ):
                     # Use the type string as in the manifest (e.g., 'blob_storage')
@@ -425,10 +429,37 @@ def discover_plugin_types(include_legacy=False):
                         types.add(module_name.replace('_plugin', ''))
     return types if include_legacy else {plugin_type for plugin_type in types if not is_legacy_msgraph_type(plugin_type)}
 
+HIDDEN_NEW_ACTION_PLUGIN_TYPES = {
+    DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
+    'embedding_model',
+    'queue_storage',
+    'ui_test',
+    'sql_schema',
+}
+
+
+def _catalog_graph_endpoint():
+    return get_graph_base_url().removesuffix('/v1.0')
+
+
+def _catalog_entry(plugin_type, class_name, display, description, **extra):
+    entry = {
+        'type': plugin_type,
+        'class': class_name,
+        'display': display,
+        'description': description,
+    }
+    if plugin_type in HIDDEN_NEW_ACTION_PLUGIN_TYPES:
+        entry['hidden'] = True
+        entry['legacy'] = True
+    entry.update(extra)
+    return entry
+
+
 def get_plugin_types(allowed_type_filter=None):
     # Path to the plugin types directory (semantic_kernel_plugins)
     plugintypes_dir = os.path.join(current_app.root_path, 'semantic_kernel_plugins')
-    types = []
+    type_entries = {}
     debug_log = []
     for fname in os.listdir(plugintypes_dir):
         if fname.endswith('_plugin.py') and fname != 'base_plugin.py' and not fname.startswith('_'):
@@ -454,32 +485,36 @@ def get_plugin_types(allowed_type_filter=None):
                     isinstance(obj, type)
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
-                    and (module_type not in M365_PLUGIN_TYPES or obj.__module__ == module.__name__)
+                    and obj.__module__ == module.__name__
                     and not getattr(obj, 'internal_only', False)
                 ):
                     found = True
+                    if module_type in type_entries:
+                        debug_log.append(f"Skipping duplicate plugin type entry: {module_type}")
+                        continue
                     if module_type in M365_PLUGIN_TYPES:
                         definition = get_m365_action_definition(module_type)
-                        types.append({
-                            'type': module_type,
-                            'class': definition['class_name'],
-                            'display': definition['display_name'],
-                            'description': definition['description'],
-                            'source': definition['source'],
-                            'capabilities': definition['capabilities'],
-                            'defaults': get_m365_default_config(module_type)['additionalFields'],
-                        })
+                        type_entries[module_type] = _catalog_entry(
+                            module_type,
+                            definition['class_name'],
+                            definition['display_name'],
+                            definition['description'],
+                            source=definition['source'],
+                            capabilities=definition['capabilities'],
+                            defaults=get_m365_default_config(module_type)['additionalFields'],
+                            graph_endpoint=_catalog_graph_endpoint(),
+                        )
                         continue
                     # Special handling for OpenAPI plugin that requires spec path
                     if 'openapi' in module_name.lower():
                         display_name = "OpenAPI"
                         description = "Connect to an API using OpenAPI JSON/YAML content and configurable authentication. Download hosted specifications before uploading them."
-                        types.append({
-                            'type': module_type,
-                            'class': attr,
-                            'display': display_name,
-                            'description': description
-                        })
+                        type_entries[module_type] = _catalog_entry(
+                            module_type,
+                            attr,
+                            display_name,
+                            description,
+                        )
                         continue
                     
                     # Try to get display name from plugin instance
@@ -688,15 +723,27 @@ def get_plugin_types(allowed_type_filter=None):
                         description = f"Plugin for {display_name.lower()} functionality"
                         debug_log.append(f"Complete failure to instantiate {attr}: {e}. Using final fallback.")
                     
-                    types.append({
-                        'type': module_type,
-                        'class': attr,
-                        'display': display_name,
-                        'description': description
-                    })
+                    if module_type == 'sql_query':
+                        display_name = 'SQL Database'
+                        description = (
+                            'Query a SQL database with governed read controls. '
+                            'Schema discovery is included automatically for agents that need table context.'
+                        )
+                    elif module_type == DATABRICKS_PLUGIN_TYPE:
+                        description = (
+                            'Run governed read-only SQL Warehouse queries against Azure Databricks, '
+                            'including catalog and schema defaults for agent context.'
+                        )
+                    elif module_type == DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE:
+                        description = (
+                            'Legacy Databricks table action retained for existing configurations. '
+                            'Create new Databricks actions with the Databricks SQL Warehouse connector.'
+                        )
+                    type_entries[module_type] = _catalog_entry(module_type, attr, display_name, description)
             if not found:
                 debug_log.append(f"No valid plugin class found in {fname}")
     # Log the debug output to the server log
+    types = list(type_entries.values())
     if callable(allowed_type_filter):
         types = [plugin_type for plugin_type in types if allowed_type_filter(plugin_type.get('type'))]
 
@@ -1348,10 +1395,10 @@ def get_user_plugins():
 
 def _prepare_personal_action_for_editor(user_id, plugin, settings, existing):
     validate_legacy_action_update(plugin, existing, 'user_id', user_id)
-    return _prepare_personal_action_payload(user_id, plugin, editor=True)
+    return _prepare_personal_action_payload(user_id, plugin, editor=True, existing=existing)
 
 
-def _prepare_personal_action_payload(user_id, plugin, *, editor=False):
+def _prepare_personal_action_payload(user_id, plugin, *, editor=False, existing=None):
     """Clean, default and validate a single personal action.
 
     This is the per-action half of the bulk save, factored out so the per-item create and
@@ -1406,6 +1453,10 @@ def _prepare_personal_action_payload(user_id, plugin, *, editor=False):
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
     if not is_valid:
         return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    try:
+        validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
+    except ValueError:
+        return None, (jsonify({'error': 'Discover and approve MCP tools before saving this action.'}), 400)
 
     try:
         ensure_action_type_access('governance_user_actions', user_id, plugin_type, 'personal')
@@ -1477,6 +1528,10 @@ def _prepare_group_action_payload(user_id, group_id, plugin, settings, existing)
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
     if not is_valid:
         return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    try:
+        validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
+    except ValueError:
+        return None, (jsonify({'error': 'Discover and approve MCP tools before saving this action.'}), 400)
 
     try:
         ensure_action_type_access('governance_group_actions', user_id, plugin_type, 'group')
@@ -1554,6 +1609,10 @@ def _prepare_global_action_payload(user_id, plugin, settings, existing):
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
     if not is_valid:
         return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    try:
+        validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
+    except ValueError:
+        return None, (jsonify({'error': 'Discover and approve MCP tools before saving this action.'}), 400)
 
     try:
         _enforce_mcp_destination_policy(
@@ -1689,7 +1748,7 @@ def update_user_plugin(action_id):
     # body; that keeps a rename from orphaning the existing record.
     merged['id'] = existing.get('id')
 
-    plugin_to_save, error = _prepare_personal_action_payload(user_id, merged)
+    plugin_to_save, error = _prepare_personal_action_payload(user_id, merged, existing=existing)
     if error:
         return error
 
@@ -1805,7 +1864,8 @@ def set_user_plugins():
             and legacy_action is None
         ):
             continue  # Skip global plugins
-        plugin_to_save, error = _prepare_personal_action_payload(user_id, plugin)
+        existing_action = current_actions_by_id.get(submitted_id) if submitted_id else None
+        plugin_to_save, error = _prepare_personal_action_payload(user_id, plugin, existing=existing_action)
         if error:
             return error
 
@@ -2880,6 +2940,10 @@ def discover_mcp_tools():
 
         probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest, origin=origin))
         tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
+        prompts = probe_result.get('prompts', []) if isinstance(probe_result, dict) else []
+        fingerprints = probe_result.get('fingerprints') if isinstance(probe_result, dict) else None
+        if not fingerprints:
+            fingerprints = build_mcp_tool_fingerprints(tools, prompts)
         log_event(
             "[MCP_DISCOVERY] Completed",
             extra=_build_mcp_discovery_log_context(
@@ -2903,6 +2967,9 @@ def discover_mcp_tools():
             'mcp_operation_id': mcp_operation_id,
             'tool_count': len(tools),
             'tools': tools,
+            'prompt_count': len(prompts),
+            'prompts': prompts,
+            'fingerprints': fingerprints,
             'capabilities': probe_result.get('capabilities', {}) if isinstance(probe_result, dict) else {},
             'warnings': probe_result.get('warnings', []) if isinstance(probe_result, dict) else [],
             'transport': probe_result.get('transport') if isinstance(probe_result, dict) else None,

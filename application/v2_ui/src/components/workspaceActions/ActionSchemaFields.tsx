@@ -1,10 +1,10 @@
 // ActionSchemaFields.tsx
 
-import { useId, useState } from 'react';
+import { useId } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { ActionField, ActionJsonInput, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
-import { EditorPanel, EditorPanelFieldset, EditorRow } from '../workspace/EditorLayout';
+import { EditorPanelFieldset, EditorRow } from '../workspace/EditorLayout';
 import { EDITOR_SECRET_MASK, isRecord, pointerPart, type EditorSchema } from '../../lib/workspaceAuthoring';
 import {
     actionArrayRemovalError, actionFieldError, actionHasStoredArraySecrets, actionSchemaDefaults,
@@ -157,59 +157,17 @@ export function ActionSchemaFields({
     const resolved = resolveActionSchema(schema, root);
     const value = actionValueAt(props.draft, path);
     const record = isRecord(value) ? value : {};
-    const covered = (pointer: string) => coveredPaths.some((known) => pointer === known || pointer.startsWith(`${known}/`));
+    const covered = (pointer: string) => coveredPaths.some((known) =>
+        pointer === known || pointer.startsWith(`${known}/`) || known.startsWith(`${pointer}/`));
     const properties = Object.entries(resolved.properties ?? {}).filter(([key]) => !covered(`${path}/${pointerPart(key)}`));
-    const unknown = Object.keys(record).filter((key) => !Object.hasOwn(resolved.properties ?? {}, key) && !covered(`${path}/${pointerPart(key)}`));
+    void record;
+    void allowCustom;
     return (
         <div className="min-w-0 space-y-4">
             {properties.map(([key, definition]) => (
                 <ActionSchemaValue key={key} props={props} path={`${path}/${pointerPart(key)}`} schema={definition} root={root}
                     label={definition.title || humanLabel(key)} required={resolved.required?.includes(key)} depth={depth} />
             ))}
-            {unknown.map((key) => <div key={key} className="min-w-0 space-y-1">
-                <ActionSchemaValue props={props} path={`${path}/${pointerPart(key)}`} root={root}
-                    schema={isRecord(resolved.additionalProperties) ? resolved.additionalProperties : {}}
-                    label={humanLabel(key)} depth={depth} />
-                {!props.readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove ${key}`}
-                    onClick={() => props.onChange((draft) => withActionValue(draft, `${path}/${pointerPart(key)}`, undefined))}>
-                    <Trash2 size={12} /> Remove field
-                </GlassButton> : null}
-            </div>)}
-            {allowCustom && !props.readOnly ? <ActionAddCustomField props={props} path={path} existing={Object.keys(record)} /> : null}
         </div>
-    );
-}
-
-function ActionAddCustomField({ props, path, existing }: { props: ActionConnectorProps; path: string; existing: string[] }) {
-    const id = useId();
-    const [name, setName] = useState('');
-    const [type, setType] = useState('text');
-    const [error, setError] = useState('');
-    return (
-        <EditorPanel title="Add a custom field"
-            description="Add an installed connector’s custom property. Names ending in __Secret are treated as credentials.">
-            <div className="min-w-0">
-                <ActionField id={`${id}-name`} label="Custom field name" error={error} width="standard">
-                    <input id={`${id}-name`} value={name} className={ACTION_INPUT_CLASS}
-                        onChange={(event) => { setName(event.target.value); setError(''); }} />
-                </ActionField>
-                <ActionField id={`${id}-type`} label="Value type" width="compact">
-                    <select id={`${id}-type`} value={type} className={ACTION_INPUT_CLASS} onChange={(event) => setType(event.target.value)}>
-                        <option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option>
-                        <option value="object">Object</option><option value="array">List</option><option value="secret">Secret</option>
-                    </select>
-                </ActionField>
-            </div>
-            <div className="flex justify-end">
-                <GlassButton type="button" size="sm" variant="subtle" onClick={() => {
-                    const raw = name.trim();
-                    const key = type === 'secret' && !raw.endsWith('__Secret') ? `${raw}__Secret` : raw;
-                    if (!raw || existing.includes(key)) { setError(raw ? 'That property already exists.' : 'Enter a property name.'); return; }
-                    const initial = type === 'number' ? 0 : type === 'boolean' ? false : type === 'object' ? {} : type === 'array' ? [] : '';
-                    props.onChange((draft) => withActionValue(draft, `${path}/${pointerPart(key)}`, initial));
-                    setName(''); setError('');
-                }}><Plus size={14} /> Add field</GlassButton>
-            </div>
-        </EditorPanel>
     );
 }

@@ -127,6 +127,7 @@ const documentSearchFields: ActionFieldDescriptor[] = [
 ];
 const searchDefaults = {
     default_doc_scope: 'all', default_top_n: 50, default_window_unit: 'pages',
+    allowed_scopes: ['personal', 'group', 'public'], allowed_group_ids: [], allowed_public_workspace_ids: [],
     default_window_target_length: '2 pages', default_final_target_length: '2 pages',
 };
 const internalUtility = (type: string, help: string): ActionNativeDefinition => ({
@@ -371,6 +372,30 @@ export const NATIVE_ACTION_TYPES: Record<string, ActionNativeDefinition> = {
         } },
         capabilities: { path: '/additionalFields/msgraph_capabilities', options: MSGRAPH_ACTION_CAPABILITIES },
         help: 'Use Microsoft 365 as the signed-in user. Mail and calendar delivery policies determine when changes are sent.',
+    },
+    m365_calendar: {
+        fields: [],
+        internal: true,
+        defaults: { auth: { type: 'user' } },
+        help: 'Use Microsoft 365 Calendar with delegated user permissions. Capability switches are bounded by the governed catalogue.',
+    },
+    m365_email: {
+        fields: [],
+        internal: true,
+        defaults: { auth: { type: 'user' } },
+        help: 'Use Microsoft 365 Email with delegated user permissions. Capability switches are bounded by the governed catalogue.',
+    },
+    m365_onedrive: {
+        fields: [],
+        internal: true,
+        defaults: { auth: { type: 'user' } },
+        help: 'Use Microsoft 365 OneDrive with delegated user permissions. Capability switches are bounded by the governed catalogue.',
+    },
+    m365_sharepoint: {
+        fields: [],
+        internal: true,
+        defaults: { auth: { type: 'user' } },
+        help: 'Use Microsoft 365 SharePoint Online with delegated user permissions. Capability switches are bounded by the governed catalogue.',
     },
     chart: {
         fields: [], internal: true, defaults: { endpoint: 'chart://internal', auth: { type: 'user' } },

@@ -37,6 +37,14 @@ from functions_mcp_operations import (
     normalize_mcp_tool_metadata,
     validate_mcp_endpoint_for_transport,
 )
+from functions_mcp_tool_pinning import (
+    MCP_TOOL_FINGERPRINTS_FIELD,
+    build_mcp_tool_fingerprints,
+    compare_mcp_fingerprints,
+    normalize_mcp_prompt_metadata,
+    normalize_mcp_tool_fingerprints,
+    persist_mcp_tool_drift,
+)
 from functions_mcp_destinations import (
     McpDestinationPolicyError,
     build_mcp_destination_log_context,
@@ -172,19 +180,27 @@ class McpPluginFactory:
                 raise ValueError("MCP server did not create a session.")
 
             tools = await cls._list_tools_from_session(connector.session)
+            prompts, prompt_warning = await cls._list_prompts_from_session(connector.session)
             capabilities = {
                 "tools": bool(tools),
+                "prompts": bool(prompts),
                 "prompts_requested": bool(additional_fields.get("load_prompts")),
                 "resources": False,
                 "connector_type": connector.__class__.__name__,
                 "session_type": connector.session.__class__.__name__,
             }
             warnings = build_mcp_tool_metadata_warnings(tools, additional_fields)
+            if prompt_warning:
+                warnings.append(prompt_warning)
+            fingerprints = build_mcp_tool_fingerprints(tools, prompts)
             result = {
                 "transport": additional_fields.get("transport"),
                 "auth_method": additional_fields.get("auth_method"),
                 "tool_count": len(tools),
                 "tools": tools,
+                "prompt_count": len(prompts),
+                "prompts": prompts,
+                "fingerprints": fingerprints,
                 "capabilities": capabilities,
                 "warnings": warnings,
             }
@@ -280,6 +296,34 @@ class McpPluginFactory:
         return normalize_mcp_tool_metadata(raw_tools)
 
     @classmethod
+    async def _list_prompts_from_session(cls, session) -> tuple[List[Dict[str, Any]], str]:
+        list_prompts = getattr(session, "list_prompts", None)
+        if not callable(list_prompts):
+            return [], "This MCP client does not support prompt discovery; prompt fingerprints are empty."
+        try:
+            prompt_list = await list_prompts()
+        except AttributeError:
+            return [], "This MCP client does not support prompt discovery; prompt fingerprints are empty."
+        except NotImplementedError:
+            return [], "This MCP client does not support prompt discovery; prompt fingerprints are empty."
+        prompts = []
+        for prompt in getattr(prompt_list, "prompts", []) if prompt_list else []:
+            raw_arguments = getattr(prompt, "arguments", None) or []
+            arguments = []
+            for argument in raw_arguments:
+                arguments.append({
+                    "name": getattr(argument, "name", ""),
+                    "description": getattr(argument, "description", "") or "",
+                    "required": bool(getattr(argument, "required", False)),
+                })
+            prompts.append({
+                "name": getattr(prompt, "name", ""),
+                "description": getattr(prompt, "description", "") or "",
+                "arguments": arguments,
+            })
+        return normalize_mcp_prompt_metadata(prompts), ""
+
+    @classmethod
     async def call_tool_from_config(
         cls,
         config: Dict[str, Any],
@@ -291,6 +335,7 @@ class McpPluginFactory:
         """Connect to an MCP server, invoke one tool, and normalize the result."""
         manifest = cls._normalize_manifest(config)
         configured_tool = cls._find_configured_tool(manifest, tool_name)
+        await cls._enforce_pinned_manifest(manifest, origin=origin)
         normalized_arguments = (
             normalize_mcp_tool_call_arguments(configured_tool, arguments)
             if configured_tool
@@ -301,6 +346,47 @@ class McpPluginFactory:
             "tool_call",
             lambda: cls._call_tool_once(manifest, tool_name, normalized_arguments, origin=origin),
         )
+
+    @classmethod
+    async def _enforce_pinned_manifest(
+        cls, config: Dict[str, Any], *, origin: Optional[McpActionOrigin] = None
+    ) -> None:
+        manifest = cls._normalize_manifest(config)
+        additional_fields = manifest.get("additionalFields", {})
+        approved = normalize_mcp_tool_fingerprints(additional_fields.get(MCP_TOOL_FINGERPRINTS_FIELD))
+        if not approved:
+            return
+        connector = cls.create_connector(manifest, origin=origin)
+        try:
+            await connector.connect()
+            if not connector.session:
+                raise ValueError("MCP server did not create a session.")
+            tools = await cls._list_tools_from_session(connector.session)
+            prompts, _ = await cls._list_prompts_from_session(connector.session)
+            current = build_mcp_tool_fingerprints(tools, prompts)
+            drift = compare_mcp_fingerprints(approved, current)
+            if drift.get("has_drift"):
+                persist_mcp_tool_drift(manifest, drift)
+                log_event(
+                    "[MCP_PINNING] MCP tool manifest drift detected",
+                    level=logging.WARNING,
+                    extra={
+                        **cls._build_operation_log_context(manifest, "pinning_check"),
+                        "manifest_hash": current.get("manifest_hash"),
+                        "new_count": len(drift.get("new", [])),
+                        "changed_count": len(drift.get("changed", [])),
+                        "removed_count": len(drift.get("removed", [])),
+                        "prompt_changed_count": len(drift.get("prompts_changed", [])),
+                    },
+                )
+                raise McpRuntimeError(
+                    "MCP tools changed after approval. Review and re-approve the action.",
+                    category="tool_pinning",
+                    operation="pinning_check",
+                    retryable=False,
+                )
+        finally:
+            await connector.close()
 
     @classmethod
     def _find_configured_tool(cls, config: Dict[str, Any], tool_name: str) -> Optional[Dict[str, Any]]:

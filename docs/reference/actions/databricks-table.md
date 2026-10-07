@@ -23,9 +23,12 @@ Use only to keep older manifests working. For new work, use Databricks.
 - Existing legacy manifest with key auth; the create-action UI hides `databricks_table`.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-No new-action panel; migrate to [Databricks]({{ '/reference/actions/databricks/' | relative_url }}) for new actions.
+`databricks_table` is hidden from new-action creation. Existing actions continue to load so owners can review, edit, or migrate them, but new governed Databricks work should use [Databricks]({{ '/reference/actions/databricks/' | relative_url }}).
+
+Connection testing, when available for an editable migrated configuration, appears in **Authentication**. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
