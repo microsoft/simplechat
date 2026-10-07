@@ -286,6 +286,40 @@ variable "param_create_entra_security_groups" {
   default     = true # Default from script
 }
 
+variable "azure_files_storage_account_resource_ids" {
+  description = "Existing Microsoft.Storage/storageAccounts resource IDs used by File Sync or Azure Files Search."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for resource_id in var.azure_files_storage_account_resource_ids :
+      can(regex("^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\\.storage/storageaccounts/[^/]+$", lower(resource_id)))
+    ])
+    error_message = "Each Azure Files storage account resource ID must target Microsoft.Storage/storageAccounts."
+  }
+}
+
+variable "external_search_service_resource_ids" {
+  description = "Existing Microsoft.Search/searchServices resource IDs used by Azure Files Search actions."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for resource_id in var.external_search_service_resource_ids :
+      can(regex("^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\\.search/searchservices/[^/]+$", lower(resource_id)))
+    ])
+    error_message = "Each external search service resource ID must target Microsoft.Search/searchServices."
+  }
+}
+
+variable "external_search_service_enable_reader_role" {
+  description = "Optionally grant control-plane Reader on external Azure AI Search services for portal and diagnostic visibility."
+  type        = bool
+  default     = false
+}
+
 # ACR Credentials (assumed to be available for Terraform)
 variable "acr_username" {
   description = "Username for the Azure Container Registry."
@@ -1195,6 +1229,38 @@ resource "azurerm_role_assignment" "app_service_smi_storage_contributor" {
   scope                = azurerm_storage_account.sa.id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "app_service_smi_external_storage_file_data_privileged_reader" {
+  for_each           = toset(var.azure_files_storage_account_resource_ids)
+  scope              = each.value
+  role_definition_id = "/subscriptions/${split("/", each.value)[2]}/providers/Microsoft.Authorization/roleDefinitions/b8eda974-7b85-4f76-af95-65846b26df6d"
+  principal_id       = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "app_service_smi_external_storage_reader" {
+  for_each           = toset(var.azure_files_storage_account_resource_ids)
+  scope              = each.value
+  role_definition_id = "/subscriptions/${split("/", each.value)[2]}/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
+  principal_id       = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "app_service_smi_external_search_index_data_reader" {
+  for_each           = toset(var.external_search_service_resource_ids)
+  scope              = each.value
+  role_definition_id = "/subscriptions/${split("/", each.value)[2]}/providers/Microsoft.Authorization/roleDefinitions/1407120a-92aa-4202-b7e9-c0e197c71c8f"
+  principal_id       = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "app_service_smi_external_search_reader" {
+  for_each           = var.external_search_service_enable_reader_role ? toset(var.external_search_service_resource_ids) : toset([])
+  scope              = each.value
+  role_definition_id = "/subscriptions/${split("/", each.value)[2]}/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
+  principal_id       = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_type     = "ServicePrincipal"
 }
 
 # azapi 2.x exposes output as an object, so read the exported identity directly.

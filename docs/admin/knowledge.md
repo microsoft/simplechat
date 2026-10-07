@@ -464,6 +464,21 @@ header shows how many are selected.
 With Key Vault secret storage enabled and a Key Vault name set, a source's credentials
 are stored in Key Vault; otherwise they are stored with the source itself.
 
+#### Azure Files access
+
+An Azure Files source that uses a managed identity or a service principal reads the share
+through Azure Files OAuth. That identity needs the **Storage File Data Privileged Reader**
+role on the storage account or the file share. This role reads every file regardless of
+its NTFS permissions, and everyone in the workspace can then search the synced files. If
+your shares restrict files by user or group and the content should stay that way, leave
+the content in place and search it with an [Azure Files Search]({{ '/reference/actions/azure-files-index/' | relative_url }})
+action, which checks each file's permissions for the signed-in user.
+
+When a run fails, the source's managers get one notification per source per day. When
+the cause is a missing role or a credential that Azure rejected, administrators are
+notified as well. The connection test and the run history name the role or setting
+to fix.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |

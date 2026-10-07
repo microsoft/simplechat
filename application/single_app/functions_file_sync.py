@@ -14,7 +14,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlparse
 
 from azure.core import MatchConditions
+from azure.core.exceptions import ClientAuthenticationError as AzureClientAuthenticationError
 from azure.core.exceptions import ResourceNotFoundError as AzureResourceNotFoundError
+from azure.core.exceptions import ServiceRequestError as AzureServiceRequestError
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError,
@@ -45,6 +47,7 @@ from functions_authentication import get_graph_authority, get_graph_base_url, ge
 from functions_azure_endpoint_validation import (
     AZURE_STORAGE_ENDPOINT_SUFFIXES,
     azure_storage_endpoint_suffix_for_hostname,
+    validate_azure_file_endpoint,
 )
 from functions_debug import debug_print
 from functions_documents import (
@@ -57,7 +60,7 @@ from functions_documents import (
     update_document,
     validate_tags,
 )
-from functions_group import assert_group_role
+from functions_group import assert_group_role, find_group_by_id, get_group_document_reviewer_ids
 from functions_keyvault import (
     keyvault_file_sync_cleanup_helper,
     keyvault_file_sync_delete_helper,
@@ -143,6 +146,68 @@ FILE_SYNC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 FILE_SYNC_PERSONAL_APP_ROLE = "PersonalFileSyncUser"
 FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE = "File Sync run failed. Contact an administrator if the problem continues."
 FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE = "File Sync could not process this item. Contact an administrator if the problem continues."
+# Azure Files OAuth over REST accepts token credentials only with backup intent, and the
+# identity then needs Storage File Data Privileged Reader, which reads every file in the
+# share regardless of its NTFS permissions.
+AZURE_FILES_TOKEN_INTENT = "backup"
+AZURE_FILES_ERROR_PERMISSION_DENIED = "azure_files_permission_denied"
+AZURE_FILES_ERROR_AUTHENTICATION_FAILED = "azure_files_authentication_failed"
+AZURE_FILES_ERROR_NOT_FOUND = "azure_files_not_found"
+AZURE_FILES_ERROR_NETWORK_BLOCKED = "azure_files_network_blocked"
+AZURE_FILES_ENDPOINT_PUBLIC_ERROR = (
+    "Azure Files sources require an Azure Files service URL such as https://account.file.core.windows.net."
+)
+# Reviewed, static messages that are safe to return for a classified run or connection failure.
+FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES = {
+    AZURE_FILES_ERROR_PERMISSION_DENIED: (
+        "Azure Files denied access. Give the managed identity or service principal this source uses "
+        "the Storage File Data Privileged Reader role on the storage account or file share (a SAS needs "
+        "Read and List), and confirm the storage account's network rules allow this app."
+    ),
+    AZURE_FILES_ERROR_AUTHENTICATION_FAILED: (
+        "Azure Files could not authenticate this source's credential. Check its managed identity, "
+        "service principal, or connection string."
+    ),
+    AZURE_FILES_ERROR_NOT_FOUND: (
+        "Azure Files could not find the file share or directory. Check the share name and directory path."
+    ),
+    AZURE_FILES_ERROR_NETWORK_BLOCKED: (
+        "Azure Files blocked the request because of a network restriction. Allow this app's outbound "
+        "addresses or private endpoint in the storage account's networking settings."
+    ),
+}
+FILE_SYNC_RUN_FAILED_NOTIFICATION_TYPE = "file_sync_run_failed"
+# Only an Azure role assignment or credential fix resolves these, so app admins are told as well.
+FILE_SYNC_ADMIN_NOTIFICATION_ERROR_CATEGORIES = {
+    AZURE_FILES_ERROR_PERMISSION_DENIED,
+    AZURE_FILES_ERROR_AUTHENTICATION_FAILED,
+}
+FILE_SYNC_RUN_FAILED_NOTIFICATION_MAX_RECIPIENTS = 25
+_AZURE_FILES_PERMISSION_ERROR_CODES = {
+    "authorizationpermissionmismatch",
+    "authorizationfailure",
+    "insufficientaccountpermissions",
+    "authorizationresourcetypemismatch",
+    "authorizationservicemismatch",
+}
+_AZURE_FILES_AUTHENTICATION_ERROR_CODES = {
+    "authenticationfailed",
+    "invalidauthenticationinfo",
+    "noauthenticationinformation",
+}
+_AZURE_FILES_NOT_FOUND_ERROR_CODES = {
+    "sharenotfound",
+    "resourcenotfound",
+    "parentnotfound",
+    "sharedisabled",
+    "sharebeingdeleted",
+}
+_AZURE_FILES_NETWORK_ERROR_CODES = {
+    "authorizationsourceipmismatch",
+    "authorizationipmismatch",
+    "ipauthorizationfailure",
+    "ipsourcenotallowed",
+}
 
 
 class FileSyncPublicValidationError(ValueError):
@@ -744,7 +809,12 @@ def sanitize_file_sync_source(source: Dict[str, Any]) -> Dict[str, Any]:
 def sanitize_file_sync_run(run: Dict[str, Any]) -> Dict[str, Any]:
     sanitized_run = dict(run or {})
     if sanitized_run.get("error_message"):
-        sanitized_run["error_message"] = FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE
+        sanitized_run["error_message"] = FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES.get(
+            sanitized_run.get("error_category") or "",
+            FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE,
+        )
+    if sanitized_run.get("error_category") not in FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES:
+        sanitized_run.pop("error_category", None)
     return sanitized_run
 
 
@@ -894,9 +964,15 @@ def _normalize_azure_file_url(value: Any) -> Tuple[str, List[str]]:
     parsed_url = urlparse(raw_url)
     if parsed_url.scheme != "https" or not parsed_url.netloc:
         raise ValueError("Azure Files sources require an HTTPS file service or share URL")
+    # Managed identity and service principal sources send a storage token to this host,
+    # so only Azure Files service endpoints are accepted.
+    try:
+        account_url = validate_azure_file_endpoint(f"{parsed_url.scheme}://{parsed_url.netloc}")
+    except ValueError as error:
+        raise FileSyncPublicValidationError(AZURE_FILES_ENDPOINT_PUBLIC_ERROR) from error
 
     path_parts = [unquote(path_part) for path_part in parsed_url.path.split("/") if path_part]
-    return f"{parsed_url.scheme}://{parsed_url.netloc}".rstrip("/"), path_parts
+    return account_url, path_parts
 
 
 def _normalize_azure_share_name(value: Any) -> str:
@@ -2286,8 +2362,60 @@ def _test_azure_files_connection(source: Dict[str, Any]) -> Dict[str, Any]:
         if "azure-storage-file-share" in str(error):
             raise
         raise ValueError("Azure Files connection test failed. Verify the file endpoint, share, and identity permissions.") from error
+    except FileSyncPublicValidationError:
+        raise
     except Exception as error:
+        error_category = classify_azure_files_error(error)
+        log_event(
+            "[FILE_SYNC] Azure Files connection test failed.",
+            level=logging.WARNING,
+            extra={**_azure_files_error_diagnostics(error, source), "error_category": error_category},
+            exceptionTraceback=True,
+        )
+        if error_category:
+            raise FileSyncPublicValidationError(FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES[error_category]) from error
         raise ValueError("Azure Files connection test failed. Verify the file endpoint, share, and identity permissions.") from error
+
+
+def classify_azure_files_error(error: Exception) -> str:
+    """Map an Azure Files or credential failure to a reviewed error category, or ``""``."""
+    error_code = _normalize_azure_storage_error_code(getattr(error, "error_code", ""))
+    response = getattr(error, "response", None)
+    status_code = getattr(error, "status_code", None) or getattr(response, "status_code", None)
+    if error_code in _AZURE_FILES_NETWORK_ERROR_CODES:
+        return AZURE_FILES_ERROR_NETWORK_BLOCKED
+    if error_code in _AZURE_FILES_PERMISSION_ERROR_CODES:
+        return AZURE_FILES_ERROR_PERMISSION_DENIED
+    if error_code in _AZURE_FILES_AUTHENTICATION_ERROR_CODES:
+        return AZURE_FILES_ERROR_AUTHENTICATION_FAILED
+    if error_code in _AZURE_FILES_NOT_FOUND_ERROR_CODES or isinstance(error, AzureResourceNotFoundError):
+        return AZURE_FILES_ERROR_NOT_FOUND
+    if status_code == 403:
+        return AZURE_FILES_ERROR_PERMISSION_DENIED
+    if status_code == 401:
+        return AZURE_FILES_ERROR_AUTHENTICATION_FAILED
+    if status_code == 404:
+        return AZURE_FILES_ERROR_NOT_FOUND
+    # Token acquisition failures (managed identity or service principal) carry no storage error code.
+    if isinstance(error, AzureClientAuthenticationError):
+        return AZURE_FILES_ERROR_AUTHENTICATION_FAILED
+    if isinstance(error, AzureServiceRequestError):
+        return AZURE_FILES_ERROR_NETWORK_BLOCKED
+    return ""
+
+
+def _azure_files_error_diagnostics(error: Exception, source: Dict[str, Any]) -> Dict[str, Any]:
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    auth = _get_identity_auth_for_source(source) or source.get("auth") or {}
+    return {
+        "exception_type": type(error).__name__,
+        "error_code": _normalize_azure_storage_error_code(getattr(error, "error_code", "")),
+        "status_code": getattr(error, "status_code", None) or getattr(response, "status_code", None),
+        "request_id": _normalize_text(headers.get("x-ms-request-id", ""), 100),
+        "source_id": source.get("id"),
+        "auth_kind": _normalize_text(auth.get("auth_type"), 50).lower(),
+    }
 
 
 def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
@@ -2816,21 +2944,27 @@ def _process_file_sync_source(
         return run
     except Exception as error:
         detailed_error_message = str(error)
-        run = _update_run(
-            run,
-            {
-                "status": "failed",
-                "counts": counts,
-                "completed_at": _now_iso(),
-                "error_message": FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE,
-            },
+        error_category = (
+            classify_azure_files_error(error)
+            if source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_FILES
+            else ""
         )
+        public_error_message = FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES.get(error_category, FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE)
+        run_changes = {
+            "status": "failed",
+            "counts": counts,
+            "completed_at": _now_iso(),
+            "error_message": public_error_message,
+        }
+        if error_category:
+            run_changes["error_category"] = error_category
+        run = _update_run(run, run_changes)
         _update_source_after_run(source, run)
         _log_file_sync_activity(
             source,
             triggered_by,
             "run_failed",
-            {"run_id": run["id"], "error": FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE},
+            {"run_id": run["id"], "error": public_error_message, "error_category": error_category},
         )
         log_event(
             "[FILE_SYNC] Run failed.",
@@ -2839,9 +2973,11 @@ def _process_file_sync_source(
                 "source_id": source.get("id"),
                 "run_id": run.get("id"),
                 "error": detailed_error_message,
+                "error_category": error_category,
             },
             exceptionTraceback=True,
         )
+        _notify_file_sync_run_failed(source, run, error_category)
         return run
 
 
@@ -3255,6 +3391,8 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
     account_url = connection.get("account_url") or ""
     if not account_url:
         raise ValueError("Azure Files source is missing an account URL")
+    # Re-checked here so sources saved before the host check can't send a token elsewhere.
+    account_url = validate_azure_file_endpoint(account_url)
     if auth_type == "client_secret":
         client_id = auth.get("identity") or ""
         client_secret = _resolved_auth_secret(auth)
@@ -3270,7 +3408,8 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
         credential = DefaultAzureCredential(managed_identity_client_id=auth.get("managed_identity_client_id") or None)
     else:
         raise ValueError("Azure Files sources require managed identity, service principal, or connection string authentication")
-    return ShareServiceClient(account_url=account_url, credential=credential)
+    # Token credentials must declare backup intent; the SDK refuses to build the client otherwise.
+    return ShareServiceClient(account_url=account_url, credential=credential, token_intent=AZURE_FILES_TOKEN_INTENT)
 
 
 def _get_azure_files_share_client(source: Dict[str, Any]):
@@ -4412,3 +4551,86 @@ def _log_file_sync_activity(source: Dict[str, Any], user_id: Optional[str], acti
         )
     except Exception as error:
         log_event(f"[FILE_SYNC] Failed to log activity: {error}", level=logging.WARNING)
+
+
+def _file_sync_manager_recipient_ids(source: Dict[str, Any]) -> List[str]:
+    """Return the users who currently manage a source's workspace, capped for fan-out."""
+    scope_type = source.get("scope_type")
+    scope_id = _source_scope_id(source)
+    candidates: List[Any] = []
+    if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+        candidates = [scope_id]
+    elif scope_type == FILE_SYNC_SCOPE_GROUP:
+        candidates = get_group_document_reviewer_ids(find_group_by_id(scope_id))
+    elif scope_type == FILE_SYNC_SCOPE_PUBLIC:
+        workspace_doc = find_public_workspace_by_id(scope_id) or {}
+        members = [*(workspace_doc.get("admins") or []), *(workspace_doc.get("documentManagers") or [])]
+        candidates = [(workspace_doc.get("owner") or {}).get("userId")]
+        candidates.extend(member.get("userId") if isinstance(member, dict) else member for member in members)
+        candidates = [
+            user_id for user_id in candidates
+            if isinstance(user_id, str)
+            and get_user_role_in_public_workspace(workspace_doc, user_id) in FILE_SYNC_MANAGER_ROLES
+        ]
+    recipient_ids = sorted({user_id for user_id in candidates if isinstance(user_id, str) and user_id})
+    return recipient_ids[:FILE_SYNC_RUN_FAILED_NOTIFICATION_MAX_RECIPIENTS]
+
+
+def _file_sync_workspace_link(source: Dict[str, Any]) -> str:
+    scope_type = source.get("scope_type")
+    if scope_type == FILE_SYNC_SCOPE_GROUP:
+        return "/group_workspaces"
+    if scope_type == FILE_SYNC_SCOPE_PUBLIC:
+        return f"/public_workspaces/{quote(str(_source_scope_id(source)), safe='')}"
+    return "/workspace"
+
+
+def _notify_file_sync_run_failed(source: Dict[str, Any], run: Dict[str, Any], error_category: str) -> None:
+    """Tell a failed source's managers once a day, and app admins when Azure access must change."""
+    try:
+        # Imported lazily, like the activity-logging hook: functions_notifications pulls in group,
+        # public workspace and workflow alert modules, and File Sync also runs in the scheduler.
+        from functions_notifications import create_notification
+
+        source_id = str(source.get("id") or "")
+        if not source_id:
+            return
+        source_name = _normalize_text(source.get("name"), 200) or "File Sync source"
+        reason = FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES.get(error_category, FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE)
+        day = _now().strftime("%Y-%m-%d")
+        metadata = {
+            "source_id": source_id,
+            "run_id": run.get("id"),
+            "scope_type": source.get("scope_type"),
+            "source_type": source.get("source_type"),
+            "error_category": error_category or "unclassified",
+        }
+        link_context = {"workspace_type": source.get("scope_type"), "source_id": source_id}
+        for recipient_id in _file_sync_manager_recipient_ids(source):
+            create_notification(
+                user_id=recipient_id,
+                notification_type=FILE_SYNC_RUN_FAILED_NOTIFICATION_TYPE,
+                title=f"File Sync failed: {source_name}",
+                message=reason,
+                link_url=_file_sync_workspace_link(source),
+                link_context=link_context,
+                metadata=metadata,
+                idempotency_key=f"file-sync-run-failed:{source_id}:{day}",
+            )
+        if error_category in FILE_SYNC_ADMIN_NOTIFICATION_ERROR_CATEGORIES:
+            create_notification(
+                notification_type=FILE_SYNC_RUN_FAILED_NOTIFICATION_TYPE,
+                title=f"File Sync needs Azure access: {source_name}",
+                message=reason,
+                link_url="/admin/settings",
+                link_context=link_context,
+                metadata=metadata,
+                assignment={"roles": ["Admin"]},
+                idempotency_key=f"file-sync-run-failed-admin:{source_id}:{day}",
+            )
+    except Exception as error:
+        log_event(
+            "[FILE_SYNC] Failed to create run failure notification.",
+            level=logging.WARNING,
+            extra={"source_id": source.get("id"), "exception_type": type(error).__name__},
+        )

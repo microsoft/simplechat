@@ -298,6 +298,12 @@ def environment(monkeypatch):
             def __init__(self, *args, **kwargs):
                 super().__init__(404)
 
+        class AzureClientAuthenticationError(Exception):
+            """Stands in for azure-core's credential failure, which File Sync classifies by type."""
+
+        class AzureServiceRequestError(Exception):
+            """Stands in for azure-core's transport failure, which File Sync classifies by type."""
+
         azure = module_stub("azure")
         azure.__path__ = []
         azure_identity = module_stub(
@@ -310,6 +316,8 @@ def environment(monkeypatch):
         azure_core.__path__ = []
         azure_core_exceptions = module_stub(
             "azure.core.exceptions", ResourceNotFoundError=AzureResourceNotFoundError,
+            ClientAuthenticationError=AzureClientAuthenticationError,
+            ServiceRequestError=AzureServiceRequestError,
         )
         azure_core.exceptions = azure_core_exceptions
         azure_cosmos = module_stub("azure.cosmos")
@@ -348,6 +356,7 @@ def environment(monkeypatch):
         }
         execute_functions("functions_group.py", {
             "get_user_role_in_group", "assert_group_role", "check_group_status_allows_operation",
+            "get_group_document_reviewer_ids",
         }, group_namespace)
         scoped.setitem(sys.modules, "functions_group", module_stub(
             "functions_group",
@@ -355,6 +364,7 @@ def environment(monkeypatch):
             get_user_role_in_group=group_namespace["get_user_role_in_group"],
             assert_group_role=group_namespace["assert_group_role"],
             check_group_status_allows_operation=group_namespace["check_group_status_allows_operation"],
+            get_group_document_reviewer_ids=group_namespace["get_group_document_reviewer_ids"],
         ))
 
         # --- functions_file_sync leaf-dependency seams -------------------

@@ -95,6 +95,15 @@
     "existingOpenAISubscriptionId": {
       "value": "${EXISTING_AZURE_OPENAI_SUBSCRIPTION_ID}"
     },
+    "azureFilesStorageAccountResourceIds": {
+      "value": "${AZURE_FILES_STORAGE_ACCOUNT_RESOURCE_IDS}"
+    },
+    "externalSearchServiceResourceIds": {
+      "value": "${EXTERNAL_SEARCH_SERVICE_RESOURCE_IDS}"
+    },
+    "externalSearchServiceEnableReaderRole": {
+      "value": "${EXTERNAL_SEARCH_SERVICE_ENABLE_READER_ROLE}"
+    },
     "openAIDeploymentType": {
       "value": "${OPENAI_DEPLOYMENT_TYPE}"
     },

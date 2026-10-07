@@ -15,6 +15,7 @@ from config import cosmos_global_actions_container
 from functions_action_manifest import McpConfigurationError, bind_action_origin
 from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
+from functions_azure_files_search import AZURE_FILES_INDEX_ACTION_TYPE, validate_azure_files_index_action
 from functions_keyvault import keyvault_plugin_save_helper, keyvault_plugin_get_helper, keyvault_plugin_delete_helper, SecretReturnType
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
@@ -137,6 +138,8 @@ def save_global_action(action_data, user_id=None):
         submitted_action = action_data
         action_data = normalize_m365_action_payload(action_data)
         action_data = prepare_scoped_action(action_data, "global", "global")
+        if action_data.get("type") == AZURE_FILES_INDEX_ACTION_TYPE:
+            validate_azure_files_index_action(action_data, get_settings())
         if user_id is None:
             user_id = get_current_user_id()
         actor_user_id = user_id

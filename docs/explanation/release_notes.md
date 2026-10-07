@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.294)**
+
+#### New Features
+
+*   **Azure Files Search Action**
+    *   Administrators can add a global action that searches an existing Azure AI Search index built by the Azure Files indexer, so file shares a customer already indexes don't have to be ingested into SimpleChat again.
+    *   Those indexes store no file permissions. At query time SimpleChat reads each candidate file's NTFS permissions and the share's permissions and checks them against the signed-in user's Microsoft Entra identity and groups. Only files the user can open reach the agent; a file whose permissions can't be verified is withheld.
+    *   Withheld files are never mentioned to the user. Each search that withholds files writes an **Azure Files Search Access** entry to the Control Center activity logs with the agent, conversation, counts, reason codes, and up to 25 file paths, never file content or the question. Administrators are notified at most once per action per day when permissions couldn't be verified.
+    *   The action is global only. Users reach it through the agents and orchestration it's assigned to, and personal and group saves are refused. It's configured in the classic Admin Settings action editor and the V2 global action editor, each with a connection test that checks index access, file paths, share and file permissions, and the admin's directory groups.
+    *   SimpleChat's managed identity needs **Search Index Data Reader** on the search service (or the action can use a query key), plus **Storage File Data Privileged Reader** and **Reader** on each storage account.
+    *   (Ref: `functions_azure_files_search.py`, `functions_azure_files_acl.py`, `functions_azure_files_access.py`, `functions_azure_files_search_runtime.py`, `azure_files_index_plugin.py`, [Azure Files Search Action](features/AZURE_FILES_SEARCH_ACTION.md), [#1697](https://github.com/microsoft/simplechat/issues/1697))
+
+*   **Deployer Role Grants for Existing Storage Accounts and Search Services**
+    *   Bicep/azd, the Azure CLI script, and Terraform accept optional lists of existing storage account and Azure AI Search service resource IDs, in any resource group or subscription. The app's managed identity gets **Storage File Data Privileged Reader** and **Reader** on each storage account and **Search Index Data Reader** on each search service, with **Reader** on search services as an opt-in. The lists default to empty, so existing deployments don't change. Deployer version 1.0.34.
+    *   (Ref: `setPermissions-externalAzureFilesStorage.bicep`, `setPermissions-externalSearchService.bicep`, `deploy-simplechat.ps1`, `deployers/terraform/main.tf`)
+
+#### Bug Fixes
+
+*   **File Sync Azure Files Sources With a Managed Identity or Service Principal Connect Again**
+    *   Azure Files sources that authenticated with a managed identity or a service principal failed every connection test and sync. The Azure Files SDK requires a backup token intent for OAuth, and SimpleChat didn't pass one. Connection string and SAS sources weren't affected.
+    *   The client now requests backup intent. Connection test and run failures are classified as a missing role, an authentication failure, a missing share, or a blocked network, each with a message that says what to change. A failed run notifies the source's managers at most once per source per day, and also notifies administrators when an Azure role or credential must change.
+    *   Because these sources now send a storage token to the file service URL, the URL must be an Azure Files service endpoint such as `https://account.file.core.windows.net`. Other hosts are refused when a source is saved or tested, and a source saved earlier with another host stops before any credential is created.
+    *   The classic and V2 File Sync editors now explain that the identity needs **Storage File Data Privileged Reader**, which reads every file regardless of NTFS permissions, so everyone in the workspace can search the synced files.
+    *   (Ref: `functions_file_sync.py` `_get_azure_files_service_client`, `classify_azure_files_error`, `_notify_file_sync_run_failed`, [Azure Files File Sync Managed Identity Fix](fixes/AZURE_FILES_FILE_SYNC_MANAGED_IDENTITY_FIX.md))
+
 ### **(v0.261.293)**
 
 #### Bug Fixes

@@ -81,7 +81,8 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
         </p>
     );
 
-    const keyLabel = draft.type === 'azure_maps_openlayers' ? 'Azure Maps subscription key' :
+    const keyLabel = draft.type === 'azure_files_index' ? 'Azure AI Search query key' :
+        draft.type === 'azure_maps_openlayers' ? 'Azure Maps subscription key' :
         draft.type === 'cosmos_query' || draft.type === 'blob_storage' && draft.auth.type === 'key' ? 'Account key' :
             draft.auth.type === 'connection_string' ? 'Connection string' :
                 draft.auth.type === 'servicePrincipal' ? 'Client secret' :

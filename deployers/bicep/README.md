@@ -13,6 +13,7 @@
         - [Deployment Prompts](#Deployment-Prompts)
     - [Post Deployment Tasks](#Post-Deployment-Tasks)
 - [Key Vault secret permissions](#key-vault-secret-permissions)
+- [External Azure Files and Azure AI Search permissions](#external-azure-files-and-azure-ai-search-permissions)
 - [Video Indexer region and permissions](#video-indexer-region-and-permissions)
 - [Cleanup / Deprovision](#Cleanup-/-Deprovisioning)
 - [Helpful Info](#Helpful-Info)
@@ -307,7 +308,7 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 
 `imageName` defaults to `simplechat:latest`. Most deployments can accept that default without entering a custom value.
 
-When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. Rerun with an identity that has the required permissions or ask an Azure administrator to complete the RBAC setup. Switching to key-based authentication does not remove the Key Vault or other shared application-permission requirements when `configureApplicationPermissions=true`.
+When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. Rerun with an identity that has the required permissions or ask an Azure administrator to complete the RBAC setup. To switch runtime resource access to key-based authentication, run `azd env set AUTHENTICATION_TYPE key`, but note that this does not remove the Key Vault or other shared application-permission requirements when `configureApplicationPermissions=true`.
 
 `redisAuthenticationType` can be managed independently from `authenticationType`. For example, MAG/Azure Government environments can keep `AUTHENTICATION_TYPE managed_identity` for Cosmos DB, Storage, Search, OpenAI, and Cognitive Services while setting `REDIS_AUTHENTICATION_TYPE key` so Redis uses access keys.
 
@@ -365,6 +366,32 @@ If a matching, unconditional Officer assignment already exists at the exact vaul
 If your platform team owns IAM instead, `configureApplicationPermissions=false` avoids template ownership conflicts, but that team must maintain **all** application permissions, not just Key Vault. No application role is silently downgraded to Secrets User.
 
 Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py); it checks both Bicep modules, generated ARM, permission-disable conditions, and runtime principals without deploying resources.
+
+## External Azure Files and Azure AI Search permissions
+
+Implemented in application version **0.261.294** and deployer version **1.0.34** (`deployers/version.txt`).
+
+SimpleChat can read customer-owned storage accounts and Azure AI Search services that are not deployed by this template. Leave these optional parameters empty to keep existing behavior:
+
+| Parameter | Default | Purpose |
+|---|---:|---|
+| `azureFilesStorageAccountResourceIds` | `[]` | Existing `Microsoft.Storage/storageAccounts` resource IDs used by File Sync or the Azure Files Search action. The app identity receives **Storage File Data Privileged Reader** (`b8eda974-7b85-4f76-af95-65846b26df6d`) and **Reader** (`acdd72a7-3385-48ef-bd42-f606fba81ae7`) at each storage account scope. |
+| `externalSearchServiceResourceIds` | `[]` | Existing `Microsoft.Search/searchServices` resource IDs queried by Azure Files Search actions. The app identity receives **Search Index Data Reader** (`1407120a-92aa-4202-b7e9-c0e197c71c8f`) at each search service scope. |
+| `externalSearchServiceEnableReaderRole` | `false` | Also grants **Reader** on external search services for portal and diagnostic visibility. Reader is control-plane only and gives SimpleChat no access to index data; **Search Index Data Reader** is what lets the action query an index. |
+
+These grants are made whenever `configureApplicationPermissions=true`, whatever `authenticationType` is. SimpleChat reaches these customer-owned resources with the App Service system-assigned managed identity even when it uses keys for its own services.
+
+For AZD, set the array values as JSON strings before `azd provision` or `azd up`:
+
+```powershell
+azd env set AZURE_FILES_STORAGE_ACCOUNT_RESOURCE_IDS '["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/files-rg/providers/Microsoft.Storage/storageAccounts/filesacct"]'
+azd env set EXTERNAL_SEARCH_SERVICE_RESOURCE_IDS '["/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/search-rg/providers/Microsoft.Search/searchServices/searchsvc"]'
+azd env set EXTERNAL_SEARCH_SERVICE_ENABLE_READER_ROLE false
+```
+
+The deploying principal must be able to create role assignments at every target resource scope: **Owner**, **User Access Administrator**, or **Role Based Access Control Administrator** on each external storage account/search service or an inherited scope. Cross-resource-group and cross-subscription IDs are supported.
+
+**Storage File Data Privileged Reader bypasses NTFS file and folder permissions.** SimpleChat enforces per-file permissions itself only inside the Azure Files Search action. File Sync imports synced files into a workspace, where they become visible to that workspace's members.
 
 ## Video Indexer region and permissions
 

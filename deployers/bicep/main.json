@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "3025497095812405668"
+      "templateHash": "658393205202677739"
     }
   },
   "parameters": {
@@ -308,6 +308,27 @@
       "defaultValue": "",
       "metadata": {
         "description": "Optional subscription ID for an existing Azure OpenAI resource.\n- Used when reusing a standard Azure OpenAI resource across subscriptions"
+      }
+    },
+    "azureFilesStorageAccountResourceIds": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Optional existing Azure Storage account resource IDs used by File Sync or Azure Files Search.\n- Each ID must be a Microsoft.Storage/storageAccounts resource ID.\n- When configureApplicationPermissions is true, the app managed identity gets Storage File Data Privileged Reader and Reader at each storage account scope."
+      }
+    },
+    "externalSearchServiceResourceIds": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Optional existing Azure AI Search service resource IDs used by Azure Files Search actions.\n- Each ID must be a Microsoft.Search/searchServices resource ID.\n- When configureApplicationPermissions is true, the app managed identity gets Search Index Data Reader at each service scope."
+      }
+    },
+    "externalSearchServiceEnableReaderRole": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Optionally grant Reader on external Azure AI Search services for portal and diagnostic visibility.\n- This does not grant data-plane access to read index definitions; Search Index Data Reader supplies query/read data-plane access."
       }
     },
     "openAIDeploymentType": {
@@ -6361,6 +6382,15 @@
           },
           "videoIndexerSupportsOpenAiIntegration": {
             "value": "[variables('videoIndexerSupportsOpenAiIntegration')]"
+          },
+          "azureFilesStorageAccountResourceIds": {
+            "value": "[parameters('azureFilesStorageAccountResourceIds')]"
+          },
+          "externalSearchServiceResourceIds": {
+            "value": "[parameters('externalSearchServiceResourceIds')]"
+          },
+          "externalSearchServiceEnableReaderRole": {
+            "value": "[parameters('externalSearchServiceEnableReaderRole')]"
           }
         },
         "template": {
@@ -6370,7 +6400,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "12563751307025747079"
+              "templateHash": "8462980383999601930"
             }
           },
           "parameters": {
@@ -6458,9 +6488,56 @@
             "videoIndexerSupportsOpenAiIntegration": {
               "type": "bool",
               "defaultValue": true
+            },
+            "azureFilesStorageAccountResourceIds": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "Existing Microsoft.Storage/storageAccounts resource IDs used by File Sync or Azure Files Search."
+              }
+            },
+            "externalSearchServiceResourceIds": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "Existing Microsoft.Search/searchServices resource IDs used by Azure Files Search actions."
+              }
+            },
+            "externalSearchServiceEnableReaderRole": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Optionally grant control-plane Reader on external Azure AI Search services for portal and diagnostic visibility."
+              }
             }
           },
           "variables": {
+            "copy": [
+              {
+                "name": "azureFilesStorageAccounts",
+                "count": "[length(parameters('azureFilesStorageAccountResourceIds'))]",
+                "input": {
+                  "id": "[parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')]]",
+                  "subscriptionId": "[split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[2]]",
+                  "resourceGroupName": "[split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[4]]",
+                  "providerNamespace": "[toLower(split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[6])]",
+                  "resourceType": "[toLower(split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[7])]",
+                  "name": "[split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[8]]"
+                }
+              },
+              {
+                "name": "externalSearchServices",
+                "count": "[length(parameters('externalSearchServiceResourceIds'))]",
+                "input": {
+                  "id": "[parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')]]",
+                  "subscriptionId": "[split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[2]]",
+                  "resourceGroupName": "[split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[4]]",
+                  "providerNamespace": "[toLower(split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[6])]",
+                  "resourceType": "[toLower(split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[7])]",
+                  "name": "[split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[8]]"
+                }
+              }
+            ],
             "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]",
             "deployManagedRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'managed')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
             "deployClassicRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'classic')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]"
@@ -6863,6 +6940,152 @@
               }
             },
             {
+              "copy": {
+                "name": "externalAzureFilesStoragePermissions",
+                "count": "[length(variables('azureFilesStorageAccounts'))]"
+              },
+              "condition": "[and(equals(variables('azureFilesStorageAccounts')[copyIndex()].providerNamespace, 'microsoft.storage'), equals(variables('azureFilesStorageAccounts')[copyIndex()].resourceType, 'storageaccounts'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('externalAzureFilesStoragePermissions-{0}', copyIndex())]",
+              "subscriptionId": "[variables('azureFilesStorageAccounts')[copyIndex()].subscriptionId]",
+              "resourceGroup": "[variables('azureFilesStorageAccounts')[copyIndex()].resourceGroupName]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "storageAccountName": {
+                    "value": "[variables('azureFilesStorageAccounts')[copyIndex()].name]"
+                  },
+                  "webAppPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "427751329563938186"
+                    }
+                  },
+                  "parameters": {
+                    "storageAccountName": {
+                      "type": "string"
+                    },
+                    "webAppPrincipalId": {
+                      "type": "string"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppPrincipalId'), 'storage-file-data-privileged-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b8eda974-7b85-4f76-af95-65846b26df6d')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppPrincipalId'), 'storage-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "copy": {
+                "name": "externalSearchServicePermissions",
+                "count": "[length(variables('externalSearchServices'))]"
+              },
+              "condition": "[and(equals(variables('externalSearchServices')[copyIndex()].providerNamespace, 'microsoft.search'), equals(variables('externalSearchServices')[copyIndex()].resourceType, 'searchservices'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('externalSearchServicePermissions-{0}', copyIndex())]",
+              "subscriptionId": "[variables('externalSearchServices')[copyIndex()].subscriptionId]",
+              "resourceGroup": "[variables('externalSearchServices')[copyIndex()].resourceGroupName]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "searchServiceName": {
+                    "value": "[variables('externalSearchServices')[copyIndex()].name]"
+                  },
+                  "webAppPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]"
+                  },
+                  "grantReaderRole": {
+                    "value": "[parameters('externalSearchServiceEnableReaderRole')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "8686245023907321587"
+                    }
+                  },
+                  "parameters": {
+                    "searchServiceName": {
+                      "type": "string"
+                    },
+                    "webAppPrincipalId": {
+                      "type": "string"
+                    },
+                    "grantReaderRole": {
+                      "type": "bool",
+                      "defaultValue": false
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('webAppPrincipalId'), 'search-index-data-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '1407120a-92aa-4202-b7e9-c0e197c71c8f')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[parameters('grantReaderRole')]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('webAppPrincipalId'), 'search-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
               "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
@@ -7020,6 +7243,15 @@
           "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
           "videoIndexerAppRoleDefinitionId": {
             "value": "[variables('videoIndexerAppRoleDefinitionId')]"
+          },
+          "azureFilesStorageAccountResourceIds": {
+            "value": "[parameters('azureFilesStorageAccountResourceIds')]"
+          },
+          "externalSearchServiceResourceIds": {
+            "value": "[parameters('externalSearchServiceResourceIds')]"
+          },
+          "externalSearchServiceEnableReaderRole": {
+            "value": "[parameters('externalSearchServiceEnableReaderRole')]"
           }
         },
         "template": {
@@ -7029,7 +7261,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "13981557879151195852"
+              "templateHash": "4229548366858475231"
             }
           },
           "parameters": {
@@ -7101,9 +7333,56 @@
               "metadata": {
                 "description": "Role definition ID granted to the native web app identity on the Video Indexer account."
               }
+            },
+            "azureFilesStorageAccountResourceIds": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "Existing Microsoft.Storage/storageAccounts resource IDs used by File Sync or Azure Files Search."
+              }
+            },
+            "externalSearchServiceResourceIds": {
+              "type": "array",
+              "defaultValue": [],
+              "metadata": {
+                "description": "Existing Microsoft.Search/searchServices resource IDs used by Azure Files Search actions."
+              }
+            },
+            "externalSearchServiceEnableReaderRole": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Optionally grant control-plane Reader on external Azure AI Search services for portal and diagnostic visibility."
+              }
             }
           },
           "variables": {
+            "copy": [
+              {
+                "name": "azureFilesStorageAccounts",
+                "count": "[length(parameters('azureFilesStorageAccountResourceIds'))]",
+                "input": {
+                  "id": "[parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')]]",
+                  "subscriptionId": "[split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[2]]",
+                  "resourceGroupName": "[split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[4]]",
+                  "providerNamespace": "[toLower(split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[6])]",
+                  "resourceType": "[toLower(split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[7])]",
+                  "name": "[split(parameters('azureFilesStorageAccountResourceIds')[copyIndex('azureFilesStorageAccounts')], '/')[8]]"
+                }
+              },
+              {
+                "name": "externalSearchServices",
+                "count": "[length(parameters('externalSearchServiceResourceIds'))]",
+                "input": {
+                  "id": "[parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')]]",
+                  "subscriptionId": "[split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[2]]",
+                  "resourceGroupName": "[split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[4]]",
+                  "providerNamespace": "[toLower(split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[6])]",
+                  "resourceType": "[toLower(split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[7])]",
+                  "name": "[split(parameters('externalSearchServiceResourceIds')[copyIndex('externalSearchServices')], '/')[8]]"
+                }
+              }
+            ],
             "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]",
             "deployManagedRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'managed')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
             "deployClassicRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'classic')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]"
@@ -7414,6 +7693,152 @@
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
                         "principalId": "[parameters('videoIndexerPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "copy": {
+                "name": "externalAzureFilesStoragePermissions",
+                "count": "[length(variables('azureFilesStorageAccounts'))]"
+              },
+              "condition": "[and(equals(variables('azureFilesStorageAccounts')[copyIndex()].providerNamespace, 'microsoft.storage'), equals(variables('azureFilesStorageAccounts')[copyIndex()].resourceType, 'storageaccounts'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('nativeExternalAzureFilesStoragePermissions-{0}', copyIndex())]",
+              "subscriptionId": "[variables('azureFilesStorageAccounts')[copyIndex()].subscriptionId]",
+              "resourceGroup": "[variables('azureFilesStorageAccounts')[copyIndex()].resourceGroupName]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "storageAccountName": {
+                    "value": "[variables('azureFilesStorageAccounts')[copyIndex()].name]"
+                  },
+                  "webAppPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "427751329563938186"
+                    }
+                  },
+                  "parameters": {
+                    "storageAccountName": {
+                      "type": "string"
+                    },
+                    "webAppPrincipalId": {
+                      "type": "string"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppPrincipalId'), 'storage-file-data-privileged-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b8eda974-7b85-4f76-af95-65846b26df6d')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppPrincipalId'), 'storage-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "copy": {
+                "name": "externalSearchServicePermissions",
+                "count": "[length(variables('externalSearchServices'))]"
+              },
+              "condition": "[and(equals(variables('externalSearchServices')[copyIndex()].providerNamespace, 'microsoft.search'), equals(variables('externalSearchServices')[copyIndex()].resourceType, 'searchservices'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('nativeExternalSearchServicePermissions-{0}', copyIndex())]",
+              "subscriptionId": "[variables('externalSearchServices')[copyIndex()].subscriptionId]",
+              "resourceGroup": "[variables('externalSearchServices')[copyIndex()].resourceGroupName]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "searchServiceName": {
+                    "value": "[variables('externalSearchServices')[copyIndex()].name]"
+                  },
+                  "webAppPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]"
+                  },
+                  "grantReaderRole": {
+                    "value": "[parameters('externalSearchServiceEnableReaderRole')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "8686245023907321587"
+                    }
+                  },
+                  "parameters": {
+                    "searchServiceName": {
+                      "type": "string"
+                    },
+                    "webAppPrincipalId": {
+                      "type": "string"
+                    },
+                    "grantReaderRole": {
+                      "type": "bool",
+                      "defaultValue": false
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('webAppPrincipalId'), 'search-index-data-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '1407120a-92aa-4202-b7e9-c0e197c71c8f')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[parameters('grantReaderRole')]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('webAppPrincipalId'), 'search-reader')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
                         "principalType": "ServicePrincipal"
                       }
                     }

@@ -110,6 +110,8 @@ export interface ConnectionDescriptor {
     fields: ConnectionField[];
     /** The auth methods this source type accepts for inline credentials, in display order. */
     authTypes: string[];
+    /** Guidance shown with the authentication choices, such as a role the identity needs. */
+    notice?: string;
 }
 
 /**
@@ -132,6 +134,8 @@ export const CONNECTION_DESCRIPTORS: Record<string, ConnectionDescriptor> = {
             { key: 'directoryPath', label: 'Directory', placeholder: 'reports/2024' },
         ],
         authTypes: ['managed_identity', 'client_secret', 'connection_string'],
+        notice:
+            'A managed identity or service principal reads the share over Azure Files OAuth, so it needs the Storage File Data Privileged Reader role on the storage account or file share. That role reads every file regardless of NTFS permissions, and everyone in this group can search the synced files. A connection string or SAS also works.',
     },
     [FILE_SOURCE_TYPE_AZURE_BLOB]: {
         fields: [

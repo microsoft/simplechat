@@ -2801,6 +2801,7 @@ class ControlCenter {
             'document_deletion': 'Document Deleted',
             'document_metadata_update': 'Document Metadata Updated',
             'file_sync': 'File Sync',
+            'azure_files_search_access': 'Azure Files Search Access',
             'data_management': 'Data Management',
             'token_usage': 'Token Usage',
             'group_status_change': 'Group Status Change',
@@ -2935,6 +2936,20 @@ class ControlCenter {
                     fileSyncDetails.push(`Error: ${this.escapeHtml(fileSyncAdditionalContext.error)}`);
                 }
                 return `Action: ${this.escapeHtml(fileSyncAction)}<br>Source: ${this.escapeHtml(fileSyncSource)}<br><small class="text-muted">Scope: ${this.escapeHtml(fileSyncScope)}${fileSyncDetails.length ? ' · ' + fileSyncDetails.join(' · ') : ''}</small>`;
+
+            case 'azure_files_search_access': {
+                const reviewAction = log.action_context?.display_name || log.action_context?.action_name || 'Azure Files Search';
+                const reviewAgent = log.agent?.display_name || log.agent?.name || '';
+                const reviewCounts = log.additional_context?.counts || {};
+                const reviewReasons = Object.entries(log.additional_context?.reasons || {})
+                    .map(([reason, count]) => `${this.formatActivityValue(reason)}: ${this.formatActivityLogNumber(count)}`);
+                const reviewSummary = `Withheld ${this.formatActivityLogNumber(reviewCounts.denied_files || 0)} denied and `
+                    + `${this.formatActivityLogNumber(reviewCounts.unverified_files || 0)} unverified of `
+                    + `${this.formatActivityLogNumber(reviewCounts.files_evaluated || 0)} files`;
+                return `Action: ${this.escapeHtml(reviewAction)}`
+                    + `${reviewAgent ? ` · Agent: ${this.escapeHtml(reviewAgent)}` : ''}<br>${this.escapeHtml(reviewSummary)}`
+                    + `${reviewReasons.length ? `<br><small class="text-muted">${this.escapeHtml(reviewReasons.join(' · '))}</small>` : ''}`;
+            }
 
             case 'data_management':
                 const dataManagementContext = log.additional_context || {};
@@ -3222,6 +3237,23 @@ class ControlCenter {
                 
             case 'document_creation':
                 return `File: ${this.escapeHtml(log.document?.file_name || 'Unknown')}, Type: ${this.escapeHtml(log.document?.file_type || '')}`;
+
+            case 'azure_files_search_access': {
+                const counts = log.additional_context?.counts || {};
+                const reasons = Object.entries(log.additional_context?.reasons || {})
+                    .map(([reason, count]) => `${reason}: ${count}`)
+                    .join('; ');
+                return [
+                    `Action: ${this.escapeHtml(log.action_context?.display_name || log.action_context?.action_name || 'Azure Files Search')}`,
+                    `Index: ${this.escapeHtml(log.action_context?.index_name || 'N/A')}`,
+                    `Agent: ${this.escapeHtml(log.agent?.display_name || log.agent?.name || 'N/A')}`,
+                    `Conversation: ${this.escapeHtml(log.conversation_id || 'N/A')}`,
+                    `Denied: ${this.escapeHtml(String(counts.denied_files ?? 0))}`,
+                    `Unverified: ${this.escapeHtml(String(counts.unverified_files ?? 0))}`,
+                    `Files checked: ${this.escapeHtml(String(counts.files_evaluated ?? 0))}`,
+                    `Reasons: ${this.escapeHtml(reasons || 'N/A')}`
+                ].join(', ');
+            }
 
             case 'file_sync': {
                 const workspaceContext = log.workspace_context || {};
@@ -3550,6 +3582,50 @@ class ControlCenter {
                     {
                         label: 'Failed',
                         value: log.additional_context?.counts?.failed,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        columnClass: 'col-md-4'
+                    }
+                );
+                break;
+            case 'azure_files_search_access':
+                summaryFields.push(
+                    {
+                        label: 'Action',
+                        value: log.action_context?.display_name || log.action_context?.action_name || 'Azure Files Search',
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Index',
+                        value: log.action_context?.index_name,
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Agent',
+                        value: log.agent?.display_name || log.agent?.name,
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Conversation',
+                        value: log.conversation_id,
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Denied Files',
+                        value: log.additional_context?.counts?.denied_files,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        badgeClass: 'bg-secondary',
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Unverified Files',
+                        value: log.additional_context?.counts?.unverified_files,
+                        formatter: (value) => this.formatActivityLogNumber(value),
+                        badgeClass: 'bg-warning text-dark',
+                        columnClass: 'col-md-4'
+                    },
+                    {
+                        label: 'Files Checked',
+                        value: log.additional_context?.counts?.files_evaluated,
                         formatter: (value) => this.formatActivityLogNumber(value),
                         columnClass: 'col-md-4'
                     }

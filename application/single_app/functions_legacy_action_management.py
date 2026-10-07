@@ -8,11 +8,13 @@ import hashlib
 import json
 
 from functions_action_manifest import (
+    GlobalOnlyActionTypeError,
     McpConfigurationError,
     McpStdioRemovedError,
     bind_action_origin,
     get_action_execution_status,
     get_action_origin,
+    is_global_only_action_type,
     is_retired_mcp_stdio,
     resolve_action_type,
 )
@@ -199,6 +201,8 @@ def prepare_scoped_action(action, scope_type, scope_id):
     payload = bind_action_origin(payload, scope_type, scope_id)
     if is_retired_mcp_stdio(payload):
         raise McpStdioRemovedError()
+    if scope_type != "global" and is_global_only_action_type(payload.get("type")):
+        raise GlobalOnlyActionTypeError()
     if payload["type"] == "mcp":
         # Save-time normalization is deferred so management-only inspection never
         # loads preset catalogs or executable action dependencies during bootstrap.

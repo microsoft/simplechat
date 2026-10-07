@@ -2,11 +2,11 @@
 # test_action_test_connection_modal_wiring.py
 """
 Functional test for the action modal Test Connection wiring.
-Version: 0.250.217
+Version: 0.261.294
 Implemented in: 0.250.217
 
 This test ensures the action modal renders a Test Connection control for all
-eight newly supported action types, that every button is wired to the matching
+nine supported action types, that every button is wired to the matching
 backend route, that results are rendered without an innerHTML sink, and that the
 new Log Analytics Step 3 section replaces the generic form while preserving
 stored additionalFields such as query_history.
@@ -33,6 +33,7 @@ ROUTE_FILE = os.path.join(APP_DIR, "route_backend_plugins.py")
 TEST_CONNECTION_PREFIXES = [
     "openapi",
     "azure-maps",
+    "azure-files-index",
     "blob-storage",
     "databricks",
     "log-analytics",
@@ -65,7 +66,7 @@ def _read(file_path):
 
 
 def test_modal_renders_test_connection_controls():
-    """Verify all eight action types render a button, result container, and alert."""
+    """Verify all supported action types render a button, result container, and alert."""
     print("Testing Test Connection markup...")
 
     try:

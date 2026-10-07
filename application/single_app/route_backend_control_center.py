@@ -1053,6 +1053,25 @@ def format_activity_log_details_for_csv(log_record):
             detail_parts.append(f"Error: {additional_context.get('error')}")
         return '; '.join(detail_parts)
 
+    if activity_type == 'azure_files_search_access':
+        action_context = log_record.get('action_context', {}) or {}
+        additional_context = log_record.get('additional_context', {}) or {}
+        counts = additional_context.get('counts', {}) or {}
+        agent = log_record.get('agent') or {}
+        reasons = '; '.join(
+            f"{reason}: {count}" for reason, count in (additional_context.get('reasons') or {}).items()
+        ) or 'N/A'
+        return '; '.join([
+            f"Action: {action_context.get('display_name') or action_context.get('action_name') or 'Azure Files Search'}",
+            f"Index: {action_context.get('index_name') or 'N/A'}",
+            f"Agent: {agent.get('display_name') or agent.get('name') or 'N/A'}",
+            f"Conversation: {log_record.get('conversation_id') or 'N/A'}",
+            f"Denied: {counts.get('denied_files', 0)}",
+            f"Unverified: {counts.get('unverified_files', 0)}",
+            f"Files checked: {counts.get('files_evaluated', 0)}",
+            f"Reasons: {reasons}",
+        ])
+
     if activity_type == 'data_management':
         workspace_context = log_record.get('workspace_context', {})
         additional_context = log_record.get('additional_context', {})

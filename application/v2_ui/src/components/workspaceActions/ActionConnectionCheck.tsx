@@ -7,7 +7,7 @@ import { EditorPanel } from '../workspace/EditorLayout';
 import { nativeActionDefinition } from '../../lib/workspaceActionRegistry';
 import { testWorkspaceAction } from '../../lib/workspaceActionServices';
 import { connectorFeedback, testApiConnector, validateApiConnector, type ConnectorFeedback } from '../../lib/workspaceActionConnectors';
-import type { ActionConfiguration, ActionTypeDefinition } from '../../lib/workspaceAuthoring';
+import { isRecord, type ActionConfiguration, type ActionTypeDefinition } from '../../lib/workspaceAuthoring';
 import { connectorTestScope, type ActionConnectorProps } from '../../lib/workspaceActionTypes';
 
 export function useConnectorRequest(props: ActionConnectorProps) {
@@ -76,7 +76,15 @@ export function useConnectorRequest(props: ActionConnectorProps) {
 
 export function ConnectorFeedbackPanel({ feedback, stale }: { feedback: ConnectorFeedback | null; stale?: boolean }) {
     if (!feedback) return null;
-    const details = Object.entries(feedback.details).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value));
+    const checks = Array.isArray(feedback.details.checks) ? feedback.details.checks.flatMap((item) => {
+        if (!isRecord(item)) return [];
+        const status = item.status === 'pass' || item.status === 'warn' || item.status === 'fail' ? item.status : 'warn';
+        const name = typeof item.name === 'string' ? item.name : 'Check';
+        const message = typeof item.message === 'string' ? item.message : '';
+        return [{ status, name, message }];
+    }) : [];
+    const details = Object.entries(feedback.details).filter(([name, value]) =>
+        name !== 'checks' && ['string', 'number', 'boolean'].includes(typeof value));
     return (
         <div role={feedback.success ? 'status' : 'alert'} aria-live="polite"
             className={`alert rounded-xl border p-3 text-sm ${feedback.success
@@ -93,6 +101,19 @@ export function ConnectorFeedbackPanel({ feedback, stale }: { feedback: Connecto
                     {feedback.warnings.map((message, index) => <li key={index} className="break-words">{message}</li>)}
                 </ul>
             </div> : null}
+            {checks.length ? <ul className="mt-2 space-y-1 text-xs">
+                {checks.map((check, index) => <li key={`${check.name}-${index}`} className="flex items-start gap-2 rounded-lg bg-surface-1 px-2 py-1.5">
+                    <span className={`mt-0.5 rounded-full px-1.5 py-0.5 text-[0.6875rem] font-semibold uppercase tracking-wide ${
+                        check.status === 'pass' ? 'bg-accent-soft text-accent' :
+                            check.status === 'fail' ? 'bg-danger-soft text-danger' : 'bg-warn-soft text-warn'
+                    }`}>
+                        {check.status}
+                    </span>
+                    <span className="min-w-0 break-words text-text-2">
+                        <span className="font-medium text-text-1">{check.name}</span>{check.message ? ` — ${check.message}` : ''}
+                    </span>
+                </li>)}
+            </ul> : null}
             {details.length ? <dl className="mt-2 grid gap-1 text-xs text-text-2">
                 {details.map(([name, value]) => <div key={name} className="flex flex-wrap gap-x-2">
                     <dt className="font-medium">{name.replaceAll('_', ' ')}:</dt><dd className="break-all">{String(value)}</dd>

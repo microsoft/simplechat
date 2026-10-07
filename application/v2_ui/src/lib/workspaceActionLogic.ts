@@ -4,6 +4,7 @@ import {
     EDITOR_SECRET_MASK, editorName, isRecord, pointerPart, sameEditorValue,
     type ActionConfiguration, type ActionTypeDefinition, type AuthoringResource, type EditorSchema,
 } from './workspaceAuthoring';
+import { validateAzureFilesIndexDraft } from './azureFilesIndexAction';
 import { nativeActionDefinition, sqlConnectionMethod, usesDirectBlobConnectionString } from './workspaceActionRegistry';
 import type { ActionIdentity } from './workspaceActionTypes';
 
@@ -18,6 +19,7 @@ export function actionTypeLabel(type: unknown): string {
     const raw = String(type ?? '').trim();
     if (!raw) return 'Unknown';
     if (raw === 'agent') return 'Call agent';
+    if (raw === 'azure_files_index') return 'Azure Files Search';
     const spaced = raw.replace(/[_-]+/g, ' ');
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
@@ -531,6 +533,7 @@ export function validateActionDraft(
         Object.assign(errors, validateActionSchema(draft.additionalFields, definition.additional_fields_schema, '/additionalFields'));
         Object.assign(errors, validateActionSchema(draft.metadata, definition.metadata_schema, '/metadata'));
     }
+    Object.assign(errors, validateAzureFilesIndexDraft(draft, original));
     const requireField = (path: string, label: string) => {
         const value = actionValueAt(draft, path);
         if (typeof value !== 'string' || !value.trim()) errors[path] = `${label} is required.`;

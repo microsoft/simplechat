@@ -314,6 +314,12 @@ def environment(monkeypatch):
             def __init__(self, *args, **kwargs):
                 super().__init__(404)
 
+        class AzureClientAuthenticationError(Exception):
+            """Stands in for azure-core's credential failure, which File Sync classifies by type."""
+
+        class AzureServiceRequestError(Exception):
+            """Stands in for azure-core's transport failure, which File Sync classifies by type."""
+
         azure = module_stub("azure")
         azure.__path__ = []
         azure_identity = module_stub(
@@ -326,6 +332,8 @@ def environment(monkeypatch):
         azure_core.__path__ = []
         azure_core_exceptions = module_stub(
             "azure.core.exceptions", ResourceNotFoundError=AzureResourceNotFoundError,
+            ClientAuthenticationError=AzureClientAuthenticationError,
+            ServiceRequestError=AzureServiceRequestError,
         )
         azure_core.exceptions = azure_core_exceptions
         azure_cosmos = module_stub("azure.cosmos")
@@ -372,11 +380,14 @@ def environment(monkeypatch):
         ))
 
         # --- group membership seam ---------------------------------------
-        # ``functions_file_sync`` imports ``assert_group_role`` for the group scope,
-        # which the public tests never exercise; refuse it loudly if reached.
+        # ``functions_file_sync`` imports group helpers for the group scope, which the
+        # public tests never exercise; refuse them loudly if reached.
+        group_scope_refused = AssertionError("Group scope is not exercised in public file source tests.")
         scoped.setitem(sys.modules, "functions_group", module_stub(
             "functions_group",
-            assert_group_role=Mock(side_effect=AssertionError("Group scope is not exercised in public file source tests.")),
+            assert_group_role=Mock(side_effect=group_scope_refused),
+            find_group_by_id=Mock(side_effect=group_scope_refused),
+            get_group_document_reviewer_ids=Mock(side_effect=group_scope_refused),
         ))
 
         # --- functions_file_sync leaf-dependency seams -------------------

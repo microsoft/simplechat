@@ -24,6 +24,11 @@ from functions_azure_endpoint_validation import (
     validate_azure_monitor_query_endpoint,
     validate_azure_queue_endpoint,
 )
+from functions_azure_files_search import (
+    AZURE_FILES_INDEX_ACTION_TYPE,
+    AzureFilesSearchConfigError,
+    normalize_azure_files_search_config,
+)
 from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
 from functions_blob_storage_operations import (
     BLOB_STORAGE_PLUGIN_TYPE,
@@ -454,6 +459,12 @@ class PluginHealthChecker:
                 errors.append("Cosmos plugin only supports auth.type values 'identity' and 'key'")
             if auth_type == 'key' and not auth.get('key'):
                 errors.append("Cosmos plugin requires auth.key when auth.type='key'")
+
+        elif plugin_type == AZURE_FILES_INDEX_ACTION_TYPE:
+            try:
+                normalize_azure_files_search_config(manifest)
+            except AzureFilesSearchConfigError as exc:
+                errors.append(exc.public_message)
 
         elif plugin_type == ROCKSDB_PLUGIN_TYPE:
             errors.extend(PluginHealthChecker._validate_rocksdb_manifest(manifest))

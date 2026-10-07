@@ -1054,6 +1054,11 @@ function initializeFileSyncRoot(root) {
         });
         const azureBlobCredentialAssessment = createElement('div', { className: 'd-none' });
         renderCredentialMetadata(azureBlobCredentialAssessment, source?.credential_metadata, false);
+        const azureFilesCredentialNotice = createElement('div', {
+            className: 'alert alert-info py-2 mb-3',
+            attributes: { 'data-file-sync-azure-files-notice': 'true' },
+            text: 'A managed identity or service principal reads the share over Azure Files OAuth, so it needs the Storage File Data Privileged Reader role on the storage account or file share. That role reads every file regardless of NTFS permissions, and everyone in this workspace can search the synced files. A connection string or SAS also works.',
+        });
 
         const localCredentialsWrapper = createElement('div', { className: 'row g-3' });
         const authTypeWrapper = createElement('div', { className: 'col-md-6' });
@@ -1214,6 +1219,8 @@ function initializeFileSyncRoot(root) {
             identityAndAuthenticationChildren = [globalConnectorNotice];
         } else if (selectedSourceType === 'azure_blob') {
             identityAndAuthenticationChildren = [azureBlobCredentialNotice, azureBlobCredentialAssessment, identityWrapper, localCredentialsWrapper];
+        } else if (selectedSourceType === 'azure_files') {
+            identityAndAuthenticationChildren = [azureFilesCredentialNotice, identityWrapper, localCredentialsWrapper];
         }
 
         appendChildren(content, [
