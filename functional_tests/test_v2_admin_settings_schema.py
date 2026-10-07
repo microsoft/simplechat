@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.105
+Version: 0.261.260
 Implemented in: 0.261.039
+DAI diagnostics runtime flag registered in: 0.261.260
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
@@ -43,8 +44,9 @@ fields_module = import_app_module("admin_settings_fields")
 
 # Runtime flags the settings API sends alongside the schema. A field may depend on
 # one of these instead of on another field, for a capability gated outside the
-# settings document.
-RUNTIME_FLAGS = {"mcp_ui_enabled"}
+# settings document. `dai_debug_enabled` mirrors `enable_dai_debug`, which has no
+# control in either admin interface.
+RUNTIME_FLAGS = {"mcp_ui_enabled", "dai_debug_enabled"}
 
 # Properties every field type must carry beyond the common ones, because the
 # renderer cannot draw the control without them.

@@ -57,7 +57,10 @@ CAPABILITY_EXEMPTIONS = {
     "enable_analysis_deliverable_contract_telemetry": "Internal telemetry switch for deliverable contract diagnostics.",
     "enable_tabular_parity_contract_telemetry": "Internal telemetry switch for tabular parity diagnostics.",
     "enable_mixed_source_development_telemetry": "Internal development telemetry switch.",
-    "enable_dai_debug": "Internal Document Intelligence debug switch.",
+    "enable_dai_debug": (
+        "Document access index diagnostics switch, set in the settings document for "
+        "support sessions; neither admin interface offers a control for it."
+    ),
     "enable_tabular_generation_balanced_batches": "Internal tabular batching tuning flag.",
     "enable_tabular_completion_driven_checkpointing": "Internal tabular checkpointing tuning flag.",
     "enable_tabular_independent_batch_retries": "Internal tabular retry tuning flag.",

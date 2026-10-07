@@ -86,11 +86,14 @@ export function ConnectionTest({
     settings,
     draft,
     disabled,
+    onSuccess,
 }: {
     field: AdminField;
     settings: Json;
     draft: Json;
     disabled?: boolean;
+    /** Runs after a test passes, for a readout that should look again, such as Redis Metrics. */
+    onSuccess?: () => void;
 }) {
     const [running, setRunning] = useState(false);
     const [outcome, setOutcome] = useState<TestOutcome | null>(null);
@@ -123,7 +126,11 @@ export function ConnectionTest({
                 '/api/v2/admin/settings/test-connection',
                 payload,
             );
-            setOutcome(readOutcome(response, true));
+            const outcome = readOutcome(response, true);
+            setOutcome(outcome);
+            if (outcome.ok) {
+                onSuccess?.();
+            }
         } catch (caught) {
             if (caught instanceof ApiError) {
                 setOutcome(

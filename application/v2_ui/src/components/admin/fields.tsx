@@ -519,19 +519,25 @@ function RangeControl({ field, value, error, warning, disabled, onChange }: Fiel
 
 function NumberControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
     const id = `admin-field-${field.key}`;
+    const unit = field.suffix?.trim();
     return (
         <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="compact">
-            <input
-                id={id}
-                type="number"
-                className={inputClass}
-                min={field.min}
-                max={field.max}
-                step={field.step ?? 1}
-                value={asNumber(value, asNumber(field.default, 0))}
-                disabled={disabled}
-                onChange={(event) => onChange(Number(event.target.value))}
-            />
+            <div className="flex items-center gap-2">
+                <input
+                    id={id}
+                    type="number"
+                    className={inputClass}
+                    min={field.min}
+                    max={field.max}
+                    step={field.step ?? 1}
+                    value={asNumber(value, asNumber(field.default, 0))}
+                    disabled={disabled}
+                    onChange={(event) => onChange(Number(event.target.value))}
+                />
+                {/* The unit belongs beside the number: 900 reads very differently as
+                    seconds, minutes or RU/s. */}
+                {unit ? <span className="shrink-0 text-xs text-text-3">{unit}</span> : null}
+            </div>
         </FieldShell>
     );
 }

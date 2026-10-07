@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
+Scale group coverage added in: 0.261.260
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -45,6 +46,13 @@ are Cosmos maintenance switches and are now declared under
 "storage" in ``data-management-storage-section`` and appeared under Backup &
 Recovery, while ``enable_key_vault_secret_expiration_reminders`` matched nothing at
 all and fell into "Other capabilities".
+
+Scale was described after that. The scan had drawn switches for the always-on
+Document Access Index flags, which ``get_settings`` forces back to True on every
+read, so each would appear to save and then revert. ``enable_dai_debug`` matched
+"debug" and appeared under Operations > Debug Logging, although it is an App
+Service setting the server-rendered page never offers a control for. All five are
+now suppressed.
 """
 
 import re
@@ -68,7 +76,7 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
+FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions", "scale")
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -120,6 +128,14 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_enhanced_citations_mount",
     "enable_mixed_source_chat_search",
     "enable_mixed_source_conversation_continuity",
+    # Scale. The Document Access Index flags are forced on by
+    # normalize_document_access_index_required_settings on every read and write, and
+    # enable_dai_debug is an App Service setting V1 never offers a control for.
+    "enable_document_access_index_container",
+    "enable_document_access_index_write_through",
+    "enable_document_access_index_reads",
+    "enable_startup_document_access_index_backfill",
+    "enable_dai_debug",
 )
 
 # Relocations with no server-rendered counterpart to check against. Both are

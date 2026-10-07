@@ -1,10 +1,11 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.258
+// Version: 0.261.260
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
 // Every-section presentation and schema-derived hierarchy added in: 0.261.258
+// Runtime-flag gated fields inside the card added in: 0.261.260
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -592,6 +593,48 @@ check('distinct subsection presentation preserves collapsed defaults and counts'
     assert.match(markup, /2 settings/);
     assert.doesNotMatch(markup, /Hero Title|Hero Subtitle/);
     assert.deepEqual(calls, []);
+});
+
+check('a card keeps fields gated on a runtime flag the server sent', () => {
+    // Regression: the card re-filtered its fields without the runtime flags. With the Inbound
+    // MCP preview on, it dropped every configuration field and kept the "preview disabled"
+    // notice in their place.
+    const gated: AdminField[] = [
+        {
+            type: 'component',
+            component: 'preview-off-notice',
+            label: 'Preview off',
+            depends_on: { flag: 'preview_enabled', equals: false },
+        },
+        {
+            key: 'preview_setting',
+            type: 'text',
+            label: 'Preview setting',
+            depends_on: { flag: 'preview_enabled', equals: true },
+        },
+    ];
+    const rendered = (runtimeFlags: Record<string, boolean>) => {
+        const calls: string[] = [];
+        renderToStaticMarkup(createElement(SettingsSection, {
+            sectionId: 'inbound-mcp-configuration',
+            label: 'Inbound MCP',
+            groupLabel: 'Security',
+            tabLabel: 'MCP',
+            fields: gated,
+            settings: {},
+            draft: {},
+            runtimeFlags,
+            renderField: (field) => {
+                calls.push(field.key ?? field.component ?? '');
+                return createElement('span', { key: field.key ?? field.component }, field.label);
+            },
+            renderCapability: (field) => createElement('span', { key: field.key }, field.label),
+        }));
+        return calls;
+    };
+
+    assert.deepEqual(rendered({ preview_enabled: true }), ['preview_setting']);
+    assert.deepEqual(rendered({ preview_enabled: false }), ['preview-off-notice']);
 });
 
 let passed = 0;
