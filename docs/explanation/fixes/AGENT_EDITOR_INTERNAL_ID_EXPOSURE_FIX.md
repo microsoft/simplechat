@@ -1,6 +1,6 @@
 # Agent Editor Internal ID Exposure Fix
 
-Fixed in version: **0.261.275**
+Fixed in version: **0.261.277**
 
 ## Issue
 

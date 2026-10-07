@@ -2,8 +2,8 @@
 # test_agent_editor_hides_internal_ids.py
 """
 Functional test for hiding internal identifiers in the shared agent editor.
-Version: 0.261.275
-Implemented in: 0.261.275
+Version: 0.261.277
+Implemented in: 0.261.277
 
 This test ensures that the shared v2 agent editor (personal, group and global agents)
 does not render GUIDs or internal IDs: no stable ID in the header or identity section,
@@ -74,7 +74,7 @@ def test_knowledge_fields_hide_ids_and_show_file_names():
 
 
 def test_version_floor():
-    assert_app_version_at_least("0.261.275")
+    assert_app_version_at_least("0.261.277")
     return True
 
 

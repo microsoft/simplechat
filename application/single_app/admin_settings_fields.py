@@ -82,6 +82,11 @@ Beyond a field's type, six optional descriptors shape how a section reads:
     input would otherwise save to a top-level key nothing reads. See
     ``_apply_nested_paths``.
 
+``keywords``
+    Extra words the V2 page search matches on. A bespoke component has one label and
+    one help text but can hold a whole workbench, so without these a search for
+    "retention" would not find the backup schedule that contains it.
+
 ``on_enable``
     Companion values a switch sets when it is turned on, as
     ``{"set": {key: value}, "when": <condition>}``. Enhanced extraction is the
@@ -93,8 +98,21 @@ Beyond a field's type, six optional descriptors shape how a section reads:
     the switch on without naming the companion, so an API client gets the same
     result. A value named in the same save always wins.
 
-The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Operations, Scale,
-Workflow, Workspaces and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+``related_section``
+    Points a setting at the section its effect shows up in, as
+    ``{"section_id": <section id>, "label": <link text>}``. ``requires`` is
+    the opposite direction: it names a prerequisite a field waits on. The page
+    says where the section sits and offers a jump to it, or a link to the
+    classic page when ``"classic_only": True`` says only that page draws what
+    the setting changes. The Document Access Index diagnostics switch points at
+    DAI Metrics; the Latest Features destination points at the User-Facing
+    Latest Features choices it publishes.
+
+The Appearance, Agents & Actions, Chat, Data Lifecycle, Governance, Help, Knowledge,
+Operations, Scale, Workflow, Workspaces and Security groups are described in full.
+Backup & Recovery is described by one component per section, because its settings are
+a separate document saved through the data-management API and the rest of it is
+workbenches over that same API. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -205,6 +223,10 @@ from functions_workflow_limits import (
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
     validate_workflow_min_schedule_interval_seconds,
+)
+from support_menu_config import (
+    get_support_latest_feature_catalog,
+    normalize_support_latest_features_visibility,
 )
 
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -419,6 +441,20 @@ KEY_VAULT_REMINDER_MAX_SCAN_SECONDS = 86400
 KEY_VAULT_REMINDER_DEFAULT_ADMIN_ROLES = ["Admin"]
 
 ACCESS_DENIED_MESSAGE_MAX_LENGTH = 2000
+
+# The Support menu title sits in the navigation rail beside other menu titles, so
+# it shares the External Links menu name's cap.
+SUPPORT_MENU_NAME_MAX_LENGTH = 60
+
+# RFC 5321 caps a forward path at 254 characters, which is as long as any address
+# a mail client will accept in a mailto: draft.
+SUPPORT_FEEDBACK_RECIPIENT_MAX_LENGTH = 254
+
+# One address, no display name and no spaces. The end-user route only checks for
+# an "@", so anything this accepts it accepts too; this is stricter so a typo such
+# as a second address after a comma is caught where it is typed rather than in a
+# user's draft.
+SUPPORT_FEEDBACK_RECIPIENT_PATTERN = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+$")
 
 # Scale groups. Each is shared by several fields, and the first field of a group
 # decides its label, variant and help, so declaring them once keeps them in step.
@@ -1012,32 +1048,14 @@ ADMIN_SETTINGS_FIELDS = {
     # below, beside the mixed-source telemetry switch that reports to the same
     # place. Wording is taken from the V1 panes so both interfaces say the same
     # thing.
-    "user-facing-latest-features-section": [
-        {
-            "key": "enable_support_latest_feature_documentation_links",
-            "type": "switch",
-            "label": "Show Simple Chat Documentation Guide Links",
-            "help": (
-                "User-facing Latest Features cards show public documentation guide "
-                "buttons in addition to the direct in-app shortcuts."
-            ),
-            "default": False,
-            # V1 hides this control entirely while the Latest Features destination
-            # is off, because the cards it affects are not reachable then. The
-            # Support Menu condition is repeated because visibility is evaluated
-            # per field rather than recursively: `enable_support_latest_features`
-            # defaults to True, so gating on it alone would leave this on screen
-            # while the whole Support menu is off.
-            "depends_on": [
-                {"key": "enable_support_menu", "equals": True},
-                {"key": "enable_support_latest_features", "equals": True},
-            ],
-        },
-    ],
-    # Declared so the dependency above resolves to a control an administrator can
-    # actually find and flip, and so the Support Menu gate chain reads the same in
-    # both interfaces. The remaining fields in this section are still discovered
-    # by the fallback scan.
+    # ------------------------------------------------------------------
+    # Help group. Sections follow admin_settings_nav.py. The Support Menu
+    # fields mirror the V1 support-menu pane. Send Feedback and the
+    # User-Facing Latest Features choices are bespoke components, because
+    # what they hold is a utility form and a release catalogue rather than
+    # scalar settings. Admin Latest Features declares no navigation sections
+    # at all; the V2 page renders it from the catalogue, as V1 does.
+    # ------------------------------------------------------------------
     "support-menu-section": [
         {
             "key": "enable_support_menu",
@@ -1050,12 +1068,127 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
         {
+            "key": "support_menu_name",
+            "type": "text",
+            "label": "Menu Name",
+            "help": "Appears in user navigation as the Support menu title.",
+            "default": "Support",
+            "placeholder": "Support",
+            "max_length": SUPPORT_MENU_NAME_MAX_LENGTH,
+            "fallback_when_empty": True,
+            "depends_on": {"key": "enable_support_menu", "equals": True},
+        },
+        {
+            "key": "enable_support_send_feedback",
+            "type": "switch",
+            "label": "Enable Send Feedback Destination",
+            "help": (
+                "Users can prepare bug reports and feature requests as email drafts "
+                "addressed to your own support mailbox."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_support_menu", "equals": True},
+        },
+        {
+            "key": "support_feedback_recipient_email",
+            "type": "text",
+            "input_type": "email",
+            "label": "Support Recipient Email",
+            "help": (
+                "User Send Feedback drafts are addressed to this internal mailbox. "
+                "Users do not see Send Feedback until it is set."
+            ),
+            "default": "",
+            "placeholder": "support@contoso.com",
+            "max_length": SUPPORT_FEEDBACK_RECIPIENT_MAX_LENGTH,
+            # Marks the section as needing configuration while Send Feedback is on
+            # and nothing is set, instead of switching the destination off on save
+            # the way the server-rendered form does.
+            "required": True,
+            "depends_on": [
+                {"key": "enable_support_menu", "equals": True},
+                {"key": "enable_support_send_feedback", "equals": True},
+            ],
+        },
+        {
             "key": "enable_support_latest_features",
             "type": "switch",
             "label": "Enable Latest Features Destination",
             "help": "Publishes a user-facing Latest Features page from the Support menu.",
             "default": True,
             "depends_on": {"key": "enable_support_menu", "equals": True},
+            "related_section": {
+                "section_id": "user-facing-latest-features-section",
+                "label": "User-Facing Latest Features",
+            },
+        },
+    ],
+    # Send Feedback is a utility rather than a setting: it prepares an email to the
+    # SimpleChat product team through /api/admin/settings/send_feedback_email, the
+    # endpoint the server-rendered tab posts to. Nothing here is saved with the page.
+    "send-feedback-overview-card": [
+        {
+            "type": "component",
+            "component": "send-feedback-overview",
+            "label": "Send Feedback to the SimpleChat Team",
+            "help": (
+                "Report a bug or request a feature directly to the SimpleChat product "
+                "team. Each submission is recorded in the activity log, then a "
+                "text-only email draft opens in your mail app."
+            ),
+        },
+    ],
+    "send-feedback-bug-card": [
+        {
+            "type": "component",
+            "component": "send-feedback-bug-report",
+            "label": "Report a Bug",
+            "help": "Something isn't working as expected.",
+        },
+    ],
+    "send-feedback-feature-card": [
+        {
+            "type": "component",
+            "component": "send-feedback-feature-request",
+            "label": "Request a Feature",
+            "help": "Suggest an improvement or new capability.",
+        },
+    ],
+    "user-facing-latest-features-section": [
+        {
+            # Reads the Support menu and destination switches, which live in another
+            # section, so it says plainly whether anything here is reaching users.
+            "type": "component",
+            "component": "support-latest-features-publication",
+            "label": "Publication",
+            "help": "Whether users can reach these announcements right now.",
+        },
+        {
+            "key": "enable_support_latest_feature_documentation_links",
+            "type": "switch",
+            "label": "Show Simple Chat Documentation Guide Links",
+            "help": (
+                "User-facing Latest Features cards show public documentation guide "
+                "buttons in addition to the direct in-app shortcuts."
+            ),
+            "default": False,
+            # Deliberately ungated. V1 hides this while the destination is off; V2
+            # lets the cards be prepared before they are published, and the
+            # publication notice above says when nothing is reaching users yet.
+        },
+        {
+            # Writes the whole visibility map into the draft. The map is checked and
+            # merged over the stored one on save, so a partial payload can never
+            # re-share an announcement that was hidden.
+            "type": "component",
+            "component": "support-latest-features-visibility",
+            "key": "support_latest_features_visibility",
+            "label": "Announcements Shared with Users",
+            "help": (
+                "Choose which release highlights appear on the user Latest Features "
+                "page. Two archive items, Deployment and Redis, start hidden because "
+                "they are mainly admin-facing rollout and infrastructure topics."
+            ),
         },
     ],
     "personal-workspaces-section": [
@@ -7741,6 +7874,138 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
     ],
+    # Backup & Recovery. Every section is a bespoke component: the data-management
+    # settings live in their own Cosmos document (`backup_settings`) and are saved through
+    # /api/admin/data-management/settings, and the inventory, jobs, migration and editor
+    # are workbenches over that same admin API rather than settings at all. The V2 page
+    # counts the components' unsaved settings in its Save bar and saves them after the
+    # main settings. `keywords` lets the page search find a section by what it contains.
+    "data-management-readiness-section": [
+        {
+            "type": "component",
+            "component": "data-management-readiness",
+            "label": "Backup readiness",
+            "help": (
+                "What is in place for backups, restore and migration, with a guide for "
+                "each."
+            ),
+            "keywords": [
+                "start here", "readiness", "checklist", "guide", "setup", "ru boost",
+                "permissions", "business hours",
+            ],
+        },
+    ],
+    "data-management-backup-section": [
+        {
+            "type": "component",
+            "component": "data-management-backup-runs",
+            "label": "Run a backup",
+            "help": (
+                "Queue a full or partial backup now, and tune how backups load Cosmos DB "
+                "and copy source files."
+            ),
+            "keywords": [
+                "backup now", "full backup", "partial backup", "queue", "performance",
+                "concurrency", "retry", "throughput", "ru boost", "chunk size",
+                "file transfers",
+            ],
+        },
+    ],
+    "data-management-schedule-section": [
+        {
+            "type": "component",
+            "component": "data-management-schedule",
+            "label": "Backup schedule",
+            "help": "When backups run, how long they are kept, and what they include.",
+            "keywords": [
+                "schedule", "frequency", "daily", "weekly", "retention",
+                "delete backups after", "partial backups", "low impact", "scope",
+                "cosmos", "ai search", "source files", "blobs",
+            ],
+        },
+    ],
+    "data-management-storage-section": [
+        {
+            "type": "component",
+            "component": "data-management-storage",
+            "label": "Backup storage",
+            "help": "The dedicated Azure Storage account and container backups are written to.",
+            "keywords": [
+                "storage", "blob", "container", "connection string", "managed identity",
+                "prefix", "test storage",
+            ],
+        },
+    ],
+    "data-management-encryption-section": [
+        {
+            "type": "component",
+            "component": "data-management-encryption",
+            "label": "Backup encryption",
+            "help": "Whether backup files are encrypted, and where the encryption key is kept.",
+            "keywords": ["encryption", "encrypt", "key", "generate key", "key vault"],
+        },
+    ],
+    "data-management-migration-section": [
+        {
+            "type": "component",
+            "component": "data-management-migration",
+            "label": "Migration",
+            "help": (
+                "Move selected users, groups and public workspaces, with their documents, "
+                "into another SimpleChat environment."
+            ),
+            "keywords": [
+                "migrate", "migration", "destination", "target", "users", "groups",
+                "public workspaces", "preflight", "review", "mirror", "catch up",
+                "baseline", "ru boost", "writer freeze",
+            ],
+        },
+    ],
+    "data-management-backup-inventory-section": [
+        {
+            "type": "component",
+            "component": "data-management-backup-inventory",
+            "label": "Backup inventory and restore",
+            "help": (
+                "Completed backups, retention cleanup, and restoring a backup into the "
+                "destination environment."
+            ),
+            "keywords": [
+                "restore", "inventory", "backups", "retention cleanup", "delete backup",
+                "overwrite", "create only",
+            ],
+        },
+    ],
+    "data-management-cosmos-editor-section": [
+        {
+            "type": "component",
+            "component": "data-management-cosmos-editor",
+            "label": "Cosmos DB editor",
+            "help": (
+                "Query SimpleChat's Cosmos DB containers and repair one document at a "
+                "time, with ETag protection."
+            ),
+            "keywords": [
+                "cosmos", "json", "editor", "query", "document", "repair", "etag",
+                "partition key",
+            ],
+        },
+    ],
+    "data-management-jobs-section": [
+        {
+            "type": "component",
+            "component": "data-management-jobs",
+            "label": "Job history",
+            "help": (
+                "Backup, restore and migration jobs, with live progress, retry, resume, "
+                "cancel and migration manifests."
+            ),
+            "keywords": [
+                "jobs", "history", "progress", "cancel", "retry", "resume", "manifest",
+                "dry run",
+            ],
+        },
+    ],
     # ------------------------------------------------------------------
     # Operations group: Control Center and Logging & Health. Sections and order
     # follow admin_settings_nav.py, and every control follows the V1
@@ -8239,6 +8504,29 @@ LEGACY_FIELD_NAMES = {
     # stored key, which reads the other way round.
     "debug_logging_timer_enabled": ["enable_debug_logging_timer"],
     "file_processing_logs_timer_enabled": ["enable_file_processing_logs_timer"],
+    # V1 renders one checkbox per catalogue feature, named after the feature id,
+    # and assembles the map server-side; V2 edits the stored map directly. The
+    # names are generated from the same catalogue the pane loops over.
+    "support_latest_features_visibility": [
+        f"support_latest_feature_{feature['id']}"
+        for feature in get_support_latest_feature_catalog()
+    ],
+}
+
+# V1 form inputs that are not settings at all, mapped to the V2 component that
+# offers the same input. The Send Feedback tab is a utility form inside the
+# settings page: its inputs are posted to /api/admin/settings/send_feedback_email
+# by script and ignored by the settings save. The parity test reads this so each
+# of them is accounted for by a component the schema actually declares.
+LEGACY_FORM_ONLY_FIELDS = {
+    "send_feedback_bug_name": "send-feedback-bug-report",
+    "send_feedback_bug_email": "send-feedback-bug-report",
+    "send_feedback_bug_org": "send-feedback-bug-report",
+    "send_feedback_bug_details": "send-feedback-bug-report",
+    "send_feedback_feature_name": "send-feedback-feature-request",
+    "send_feedback_feature_email": "send-feedback-feature-request",
+    "send_feedback_feature_org": "send-feedback-feature-request",
+    "send_feedback_feature_details": "send-feedback-feature-request",
 }
 
 # Field names present in the V1 panes covered by a parity test that intentionally
@@ -8407,6 +8695,17 @@ ADMIN_SECTION_STATUS = {
     "rate-limit-message-section": {
         "enabled_key": "enable_custom_rate_limit_message",
         "configured": [{"requires": ["rate_limit_message"]}],
+    },
+    # Send Feedback stays out of the user Support menu until a recipient exists,
+    # so "on with no recipient" is a configuration gap rather than a working state.
+    "support-menu-section": {
+        "enabled_key": "enable_support_menu",
+        "configured": [
+            {
+                "when": {"enable_support_send_feedback": True},
+                "requires": ["support_feedback_recipient_email"],
+            },
+        ],
     },
 }
 
@@ -8801,6 +9100,49 @@ def _validate_front_door_url(value):
     if parsed.path or parsed.query or parsed.fragment:
         return None, "Enter the origin only, with no path or query string."
     return candidate, None
+
+
+def _validate_support_feedback_recipient(value):
+    """Return ``(address, error)`` for the end-user Send Feedback recipient.
+
+    The server-rendered form clears a malformed address and switches the Send
+    Feedback destination off with a flash message. Refusing the save instead keeps
+    what was typed on screen beside the reason, which is how V2 treats any value an
+    administrator entered. A blank value is accepted: it is how the destination is
+    left unconfigured, and the Support section status says so.
+    """
+    candidate = str(value if value is not None else "").strip()
+    if not candidate:
+        return "", None
+    if len(candidate) > SUPPORT_FEEDBACK_RECIPIENT_MAX_LENGTH:
+        return None, (
+            f"Email addresses are at most {SUPPORT_FEEDBACK_RECIPIENT_MAX_LENGTH} characters."
+        )
+    if not SUPPORT_FEEDBACK_RECIPIENT_PATTERN.match(candidate):
+        return None, "Enter one email address, such as support@contoso.com."
+    return candidate, None
+
+
+def _merge_support_latest_features_visibility(value, current_settings):
+    """Return ``(visibility, error)`` for the User-Facing Latest Features choices.
+
+    The V2 control sends the whole map, but the endpoint accepts partial updates,
+    so submitted entries are merged over what is stored rather than over the
+    catalogue defaults. Merging over the defaults would let a payload naming one
+    announcement quietly re-share every other one an administrator had hidden.
+    Ids the catalogue no longer has are dropped, and the result goes through the
+    same normalizer the server-rendered save uses.
+    """
+    if not isinstance(value, dict):
+        return None, "Expected a map of announcement ids to true or false."
+
+    merged = normalize_support_latest_features_visibility(
+        (current_settings or {}).get("support_latest_features_visibility", {})
+    )
+    for feature_id, shared in value.items():
+        if feature_id in merged:
+            merged[feature_id] = _coerce_bool(shared)
+    return normalize_support_latest_features_visibility(merged), None
 
 
 def _validate_external_link_url(url):
@@ -9842,6 +10184,26 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 normalized[key] = front_door_value
             continue
 
+        if key == "support_feedback_recipient_email":
+            recipient, recipient_error = _validate_support_feedback_recipient(value)
+            if recipient_error:
+                errors[key] = recipient_error
+            else:
+                normalized[key] = recipient
+            continue
+
+        if key == "support_latest_features_visibility":
+            # Declared as a component field, which the type-driven path below
+            # refuses, so it is validated here instead.
+            visibility, visibility_error = _merge_support_latest_features_visibility(
+                value, current
+            )
+            if visibility_error:
+                errors[key] = visibility_error
+            else:
+                normalized[key] = visibility
+            continue
+
         if key == "redis_port":
             port_value, port_error = _validate_redis_port(value)
             if port_error:
@@ -9911,6 +10273,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # together or one at a time, so the merged state is the only thing worth
     # judging.
     _apply_cross_field_rules(normalized, current, warnings)
+    _note_unaddressed_support_feedback(normalized, current, warnings)
 
     # Folded last so the checks above still see the flat keys they were written
     # against, and so a rejected save never assembles a container.
@@ -10275,6 +10638,43 @@ def _apply_idle_warning_rule(normalized, current_settings, warnings):
         f"Lowered to {timeout} minutes, because a warning cannot arrive after the "
         "sign-out it warns about."
     )
+
+
+# The settings that together decide whether Send Feedback reaches end users.
+SUPPORT_FEEDBACK_SETTING_KEYS = (
+    "enable_support_menu",
+    "enable_support_send_feedback",
+    "support_feedback_recipient_email",
+)
+
+
+def _note_unaddressed_support_feedback(normalized, current_settings, warnings):
+    """Say when Send Feedback is on for users but has nowhere to send.
+
+    The server-rendered form switches the destination off in this case. V2 keeps
+    what was saved and explains why users will not see it yet, so turning on the
+    Support menu never silently changes a different setting; the Support section
+    status reads "Needs configuration" for the same reason.
+
+    Judged on the merged state, and only when the save touches one of the three
+    keys, so an unrelated save does not repeat the note.
+    """
+    if not any(key in normalized for key in SUPPORT_FEEDBACK_SETTING_KEYS):
+        return
+
+    def merged(key, fallback):
+        if key in normalized:
+            return normalized[key]
+        stored = current_settings.get(key)
+        return fallback if stored is None else stored
+
+    menu_on = _coerce_bool(merged("enable_support_menu", False))
+    feedback_on = _coerce_bool(merged("enable_support_send_feedback", True))
+    recipient = str(merged("support_feedback_recipient_email", "") or "").strip()
+    if menu_on and feedback_on and not recipient:
+        warnings["support_feedback_recipient_email"] = (
+            "Users won't see Send Feedback until a recipient email is set."
+        )
 
 
 def _apply_logging_timer_limits(normalized, current_settings, warnings):

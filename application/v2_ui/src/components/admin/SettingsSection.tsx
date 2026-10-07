@@ -58,6 +58,7 @@ import {
 } from '../../lib/adminSections';
 import { GlassPanel } from '../ui/primitives';
 import { FALLBACK_SECTION_ICON } from './adminSectionIcons';
+import { SectionStatusContext } from './sectionStatusContext';
 import { presentSectionStatus } from './sectionStatusPresentation';
 import type { Json } from '../../lib/types';
 
@@ -123,6 +124,11 @@ export interface SettingsSectionProps {
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * A marker drawn in the header beside the status chip. Admin Latest Features uses it
+     * for its "New" pill, which is about the content rather than the section's state.
+     */
+    badge?: ReactNode;
     /**
      * An in-app guide the header offers, for settings that depend on work done outside
      * SimpleChat. Declared per section by `ADMIN_SECTION_GUIDES`.
@@ -387,6 +393,7 @@ export function SettingsSection({
     renderCapability,
     forceExpanded,
     appearance,
+    badge,
     guide,
     runtimeFlags,
     onNavigate,
@@ -573,8 +580,9 @@ export function SettingsSection({
                     </div>
                 </div>
 
-                {guide || presentation ? (
+                {badge || guide || presentation ? (
                     <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">
+                        {badge}
                         {guide ? (
                             <button
                                 type="button"
@@ -609,31 +617,33 @@ export function SettingsSection({
             </div>
 
             <div className="admin-section-body p-4 sm:p-5">
-                {dependents?.length ? (
-                    <DependentsLine
-                        dependents={dependents}
-                        onNavigate={onNavigate}
-                    />
-                ) : null}
+                <SectionStatusContext.Provider value={status}>
+                    {dependents?.length ? (
+                        <DependentsLine
+                            dependents={dependents}
+                            onNavigate={onNavigate}
+                        />
+                    ) : null}
 
-                {requirements.map((requirement) => (
-                    <RequirementNotice
-                        key={requirement.key}
-                        requirement={requirement}
-                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
-                        onNavigate={onNavigate}
-                    />
-                ))}
+                    {requirements.map((requirement) => (
+                        <RequirementNotice
+                            key={requirement.key}
+                            requirement={requirement}
+                            satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
+                            onNavigate={onNavigate}
+                        />
+                    ))}
 
-                {capability ? (
-                    <div className={clsx(emphasisOf(capability) ? 'mb-1' : 'mb-1 border-b border-edge-strong pb-2')}>
-                        {decorateField(capability, renderCapability)}
-                    </div>
-                ) : null}
+                    {capability ? (
+                        <div className={clsx(emphasisOf(capability) ? 'mb-1' : 'mb-1 border-b border-edge-strong pb-2')}>
+                            {decorateField(capability, renderCapability)}
+                        </div>
+                    ) : null}
 
-                {placement.topLevel.map((group) => renderGroup(group))}
+                    {placement.topLevel.map((group) => renderGroup(group))}
 
-                {children}
+                    {children}
+                </SectionStatusContext.Provider>
             </div>
         </GlassPanel>
     );

@@ -11,7 +11,7 @@
 
 import { clsx } from 'clsx';
 import { AlertCircle, Check, CheckCircle2, Info, KeyRound, LocateFixed, Lock, RotateCcw } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useContext, useMemo, useState, type ReactNode } from 'react';
 import {
     asBoolean,
     asNumber,
@@ -28,6 +28,7 @@ import {
     viewerTimeZone,
 } from '../../lib/adminOperations';
 import { Toggle } from '../ui/primitives';
+import { SectionStatusContext } from './sectionStatusContext';
 
 const inputClass = clsx(
     'min-h-10 w-full rounded-lg border border-edge bg-surface-1 px-3 py-2',
@@ -69,6 +70,24 @@ export function FieldNotice({ field }: { field: AdminField }) {
 }
 
 /**
+ * Marks a field its section cannot be configured without, while it is still empty.
+ *
+ * The section's status chip says "Needs configuration"; this says which control to fill.
+ * It is not a validation error -- the value can be saved blank -- so it is a quiet pill
+ * beside the label rather than a red line beneath the control.
+ */
+function RequiredMark() {
+    return (
+        <span
+            title="Needed before this section is fully configured"
+            className="shrink-0 rounded-full border border-warn/40 bg-warn-soft px-2 py-0.5 text-[11px] leading-none font-medium text-warn"
+        >
+            Required
+        </span>
+    );
+}
+
+/**
  * How much of the control column a field's input may take on a wide card.
  *
  * A number box stretched across 700px reads as a text field, and a URL squeezed into a
@@ -92,6 +111,7 @@ export function FieldShell({
     children,
     trailing,
     width = 'wide',
+    missing = false,
 }: {
     field: AdminField;
     error?: string;
@@ -100,7 +120,10 @@ export function FieldShell({
     children: ReactNode;
     trailing?: ReactNode;
     width?: FieldWidth;
+    /** A required field that is still empty; see `RequiredMark`. */
+    missing?: boolean;
 }) {
+    const requiredMark = missing ? <RequiredMark /> : null;
     return (
         <div className="admin-field py-3" data-field-width={width}>
             <div className="admin-field-heading flex items-baseline justify-between gap-3">
@@ -110,7 +133,14 @@ export function FieldShell({
                 >
                     {field.label}
                 </label>
-                {trailing}
+                {requiredMark && trailing ? (
+                    <span className="flex shrink-0 items-baseline gap-2">
+                        {requiredMark}
+                        {trailing}
+                    </span>
+                ) : (
+                    requiredMark ?? trailing
+                )}
             </div>
 
             {field.help ? (
@@ -153,6 +183,10 @@ export interface FieldControlProps {
 }
 
 function TextControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    // Marked only while the section asks for configuration: blank fields under a
+    // capability that is off, or behind a missing prerequisite, are not the next step.
+    // Read before the timezone branch so the hook runs on every render.
+    const sectionStatus = useContext(SectionStatusContext);
     if (field.input_type === 'timezone') {
         return (
             <TimezoneControl
@@ -168,12 +202,17 @@ function TextControl({ field, value, error, warning, disabled, onChange }: Field
 
     const id = `admin-field-${field.key}`;
     const isTime = field.input_type === 'time';
+    const missing =
+        Boolean(field.required) &&
+        !asString(value).trim() &&
+        (sectionStatus === undefined || sectionStatus === 'incomplete');
     return (
         <FieldShell
             field={field}
             error={error}
             warning={warning}
             htmlFor={id}
+            missing={missing}
             width={isTime ? 'compact' : 'wide'}
         >
             <input

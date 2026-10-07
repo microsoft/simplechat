@@ -644,7 +644,7 @@ admin_sections:
   tab: custom-pages
   group: appearance
 - id: data-management-backup-inventory-section
-  label: Backup Inventory &amp; Restore
+  label: Backup Inventory & Restore
   tab: restore
   group: backup-recovery
 - id: data-management-backup-section
