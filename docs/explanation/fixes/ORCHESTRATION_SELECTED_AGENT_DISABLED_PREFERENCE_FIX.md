@@ -1,8 +1,8 @@
 # Orchestration Selected Agent With Agents Turned Off Fix
 
-**Version: 0.261.279**
+**Version: 0.261.282**
 
-Fixed in version: **0.261.279**, recorded in
+Fixed in version: **0.261.282**, recorded in
 `application/single_app/config.py`.
 
 ## Issue
@@ -80,7 +80,7 @@ What doesn't change:
 | File | Change |
 | --- | --- |
 | `application/single_app/functions_orchestration_external_sources.py` | Narrow the agent catalog to the run's picked agent and honour the pick in the capability check. |
-| `application/single_app/config.py` | Version `0.261.279`. |
+| `application/single_app/config.py` | Version `0.261.282`. |
 | `functional_tests/test_orchestration_seeded_agent_preference_fix.py` | New regression test. |
 | `docs/admin/orchestration.md` | Picked agents run while the agents setting is off; troubleshooting row. |
 | `docs/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md` | Picked-agent catalog narrowing in the provider contract. |
@@ -105,7 +105,7 @@ provider and the real `resolve_agent_catalog` over in-memory agents:
 - A narrowed catalog with more than one agent is refused.
 - Malformed picks don't lift the setting, and action steps never receive the pick.
 
-16 of its 29 tests fail against the provider from 0.261.278, including the reported case.
+16 of its 29 tests fail against the provider without this fix, including the reported case.
 
 With the new file, these existing suites pass unchanged, 506 tests and 282 subtests in
 all: `test_orchestration_external_sources.py`, `test_orchestration_session_trusted_sources.py`,
