@@ -208,7 +208,7 @@ def test_detail_tabs_status_history_raw_json_and_approval(groups_ui, mobile):
     page.get_by_role("button", name="Submit approval request").click()
     expect(page.get_by_text("Request approval-42 submitted for approval.", exact=False)).to_be_visible()
     assert groups_ui.mutations[-1][1].endswith("/delete-documents")
-    expect(page.get_by_role("link", name="View approval requests")).to_have_attribute("href", "/approvals")
+    expect(page.get_by_role("link", name="View approval requests")).to_have_attribute("href", "/v2/approvals/all/approval-42?group_id=group-1")
 
 
 def test_members_add_csv_role_remove_and_retention(groups_ui):

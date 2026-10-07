@@ -47,6 +47,10 @@ from functions_control_center_groups import (
     validate_group_id,
     validate_group_status_payload,
 )
+from functions_control_center_public_workspaces import (
+    WORKSPACE_EXPORT_LIMIT, parse_workspace_filters, query_workspaces,
+    select_workspace_ids, workspace_members, workspace_row,
+)
 from functions_safety_remediation import (
     execute_safety_violation_action,
     get_safety_log_item,
@@ -57,6 +61,7 @@ from functions_public_workspaces import (
     PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
     PublicWorkspaceDocumentWriteConflict,
     update_public_workspace_document_with_etag_guard,
+    get_user_role_in_public_workspace,
 )
 from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
@@ -5147,6 +5152,148 @@ def register_route_backend_control_center(bp):
             traceback.print_exc()
             return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
 
+    @bp.route('/api/v2/control-center/public-workspaces', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces():
+        try:
+            filters = parse_workspace_filters(request.args)
+            return jsonify(query_workspaces(cosmos_public_workspaces_container, filters)), 200
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace query failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve public workspaces."}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces/<workspace_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspace_detail(workspace_id):
+        try:
+            validate_group_id(workspace_id)
+            workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            parameters = [{"name": "@id", "value": workspace_id}]
+            documents = list(cosmos_public_documents_container.query_items(
+                query="SELECT VALUE COUNT(1) FROM c WHERE c.type = 'document_metadata' AND c.public_workspace_id = @id",
+                parameters=parameters, enable_cross_partition_query=True,
+            ))[0]
+            tokens = list(cosmos_activity_logs_container.query_items(
+                query=("SELECT VALUE SUM(c.usage.total_tokens) FROM c WHERE c.activity_type = 'token_usage' "
+                       "AND c.workspace_context.public_workspace_id = @id AND IS_NUMBER(c.usage.total_tokens)"),
+                parameters=parameters, enable_cross_partition_query=True,
+            ))
+            activity = list(cosmos_activity_logs_container.query_items(
+                query=("SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, c.user_id, "
+                       "c.admin_user_id, c.admin_email, c.workspace_context, c.public_workspace, c.changed_by, c.status_change, "
+                       "c.document, c.usage, c.token_type, c.member_email, c.member_name, c.member_role "
+                       "FROM c WHERE c.workspace_context.public_workspace_id = @id OR c.workspace_id = @id "
+                       "OR c.public_workspace.workspace_id = @id ORDER BY c.timestamp DESC"),
+                parameters=parameters, enable_cross_partition_query=True,
+            ))
+            user = session.get("user") or {}
+            # Normalize legacy bare-string owner for the existing role helper.
+            role_workspace = dict(workspace)
+            if isinstance(role_workspace.get("owner"), str):
+                role_workspace["owner"] = {"userId": role_workspace["owner"]}
+            role = get_user_role_in_public_workspace(role_workspace, user.get("oid") or user.get("sub"))
+            settings = get_settings()
+            can_edit = role in ("Owner", "Admin") and bool(settings.get("enable_public_workspaces"))
+            retention = workspace.get("retention_policy") or {}
+            row = workspace_row(workspace)
+            return jsonify({
+                "workspace": row, "members": workspace_members(workspace),
+                "status_history": workspace.get("statusHistory") or [],
+                "permissions": {"can_edit_members": can_edit, "current_user_id": user.get("oid") or user.get("sub")},
+                "retention": {
+                    "conversation_retention_days": retention.get("conversation_retention_days", "default"),
+                    "document_retention_days": retention.get("document_retention_days", "default"),
+                    "enabled": bool(settings.get("enable_retention_policy_public")),
+                    "can_edit": can_edit and bool(settings.get("enable_retention_policy_public")),
+                },
+                "documents_summary": {"count": documents,
+                                      "cached_metrics": (workspace.get("metrics") or {}).get("document_metrics") or {},
+                                      "metrics_calculated_at": row["metrics_calculated_at"]},
+                "tokens": tokens[0] if tokens and tokens[0] is not None else 0,
+                "activity": activity, "metrics_calculated_at": datetime.now(timezone.utc).isoformat(),
+            }), 200
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except CosmosResourceNotFoundError:
+            return jsonify({"error": "Public workspace not found."}), 404
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace detail failed.",
+                      extra={"workspace_id": workspace_id, "error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve workspace details."}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces/bulk-status', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces_bulk_status():
+        try:
+            data = request.get_json(silent=True)
+            validate_group_status_payload(data)
+            ids = select_workspace_ids(cosmos_public_workspaces_container, data)
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace selection failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to select public workspaces."}), 500
+        failed = []
+        for workspace_id in ids:
+            response, code = api_update_public_workspace_status(workspace_id)
+            if code != 200:
+                failed.append({"id": workspace_id, "status": code, "error": response.get_json()["error"]})
+        return jsonify({"success_count": len(ids) - len(failed), "failed_count": len(failed),
+                        "failed_workspaces": failed}), 200
+
+    @bp.route('/api/v2/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspace_status(workspace_id):
+        try:
+            validate_group_id(workspace_id)
+            validate_group_status_payload(request.get_json(silent=True))
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        return api_update_public_workspace_status(workspace_id)
+
+    @bp.route('/api/v2/control-center/public-workspaces/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces_export():
+        try:
+            filters = parse_workspace_filters(request.args)
+            filters.update(page=1, per_page=250)
+            payload = query_workspaces(cosmos_public_workspaces_container, filters)
+            if payload["pagination"]["total_items"] > WORKSPACE_EXPORT_LIMIT:
+                return jsonify({"error": "Export is limited to 10000 workspaces. Narrow the filters."}), 400
+            rows = payload["workspaces"]
+            for page in range(2, payload["pagination"]["total_pages"] + 1):
+                rows.extend(query_workspaces(cosmos_public_workspaces_container, {**filters, "page": page})["workspaces"])
+            buffer = StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "name", "owner", "status", "members", "documents", "tokens", "last_activity", "metrics_calculated_at"])
+            for row in rows:
+                writer.writerow(_control_center_csv_safe_cell(value) for value in (
+                    row["id"], row["name"], row["owner"]["email"], row["status"], row["members"],
+                    row["documents"], row["tokens"], row["last_activity"], row["metrics_calculated_at"],
+                ))
+            return Response(buffer.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="control-center-public-workspaces.csv"'}), 200
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace export failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to export public workspaces."}), 500
+
     # Public Workspaces API
     @bp.route('/api/admin/control-center/public-workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -6196,7 +6343,7 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error creating take workspace ownership request: {e}")
             import traceback
             traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace ownership.'}), 500
 
     @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
     @swagger_route(security=get_auth_security())
@@ -6384,7 +6531,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating document deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace document deletion.'}), 500
 
 
     @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
@@ -6452,7 +6599,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating workspace deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace deletion.'}), 500
 
     @bp.route('/api/v2/control-center/dashboard/summary', methods=['GET'])
     @swagger_route(security=get_auth_security())

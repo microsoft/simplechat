@@ -271,11 +271,12 @@ export function ReasonConfirmDialog({
     );
 }
 
-export const APPROVALS_URL = '/approvals';
+export const APPROVALS_URL = '/v2/approvals';
 
-export function ApprovalSubmittedNotice({ children }: { children: ReactNode }) {
+export function ApprovalSubmittedNotice({ children, approvalId, groupId }: { children: ReactNode; approvalId?: string; groupId?: string }) {
     return <GlassPanel role="status" className="border border-warn/30 bg-warn-soft p-4 text-sm text-text-1">
-        <p>{children}</p><a className="mt-2 inline-block text-accent underline" href={APPROVALS_URL}>View approval requests</a>
+        <p>{children}</p><a className="mt-2 inline-block text-accent underline"
+            href={approvalId ? `/v2/approvals/all/${encodeURIComponent(approvalId)}${groupId ? `?group_id=${encodeURIComponent(groupId)}` : ''}` : '/v2/approvals'}>View approval requests</a>
     </GlassPanel>;
 }
 

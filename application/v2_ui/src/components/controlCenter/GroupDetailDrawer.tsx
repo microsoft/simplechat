@@ -19,8 +19,8 @@ export interface GroupRow {
     owner: { id: string | null; email: string; display_name: string };
     status: string;
     members: number;
-    documents: number;
-    tokens: number;
+    documents: number | null;
+    tokens: number | null;
     created_at: string | null;
     last_activity: string | null;
     metrics_calculated_at: string | null;
@@ -43,7 +43,7 @@ interface GroupDetail {
         conversation_retention_days: string | number;
         document_retention_days: string | number;
     };
-    permissions: { can_edit_members: boolean; current_role: string | null };
+    permissions: { can_edit_members: boolean; current_role: string | null; current_user_id?: string };
     documents_summary: {
         count: number;
         cached_metrics: Record<string, number>;
@@ -53,6 +53,8 @@ interface GroupDetail {
     activity: EntityActivityItem[];
     metrics_calculated_at: string;
 }
+
+type WorkspaceDetail = Omit<GroupDetail, 'group'> & { workspace: GroupRow };
 
 const TABS = ['overview', 'members', 'ownership', 'status', 'retention', 'activity', 'documents'] as const;
 const STATUSES = ['active', 'locked', 'upload_disabled', 'inactive'] as const;
@@ -69,9 +71,15 @@ function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : 'The request could not be completed.';
 }
 
-export function GroupDetailDrawer({ id, onClose, onChanged }: {
-    id: string; onClose: () => void; onChanged: () => void;
+export function GroupDetailDrawer({ id, onClose, onChanged, entity = 'group' }: {
+    id: string; onClose: () => void; onChanged: () => void; entity?: 'group' | 'public';
 }) {
+    const isPublic = entity === 'public';
+    const label = isPublic ? 'Public workspace' : 'Group';
+    const noun = isPublic ? 'workspace' : 'group';
+    const collection = isPublic ? 'public-workspaces' : 'groups';
+    const memberRoles: readonly AssignableMemberRole[] = isPublic ? ASSIGNABLE_MEMBER_ROLES.filter((role) => role !== 'User') : ASSIGNABLE_MEMBER_ROLES;
+    const roleOptions = ASSIGNABLE_ROLE_OPTIONS.filter((role) => memberRoles.includes(role.value));
     const [detail, setDetail] = useState<GroupDetail | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -87,20 +95,21 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
     const [addOpen, setAddOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
     const [addError, setAddError] = useState('');
-    const adminBase = `/api/admin/control-center/groups/${encodeURIComponent(id)}`;
-    const nativeBase = `/api/groups/${encodeURIComponent(id)}/members`;
+    const adminBase = `/api/admin/control-center/${collection}/${encodeURIComponent(id)}`;
+    const nativeBase = `/api/${isPublic ? 'public_workspaces' : 'groups'}/${encodeURIComponent(id)}/members`;
 
     useEffect(() => {
         const controller = new AbortController();
         setLoading(true);
         setError('');
-        api.get<GroupDetail>(`/api/v2/control-center/groups/${encodeURIComponent(id)}`, controller.signal)
+        api.get<GroupDetail | WorkspaceDetail>(`/api/v2/control-center/${collection}/${encodeURIComponent(id)}`, controller.signal)
             .then((data) => {
                 if (controller.signal.aborted) return;
-                setDetail(data);
-                setStatus(data.group.status);
-                setConversationDays(String(data.retention.conversation_retention_days));
-                setDocumentDays(String(data.retention.document_retention_days));
+                const normalized = 'workspace' in data ? { ...data, group: data.workspace } : data;
+                setDetail(normalized);
+                setStatus(normalized.group.status);
+                setConversationDays(String(normalized.retention.conversation_retention_days));
+                setDocumentDays(String(normalized.retention.document_retention_days));
             })
             .catch((cause: unknown) => {
                 if (!controller.signal.aborted) {
@@ -110,7 +119,7 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
             })
             .finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => controller.abort();
-    }, [id, revision]);
+    }, [id, revision, collection, isPublic]);
 
     const changed = () => { onChanged(); setRevision((value) => value + 1); };
     const confirmAction = async (reason: string) => {
@@ -121,19 +130,22 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
         setError('');
         try {
             if (target.kind === 'status') {
-                await api.put(`/api/v2/control-center/groups/${encodeURIComponent(id)}/status`, { status: target.status, reason });
-                toast.success('Group status saved.');
+                await api.put(`/api/v2/control-center/${collection}/${encodeURIComponent(id)}/status`, { status: target.status, reason });
+                toast.success(`${label} status saved.`);
                 changed();
             } else if (target.kind === 'remove') {
                 await api.delete(`${nativeBase}/${encodeURIComponent(target.member.id)}`);
                 toast.success('Member removed.');
                 changed();
             } else {
-                const path = target.kind === 'delete-group' ? adminBase : `${adminBase}/${target.kind}`;
+                const path = target.kind === 'delete-group' ? adminBase : `${adminBase}/${isPublic && target.kind === 'delete-documents' ? 'documents' : isPublic && target.kind === 'transfer-ownership' ? 'ownership' : target.kind}`;
                 const payload = target.kind === 'transfer-ownership' ? { reason, newOwnerId: target.memberId } : { reason };
-                const result = target.kind === 'delete-group'
-                    ? await api.delete<{ approval_id: string }>(path, payload)
-                    : await api.post<{ approval_id: string }>(path, payload);
+                const result = target.kind === 'delete-group' || isPublic && target.kind === 'delete-documents'
+                    ? await api.delete<{ approval_id?: string; success?: boolean; message?: string }>(path, payload)
+                    : isPublic && target.kind === 'transfer-ownership'
+                        ? await api.put<{ approval_id?: string }>(path, payload)
+                        : await api.post<{ approval_id?: string }>(path, payload);
+                if (!result.approval_id) throw new Error('The server did not return an approval request. Refresh before trying again.');
                 setApproval(result.approval_id);
             }
         } catch (cause) {
@@ -184,9 +196,13 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
         setBusy(true);
         setError('');
         try {
-            await api.post(`/api/retention-policy/group/${encodeURIComponent(id)}`, {
+            const payload = {
                 conversation_retention_days: conversationDays, document_retention_days: documentDays,
-            });
+            };
+            // The existing public save path does not accept "default". Leave inherited fields unchanged.
+            await api.post(`/api/retention-policy/${entity}/${encodeURIComponent(id)}`, isPublic
+                ? Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== 'default'))
+                : payload);
             toast.success('Retention policy saved.');
             changed();
         } catch (cause) { setError(errorMessage(cause)); }
@@ -197,18 +213,18 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
             {detail.group.owner.display_name || detail.group.owner.email || detail.group.owner.id}
         </Link> : 'No owner recorded';
 
-    return <DetailDrawer title={detail?.group.name || 'Group details'} onClose={() => { if (!busy) onClose(); }}>
+    return <DetailDrawer title={detail?.group.name || `${label} details`} onClose={() => { if (!busy) onClose(); }}>
         <div className="space-y-4">
-            {loading ? <p role="status" className="text-sm text-text-3">Loading group details...</p> : null}
+            {loading ? <p role="status" className="text-sm text-text-3">Loading {noun} details...</p> : null}
             {error ? <p role="alert" className="rounded-lg bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
-            {approval ? <ApprovalSubmittedNotice>Request {approval} submitted for approval. No group or documents have been deleted, and ownership has not changed.</ApprovalSubmittedNotice> : null}
+            {approval ? <ApprovalSubmittedNotice approvalId={approval} groupId={id}>Request {approval} submitted for approval. No {noun} or documents have been deleted, and ownership has not changed.</ApprovalSubmittedNotice> : null}
             {detail && !loading ? <>
                 <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge status={detail.group.status} />
-                    <span className="break-all text-xs text-text-3">Group ID: {id}</span>
+                    <span className="break-all text-xs text-text-3">{label} ID: {id}</span>
                 </div>
                 <Link className="inline-block text-sm text-accent underline"
-                    to={`/control-center/activity-logs?workspace_type=group&workspace_id=${encodeURIComponent(id)}&group_id=${encodeURIComponent(id)}`}>
+                    to={`/control-center/activity-logs?workspace_type=${entity}&workspace_id=${encodeURIComponent(id)}&${isPublic ? 'public_workspace_id' : 'group_id'}=${encodeURIComponent(id)}`}>
                     View in Activity Logs
                 </Link>
                 <EntityDetailTabs tabs={TABS} selected={tab} onSelect={setTab}>
@@ -220,19 +236,20 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
                             <div><dt className="text-xs text-text-3">Last activity</dt><dd>{entityDate(detail.group.last_activity)}</dd></div>
                         </dl>
                         <div className="grid grid-cols-2 gap-3">
-                            <KpiCard label="Members" value={detail.group.members.toLocaleString()} />
+                            <KpiCard label={isPublic ? 'Managers (including owner)' : 'Members'} value={detail.group.members.toLocaleString()} />
                             <KpiCard label="Documents" value={detail.documents_summary.count.toLocaleString()} />
                             <KpiCard label="All-time tokens" value={detail.tokens.toLocaleString()} />
                         </div>
                         <p className="text-xs text-text-3">Totals calculated: {entityDate(detail.metrics_calculated_at)}</p>
-                        <GlassButton variant="danger" disabled={busy} onClick={() => setAction({ kind: 'delete-group' })}>Request group deletion</GlassButton>
+                        <GlassButton variant="danger" disabled={busy} onClick={() => setAction({ kind: 'delete-group' })}>Request {noun} deletion</GlassButton>
                     </> : null}
                     {tab === 'members' ? <>
                         <div className="flex flex-wrap gap-2">
                             <GlassButton disabled={busy} onClick={() => { setAddError(''); setAddOpen(true); }}>Add member</GlassButton>
                             <GlassButton disabled={busy} onClick={() => setImportOpen(true)}>Import CSV</GlassButton>
                         </div>
-                        {!detail.permissions.can_edit_members ? <p className="text-xs text-text-3">Removing members and changing roles require group Owner or Admin membership. Use Ownership to request a change.</p> : null}
+                        {isPublic ? <p className="text-xs text-text-3">Public readers are implicit, not stored members. Only Admin and Document Manager roles can be added or imported.</p> : null}
+                        {!detail.permissions.can_edit_members ? <p className="text-xs text-text-3">Removing members and changing roles require {noun} Owner or Admin membership. Use Ownership to request a change.</p> : null}
                         <ul className="space-y-3">
                             {detail.members.map((member) => <li key={member.id} className="space-y-2 border-b border-edge pb-3">
                                 <Link className="break-words text-sm text-accent underline" to={`/control-center/users?user_id=${encodeURIComponent(member.id)}`}>
@@ -241,10 +258,10 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
                                 <p className="break-all text-xs text-text-3">{member.email}</p>
                                 <div className="flex flex-wrap items-center gap-2">
                                     <StatusBadge status={member.role} />
-                                    {member.role !== 'Owner' && detail.permissions.can_edit_members ? <>
+                                    {member.role !== 'Owner' && detail.permissions.can_edit_members && (!isPublic || member.id !== detail.permissions.current_user_id) ? <>
                                         <select aria-label={`Role for ${member.display_name || member.id}`} className={GROUP_INPUT}
                                             value={member.role} disabled={busy} onChange={(event) => void changeRole(member.id, event.target.value)}>
-                                            {ASSIGNABLE_ROLE_OPTIONS.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                                            {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
                                         </select>
                                         <GlassButton size="sm" variant="danger" disabled={busy} onClick={() => setAction({ kind: 'remove', member })}>Remove member</GlassButton>
                                     </> : null}
@@ -266,9 +283,9 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
                         <GlassButton disabled={busy || !newOwner} onClick={() => setAction({ kind: 'transfer-ownership', memberId: newOwner })}>Request ownership transfer</GlassButton>
                     </> : null}
                     {tab === 'status' ? <>
-                        <p className="text-sm text-text-3">Locked makes documents read-only while viewing and chat remain available; upload disabled blocks uploads; inactive makes the group unavailable. Locking and inactivation require a reason.</p>
-                        <label className="grid gap-1 text-xs text-text-3">Group status
-                            <select aria-label="Group status" className={GROUP_INPUT} value={status} onChange={(event) => setStatus(event.target.value)}>
+                        <p className="text-sm text-text-3">Locked makes documents read-only while viewing and chat remain available; upload disabled blocks uploads; inactive makes the {noun} unavailable. Locking and inactivation require a reason.</p>
+                        <label className="grid gap-1 text-xs text-text-3">{label} status
+                            <select aria-label={`${label} status`} className={GROUP_INPUT} value={status} onChange={(event) => setStatus(event.target.value)}>
                                 {STATUSES.map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
                             </select>
                         </label>
@@ -282,9 +299,9 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
                         </li>)}</ol>
                     </> : null}
                     {tab === 'retention' ? <>
-                        <p className="text-sm text-text-3">Retention automatically deletes aged content. Enter default to inherit organization policy, none to keep content, or a whole number of days.</p>
-                        {!detail.retention.enabled ? <p className="text-sm text-text-3">Group retention is not enabled.</p> : null}
-                        {!detail.retention.can_edit ? <p className="text-xs text-text-3">Editing requires group Owner or Admin membership and enabled group retention.</p> : null}
+                        <p className="text-sm text-text-3">Retention automatically deletes aged content. Enter none to keep content or a whole number of days.{isPublic ? ' Inherited (default) fields can be left unchanged; the existing public API cannot reset a custom value to default.' : ' Enter default to inherit organization policy.'}</p>
+                        {!detail.retention.enabled ? <p className="text-sm text-text-3">{label} retention is not enabled.</p> : null}
+                        {!detail.retention.can_edit ? <p className="text-xs text-text-3">Editing requires {noun} Owner or Admin membership and enabled retention.</p> : null}
                         <label className="grid gap-1 text-xs text-text-3">Conversation retention days
                             <input className={GROUP_INPUT} value={conversationDays} disabled={busy || !detail.retention.can_edit}
                                 onChange={(event) => setConversationDays(event.target.value)} />
@@ -293,12 +310,15 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
                             <input className={GROUP_INPUT} value={documentDays} disabled={busy || !detail.retention.can_edit}
                                 onChange={(event) => setDocumentDays(event.target.value)} />
                         </label>
-                        <GlassButton disabled={busy || !detail.retention.can_edit || ![conversationDays, documentDays].every((value) => /^(default|none|[1-9]\d*)$/.test(value))}
+                        <GlassButton disabled={busy || !detail.retention.can_edit || ![conversationDays, documentDays].every((value) => /^(default|none|[1-9]\d*)$/.test(value))
+                            || isPublic && ((conversationDays === 'default' && String(detail.retention.conversation_retention_days) !== 'default')
+                                || (documentDays === 'default' && String(detail.retention.document_retention_days) !== 'default')
+                                || (conversationDays === 'default' && documentDays === 'default'))}
                             onClick={() => void saveRetention()}>Save retention</GlassButton>
                     </> : null}
-                    {tab === 'activity' ? <EntityActivity items={detail.activity} /> : null}
+                    {tab === 'activity' ? <EntityActivity items={detail.activity} entityLabel={noun} /> : null}
                     {tab === 'documents' ? <>
-                        <p className="text-sm text-text-2">{detail.documents_summary.count.toLocaleString()} document metadata records in this group.</p>
+                        <p className="text-sm text-text-2">{detail.documents_summary.count.toLocaleString()} document metadata records in this {noun}.</p>
                         <dl className="space-y-2 text-sm text-text-2">
                             {Object.entries(detail.documents_summary.cached_metrics).map(([key, value]) => <div key={key}>
                                 <dt className="text-xs text-text-3">{key.replaceAll('_', ' ')}</dt><dd>{Number(value).toLocaleString()}</dd>
@@ -311,17 +331,18 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
             </> : null}
         </div>
         {action ? <ReasonConfirmDialog
-            title={action.kind === 'status' ? `Change group status to ${action.status}?` : action.kind === 'remove'
+            title={action.kind === 'status' ? `Change ${noun} status to ${action.status}?` : action.kind === 'remove'
                 ? `Remove ${action.member.display_name || action.member.email}?` : `Submit ${action.kind.replaceAll('-', ' ')} request?`}
-            description={action.kind === 'status' ? 'This applies immediately and records the transition in the group audit history.'
+            description={action.kind === 'status' ? `This applies immediately and records the transition in the ${noun} audit history.`
                 : action.kind === 'remove' ? 'This removes membership immediately; it does not delete this person or their documents.'
                     : 'This creates an approval request only. The action does not run until it is approved.'}
             reasonRequired={action.kind !== 'status' && action.kind !== 'remove' || action.kind === 'status' && ['locked', 'inactive'].includes(action.status)}
             confirmLabel={action.kind === 'status' ? 'Apply status' : action.kind === 'remove' ? 'Remove member' : 'Submit approval request'}
             onClose={() => setAction(null)} onConfirm={(reason) => void confirmAction(reason)} /> : null}
         {addOpen ? <AddMemberDialog submitting={busy} serverError={addError} onClose={() => setAddOpen(false)}
+            roleOptions={roleOptions} defaultRole={isPublic ? 'DocumentManager' : 'User'}
             onSubmit={(user, role) => void addSingle(user, role)} /> : null}
-        {importOpen ? <ImportMembersDialog roles={ASSIGNABLE_MEMBER_ROLES} onAddRow={addCsvRow}
+        {importOpen ? <ImportMembersDialog roles={memberRoles} onAddRow={addCsvRow}
             identityDescription="Control Center imports the IDs, names and emails in this file. Verify them before adding members."
             onRunningChange={setBusy} onFinished={changed} onClose={() => setImportOpen(false)} /> : null}
     </DetailDrawer>;

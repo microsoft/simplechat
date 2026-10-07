@@ -82,8 +82,8 @@ export function GroupsSection() {
             ? <Link className="text-accent underline" to={`/control-center/users?user_id=${encodeURIComponent(row.owner.id)}`}>{row.owner.display_name || row.owner.email || row.owner.id}</Link>
             : 'No owner recorded' },
         { id: 'members', label: 'Members', sortable: true, render: (row) => row.members.toLocaleString() },
-        { id: 'documents', label: 'Documents', sortable: true, render: (row) => row.documents.toLocaleString() },
-        { id: 'tokens', label: 'Tokens', sortable: true, render: (row) => row.tokens.toLocaleString() },
+        { id: 'documents', label: 'Documents', sortable: true, render: (row) => row.documents?.toLocaleString() ?? 'Not recorded' },
+        { id: 'tokens', label: 'Tokens', sortable: true, render: (row) => row.tokens?.toLocaleString() ?? 'Not recorded' },
         { id: 'last_activity', label: 'Last activity', sortable: true, render: (row) => entityDate(row.last_activity) },
     ];
     const total = response?.pagination.total_items ?? 0;

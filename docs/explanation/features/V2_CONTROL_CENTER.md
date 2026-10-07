@@ -6,6 +6,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Foundation implemented in version:** 0.261.278
 **Users implemented in version:** 0.261.280
 **Groups implemented in version:** 0.261.281
+**Public Workspaces implemented in version:** 0.261.283
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 
@@ -17,7 +18,7 @@ The Control Center is a distinct React route (`/control-center` and `/control-ce
 
 ## Dashboard
 
-Public Workspaces remains a permission-gated placeholder linking to the classic Control Center at `/admin/control-center`. Users and Groups management are available with `can_manage_users` and `can_manage_groups`, respectively.
+Users, Groups and Public Workspaces management are available with `can_manage_users`, `can_manage_groups` and `can_manage_workspaces`, respectively.
 
 The Dashboard is available to users with `can_view_dashboard`, including users assigned the configured ControlCenterDashboardReader role. `GET /api/v2/control-center/dashboard/summary` returns counts and period comparisons; `GET /api/v2/control-center/dashboard/insights` returns grouped chart data. Both use a 90-second in-process cache keyed by the date range and token filters. Pass `force_refresh=1` to bypass it.
 
@@ -99,6 +100,42 @@ Delete group, delete all documents, take ownership and transfer ownership reuse 
 
 `functional_tests/test_v2_control_center_groups.py` exercises filters/sorts/paging, cache reuse/expiry, detail projection, roles, bulk cap/exclusions/reasons, real status-writer audit parity, denied access, formula-safe export, and approval creation without direct mutation. `ui_tests/test_v2_control_center_groups.py` covers desktop/mobile drawers, URL filters, cross-page bulk selection, partial failures, status history, escaped text/raw JSON, member search/CSV/roles/removal, retention, ownership approvals and permission-limited controls. Route policy tests include all five new routes; prior Control Center layers and `test_v2_api_security.py` are included in regression validation.
 
+## Public Workspaces
+
+Implemented in version: **0.261.283**, tracked in `application/single_app/config.py`.
+
+The Public Workspaces section helps administrators review public knowledge collections, their responsible managers, restrictions and usage. It reuses the Groups detail drawer, membership dialogs, keyboard-operated tabs, reason confirmation, activity presentation and shared approval notice. Dashboard `id` and `status` deep links retain their meaning.
+
+### Query-backed list and selection
+
+`GET /api/v2/control-center/public-workspaces` accepts `search` (name/description substring), `owner` (stored owner name/email/ID substring), `status`, `page`, `per_page`, `sort` and `direction`. Search/owner text is limited to 200 characters, pages to 100,000, and page size to 250 (default 25). Invalid inputs fail before storage access. Status values are active, locked, upload_disabled and inactive; missing, null and empty status is active, and unrecognized stored strings are inactive.
+
+`functions_control_center_public_workspaces.py` applies parameterized search, owner and status predicates to Cosmos counts and paginated queries, **not an in-memory workspace inventory**. Sort choices are name, stored owner display name, created date, recorded documents, recorded tokens and recorded last activity. A separate missing-value population places unavailable sort fields last without dropping those workspaces. Each query orders one property and uses the existing automatic indexes, not a new composite index. Equal recorded values have no guaranteed secondary ordering, and concurrent writes can shift OFFSET pages; this is live offset pagination, not a stable snapshot or continuation-token cursor.
+
+The list reads recorded `metrics.document_metrics`, `metrics.token_metrics` and `metrics.last_activity` fields from the returned page. There are no per-row metric or directory queries. Unrecorded statistics are unavailable rather than zero, and every row shows the stored metric refresh timestamp. **Refresh workspaces** rereads stored records; it does not recalculate metrics. In particular, the legacy public-workspace refresh does not currently record token totals, so those list cells can remain unavailable. Detail views calculate live metadata-document and activity-log token totals separately.
+
+`POST /api/v2/control-center/public-workspaces/bulk-status` accepts either `workspace_ids` or `filter` with optional `exclude_ids`, plus `status` and `reason`. Filter selection queries at most 501 IDs after exclusions and rejects populations above 500 **before writing anything**. Locked/inactive changes require a reason of at most 2,000 characters. `PUT /api/v2/control-center/public-workspaces/<id>/status` applies the same validation. Both reuse the classic guarded status writer with its etag conflict handling, status history and audit logging. Partial failures return `failed_workspaces` alongside success/failure counts.
+
+Bulk controls are status-only. Setting active unlocks and enables uploads, as in classic lock/unlock and upload-enable actions. V2 does not expose the classic bulk `delete_documents` action, which deletes directly and differs from individual document-deletion approval requests.
+
+`GET /api/v2/control-center/public-workspaces/export.csv` honors the same filters and server sorting across pages, exports at most 10,000 workspaces, and protects every cell against spreadsheet formula injection. Narrow filters when the limit is exceeded. Export shares live offset pagination's concurrent-write limitation.
+
+### Details and existing behavior
+
+`GET /api/v2/control-center/public-workspaces/<id>` projects current owner, managers, history and retention, computes document metadata count and all-time recorded token usage, and returns the most recent 20 projected activity records. Activity failures fail the detail request instead of producing an empty success. Raw JSON and local CSV export apply to this returned, allowlisted subset, not the full storage document. Links carry `workspace_type=public`, `workspace_id` and `public_workspace_id` to Activity Logs (Phase 6), and owner/manager links open Users.
+
+Unlike Groups, public readers are implicit; only Owner, Admin and DocumentManager are stored. Legacy string identities are shown by ID without uncached directory lookup. Addition/CSV uses classic `/add-member` with `admin` or `document_manager`; the unsupported `user` role is never offered. CSV identities are trusted by that existing admin path and should be verified before import. Native `/api/public_workspaces/<id>/members/<member_id>` PATCH/DELETE still require workspace Owner/Admin membership and enabled public workspaces. Owner and self-removal controls are excluded. Control Center access does not bypass those membership checks.
+
+Retention uses `/api/retention-policy/public/<id>` with the existing Owner/Admin rules. It accepts `none` or organization-bounded numeric days. The public save API does **not** accept `default`: inherited fields are omitted from writes, and resetting a custom policy to inherited defaults is unavailable in this drawer. Organization retention defaults remain managed through existing admin settings.
+
+Take ownership POST, ownership PUT with `newOwnerId`, documents DELETE and workspace DELETE reuse existing classic admin routes with a required reason. On this branch both deletion routes already create approvals; this release does not introduce a new deletion authorization policy. Submission displays the returned approval ID and links to `/v2/approvals/all/<id>?group_id=<workspace_id>`; it never claims deletion or ownership execution. The approval's `metadata.entity_type=workspace` dispatches to public-workspace executors, using `group_id` as the existing approval partition/scope key, not the Groups container.
+
+An existing executor limitation remains: document deletion catches individual document errors and reports the successful deletion count. The workspace executor can consequently delete the workspace after partial document cleanup. This release does not change those destructive semantics; inspect the approval execution result and logs for cleanup failures.
+
+### Validation
+
+`functional_tests/test_v2_control_center_public_workspaces.py` exercises query-level filters/paging, missing-status normalization, sorts with unavailable metrics, bounded inputs, admin-versus-reader access, bulk cap/exclusions/partial failures, real guarded audit writes, safe filtered CSV, detail projection and actual public-scope approval dispatch. `ui_tests/test_v2_control_center_public_workspaces.py` exercises the built local bundle at desktop/mobile sizes: filters/sorts, cross-page selection, partial errors, details/history/raw JSON, supported member roles/CSV, public retention payloads, ownership and deletion approval requests. Existing Groups, Users, foundation, dashboard, API security, public writers and route-policy checks remain regression coverage.
+
 ## Usage
 
 Open **Account → Control Center**, then select a section in its internal rail. A bookmarked section URL opens that section directly. On the Dashboard, select a date range and optional token filters; charts include accessible data tables, and chart selections link to the corresponding filtered activity view. Export downloads the trend data as CSV. “Chat with these trends” creates a conversation containing the selected trend data. The Data health page is intended for explicit diagnosis or a known recovery scenario; check first, and run the backfill only when the result and operational context justify it.
@@ -109,4 +146,4 @@ Functional checks cover dashboard status normalization, period deltas, cache exp
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, and group management in **0.261.281**.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.281**, and public workspace management in **0.261.283**.
