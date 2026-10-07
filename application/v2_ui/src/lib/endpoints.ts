@@ -1489,6 +1489,18 @@ export interface DocumentMetadataUpdate {
     tags?: string[];
 }
 
+/**
+ * A background search index update queued by a metadata or tag save. `pending` means the change is
+ * saved and the search index is still catching up; one save reports its revision and fields, and a
+ * batch reports how many documents it queued.
+ */
+export interface DocumentSearchSync {
+    status: 'pending' | 'not_required';
+    revision?: number;
+    fields?: string[];
+    document_count?: number;
+}
+
 export const updatePersonalDocumentMetadata = (
     documentId: string,
     metadata: DocumentMetadataUpdate,
@@ -1591,7 +1603,7 @@ export const updatePersonalDocumentTag = (
     tagName: string,
     changes: { new_name?: string; color?: string | null },
 ) =>
-    api.patch<{ message?: string; documents_updated?: number; tag?: WorkspaceTag }>(
+    api.patch<{ message?: string; documents_updated?: number; tag?: WorkspaceTag; search_sync?: DocumentSearchSync }>(
         `/api/documents/tags/${encodeURIComponent(tagName)}`,
         changes as unknown as Json,
     );
@@ -1606,7 +1618,7 @@ export const bulkTagPersonalDocuments = (
     action: BulkTagAction,
     tags: string[],
 ) =>
-    api.post<{ success?: string[]; errors?: unknown[] }>('/api/documents/bulk-tag', {
+    api.post<{ success?: string[]; errors?: unknown[]; search_sync?: DocumentSearchSync }>('/api/documents/bulk-tag', {
         document_ids: documentIds,
         action,
         tags,

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.268)**
+### **(v0.261.269)**
 
 #### New Features
 
@@ -28,9 +28,29 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **Agent and Action Editors Share the Admin Settings Design**
     *   The full-page agent and action editors, the same ones in My Workspace, group workspaces and Admin Settings, are now laid out as Admin Settings is. Each section is a card headed by an icon, its title and what it holds. Settings are rows with the label and help beside the control on a wide screen, stacked on a narrow one. A setting others depend on, such as **Restrict to assigned knowledge** or **Track secret expiration**, is highlighted with the settings it controls indented beneath it, and collapsible groups and panels match Admin Settings.
-    *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll.
+    *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll or start editing.
     *   The Global Agents and Global Actions lists now match AI Connections: an Enabled or Disabled badge, a Default agent badge, and icon buttons to make an agent the default, enable or disable, edit, and delete.
     *   (Ref: `EditorLayout.tsx`, `WorkspaceEditorFrame.tsx`, `theme.css` `.editor-field`, `AgentFields.tsx`, `ActionFields.tsx`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminListPill.tsx`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+### **(v0.261.268)**
+
+#### Bug Fixes
+
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, file names, or classification no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Saves on large documents no longer time out with "invalid JSON" errors in the personal, group, or public workspaces.
+    *   The search index update sends only the changed fields instead of re-reading every chunk with its embedding and writing it back one chunk at a time. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with a similar drop in Cosmos write-fence operations, which sharply reduces Search and Cosmos load for everyone on the server.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   Group and public metadata edits through the V2 explorer no longer fail with "propagation incomplete" on documents with more than one search chunk.
+    *   What users will notice: saves and tag changes finish right away, and a brief notice says that search and chat results will reflect the change once the search index finishes updating. That usually takes seconds, and up to a minute or two on very large documents. Failed or interrupted updates retry automatically until every chunk matches the document, so chat tag filters and citation titles converge instead of staying partly stale.
+    *   When the background sync finishes, it clears cached search results for the document's workspace and for every user or group with an approved share, so a search that ran during the sync does not keep returning the old values for the search cache lifetime (5 minutes by default).
+    *   (Ref: `update_document()`, `run_document_search_metadata_sync()`, `background_tasks.py`, document metadata routes and native document APIs, `documentOperations.ts`, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657, #1658, #1673)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share through the classic workspace now updates the search index. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Revocations are enforced in the search index before they are saved. When the index cannot apply a sharing change, users get a clear, retryable error instead of a silent success.
+    *   Personal share approvals and unshares also update the search index before they are saved.
+    *   Approving a share that is already approved now repairs its search access, so a share whose search update failed can be completed by approving it again.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, `reproject_document_search_acl()`, group and personal sharing routes, `functions_group_document_collaboration.py`, #1657)
 
 ### **(v0.261.267)**
 

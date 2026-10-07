@@ -1,8 +1,8 @@
 # test_v2_admin_global_agents_actions.py
 """
 Browser coverage for V2 Admin Settings categories and the global agents and actions.
-Version: 0.261.268
-Implemented in: 0.261.268
+Version: 0.261.269
+Implemented in: 0.261.269
 
 Run against the real built SPA with the real Admin Settings field schema and a
 closed in-memory API (fixtures/v2_admin_global_editors.py). Check that choosing a

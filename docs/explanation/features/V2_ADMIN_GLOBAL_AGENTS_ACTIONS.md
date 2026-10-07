@@ -16,7 +16,7 @@ delegation** card that created **Call agent** actions on its own. That card is
 removed: a Call agent action is an ordinary global action with the **Call agent**
 type, and a global agent attaches it in its editor like any other action.
 
-**Implemented in version:** 0.261.268 (`application/single_app/config.py`)
+**Implemented in version:** 0.261.269 (`application/single_app/config.py`)
 
 **Dependencies:** `functions_workspace_authoring.py` (the shared editor engine),
 `functions_global_editor_access.py`, `route_backend_v2_admin_agents_actions.py`,
