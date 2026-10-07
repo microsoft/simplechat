@@ -25,6 +25,7 @@ Use it when an agent should work with a controlled container path without broad 
 - Agents enabled with `enable_semantic_kernel`.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
 Choose **Authentication Type**:
@@ -33,7 +34,9 @@ Choose **Authentication Type**:
 - **Managed Identity** uses the application's Azure identity with the **Blob Service Endpoint**. Choose it when you want to avoid stored secrets and can grant the app identity the required Storage Blob data role ahead of time.
 - **Account Key** uses the **Blob Service Endpoint** plus a primary or secondary storage account key. Choose it when a full connection string is not desired but key-based access is still required.
 
-Then set **Container Name**, optional **Blob Prefix**, default capabilities, and supported read/upload file types. The endpoint must be an Azure Blob service hostname such as `https://account.blob.core.windows.net`; SimpleChat validates the endpoint before saving and again before building the action client.
+Then set **Container Name**, optional **Blob Prefix**, default capabilities, and the supported Markdown read/upload file type switches. Those file-type groups are schema-defined settings, so V2 shows them as ordinary switches instead of removable unknown fields. The endpoint must be an Azure Blob service hostname such as `https://account.blob.core.windows.net`; SimpleChat validates the endpoint before saving and again before building the action client.
+
+Connection testing appears in **Authentication**, after the credential choice. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON** for review.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

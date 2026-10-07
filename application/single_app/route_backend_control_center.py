@@ -48,12 +48,19 @@ from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 import json
 from functions_debug import debug_print
+from functions_appinsights import log_event
 
 
 ACTIVITY_LOGS_DEFAULT_PER_PAGE = 50
 ACTIVITY_LOGS_MAX_PER_PAGE = 200
 CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE = 25
 CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
+CONTROL_CENTER_DASHBOARD_CACHE_TTL_SECONDS = 90
+CONTROL_CENTER_DASHBOARD_CACHE_MAX_ENTRIES = 128
+DASHBOARD_INVALID_RANGE_ERROR = (
+    "Invalid dashboard date range. Use 7, 30, or 90 days or a valid custom range of up to 366 days."
+)
+_control_center_dashboard_cache = {}
 
 # The answers an approved ownership change gives when the group's current copy no
 # longer matches the request. Each is stored on the approval as its failure reason.
@@ -105,6 +112,241 @@ class _PublicChangeAnswer(Exception):
     def __init__(self, answer):
         super().__init__()
         self.answer = answer
+
+
+def _dashboard_cache_get(key, force_refresh=False, now=None):
+    """Return an unexpired dashboard cache entry, if one is available."""
+    if force_refresh:
+        return None
+    current_time = time.monotonic() if now is None else now
+    entry = _control_center_dashboard_cache.get(key)
+    if not entry:
+        return None
+    expires_at, payload = entry
+    if expires_at <= current_time:
+        _control_center_dashboard_cache.pop(key, None)
+        return None
+    return payload
+
+
+def _dashboard_cache_set(key, payload, now=None):
+    """Store a short-lived dashboard response and bound cache growth."""
+    current_time = time.monotonic() if now is None else now
+    expired_keys = [
+        cache_key
+        for cache_key, (expires_at, _) in _control_center_dashboard_cache.items()
+        if expires_at <= current_time
+    ]
+    for cache_key in expired_keys:
+        _control_center_dashboard_cache.pop(cache_key, None)
+    if len(_control_center_dashboard_cache) >= CONTROL_CENTER_DASHBOARD_CACHE_MAX_ENTRIES:
+        _control_center_dashboard_cache.pop(next(iter(_control_center_dashboard_cache)))
+    _control_center_dashboard_cache[key] = (
+        current_time + CONTROL_CENTER_DASHBOARD_CACHE_TTL_SECONDS,
+        payload,
+    )
+
+
+def _dashboard_metric(current_value, previous_value=None):
+    """Format a current-period value with a comparable prior-period delta."""
+    current_value = int(current_value or 0)
+    if previous_value is None:
+        return {"value": current_value, "delta": None, "percent_change": None}
+    previous_value = int(previous_value or 0)
+    delta = current_value - previous_value
+    percent_change = (
+        round((delta / previous_value) * 100, 1)
+        if previous_value
+        else (0.0 if delta == 0 else None)
+    )
+    return {
+        "value": current_value,
+        "delta": delta,
+        "previous": previous_value,
+        "percent_change": percent_change,
+    }
+
+
+def _dashboard_status_counts(total, grouped_statuses, unknown_status='active'):
+    """Normalize stored status counts while preserving each workspace type's default."""
+    counts = {
+        "active": 0,
+        "locked": 0,
+        "upload_disabled": 0,
+        "inactive": 0,
+    }
+    for row in grouped_statuses:
+        raw_status = row.get("status")
+        status = str(raw_status or "active").strip().lower()
+        count = int(row.get("count") or 0)
+        if status in {"locked", "upload_disabled", "inactive"}:
+            counts[status] += count
+        elif status != "active" and raw_status and unknown_status == 'inactive':
+            counts["inactive"] += count
+    counts["active"] = max(
+        int(total or 0) - counts["locked"] - counts["upload_disabled"] - counts["inactive"],
+        0,
+    )
+    return counts
+
+
+def _dashboard_parse_period(args):
+    """Resolve the requested day preset or custom UTC calendar range."""
+    custom_start = args.get("start_date")
+    custom_end = args.get("end_date")
+    if custom_start or custom_end:
+        if not custom_start or not custom_end:
+            raise ValueError("Both start_date and end_date are required.")
+        try:
+            start_day = datetime.strptime(custom_start, "%Y-%m-%d").date()
+            end_day = datetime.strptime(custom_end, "%Y-%m-%d").date()
+        except (TypeError, ValueError) as ex:
+            raise ValueError("Dates must use YYYY-MM-DD format.") from ex
+        if end_day < start_day:
+            raise ValueError("end_date must be on or after start_date.")
+        days = (end_day - start_day).days + 1
+        if days > 366:
+            raise ValueError("Custom ranges may not exceed 366 days.")
+    else:
+        try:
+            days = int(args.get("days", 30))
+        except (TypeError, ValueError) as ex:
+            raise ValueError("days must be 7, 30, or 90.") from ex
+        if days not in {7, 30, 90}:
+            raise ValueError("days must be 7, 30, or 90.")
+        end_day = datetime.utcnow().date()
+        start_day = end_day - timedelta(days=days - 1)
+
+    start_date = datetime.combine(start_day, datetime.min.time())
+    end_date = datetime.combine(end_day, datetime.max.time())
+    period_days = (end_day - start_day).days + 1
+    previous_end = start_date - timedelta(microseconds=1)
+    previous_start = previous_end - timedelta(days=period_days) + timedelta(microseconds=1)
+    return start_date, end_date, previous_start, previous_end, period_days
+
+
+def _dashboard_query_count(container, query, parameters=None):
+    """Execute a cross-partition aggregate count."""
+    rows = list(container.query_items(
+        query=query,
+        parameters=parameters or [],
+        enable_cross_partition_query=True,
+    ))
+    return int(rows[0] or 0) if rows else 0
+
+
+def _dashboard_count_active_users(start_date, end_date):
+    """Count distinct users with recorded login activity in a UTC interval."""
+    return _dashboard_query_count(
+        cosmos_activity_logs_container,
+        """
+        SELECT VALUE COUNT(1) FROM (
+            SELECT DISTINCT c.user_id FROM c
+            WHERE c.activity_type = 'user_login'
+              AND IS_DEFINED(c.user_id)
+              AND c.timestamp >= @start_date
+              AND c.timestamp <= @end_date
+        )
+        """,
+        [
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()},
+        ],
+    )
+
+
+def _dashboard_activity_count(activity_type, start_date, end_date):
+    """Count recorded creation events in a UTC interval."""
+    return _dashboard_query_count(
+        cosmos_activity_logs_container,
+        """
+        SELECT VALUE COUNT(1) FROM c
+        WHERE c.activity_type = @activity_type
+          AND (
+              (c.timestamp >= @start_date AND c.timestamp <= @end_date)
+              OR (c.created_at >= @start_date AND c.created_at <= @end_date)
+          )
+        """,
+        [
+            {"name": "@activity_type", "value": activity_type},
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()},
+        ],
+    )
+
+
+def _dashboard_document_upload_counts(start_date, end_date):
+    """Aggregate document-creation activity by the recorded workspace type."""
+    rows = list(cosmos_activity_logs_container.query_items(
+        query="""
+        SELECT c.workspace_type AS workspace_type, COUNT(1) AS count FROM c
+        WHERE c.activity_type = 'document_creation'
+          AND (
+              (c.timestamp >= @start_date AND c.timestamp <= @end_date)
+              OR (c.created_at >= @start_date AND c.created_at <= @end_date)
+          )
+        GROUP BY c.workspace_type
+        """,
+        parameters=[
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()},
+        ],
+        enable_cross_partition_query=True,
+    ))
+    counts = {"personal": 0, "group": 0, "public": 0}
+    for row in rows:
+        workspace_type = row.get("workspace_type") or "personal"
+        if workspace_type not in counts:
+            workspace_type = "personal"
+        counts[workspace_type] += int(row.get("count") or 0)
+    return counts
+
+
+def _dashboard_token_total(start_date, end_date, token_filters):
+    """Aggregate token usage without returning individual activity records."""
+    where_clause, parameters = build_token_usage_query_context(
+        start_date,
+        end_date,
+        token_filters=token_filters,
+    )
+    rows = list(cosmos_activity_logs_container.query_items(
+        query=f"SELECT VALUE SUM(c.usage.total_tokens) FROM c WHERE {where_clause}",
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    return int(rows[0] or 0) if rows else 0
+
+
+def _dashboard_document_failure_count(container, start_date, end_date):
+    """Count stored document processing states that explicitly report failure."""
+    return _dashboard_query_count(
+        container,
+        """
+        SELECT VALUE COUNT(1) FROM c
+        WHERE IS_STRING(c.status)
+          AND (CONTAINS(LOWER(c.status), 'failed') OR CONTAINS(LOWER(c.status), 'error'))
+          AND (
+              (c.upload_date >= @start_date AND c.upload_date <= @end_date)
+              OR (c.created_at >= @start_date AND c.created_at <= @end_date)
+          )
+        """,
+        [
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()},
+        ],
+    )
+
+
+def _dashboard_document_failures(start_date, end_date):
+    """Count failed processing records across personal, group, and public workspaces."""
+    return sum(
+        _dashboard_document_failure_count(container, start_date, end_date)
+        for container in (
+            cosmos_user_documents_container,
+            cosmos_group_documents_container,
+            cosmos_public_documents_container,
+        )
+    )
 
 
 def parse_control_center_management_pagination(request_args):
@@ -5396,6 +5638,396 @@ def register_route_backend_control_center(bp):
         except Exception as e:
             debug_print(f"Error creating workspace deletion request: {e}")
             return jsonify({'error': str(e)}), 500
+
+    @bp.route('/api/v2/control-center/dashboard/summary', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('dashboard')
+    def api_v2_control_center_dashboard_summary():
+        """Return cached aggregate dashboard metrics for the requested UTC period."""
+        try:
+            start_date, end_date, previous_start, previous_end, period_days = (
+                _dashboard_parse_period(request.args)
+            )
+        except ValueError:
+            return jsonify({'error': DASHBOARD_INVALID_RANGE_ERROR}), 400
+
+        token_filters = extract_token_filters(request.args)
+        cache_key = (
+            start_date.isoformat(),
+            end_date.isoformat(),
+            json.dumps(token_filters, sort_keys=True),
+        )
+        force_refresh = request.args.get('force_refresh', '').strip().lower() in {
+            '1', 'true', 'yes'
+        }
+        cached = _dashboard_cache_get(cache_key, force_refresh=force_refresh)
+        if cached is not None:
+            return jsonify({**cached, 'cached': True})
+
+        try:
+            total_users = _dashboard_query_count(
+                cosmos_user_settings_container,
+                'SELECT VALUE COUNT(1) FROM c',
+            )
+            blocked_users = _dashboard_query_count(
+                cosmos_user_settings_container,
+                """
+                SELECT VALUE COUNT(1) FROM c
+                WHERE c.settings.access.status = 'deny'
+                """,
+            )
+
+            groups_total = _dashboard_query_count(
+                cosmos_groups_container,
+                'SELECT VALUE COUNT(1) FROM c',
+            )
+            group_statuses = list(cosmos_groups_container.query_items(
+                query="""
+                SELECT c.status AS status, COUNT(1) AS count FROM c
+                WHERE IS_DEFINED(c.status)
+                GROUP BY c.status
+                """,
+                enable_cross_partition_query=True,
+            ))
+            groups_by_status = _dashboard_status_counts(groups_total, group_statuses)
+
+            workspaces_total = _dashboard_query_count(
+                cosmos_public_workspaces_container,
+                'SELECT VALUE COUNT(1) FROM c',
+            )
+            workspace_statuses = list(cosmos_public_workspaces_container.query_items(
+                query="""
+                SELECT c.status AS status, COUNT(1) AS count FROM c
+                WHERE IS_DEFINED(c.status)
+                GROUP BY c.status
+                """,
+                enable_cross_partition_query=True,
+            ))
+            workspaces_by_status = _dashboard_status_counts(
+                workspaces_total,
+                workspace_statuses,
+                unknown_status='inactive',
+            )
+
+            active_users = _dashboard_count_active_users(start_date, end_date)
+            previous_active_users = _dashboard_count_active_users(
+                previous_start,
+                previous_end,
+            )
+            current_dau = _dashboard_count_active_users(
+                datetime.combine(end_date.date(), datetime.min.time()),
+                end_date,
+            )
+            current_wau = _dashboard_count_active_users(
+                datetime.combine(end_date.date() - timedelta(days=6), datetime.min.time()),
+                end_date,
+            )
+            current_mau = _dashboard_count_active_users(
+                datetime.combine(end_date.date() - timedelta(days=29), datetime.min.time()),
+                end_date,
+            )
+
+            conversations = _dashboard_activity_count(
+                'conversation_creation',
+                start_date,
+                end_date,
+            )
+            previous_conversations = _dashboard_activity_count(
+                'conversation_creation',
+                previous_start,
+                previous_end,
+            )
+            document_uploads = _dashboard_document_upload_counts(start_date, end_date)
+            previous_document_uploads = _dashboard_document_upload_counts(
+                previous_start,
+                previous_end,
+            )
+            current_token_total = _dashboard_token_total(
+                start_date,
+                end_date,
+                token_filters,
+            )
+            previous_token_total = _dashboard_token_total(
+                previous_start,
+                previous_end,
+                token_filters,
+            )
+
+            try:
+                processing_failures = _dashboard_document_failures(start_date, end_date)
+                previous_processing_failures = _dashboard_document_failures(
+                    previous_start,
+                    previous_end,
+                )
+                failure_metric = {
+                    **_dashboard_metric(
+                        processing_failures,
+                        previous_processing_failures,
+                    ),
+                    'available': True,
+                }
+            except Exception as ex:
+                log_event(
+                    message='[CONTROL_CENTER] Document failure metrics are unavailable.',
+                    extra={'error_type': type(ex).__name__},
+                    level=logging.WARNING,
+                )
+                failure_metric = {
+                    'value': None,
+                    'delta': None,
+                    'percent_change': None,
+                    'available': False,
+                }
+
+            try:
+                pending_approvals = _dashboard_query_count(
+                    cosmos_approvals_container,
+                    """
+                    SELECT VALUE COUNT(1) FROM c
+                    WHERE c.status = 'pending'
+                    """,
+                )
+            except Exception as ex:
+                log_event(
+                    message='[CONTROL_CENTER] Pending approval count is unavailable.',
+                    extra={'error_type': type(ex).__name__},
+                    level=logging.WARNING,
+                )
+                pending_approvals = None
+
+            total_document_uploads = sum(document_uploads.values())
+            previous_total_document_uploads = sum(previous_document_uploads.values())
+            response_data = {
+                'period': {
+                    'start_date': start_date.date().isoformat(),
+                    'end_date': end_date.date().isoformat(),
+                    'days': period_days,
+                    'timezone': 'UTC',
+                },
+                'refreshed_at': datetime.utcnow().isoformat() + 'Z',
+                'users': {
+                    'total': _dashboard_metric(total_users),
+                    'active': _dashboard_metric(active_users, previous_active_users),
+                    'dau': _dashboard_metric(current_dau),
+                    'wau': _dashboard_metric(current_wau),
+                    'mau': _dashboard_metric(current_mau),
+                    'blocked': _dashboard_metric(blocked_users),
+                },
+                'groups': {
+                    'total': _dashboard_metric(groups_total),
+                    'by_status': {
+                        status: _dashboard_metric(count)
+                        for status, count in groups_by_status.items()
+                    },
+                },
+                'public_workspaces': {
+                    'total': _dashboard_metric(workspaces_total),
+                    'by_status': {
+                        status: _dashboard_metric(count)
+                        for status, count in workspaces_by_status.items()
+                    },
+                },
+                'conversations': _dashboard_metric(
+                    conversations,
+                    previous_conversations,
+                ),
+                'document_uploads': {
+                    'total': _dashboard_metric(
+                        total_document_uploads,
+                        previous_total_document_uploads,
+                    ),
+                    'by_workspace_type': {
+                        workspace_type: _dashboard_metric(
+                            count,
+                            previous_document_uploads.get(workspace_type, 0),
+                        )
+                        for workspace_type, count in document_uploads.items()
+                    },
+                },
+                'document_processing_failures': failure_metric,
+                'tokens': _dashboard_metric(current_token_total, previous_token_total),
+                'pending_approvals': (
+                    _dashboard_metric(pending_approvals)
+                    if pending_approvals is not None else None
+                ),
+                'status_history_available': False,
+            }
+            _dashboard_cache_set(cache_key, response_data)
+            return jsonify({**response_data, 'cached': False})
+        except Exception as ex:
+            log_event(
+                message='[CONTROL_CENTER] Dashboard summary query failed.',
+                extra={'error_type': type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to retrieve dashboard summary.'}), 500
+
+    @bp.route('/api/v2/control-center/dashboard/insights', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('dashboard')
+    def api_v2_control_center_dashboard_insights():
+        """Return aggregate-only dashboard insights available from recorded activity fields."""
+        try:
+            start_date, end_date, _, _, period_days = _dashboard_parse_period(request.args)
+        except ValueError:
+            return jsonify({'error': DASHBOARD_INVALID_RANGE_ERROR}), 400
+
+        token_filters = extract_token_filters(request.args)
+        cache_key = (
+            'insights',
+            start_date.isoformat(),
+            end_date.isoformat(),
+            json.dumps(token_filters, sort_keys=True),
+        )
+        force_refresh = request.args.get('force_refresh', '').strip().lower() in {
+            '1', 'true', 'yes'
+        }
+        cached = _dashboard_cache_get(cache_key, force_refresh=force_refresh)
+        if cached is not None:
+            return jsonify({**cached, 'cached': True})
+
+        try:
+            token_where, token_parameters = build_token_usage_query_context(
+                start_date,
+                end_date,
+                token_filters=token_filters,
+            )
+            model_rows = list(cosmos_activity_logs_container.query_items(
+                query=f"""
+                SELECT SUBSTRING(c.timestamp, 0, 10) AS date,
+                       c.usage.model AS model,
+                       SUM(c.usage.total_tokens) AS tokens
+                FROM c
+                WHERE {token_where}
+                  AND IS_DEFINED(c.timestamp)
+                  AND IS_DEFINED(c.usage.model)
+                GROUP BY SUBSTRING(c.timestamp, 0, 10), c.usage.model
+                """,
+                parameters=token_parameters,
+                enable_cross_partition_query=True,
+            ))
+
+            def ranked_token_totals(field_path):
+                rows = list(cosmos_activity_logs_container.query_items(
+                    query=f"""
+                    SELECT c.{field_path} AS id, SUM(c.usage.total_tokens) AS tokens
+                    FROM c
+                    WHERE {token_where} AND IS_DEFINED(c.{field_path})
+                    GROUP BY c.{field_path}
+                    """,
+                    parameters=token_parameters,
+                    enable_cross_partition_query=True,
+                ))
+                return sorted(
+                    (
+                        {'id': row.get('id'), 'tokens': int(row.get('tokens') or 0)}
+                        for row in rows if row.get('id')
+                    ),
+                    key=lambda item: item['tokens'],
+                    reverse=True,
+                )[:10]
+
+            def ranked_activity_totals(field_path):
+                rows = list(cosmos_activity_logs_container.query_items(
+                    query=f"""
+                    SELECT c.{field_path} AS id, COUNT(1) AS activity_count
+                    FROM c
+                    WHERE c.timestamp >= @start_date
+                      AND c.timestamp <= @end_date
+                      AND IS_DEFINED(c.{field_path})
+                    GROUP BY c.{field_path}
+                    """,
+                    parameters=[
+                        {'name': '@start_date', 'value': start_date.isoformat()},
+                        {'name': '@end_date', 'value': end_date.isoformat()},
+                    ],
+                    enable_cross_partition_query=True,
+                ))
+                return sorted(
+                    (
+                        {'id': row.get('id'), 'activity_count': int(row.get('activity_count') or 0)}
+                        for row in rows if row.get('id')
+                    ),
+                    key=lambda item: item['activity_count'],
+                    reverse=True,
+                )[:10]
+
+            login_rows = list(cosmos_activity_logs_container.query_items(
+                query="""
+                SELECT SUBSTRING(c.timestamp, 0, 10) AS date,
+                       SUBSTRING(c.timestamp, 11, 2) AS hour,
+                       COUNT(1) AS count
+                FROM c
+                WHERE c.activity_type = 'user_login'
+                  AND c.timestamp >= @start_date
+                  AND c.timestamp <= @end_date
+                GROUP BY SUBSTRING(c.timestamp, 0, 10), SUBSTRING(c.timestamp, 11, 2)
+                """,
+                parameters=[
+                    {'name': '@start_date', 'value': start_date.isoformat()},
+                    {'name': '@end_date', 'value': end_date.isoformat()},
+                ],
+                enable_cross_partition_query=True,
+            ))
+            login_heatmap = []
+            for row in login_rows:
+                try:
+                    weekday = datetime.strptime(row['date'], '%Y-%m-%d').weekday()
+                    hour = int(row['hour'])
+                    login_heatmap.append({
+                        'weekday': weekday,
+                        'hour': hour,
+                        'count': int(row.get('count') or 0),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+            response_data = {
+                'period': {
+                    'start_date': start_date.date().isoformat(),
+                    'end_date': end_date.date().isoformat(),
+                    'days': period_days,
+                    'timezone': 'UTC',
+                },
+                'token_usage_by_model': [
+                    {
+                        'date': row.get('date'),
+                        'model': row.get('model') or 'Unknown model',
+                        'tokens': int(row.get('tokens') or 0),
+                    }
+                    for row in model_rows
+                ],
+                'top_tokens': {
+                    'users': ranked_token_totals('user_id'),
+                    'groups': ranked_token_totals('workspace_context.group_id'),
+                    'public_workspaces': ranked_token_totals(
+                        'workspace_context.public_workspace_id'
+                    ),
+                },
+                'top_activity': {
+                    'users': ranked_activity_totals('user_id'),
+                    'groups': ranked_activity_totals('workspace_context.group_id'),
+                    'public_workspaces': ranked_activity_totals(
+                        'workspace_context.public_workspace_id'
+                    ),
+                },
+                'login_heatmap': {
+                    'weekday_convention': 'Monday=0 through Sunday=6',
+                    'timezone': 'UTC',
+                    'cells': login_heatmap,
+                },
+            }
+            _dashboard_cache_set(cache_key, response_data)
+            return jsonify({**response_data, 'cached': False})
+        except Exception as ex:
+            log_event(
+                message='[CONTROL_CENTER] Dashboard insights query failed.',
+                extra={'error_type': type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to retrieve dashboard insights.'}), 500
 
     # Activity Trends API
     @bp.route('/api/admin/control-center/activity-trends', methods=['GET'])

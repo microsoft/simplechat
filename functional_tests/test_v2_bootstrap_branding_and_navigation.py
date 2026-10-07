@@ -42,13 +42,19 @@ BACKEND_V2 = APP_ROOT / "route_backend_v2.py"
 
 # The builders under test. There is no module-level constant to lift: the landing copy
 # is passed through exactly as stored, deliberately.
-LIFTED_FUNCTIONS = ("_build_branding", "_coerce_logo_scale", "_menu_name", "_build_navigation")
+LIFTED_FUNCTIONS = (
+    "_build_branding",
+    "_coerce_logo_scale",
+    "_menu_name",
+    "_build_navigation",
+    "_build_latest_features_nav",
+)
 
 branding_urls = import_app_module("functions_branding_urls")
 fields_module = import_app_module("admin_settings_fields")
 
 
-def load_builders(custom_pages_nav=None, nav_raises=False):
+def load_builders(custom_pages_nav=None, nav_raises=False, latest_visible=True, development=False):
     """Execute the bootstrap builders in isolation from the Flask application.
 
     Only the names the lifted functions actually reference are provided. Anything
@@ -86,6 +92,8 @@ def load_builders(custom_pages_nav=None, nav_raises=False):
         "LOGO_SCALE_DEFAULT_PERCENT": fields_module.LOGO_SCALE_DEFAULT_PERCENT,
         "LOGO_SCALE_MIN_PERCENT": fields_module.LOGO_SCALE_MIN_PERCENT,
         "LOGO_SCALE_MAX_PERCENT": fields_module.LOGO_SCALE_MAX_PERCENT,
+        "has_visible_support_latest_features": lambda _settings: latest_visible,
+        "IS_DEVELOPMENT": development,
     }
 
     module = ast.Module(body=wanted, type_ignores=[])
@@ -377,6 +385,33 @@ def test_custom_pages_group_survives_a_failing_lookup():
     return True
 
 
+def test_latest_features_entry_follows_the_classic_gate():
+    """The rail shortcut appears only where the classic Support menu would show it."""
+    print("\nTesting the Latest Features navigation entry...")
+
+    assert_app_version_at_least("0.261.280")
+    on = {"enable_support_menu": True, "enable_support_latest_features": True}
+
+    entry = load_builders()["_build_navigation"](on, ["User"])["latest_features"]
+    assert entry["available"] is True and entry["hidden_by_development"] is False
+    assert entry["url"] == "/support/latest-features"
+    assert entry["menu_name"] == "Support"
+
+    build = load_builders()["_build_latest_features_nav"]
+    assert build(on, [])["available"] is False, "A caller with no app role must not see it"
+    assert build({**on, "enable_support_menu": False}, ["User"])["available"] is False
+    assert build({**on, "enable_support_latest_features": False}, ["Admin"])["available"] is False
+    assert load_builders(latest_visible=False)["_build_latest_features_nav"](on, ["User"])[
+        "available"
+    ] is False, "With every feature hidden there is nothing to link to"
+    assert load_builders(development=True)["_build_latest_features_nav"](on, ["User"])[
+        "hidden_by_development"
+    ] is True
+
+    print("  The Latest Features entry follows the classic gate.")
+    return True
+
+
 def test_bootstrap_payload_carries_the_navigation_block():
     """The rail reads navigation from bootstrap; nothing else supplies it."""
     print("\nTesting the bootstrap payload wiring...")
@@ -401,6 +436,7 @@ if __name__ == "__main__":
         test_unsafe_external_link_urls_are_dropped,
         test_external_links_are_gated_by_role_and_validated,
         test_custom_pages_group_survives_a_failing_lookup,
+        test_latest_features_entry_follows_the_classic_gate,
         test_bootstrap_payload_carries_the_navigation_block,
     ]
 

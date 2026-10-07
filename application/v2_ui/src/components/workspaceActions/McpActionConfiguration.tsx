@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { GlassButton } from '../ui/primitives';
 import { EditorFieldset, EditorGroup, EditorPanel, EditorSwitch } from '../workspace/EditorLayout';
+import { ActionConnectionCheck } from './ActionConnectionCheck';
 import { ACTION_INPUT_CLASS, ActionField, ActionJsonInput, ActionSecretInput } from './ActionFields';
 import { ActionSchemaValue } from './ActionSchemaFields';
 import {
-    ConnectorFeedbackPanel, ConnectorIdentitySelect, useConnectorRequest, useConnectorValidity,
+    ConnectorIdentitySelect, useConnectorRequest, useConnectorValidity,
 } from './OpenApiActionConfiguration';
 import { EDITOR_SECRET_MASK, pointerPart } from '../../lib/workspaceAuthoring';
 import { actionHasStoredArraySecrets } from '../../lib/workspaceActionLogic';
@@ -15,9 +16,10 @@ import {
     allowedMcpAuthMethods, allowedMcpTransports, applyMcpPreconfiguration, applyMcpPreset,
     changeConnectorAuthMethod, connectorAuthMethod, connectorFeedback, connectorLines, connectorObject,
     connectorStrings, connectorText, discoverMcpAction, fetchMcpPreconfigurations, fetchMcpPresets,
-    MCP_AUTH_OPTIONS, MCP_GENERIC_PRESET, MCP_NUMBER_FIELDS, mcpHeaderNameError,
-    mcpImplementationFields, mcpToolChoices, mergeMcpTools, parseMcpTools, setMcpToolSelection,
-    testApiConnector, updateConnectorFields, validateApiConnector, validateConnectorAuthentication,
+    MCP_AUTH_OPTIONS, MCP_GENERIC_PRESET, MCP_NUMBER_FIELDS, mcpDiscoverySignature, mcpFingerprintChangeSummary,
+    mcpFingerprints, mcpHeaderNameError, mcpImplementationFields, mcpToolChoices, mergeMcpTools, parseMcpTools,
+    setMcpToolSelection,
+    updateConnectorFields, validateConnectorAuthentication,
     validateConnectorConfiguration, type McpCatalogEntry, type McpDiscoveryResult,
 } from '../../lib/workspaceActionConnectors';
 
@@ -195,28 +197,47 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
     const [applyError, setApplyError] = useState<string | null>(null);
     const [toolSearch, setToolSearch] = useState('');
     const [toolLimit, setToolLimit] = useState(30);
-    const [discovery, setDiscovery] = useState<{ result: McpDiscoveryResult; endpoint: string; transport: string } | null>(null);
-    const { busy, feedback, stale, run } = useConnectorRequest(props);
+    const [discovery, setDiscovery] = useState<{
+        result: McpDiscoveryResult; endpoint: string; transport: string; signature: string; approvedBefore: unknown;
+    } | null>(null);
+    const { busy, run } = useConnectorRequest(props);
     useEffect(() => setPresetChoice(profile), [profile]);
     useEffect(() => setPreconfigurationChoice(preconfigurationId), [preconfigurationId]);
+    const serverTemplateChoice = preconfigurationChoice ? `pre:${preconfigurationChoice}` : presetChoice === 'generic' ? 'custom' : `preset:${presetChoice}`;
     const chosenPreset = catalogue.presets.find(({ id }) => id === presetChoice);
     const chosenPreconfiguration = catalogue.preconfigurations.find(({ id }) => id === preconfigurationChoice);
     const localErrors = validateConnectorConfiguration(draft, 'mcp', preset);
-    useConnectorValidity(props, 'mcp-configuration', Object.values(localErrors).join(' ') || null);
+    const currentDiscoverySignature = mcpDiscoverySignature(draft);
+    const originalDiscoverySignature = original ? mcpDiscoverySignature(original.record) : '';
+    const approvedFingerprints = mcpFingerprints(fields.mcp_tool_fingerprints);
+    const pinningError = readOnly || (original && currentDiscoverySignature === originalDiscoverySignature)
+        ? null
+        : discovery?.signature === currentDiscoverySignature && mcpFingerprints(discovery.result.fingerprints)
+            ? null
+            : 'Discover and approve MCP tools after changing the endpoint, transport, template, or authentication.';
+    useConnectorValidity(props, 'mcp-configuration', [...Object.values(localErrors), pinningError].filter(Boolean).join(' ') || null);
     const fieldError = (key: string) => errors[`additionalFields.${key}`] || localErrors[`additionalFields.${key}`];
     const updateField = (key: string, value: unknown) => onChange((current) => updateConnectorFields(current, { [key]: value }));
     const availableTransports = allowedMcpTransports(preset);
     const selectedTools = connectorStrings(fields.allowed_tool_names);
-    const lastDiscoveryMatches = discovery?.endpoint === draft.endpoint && discovery?.transport === transport;
+    const lastDiscoveryMatches = discovery?.signature === currentDiscoverySignature;
+    const discoveredChanges = discovery?.result.fingerprints
+        ? mcpFingerprintChangeSummary(discovery.approvedBefore, discovery.result.fingerprints)
+        : null;
+    const drift = connectorObject(fields.mcp_tool_drift);
     const choices = mcpToolChoices(fields.mcp_tools, selectedTools,
         lastDiscoveryMatches ? parseMcpTools(discovery?.result.tools).map(({ original_name }) => original_name) : undefined);
     const filteredTools = choices.filter(({ name, tool }) =>
         `${name} ${tool?.function_name || ''} ${tool?.description || ''}`.toLowerCase().includes(toolSearch.toLowerCase()));
     const blockedExecution = readOnly || Boolean(busy) || Object.keys(localErrors).length > 0;
     const doDiscovery = async () => {
+        const approvedBefore = fields.mcp_tool_fingerprints;
         const result = await run('Discovering MCP tools…', (signal) => discoverMcpAction(draft, original, signal, connectorTestScope(props)),
             (current, response) => updateConnectorFields(current, {
                 mcp_tools: mergeMcpTools(current.additionalFields.mcp_tools, response.tools, connectorStrings(current.additionalFields.allowed_tool_names)),
+                mcp_prompts: Array.isArray(response.prompts) ? response.prompts : [],
+                ...(response.fingerprints ? { mcp_tool_fingerprints: response.fingerprints } : {}),
+                mcp_tool_drift: null,
             }),
             (response) => ({
                 ...connectorFeedback(response),
@@ -226,79 +247,80 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     ...(response.mcp_operation_id ? { operation_id: response.mcp_operation_id } : {}),
                 },
             }));
-        if (result) setDiscovery({ result, endpoint: draft.endpoint, transport });
+        if (result) setDiscovery({ result, endpoint: draft.endpoint, transport, signature: currentDiscoverySignature, approvedBefore });
     };
 
     return (
         <div className="min-w-0 space-y-6" data-testid="mcp-configuration">
-            <p className="text-[0.8125rem] leading-relaxed text-text-2">Connect to a Model Context Protocol server and expose its tools or prompts to agents. Server discovery and connection testing are explicit commands; selecting a template or saving an action never runs either.</p>
-            <EditorPanel title="Server starting points"
-                description="Choose a preconfiguration or compatibility preset, review it, then apply its defaults. Existing custom fields, secret state, identity references, and selected tools are retained.">
+            <p className="text-[0.8125rem] leading-relaxed text-text-2">Connect to one Model Context Protocol server. Choose either a ready-to-use server with a fixed endpoint, a vendor compatibility profile where you provide the endpoint, or a fully custom server.</p>
+            <EditorPanel title="Server template"
+                description="Server templates apply defaults only. Discovery, connection testing, and saving remain explicit steps. Existing secret state, identity references, and selected tools are retained.">
                 {catalogue.loading ? <p role="status" className="text-xs text-text-3">Loading MCP catalogues…</p> : null}
                 {catalogue.presetsError || catalogue.preconfigurationsError ? <div role="alert" className="alert alert-warning space-y-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                    {catalogue.presetsError ? <p>{catalogue.presetsError} The built-in generic preset remains available.</p> : null}
-                    {catalogue.preconfigurationsError ? <p>{catalogue.preconfigurationsError} This is not an empty catalogue; your saved selection is retained.</p> : null}
+                    {catalogue.presetsError ? <p>{catalogue.presetsError} The built-in custom-server profile remains available.</p> : null}
+                    {catalogue.preconfigurationsError ? <p>{catalogue.preconfigurationsError} Saved selections are retained.</p> : null}
                     <GlassButton type="button" size="sm" disabled={catalogue.loading} onClick={catalogue.retry}>Retry catalogues</GlassButton>
                 </div> : null}
-                {groupScoped ? (
-                    <p className="rounded-lg bg-panel-2 p-3 text-xs text-text-3">
-                        Saved MCP preconfigurations aren’t available for group actions yet. Choose a compatibility preset below or configure the server manually.
-                    </p>
-                ) : (<>
-                <ActionField id="mcp-preconfiguration" label="Preconfigured server">
-                    <select id="mcp-preconfiguration" className={ACTION_INPUT_CLASS} value={preconfigurationChoice} disabled={readOnly || catalogue.loading}
-                        onChange={(event) => setPreconfigurationChoice(event.target.value)}>
-                        <option value="">Custom configuration</option>
-                        {preconfigurationChoice && !chosenPreconfiguration ? <option value={preconfigurationChoice} disabled>Unavailable — {preconfigurationChoice}</option> : null}
-                        {catalogue.preconfigurations.map((entry) => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}
+                {groupScoped ? <p className="rounded-lg bg-panel-2 p-3 text-xs text-text-3">
+                    Ready-to-use server templates aren’t available for group actions yet. Choose a vendor profile or configure the server manually.
+                </p> : null}
+                <ActionField id="mcp-server-template" label="Server template">
+                    <select id="mcp-server-template" className={ACTION_INPUT_CLASS} value={serverTemplateChoice} disabled={readOnly || catalogue.loading}
+                        onChange={(event) => {
+                            const value = event.target.value;
+                            if (value === 'custom') {
+                                setPreconfigurationChoice('');
+                                setPresetChoice('generic');
+                            } else if (value.startsWith('pre:')) {
+                                setPreconfigurationChoice(value.slice(4));
+                            } else if (value.startsWith('preset:')) {
+                                setPreconfigurationChoice('');
+                                setPresetChoice(value.slice(7));
+                            }
+                        }}>
+                        <option value="custom">Custom server</option>
+                        {!groupScoped ? <optgroup label="Ready-to-use servers">
+                            {preconfigurationChoice && !chosenPreconfiguration ? <option value={`pre:${preconfigurationChoice}`} disabled>Unavailable — {preconfigurationChoice}</option> : null}
+                            {catalogue.preconfigurations.map((entry) => <option key={entry.id} value={`pre:${entry.id}`}>{entry.displayName}</option>)}
+                        </optgroup> : null}
+                        <optgroup label="Vendor compatibility profiles">
+                            {catalogue.presets.filter(({ id }) => id !== 'generic').map((entry) => <option key={entry.id} value={`preset:${entry.id}`}>{entry.displayName}</option>)}
+                        </optgroup>
                     </select>
                 </ActionField>
-                <McpCatalogueDetails entry={chosenPreconfiguration} />
-                {chosenPreconfiguration ? <p className="break-all text-xs text-text-3">Endpoint to apply: {chosenPreconfiguration.endpoint || 'No endpoint default'}</p> : null}
-                {preconfigurationId && !catalogue.preconfigurations.some(({ id }) => id === preconfigurationId) ? <p className="text-xs text-warn">Saved preconfiguration {preconfigurationId} is unavailable. Its implementation settings remain intact.</p> : null}
+                {chosenPreconfiguration ? <>
+                    <McpCatalogueDetails entry={chosenPreconfiguration} />
+                    <p className="break-all text-xs text-text-3">This ready-to-use server sets the endpoint to {chosenPreconfiguration.endpoint || 'its catalogue default'} and applies the {chosenPreconfiguration.presetId || 'generic'} compatibility profile.</p>
+                </> : <McpCatalogueDetails entry={presetChoice === 'generic' ? undefined : chosenPreset} />}
+                {preconfigurationId && !catalogue.preconfigurations.some(({ id }) => id === preconfigurationId) ? <p className="text-xs text-warn">Saved ready-to-use server {preconfigurationId} is unavailable. Its implementation settings remain intact.</p> : null}
+                {!preset && !chosenPreconfiguration ? <p className="text-xs text-warn">Saved vendor profile {profile} is unavailable. It has not been replaced.</p> : null}
                 <div><GlassButton type="button" variant="subtle"
-                    disabled={readOnly || Boolean(busy) || catalogue.loading || Boolean(preconfigurationChoice && !chosenPreconfiguration)}
+                    disabled={readOnly || Boolean(busy) || catalogue.loading || Boolean(chosenPreconfiguration && !catalogue.presets.some(({ id }) => id === (chosenPreconfiguration.presetId || 'generic'))) || Boolean(!chosenPreconfiguration && presetChoice !== 'generic' && !chosenPreset)}
                     onClick={() => {
-                        if (!chosenPreconfiguration) {
+                        if (serverTemplateChoice === 'custom') {
                             updateField('preconfiguration_id', '');
+                            updateField('server_profile', 'generic');
                             setApplyError(null);
                             return;
                         }
-                        const basePreset = catalogue.presets.find(({ id }) => id === (chosenPreconfiguration.presetId || 'generic'));
-                        if (!basePreset) { setApplyError('Load the preconfiguration’s compatibility preset before applying it.'); return; }
                         try {
-                            applyMcpPreconfiguration(draft, chosenPreconfiguration, basePreset);
-                            onChange((current) => applyMcpPreconfiguration(current, chosenPreconfiguration, basePreset));
+                            if (chosenPreconfiguration) {
+                                const basePreset = catalogue.presets.find(({ id }) => id === (chosenPreconfiguration.presetId || 'generic'));
+                                if (!basePreset) { setApplyError('Load the ready-to-use server’s compatibility profile before applying it.'); return; }
+                                onChange((current) => applyMcpPreconfiguration(current, chosenPreconfiguration, basePreset));
+                            } else if (chosenPreset) {
+                                onChange((current) => {
+                                    const next = applyMcpPreset(current, chosenPreset);
+                                    return { ...next, additionalFields: { ...next.additionalFields, preconfiguration_id: '' } };
+                                });
+                            }
                             setApplyError(null);
                         } catch (error) {
-                            setApplyError(error instanceof Error ? error.message : 'Could not apply the preconfiguration.');
+                            setApplyError(error instanceof Error ? error.message : 'Could not apply the server template.');
                         }
                     }}>
-                    {preconfigurationChoice ? 'Apply server preconfiguration' : 'Use custom configuration'}
+                    {serverTemplateChoice === 'custom' ? 'Use custom server' : 'Apply server template'}
                 </GlassButton></div>
-                </>)}
-                <div className="space-y-3 border-t border-edge pt-3">
-                    <ActionField id="mcp-preset" label="Compatibility preset">
-                        <select id="mcp-preset" className={ACTION_INPUT_CLASS} value={presetChoice} disabled={readOnly || catalogue.loading}
-                            onChange={(event) => setPresetChoice(event.target.value)}>
-                            {!chosenPreset ? <option value={presetChoice} disabled>Unavailable — {presetChoice}</option> : null}
-                            {catalogue.presets.map((entry) => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}
-                        </select>
-                    </ActionField>
-                    <McpCatalogueDetails entry={chosenPreset} />
-                    {!preset ? <p className="text-xs text-warn">Saved preset {profile} is unavailable. It has not been replaced.</p> : null}
-                    <div><GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || !chosenPreset || catalogue.loading}
-                        onClick={() => {
-                            if (!chosenPreset) return;
-                            try {
-                                applyMcpPreset(draft, chosenPreset);
-                                onChange((current) => applyMcpPreset(current, chosenPreset));
-                                setApplyError(null);
-                            } catch (error) {
-                                setApplyError(error instanceof Error ? error.message : 'Could not apply the preset.');
-                            }
-                        }}>Apply preset defaults</GlassButton></div>
-                </div>
                 {applyError ? <p role="alert" className="text-sm text-danger">{applyError}</p> : null}
             </EditorPanel>
             <div className="min-w-0">
@@ -359,10 +381,25 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                 {!selectedTools.length ? <p className="alert alert-warning rounded-lg bg-warn-soft p-2 text-xs text-warn">No tool allowlist is configured. All server tools may be exposed when Load tools is enabled.</p> : null}
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution} onClick={() => void doDiscovery()}>Discover MCP tools</GlassButton>
-                    <p className="text-xs text-text-3">Discovery connects and lists tools; it does not invoke them.</p>
+                    <p className="text-xs text-text-3">Discovery connects, lists tools and prompts, and records approved fingerprints. It does not invoke tools.</p>
                 </div>
+                {pinningError ? <p role="alert" className="alert alert-warning rounded-lg bg-warn-soft p-2 text-xs text-warn">{pinningError}</p> : null}
+                {approvedFingerprints ? <p className="text-xs text-text-3">Approved manifest: <span className="font-mono">{approvedFingerprints.manifest_hash.slice(0, 12)}</span> · discovered {approvedFingerprints.discovered_at}</p> : null}
+                {Object.keys(drift).length ? <div className="alert alert-warning space-y-1 rounded-lg bg-warn-soft p-2 text-xs text-warn">
+                    <p className="font-medium">Tools changed — review required.</p>
+                    {['new', 'changed', 'removed', 'prompts_new', 'prompts_changed', 'prompts_removed'].map((key) => connectorStrings(drift[key]).length ? <p key={key}>{key.replaceAll('_', ' ')}: {connectorStrings(drift[key]).join(', ')}</p> : null)}
+                </div> : null}
                 {discovery ? <EditorPanel title="Last discovery capabilities">
                     {!lastDiscoveryMatches ? <p className="text-xs text-warn">The endpoint or transport changed after this discovery. Run discovery again to verify the current server.</p> : null}
+                    {discoveredChanges?.hasChanges ? <div className="alert alert-warning space-y-1 rounded-lg bg-warn-soft p-2 text-xs text-warn">
+                        <p className="font-medium">Discovery differs from the previously approved manifest. Saving will approve this new manifest.</p>
+                        {discoveredChanges.new.length ? <p>New tools: {discoveredChanges.new.join(', ')}</p> : null}
+                        {discoveredChanges.changed.length ? <p>Changed tools: {discoveredChanges.changed.join(', ')}</p> : null}
+                        {discoveredChanges.removed.length ? <p>Removed tools: {discoveredChanges.removed.join(', ')}</p> : null}
+                        {discoveredChanges.promptsNew.length ? <p>New prompts: {discoveredChanges.promptsNew.join(', ')}</p> : null}
+                        {discoveredChanges.promptsChanged.length ? <p>Changed prompts: {discoveredChanges.promptsChanged.join(', ')}</p> : null}
+                        {discoveredChanges.promptsRemoved.length ? <p>Removed prompts: {discoveredChanges.promptsRemoved.join(', ')}</p> : null}
+                    </div> : null}
                     <dl className="grid gap-2 text-xs text-text-2 sm:grid-cols-2">
                         {Object.entries(connectorObject(discovery.result.capabilities)).map(([key, value]) =>
                             ['string', 'boolean', 'number'].includes(typeof value) ? <div key={key}>
@@ -440,19 +477,6 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                             onChange={(event) => updateField(field.key, event.target.value === '' ? '' : Number(event.target.value))} />
                     </ActionField>)}
                 </div>
-            </EditorPanel>
-            <EditorPanel title="Validate and test"
-                description="The connection test initializes a server session and lists its tools. It does not invoke tools or save discovered metadata. Authentication is configured in the Authentication section.">
-                <div className="flex flex-wrap items-center gap-2">
-                    <GlassButton type="button" variant="subtle" disabled={blockedExecution}
-                        onClick={() => void run('Validating MCP configuration…', (signal) => validateApiConnector(draft, original, 'mcp', signal, connectorTestScope(props)))}>Validate MCP configuration</GlassButton>
-                    <GlassButton type="button" variant="subtle" disabled={blockedExecution}
-                        onClick={() => void run('Testing MCP connection…', (signal) => testApiConnector(draft, original, 'mcp', signal, connectorTestScope(props)))}>Test MCP connection</GlassButton>
-                    {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}
-                </div>
-                {readOnly ? <p className="text-xs text-text-3">Provided actions are read-only. Discovery and connection testing are disabled.</p> : null}
-                {!readOnly && Object.keys(localErrors).length ? <p className="text-xs text-text-3">Resolve the highlighted configuration errors before validating or connecting.</p> : null}
-                <ConnectorFeedbackPanel feedback={feedback} stale={stale} />
             </EditorPanel>
         </div>
     );
@@ -555,6 +579,8 @@ export function McpActionAuthentication(props: ActionConnectorProps) {
                     <p className="text-xs text-text-3">{Object.keys(headers).length}/20 headers. Values may contain up to 4096 characters and must not contain line breaks.</p>
                 </div> : null}
             </EditorPanel>
+            <ActionConnectionCheck props={props} kind="mcp"
+                configurationError={Object.keys(validateConnectorConfiguration(draft, 'mcp', preset)).length > 0} />
         </div>
     );
 }

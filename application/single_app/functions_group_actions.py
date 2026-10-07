@@ -36,6 +36,7 @@ from functions_legacy_action_management import (
 )
 from functions_settings import get_settings
 from functions_agent_delegation import validate_agent_action_for_scope
+from functions_mcp_tool_pinning import validate_mcp_tool_pinning_for_save
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -154,6 +155,7 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
     except exceptions.CosmosResourceNotFoundError:
         pass
     validate_legacy_action_update(submitted_action, existing_action, 'group_id', group_id)
+    validate_mcp_tool_pinning_for_save(payload, existing_action)
     legacy_type = is_legacy_msgraph_type(payload.get('type'))
     if legacy_type:
         payload['type'] = 'msgraph'

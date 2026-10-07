@@ -113,12 +113,20 @@ export async function transcribeAudio(wav: Blob): Promise<TranscriptionResult> {
  * The endpoint returns an audio stream rather than JSON, so the response is turned into
  * an object URL for playback.
  */
-export async function synthesizeSpeech(text: string, voice?: string): Promise<string> {
+export async function synthesizeSpeech(text: string, voice?: string, speed?: number): Promise<string> {
+    const body: Record<string, unknown> = { text };
+    if (voice) {
+        body.voice = voice;
+    }
+    // The route clamps to 0.5-2.0; normal speed is left out so the request stays as it was.
+    if (typeof speed === 'number' && Number.isFinite(speed) && Math.abs(speed - 1) > 0.001) {
+        body.speed = speed;
+    }
     const response = await fetch(apiUrl('/api/chat/tts'), {
         method: 'POST',
         credentials: CREDENTIALS_MODE,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(voice ? { text, voice } : { text }),
+        body: JSON.stringify(body),
     });
 
     if (!response.ok) {

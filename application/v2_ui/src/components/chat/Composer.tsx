@@ -1555,7 +1555,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     </div>
                 )}
 
-                <div className="glass glass-edge relative rounded-2xl p-2">
+                <div className="glass glass-edge relative rounded-2xl p-2" data-tour="composer-input">
                     {savedAnalysis && (
                         <div role="status" aria-live="polite" className="mb-2 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
                             <span className="min-w-0 flex-1 text-xs text-text-2">
@@ -1713,7 +1713,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         </div>
                     )}
 
-                    <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
+                    <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1" data-tour="composer-tools">
                         {orchestrationAvailable && (
                             <ToolToggle
                                 active={orchestrating}
@@ -1975,6 +1975,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             <button
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
+                                data-tour="composer-attach"
                                 disabled={
                                     !canPost ||
                                     !gating.showFileUpload ||
@@ -2000,6 +2001,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     type="button"
                                     onClick={handleStop}
                                     aria-label="Stop generating"
+                                    data-tour="composer-send"
                                     className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-danger-soft text-danger transition-colors hover:bg-danger hover:text-white"
                                 >
                                     <Square size={15} className="fill-current" />
@@ -2008,6 +2010,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
+                                    data-tour="composer-send"
                                     disabled={(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
                                     aria-label={
                                         shared && !streaming

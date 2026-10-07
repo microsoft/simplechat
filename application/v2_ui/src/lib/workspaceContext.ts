@@ -319,6 +319,44 @@ export function workspaceBasePath(scope: WorkspaceRef): string {
     return `/${scope.kind === 'group' ? 'groups' : 'public'}/${id}`;
 }
 
+/** Validate a workspace navigation path before it reaches a router link. */
+export function normalizeWorkspaceUrl(value: string, origin: string): string {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')
+        || value.includes('\\') || /[?#]/.test(value)) {
+        throw new Error('Invalid workspace navigation path.');
+    }
+
+    let pageOrigin: URL;
+    try {
+        pageOrigin = new URL(origin);
+    } catch {
+        throw new Error('Invalid workspace navigation origin.');
+    }
+    if ((pageOrigin.protocol !== 'http:' && pageOrigin.protocol !== 'https:')
+        || pageOrigin.origin !== origin) {
+        throw new Error('Invalid workspace navigation origin.');
+    }
+
+    for (const segment of value.slice(1).split('/')) {
+        let decoded: string;
+        try {
+            decoded = decodeURIComponent(segment);
+        } catch {
+            throw new Error('Invalid workspace navigation path.');
+        }
+        if (decoded === '.' || decoded === '..' || /[/\\?#\u0000-\u001f\u007f]/.test(decoded)) {
+            throw new Error('Invalid workspace navigation path.');
+        }
+    }
+
+    const target = new URL(value, pageOrigin);
+    if (target.origin !== pageOrigin.origin || target.username || target.password
+        || target.search || target.hash || !/^\/(?:workspace|groups|public)(?:\/|$)/.test(target.pathname)) {
+        throw new Error('Invalid workspace navigation path.');
+    }
+    return target.pathname;
+}
+
 const CONTENT_SECTION_GROUPS = ['knowledge', 'automation', 'connections'];
 
 function isSectionAccess(value: unknown, groups: readonly string[] = CONTENT_SECTION_GROUPS): value is WorkspaceSectionAccess {
