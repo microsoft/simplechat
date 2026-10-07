@@ -4,6 +4,7 @@ import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { OrchestrationDeliverables } from './OrchestrationDeliverables';
 import { OrchestrationWorkflowRunNotice } from './OrchestrationWorkflowRunNotice';
+import { OrchestrationWorkflowHandoffNotice } from './OrchestrationWorkflowHandoffNotice';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -350,6 +351,7 @@ export function OrchestrationPlanCard({
             ) : null}
 
             <OrchestrationWorkflowRunNotice plan={editedPlan ?? plan} />
+            <OrchestrationWorkflowHandoffNotice plan={editedPlan ?? plan} />
 
             {held ? (
                 <p className="mt-2 text-xs text-text-3" role="status">

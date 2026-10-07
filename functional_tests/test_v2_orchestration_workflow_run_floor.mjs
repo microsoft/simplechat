@@ -1,10 +1,11 @@
 // test_v2_orchestration_workflow_run_floor.mjs
-// Version: 0.261.212
+// Version: 0.261.256
 // Implemented in: 0.261.212
 // Executes the shared V2 plan normalization for plans that start a saved workflow: the approval
 // floor survives only as `{mode: 'manual'}`, the workflows the approval card names are parsed as
 // plain data (the server bounds their length), and the browser's own floor guard holds even when
-// the marker is missing.
+// the marker is missing. Since 0.261.256 a plan that hands large work off to a one-time workflow
+// holds the same floor, and is never counted as a run of a saved workflow.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -40,6 +41,25 @@ function answerStep() {
     };
 }
 
+/** A workflow_handoff step as the planner writes it: one blueprint, and the `handoff` output. */
+function handoffStep(stepId, { enabled = true } = {}) {
+    return {
+        step_id: stepId, capability_id: 'workflow_handoff', role: 'reason', title: 'Hand off large work',
+        arguments: {
+            blueprint: {
+                name: 'Contract renewal review',
+                loop: { source: 'documents', documents: ['doc-a-123abc'] },
+                tasks: [
+                    { title: 'Read the renewal terms', instructions: 'List each renewal term.' },
+                    { title: 'Write the report', instructions: 'Summarize every document.' },
+                ],
+            },
+        },
+        enabled,
+        outputs: [{ name: 'handoff', kind: 'structured-v1' }],
+    };
+}
+
 function rawPlan({ approval = { mode: 'manual', state: 'pending' }, steps = [answerStep()], inputs } = {}) {
     const plan = { planner_contract_version: 2, approval, steps, status: 'awaiting_approval' };
     if (inputs !== undefined) {
@@ -48,8 +68,8 @@ function rawPlan({ approval = { mode: 'manual', state: 'pending' }, steps = [ans
     return plan;
 }
 
-test('the browser floor list mirrors the registry and names only workflow_run', () => {
-    assert.deepEqual([...APPROVAL_FLOOR_CAPABILITIES], ['workflow_run']);
+test('the browser floor list mirrors the registry and names workflow_run and workflow_handoff', () => {
+    assert.deepEqual([...APPROVAL_FLOOR_CAPABILITIES], ['workflow_run', 'workflow_handoff']);
 });
 
 test('a manual approval floor survives normalization with its reason', () => {
@@ -135,6 +155,38 @@ test('a switched-off run step, or no run step, sets no floor', () => {
         steps: [{ ...runStep('propose', 'wf_1'), capability_id: 'workflow_propose' }, answerStep()],
     }));
     assert.equal(planHasApprovalFloor(proposal), false);
+});
+
+test('an enabled hand-off step holds an auto, timed or manual plan, and its marker survives', () => {
+    for (const mode of ['auto', 'timed', 'manual']) {
+        const stepOnly = normalizePlan(rawPlan({
+            approval: { mode, state: 'pending' }, steps: [handoffStep('handoff'), answerStep()],
+        }));
+        assert.equal('floor' in stepOnly.approval, false);
+        assert.equal(planHasApprovalFloor(stepOnly), true, `an enabled hand-off step holds a ${mode} plan`);
+    }
+
+    const marked = normalizePlan(rawPlan({
+        approval: { mode: 'manual', state: 'pending', floor: { mode: 'manual', reason: 'workflow_handoff' } },
+        steps: [handoffStep('handoff'), answerStep()],
+    }));
+    assert.deepEqual(marked.approval.floor, { mode: 'manual', reason: 'workflow_handoff' });
+    assert.equal(marked.approval.mode, 'manual');
+    assert.equal(planHasApprovalFloor(marked), true);
+    assert.equal(planRequiresApproval(marked), true);
+});
+
+test('a switched-off hand-off step sets no floor, and a hand-off is never counted as a workflow run', () => {
+    const disabled = normalizePlan(rawPlan({
+        approval: { mode: 'timed', state: 'pending' },
+        steps: [handoffStep('handoff', { enabled: false }), answerStep()],
+    }));
+    assert.equal(planHasApprovalFloor(disabled), false);
+
+    const handoff = normalizePlan(rawPlan({ steps: [handoffStep('handoff'), answerStep()] }));
+    assert.deepEqual(planWorkflowRuns(handoff), { count: 0, workflows: [] });
+    // The blueprint stays plain data on the step; only the run view decides what of it is shown.
+    assert.deepEqual(handoff.steps[0].arguments, handoffStep('handoff').arguments);
 });
 
 test('planWorkflowRuns counts enabled run steps and names each known workflow once in step order', () => {

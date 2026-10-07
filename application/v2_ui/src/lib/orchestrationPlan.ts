@@ -1068,7 +1068,7 @@ export function planRequiresApproval(plan: OrchestrationPlan): boolean {
 }
 
 /** Capabilities whose steps always wait for the user, mirroring the registry's `approval_floor`. */
-export const APPROVAL_FLOOR_CAPABILITIES: readonly string[] = ['workflow_run'];
+export const APPROVAL_FLOOR_CAPABILITIES: readonly string[] = ['workflow_run', 'workflow_handoff'];
 
 /**
  * Whether the plan must wait for the user to run it, whatever its approval mode says.
