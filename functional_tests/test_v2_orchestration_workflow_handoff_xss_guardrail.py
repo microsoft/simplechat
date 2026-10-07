@@ -3,7 +3,7 @@
 """
 Functional test for the V2 workflow hand-off card passing the XSS sink guardrail.
 Version: 0.261.253
-Implemented in: 0.261.281
+Implemented in: 0.261.282
 
 This test ensures that the files behind the workflow hand-off card under a chat
 answer, and the hand-off notice on the plan card, pass scripts/check_xss_sinks.py

@@ -623,7 +623,7 @@ aren't available right now."
 
 ## Workflow hand-offs (V2 interface)
 
-Implemented in **0.261.281** (Refs: microsoft/simplechat#1549). Some requests are
+Implemented in **0.261.282** (Refs: microsoft/simplechat#1549). Some requests are
 too big for one chat plan, such as "review every contract in my Legal workspace
 and list the renewal terms". When **Hand Off Large Work From Chat**
 (`enable_chat_orchestration_workflow_handoff`) and the settings it requires are on,
