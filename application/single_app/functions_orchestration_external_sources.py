@@ -1,8 +1,9 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.270
+Version: 0.261.289
 Session-trusted agent and action sources in: 0.261.270
+Hand-selected agent honoured while the agent preference is off in: 0.261.289
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page
@@ -11,6 +12,11 @@ revision. Committed result lineage supplies the binding after a process restart.
 Agent and action sources trust the signed-in session the way classic chat does: every
 admission and read rechecks the user's current access to the conversation, the run's
 step and the exact agent or action, but their configuration is not attested or compared.
+
+An agent the user picked by hand for the run is itself the permission to use it, as
+planning, execution and classic chat already treat it, so it is honoured while the
+user's general agent preference is off. Only that agent is: the catalog is narrowed to
+the run's selection, and current scope, membership and governance are still rechecked.
 """
 
 from dataclasses import dataclass
@@ -21,6 +27,7 @@ from functions_action_catalog import resolve_action_manifest
 from functions_action_manifest import get_action_origin
 from functions_agent_delegation import agent_reference, resolve_delegation_agent
 from functions_orchestration_context import (
+    CatalogResolutionError,
     build_capability_request_context,
     conversation_user_urls,
     resolve_action_catalog,
@@ -235,19 +242,47 @@ class OrchestrationExternalSourceProvider:
             raise ResultUnavailableError("result_external_audience_unavailable") from exc
         return identity, settings, conversation, run, audience
 
-    def _catalog(self, source_type, identity, settings):
+    @staticmethod
+    def _seeded_agent(run):
+        """The agent the user picked for this run: a selection, not proof of access.
+
+        Picking an agent by hand is itself the permission to use it, so it lifts the
+        user's general agent preference for that one agent. Current access to it is still
+        resolved from the catalog, never from the selection's own fields.
+        """
+        seeds = run.get("seeds")
+        agent = seeds.get("agent") if type(seeds) is dict else None
+        if type(agent) is not dict or type(agent.get("name")) is not str or not agent["name"].strip():
+            return None
+        return agent
+
+    def _catalog(self, source_type, identity, settings, *, seeded_agent=None):
         callback = self.agent_catalog_reader if source_type == "agent" else self.action_catalog_reader
         if callback is None:
             raise ResultUnavailableError("result_external_catalog_required")
-        catalog = callback(identity.user_id, settings=settings)
+        if seeded_agent is None:
+            catalog = callback(identity.user_id, settings=settings)
+        else:
+            # Narrowed to the run's selection exactly as planning and execution narrowed it.
+            try:
+                catalog = callback(identity.user_id, seeds={"agent": seeded_agent}, settings=settings)
+            except CatalogResolutionError as exc:
+                if exc.code != "selected_agent_unavailable":
+                    raise
+                raise ResultUnavailableError("result_external_source_unavailable") from exc
         if (
             type(catalog) is not list or len(catalog) > MAX_CATALOG_ITEMS
             or any(type(item) is not dict for item in catalog)
         ):
             raise ResultUnavailableError("result_external_catalog_invalid")
+        if seeded_agent is not None and len(catalog) > 1:
+            raise ResultUnavailableError("result_external_source_unavailable")
         return catalog
 
-    def _capability(self, source_type, producer, identity, settings, catalog, *, invocation_user_urls=None):
+    def _capability(
+        self, source_type, producer, identity, settings, catalog, *,
+        seeded_agent=None, invocation_user_urls=None,
+    ):
         if any(settings.get(key) is not True for key in _REQUIRED_SETTINGS[source_type]):
             raise ResultUnavailableError("result_external_capability_unavailable")
         if source_type == "fact_memory":
@@ -263,7 +298,8 @@ class OrchestrationExternalSourceProvider:
             identity.user_id,
             {
                 "user_roles": list(identity.roles), "user_email": identity.email,
-                "user_enable_agents": identity.user_enable_agents,
+                # The catalog is already narrowed to a hand-picked agent, which is its own permission.
+                "user_enable_agents": identity.user_enable_agents or seeded_agent is not None,
             },
             "", catalog if source_type == "agent" else [],
             catalog if source_type == "action" else [],
@@ -449,9 +485,13 @@ class OrchestrationExternalSourceProvider:
         self._step_arguments(run, producer)
         if run.get("memory_audience") is not None and run["memory_audience"] != audience:
             raise ResultUnavailableError("result_external_audience_unavailable")
-        catalog = self._catalog(source_type, identity, settings) if source_type in {"agent", "action"} else []
+        seeded_agent = self._seeded_agent(run) if source_type == "agent" else None
+        catalog = (
+            self._catalog(source_type, identity, settings, seeded_agent=seeded_agent)
+            if source_type in {"agent", "action"} else []
+        )
         self._capability(
-            source_type, producer, identity, settings, catalog,
+            source_type, producer, identity, settings, catalog, seeded_agent=seeded_agent,
             invocation_user_urls=self._invocation_user_urls(run) if source_type == "url" else None,
         )
         resolved = None
@@ -488,8 +528,12 @@ class OrchestrationExternalSourceProvider:
         self, *, producer, source_type, content_sha256, state, selector=None, previous=None,
     ):
         identity, settings, conversation, run, audience = state
-        catalog = self._catalog(source_type, identity, settings) if source_type in {"agent", "action"} else []
-        self._capability(source_type, producer, identity, settings, catalog)
+        seeded_agent = self._seeded_agent(run) if source_type == "agent" else None
+        catalog = (
+            self._catalog(source_type, identity, settings, seeded_agent=seeded_agent)
+            if source_type in {"agent", "action"} else []
+        )
+        self._capability(source_type, producer, identity, settings, catalog, seeded_agent=seeded_agent)
         revision = None
         configuration_suffix = None
         if source_type == "fact_memory":
