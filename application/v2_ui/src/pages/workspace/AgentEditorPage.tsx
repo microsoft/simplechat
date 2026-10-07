@@ -19,13 +19,17 @@ import { chatHrefForAgent } from '../../lib/conversationUrl';
 import { type AgentTargetCatalog } from '../../lib/agentDelegation';
 import { PERSONAL_AGENT_WORKBENCH, type AgentWorkbenchAdapter } from '../../lib/agentWorkbench';
 import {
-    isRecord, type ActionConfiguration, type AgentConfiguration, type AgentEditorOptions,
+    isRecord, type ActionConfiguration, type ActionTypeDefinition, type AgentConfiguration, type AgentEditorOptions,
 } from '../../lib/workspaceAuthoring';
-import { takeCreatedWorkspaceAction, useWorkspaceEditorDraft } from '../../lib/workspaceEditorDrafts';
+import { seedNewWorkspaceActionDraft, takeCreatedWorkspaceAction, useWorkspaceEditorDraft } from '../../lib/workspaceEditorDrafts';
 import { agentForSave, agentReasoningLevels, agentText, agentValidationErrors, applySafeAgentDraft, isAgentEditorEnvelope, newAgentDraft } from '../../lib/workspaceAgentAuthoring';
 import { newAgentActionErrors } from '../../lib/workspaceAgentActions';
 import { agentKnowledgeErrors, type AgentKnowledgeCatalog } from '../../lib/workspaceAgentKnowledge';
-import { agentAssistValues, applyAgentAssistPatch, buildAgentAssistView, type AgentAssistContext } from '../../lib/agentEditorAssist';
+import {
+    agentAssistValues, applyAgentAssistPatch, buildAgentAssistView, newPendingActionReference, pendingAgentActions,
+    prunePendingAgentActions, resolvePendingAgentAction, type AgentAssistContext,
+} from '../../lib/agentEditorAssist';
+import { actionForSave, createActionDraft, validateActionDraft } from '../../lib/workspaceActionLogic';
 import type { ModelCatalogEntry } from '../../lib/models';
 import { useEditorAssist } from '../../components/editorAssist/useEditorAssist';
 import { EditorAskAiPanel, EditorAskAiToggle, EditorAssistLockBanner } from '../../components/editorAssist/EditorAskAiPanel';
@@ -46,7 +50,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const { draft, setDraft: setStoredDraft, original, load, clear, dirty, restored } =
         useWorkspaceEditorDraft<AgentConfiguration>('agents', `${scope}:${resourceId}`, newAgentDraft, adapter.draftScope);
     const setDraft: Dispatch<SetStateAction<AgentConfiguration>> = (update) => setStoredDraft((current) =>
-        applySafeAgentDraft(current, typeof update === 'function' ? update(current) : update, original));
+        applySafeAgentDraft(current, prunePendingAgentActions(typeof update === 'function' ? update(current) : update), original));
     const [options, setOptions] = useState<AgentEditorOptions | null>(null);
     const [bootLoading, setBootLoading] = useState(true);
     const [bootError, setBootError] = useState<string | null>(null);
@@ -66,6 +70,9 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const [knowledgeLoading, setKnowledgeLoading] = useState(false);
     const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
     const [knowledgeRevision, setKnowledgeRevision] = useState(0);
+    const [actionTypes, setActionTypes] = useState<ActionTypeDefinition[] | null>(null);
+    // Drafted actions an undo may bring back after a later turn or Remove dropped them.
+    const pendingStash = useRef(new Map<string, ActionConfiguration>());
     const returnedAction = useRef<ActionConfiguration | null>(null);
     const handoffChecked = useRef(false);
     // A member without the edit hint sees the group editor read-only; personal scope always authors.
@@ -80,9 +87,15 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     // Ask AI reads and changes the latest draft between renders, so it works from a ref.
     const draftRef = useRef(draft);
     draftRef.current = draft;
+    const actionWorkbench = adapter.actionWorkbench;
     const assistContext = (current: AgentConfiguration): AgentAssistContext | null => options ? {
         options, actions, targets, knowledge, knowledgeScopes: adapter.knowledgeScopes,
         reasoningLevels: agentReasoningLevels(current, options, models), ownerId, isNew,
+        ...(actionTypes && canCreateActions && actionWorkbench ? {
+            actionTypes,
+            newPendingReference: newPendingActionReference,
+            recallPendingAction: (reference: string) => pendingStash.current.get(reference),
+        } : {}),
     } : null;
     const assist = useEditorAssist({
         kind: 'agent',
@@ -95,11 +108,12 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             if (!context) throw new Error('The agent editor is still loading.');
             return buildAgentAssistView(draftRef.current, context);
         },
-        apply: (patch) => {
+        apply: (patch, newItems) => {
             const current = draftRef.current;
             const context = assistContext(current);
-            const next = context ? applyAgentAssistPatch(current, patch, context) : null;
+            const next = context ? applyAgentAssistPatch(current, patch, context, newItems) : null;
             if (!next || !context) return null;
+            for (const { reference, action } of pendingAgentActions(next)) pendingStash.current.set(reference, action);
             draftRef.current = next;
             setDraft(next);
             return agentAssistValues(next, { ...context, reasoningLevels: agentReasoningLevels(next, context.options, models) });
@@ -143,10 +157,16 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
         if (!action) return;
         returnedAction.current = action;
         setActions((current) => [...current.filter((item) => item.id !== action.id || item.is_global !== action.is_global), action]);
-        setDraft((current) => ({
-            ...current,
-            actions_to_load: current.actions_to_load.includes(action.id) ? current.actions_to_load : [...current.actions_to_load, action.id],
-        }));
+        setDraft((current) => {
+            // An action Ask AI drafted and the person finished in the action editor replaces its placeholder.
+            const handoff = typeof current._pendingActionHandoff === 'string' ? current._pendingActionHandoff : '';
+            const { _pendingActionHandoff: _marker, ...rest } = current;
+            if (handoff && rest.actions_to_load.includes(handoff)) return resolvePendingAgentAction(rest as AgentConfiguration, handoff, action.id);
+            return {
+                ...rest,
+                actions_to_load: rest.actions_to_load.includes(action.id) ? rest.actions_to_load : [...rest.actions_to_load, action.id],
+            } as AgentConfiguration;
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bootLoading, bootError, readOnly, location.pathname]);
 
@@ -177,6 +197,16 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     }, [bootLoading, bootError, actionsRevision]);
 
     useEffect(() => {
+        if (!assistEnabled || readOnly || bootLoading || bootError || !canCreateActions || !actionWorkbench) return;
+        const controller = new AbortController();
+        // Without the catalogue Ask AI only assigns existing actions, so a failure stays quiet.
+        void actionWorkbench.fetchTypes(controller.signal).then((types) => {
+            if (!controller.signal.aborted && Array.isArray(types)) setActionTypes(types);
+        }).catch(() => { if (!controller.signal.aborted) setActionTypes(null); });
+        return () => controller.abort();
+    }, [assistEnabled, readOnly, bootLoading, bootError, canCreateActions, actionWorkbench]);
+
+    useEffect(() => {
         if (bootLoading || bootError || draft.agent_type !== 'local') return;
         const controller = new AbortController();
         setKnowledgeLoading(true);
@@ -190,13 +220,33 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bootLoading, bootError, draft.agent_type, knowledgeRevision]);
 
+    const pendingActions = pendingAgentActions(draft);
+    const actionTypeFor = (action: ActionConfiguration) => actionTypes?.find((type) => type.type === action.type);
+    const pendingIssues = Object.fromEntries(pendingActions.map(({ reference, action }) => [
+        reference, [...new Set(Object.values(validateActionDraft(actionForSave(action), actionTypeFor(action))))],
+    ]));
+
+    const finishPendingAction = (reference: string) => {
+        const pending = pendingActions.find((item) => item.reference === reference);
+        if (!pending || !actionWorkbench) return;
+        seedNewWorkspaceActionDraft(location.pathname, pending.action, createActionDraft(), actionWorkbench.draftScope);
+        setDraft((current) => ({ ...current, _pendingActionHandoff: reference }));
+        navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`,
+            { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } });
+    };
+
     const save = async () => {
         if (!options || readOnly || saving || iconBusy) return;
+        const pendingErrors = pendingActions.flatMap(({ reference, action }) => (pendingIssues[reference] ?? []).length
+            ? [`New action ${agentText(action.displayName) || action.name} needs attention: ${pendingIssues[reference].join(' ')} Finish it in the action editor or remove it.`]
+            : []);
+        if (pendingActions.length && (!actionWorkbench || !canCreateActions)) pendingErrors.push('New actions from Ask AI can’t be created here. Remove them before saving.');
         const errors = [
             ...agentValidationErrors(draft, options),
             ...agentKnowledgeErrors(draft),
             ...newAgentActionErrors(draft, original?.record ?? null, actions, targets, ownerId),
             ...(advancedError ? [advancedError] : []),
+            ...pendingErrors,
         ];
         if (errors.length) {
             setHasSaveConflict(false);
@@ -206,8 +256,26 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
         setSaving(true);
         setSaveError(null);
         setHasSaveConflict(false);
+        let working = draft;
         try {
-            const resource = await adapter.save(agentForSave(draft), original);
+            // Create the actions Ask AI drafted first, so the agent saves with their real IDs.
+            for (const { reference, action } of pendingActions) {
+                if (!actionWorkbench) break;
+                let created: ActionConfiguration | undefined;
+                try {
+                    created = (await actionWorkbench.save(actionForSave(action), null)).record;
+                } catch (cause) {
+                    throw new Error(`New action ${agentText(action.displayName) || action.name} could not be created: ${message(cause)} The agent was not saved.`);
+                }
+                if (!created?.id) throw new Error('An action save response did not include an identifier. The agent was not saved.');
+                const saved = created;
+                working = resolvePendingAgentAction(working, reference, saved.id);
+                pendingStash.current.delete(reference);
+                setActions((current) => [...current.filter((item) => item.id !== saved.id), saved]);
+                setDraft(working);
+            }
+            const { _pendingActions: _drafts, _pendingActionHandoff: _marker, ...agent } = working;
+            const resource = await adapter.save(agentForSave(agent as AgentConfiguration), original);
             if (!resource.record?.id) throw new Error('The save response did not include an agent identifier. Reload before trying again.');
             load(resource);
             clear();
@@ -280,6 +348,8 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                     actions={actions} targets={targets} loading={actionsLoading} error={actionsError} targetError={targetError}
                     builtinActions={options.builtin_actions} ownerId={ownerId} canCreateActions={canCreateActions} readOnly={readOnly}
                     scopeKind={adapter.scope.kind}
+                    pendingActions={pendingActions} pendingIssues={pendingIssues}
+                    onFinishPendingAction={actionWorkbench ? finishPendingAction : undefined}
                     onRefresh={() => setActionsRevision((value) => value + 1)}
                     onNewAction={() => navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`, { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } })} />) },
                 { id: 'knowledge', label: 'Assigned knowledge', icon: BookOpen,

@@ -7,9 +7,10 @@
 // from Ask AI is the same change the person could have made by hand.
 
 import type {
-    EditorAssistField, EditorAssistOption, EditorAssistSection, EditorAssistValues, EditorAssistView,
+    EditorAssistField, EditorAssistNewItem, EditorAssistOption, EditorAssistSection, EditorAssistValues, EditorAssistView,
 } from './editorAssist';
-import type { ActionConfiguration, AgentConfiguration, AgentEditorOptions } from './workspaceAuthoring';
+import { isRecord, type ActionConfiguration, type ActionTypeDefinition, type AgentConfiguration, type AgentEditorOptions } from './workspaceAuthoring';
+import { draftActionFromAssist, newActionAssistSpec } from './actionEditorAssist';
 import {
     agentModelChoices, agentText, clearAgentDraftFields, renameAgentDraft, selectAgentModel, selectedAgentModel,
 } from './workspaceAgentAuthoring';
@@ -49,6 +50,65 @@ export interface AgentAssistContext {
     readonly reasoningLevels: readonly string[];
     readonly ownerId: string;
     readonly isNew: boolean;
+    /** Action types the assistant may draft new actions of; null or empty when it can't create actions. */
+    readonly actionTypes?: readonly ActionTypeDefinition[] | null;
+    /** A fresh, session-unique reference for a drafted action. */
+    readonly newPendingReference?: () => string;
+    /** A drafted action removed earlier this session, so undo can bring it back. */
+    readonly recallPendingAction?: (reference: string) => ActionConfiguration | undefined;
+}
+
+const MAX_NEW_ACTIONS = 3;
+const PENDING_PREFIX = 'new-action-';
+
+/** An action Ask AI drafted for this agent. It is created when the agent is saved. */
+export interface PendingAgentAction {
+    readonly reference: string;
+    readonly action: ActionConfiguration;
+}
+
+export function isPendingActionReference(reference: string): boolean {
+    return reference.startsWith(PENDING_PREFIX);
+}
+
+/** A reference no saved action uses, for a newly drafted action. */
+export function newPendingActionReference(): string {
+    const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    return `${PENDING_PREFIX}${random}`;
+}
+
+/** The drafted actions in an agent draft, in the order they were drafted. */
+export function pendingAgentActions(draft: AgentConfiguration): PendingAgentAction[] {
+    const raw = draft._pendingActions;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((item): item is PendingAgentAction => isRecord(item) && typeof item.reference === 'string' &&
+        isPendingActionReference(item.reference) && isRecord(item.action));
+}
+
+/**
+ * The draft with only the drafted actions it still assigns. Removing a drafted action's
+ * reference, by hand or by undo, discards that draft.
+ */
+export function prunePendingAgentActions(draft: AgentConfiguration): AgentConfiguration {
+    if (!Object.hasOwn(draft, '_pendingActions')) return draft;
+    const kept = pendingAgentActions(draft).filter((item) => draft.actions_to_load.includes(item.reference));
+    if (kept.length === (Array.isArray(draft._pendingActions) ? draft._pendingActions.length : -1)) return draft;
+    const next = { ...draft };
+    if (kept.length) next._pendingActions = kept;
+    else delete next._pendingActions;
+    return next;
+}
+
+/** The draft with a drafted action replaced by the saved action's identifier, keeping its position. */
+export function resolvePendingAgentAction(draft: AgentConfiguration, reference: string, savedId: string): AgentConfiguration {
+    const actions = draft.actions_to_load.flatMap((item) => item !== reference ? [item]
+        : draft.actions_to_load.includes(savedId) ? [] : [savedId]);
+    return prunePendingAgentActions({ ...draft, actions_to_load: actions });
+}
+
+function canDraftActions(context: AgentAssistContext): boolean {
+    return Boolean(context.actionTypes?.some((definition) => definition.type !== 'agent') && context.newPendingReference);
 }
 
 function webSourcesValue(sources: readonly AgentWebSource[]): { url: string; mode: string }[] {
@@ -108,6 +168,17 @@ function actionOptions(draft: AgentConfiguration, context: AgentAssistContext): 
         });
         if (options.length >= MAX_ACTION_OPTIONS) break;
     }
+    for (const { reference, action } of pendingAgentActions(draft)) {
+        if (seen.has(reference)) continue;
+        seen.add(reference);
+        const description = agentText(action.description).slice(0, 700);
+        options.push({
+            value: reference,
+            label: agentText(action.displayName) || agentText(action.name) || 'New action',
+            description: [`New ${agentText(action.type)} action drafted in this session; it is created when the agent is saved.`, description]
+                .filter(Boolean).join(' '),
+        });
+    }
     return options;
 }
 
@@ -145,7 +216,8 @@ export function buildAgentAssistView(draft: AgentConfiguration, context: AgentAs
             });
         }
         const actions = actionOptions(draft, context);
-        if (actions.length || draft.actions_to_load.length) {
+        const drafting = canDraftActions(context);
+        if (actions.length || draft.actions_to_load.length || drafting) {
             fields.push({
                 path: '/actions', label: 'Actions', section: 'actions', kind: 'choices', max_items: MAX_ACTION_OPTIONS,
                 options: actions, help: 'The actions this agent may call.',
@@ -214,10 +286,23 @@ export function buildAgentAssistView(draft: AgentConfiguration, context: AgentAs
     } else {
         notes.push('This is a Foundry agent: its model, tools and knowledge are managed in Foundry, so only identity and description can change here.');
     }
+    let newItems: EditorAssistView['newItems'];
+    if (local && canDraftActions(context)) {
+        const spec = newActionAssistSpec({ catalogue: context.actionTypes ?? [], isNew: true });
+        const room = Math.max(0, MAX_NEW_ACTIONS - pendingAgentActions(draft).length);
+        newItems = { target: '/actions', noun: 'action', max: room, ...spec };
+        notes.push(room
+            ? `Ask AI can draft up to ${room} new action${room === 1 ? '' : 's'} when no existing action fits; prefer assigning an existing one. New actions are created only when the person saves the agent.`
+            : 'This draft already has the most new actions Ask AI can draft at once. Save the agent or remove one first.');
+        notes.push('Ask AI never enters keys, passwords or other credentials. The person finishes a new action that needs them in the action editor. Call agent actions are created in the action editor.');
+    } else if (local) {
+        notes.push('Ask AI can only assign existing actions here; new actions are created in the action editor.');
+    }
     return {
         sections: AGENT_ASSIST_SECTIONS,
         fields,
         values: agentAssistValues(draft, context),
+        ...(newItems ? { newItems } : {}),
         notes,
     };
 }
@@ -228,14 +313,27 @@ function strings(value: unknown): string[] {
 
 /**
  * The draft with a patch applied, or null when the patch can't be applied, such as a model
- * that is no longer offered.
+ * that is no longer offered. ``newItems`` are actions the assistant drafted this turn; each gets
+ * a session-unique reference, and its turn handle in the patch is replaced by that reference.
  */
 export function applyAgentAssistPatch(
     draft: AgentConfiguration,
     patch: Readonly<Record<string, unknown>>,
     context: AgentAssistContext,
+    newItems: readonly EditorAssistNewItem[] = [],
 ): AgentConfiguration | null {
     let next = draft;
+    const handles = new Map<string, string>();
+    const drafted: PendingAgentAction[] = [];
+    for (const item of newItems) {
+        if (!canDraftActions(context) || !context.newPendingReference) return null;
+        const action = draftActionFromAssist(item.type, item.values, { catalogue: context.actionTypes ?? [], isNew: true });
+        if (!action) return null;
+        const reference = context.newPendingReference();
+        handles.set(item.handle, reference);
+        drafted.push({ reference, action });
+    }
+    if (drafted.length && pendingAgentActions(draft).length + drafted.length > MAX_NEW_ACTIONS) return null;
     for (const [path, value] of Object.entries(patch)) {
         switch (path) {
             case '/display_name':
@@ -253,9 +351,23 @@ export function applyAgentAssistPatch(
                 next = selectAgentModel(next, choice);
                 break;
             }
-            case '/actions':
-                next = { ...next, actions_to_load: [...new Set(strings(value))] };
+            case '/actions': {
+                const pending = [...pendingAgentActions(next), ...drafted];
+                const references: string[] = [];
+                for (const raw of strings(value)) {
+                    const reference = handles.get(raw) ?? raw;
+                    if (raw.startsWith('new:') && !handles.has(raw)) return null;
+                    if (isPendingActionReference(reference) && !pending.some((item) => item.reference === reference)) {
+                        // Undo can assign a drafted action an earlier turn removed.
+                        const recalled = context.recallPendingAction?.(reference);
+                        if (!recalled) return null;
+                        pending.push({ reference, action: recalled });
+                    }
+                    if (!references.includes(reference)) references.push(reference);
+                }
+                next = { ...next, actions_to_load: references, ...(pending.length ? { _pendingActions: pending } : {}) };
                 break;
+            }
             case '/reasoning_effort': {
                 const effort = agentText(value);
                 const updated = { ...next };
@@ -306,5 +418,5 @@ export function applyAgentAssistPatch(
                 return null;
         }
     }
-    return next;
+    return prunePendingAgentActions(next);
 }

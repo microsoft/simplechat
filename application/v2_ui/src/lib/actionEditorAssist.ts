@@ -8,14 +8,14 @@
 // method), so a change from Ask AI is the same change the person could have made by hand.
 
 import type {
-    EditorAssistField, EditorAssistFieldKind, EditorAssistSection, EditorAssistValues, EditorAssistView,
+    EditorAssistField, EditorAssistFieldKind, EditorAssistOption, EditorAssistSection, EditorAssistValues, EditorAssistView,
 } from './editorAssist';
 import {
     EDITOR_SECRET_MASK, isRecord, pointerPart, type ActionConfiguration, type ActionTypeDefinition, type EditorSchema,
 } from './workspaceAuthoring';
 import {
     actionAuthMethod, actionAuthModes, actionText, actionTypeLabel, actionValueAt, changeActionAuth,
-    changeActionDisplayName, changeActionField, changeActionType, displayedActionValue, resolveActionSchema,
+    changeActionDisplayName, changeActionField, changeActionType, createActionDraft, displayedActionValue, resolveActionSchema,
 } from './workspaceActionLogic';
 import { nativeActionDefinition } from './workspaceActionRegistry';
 import type { ActionFieldDescriptor } from './workspaceActionTypes';
@@ -480,4 +480,54 @@ export function applyActionAssistPatch(
         next = updated;
     }
     return next;
+}
+
+/** Action types the agent assistant can draft. A Call agent action needs a target picked in the editor. */
+function draftableTypes(context: ActionAssistContext): ActionTypeDefinition[] {
+    return context.catalogue.filter((definition) => definition.type && definition.type !== 'agent');
+}
+
+/**
+ * How a new action looks to the agent assistant: the type choices, the fields every new action
+ * has, and each type's fields as they look on a fresh action of that type.
+ */
+export function newActionAssistSpec(context: ActionAssistContext): {
+    types: EditorAssistOption[];
+    common: EditorAssistField[];
+    variants: Record<string, readonly EditorAssistField[]>;
+} {
+    const types = draftableTypes(context);
+    const variants: Record<string, readonly EditorAssistField[]> = {};
+    for (const definition of types) {
+        const fresh = changeActionType(createActionDraft(), definition);
+        variants[definition.type] = describeType(fresh, definition, { ...context, isNew: true }).map(({ field }) => field);
+    }
+    return {
+        types: types.map((definition) => ({
+            value: definition.type, label: definition.display,
+            description: definition.description ? definition.description.slice(0, 900) : undefined,
+        })),
+        common: [
+            {
+                path: '/displayName', label: 'Action name', kind: 'text', required: true, max_length: DISPLAY_NAME_LIMIT,
+                help: 'The name agents and people see for this action.',
+            },
+            {
+                path: '/description', label: 'Description', kind: 'textarea', max_length: DESCRIPTION_LIMIT,
+                help: 'What this action does and when an agent should use it.',
+            },
+        ],
+        variants,
+    };
+}
+
+/** A new action of ``type`` with the assistant's values, or null when the type or a value isn't allowed. */
+export function draftActionFromAssist(
+    type: string, values: Readonly<Record<string, unknown>>, context: ActionAssistContext,
+): ActionConfiguration | null {
+    const definition = draftableTypes(context).find((item) => item.type === type);
+    if (!definition) return null;
+    const patch = { ...values };
+    delete patch['/type'];
+    return applyActionAssistPatch(changeActionType(createActionDraft(), definition), patch, { ...context, isNew: true });
 }

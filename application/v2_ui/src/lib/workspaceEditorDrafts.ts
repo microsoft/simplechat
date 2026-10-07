@@ -154,6 +154,26 @@ export function queueCreatedWorkspaceAction(
     syncDraftUnloadProtection();
 }
 
+/**
+ * Opens the new-action editor that returns to ``returnPath`` with ``draft`` already filled in,
+ * such as an action Ask AI drafted for an agent. ``baseline`` is the editor's empty action, so
+ * the seeded draft counts as unsaved. The key matches the one the action editor builds.
+ */
+export function seedNewWorkspaceActionDraft(
+    returnPath: string,
+    draft: ActionConfiguration,
+    baseline: ActionConfiguration,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+): string {
+    const path = agentEditorReturnPath(returnPath, returnPathScope(workspaceScope));
+    if (!path) throw new Error('Invalid agent editor return path.');
+    const key = JSON.stringify(['personal', 'new', path]);
+    drafts.set(JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), 'actions', key]),
+        { draft: structuredClone(draft), baseline, original: null });
+    syncDraftUnloadProtection();
+    return path;
+}
+
 export function takeCreatedWorkspaceAction(
     returnPath: string,
     workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
