@@ -32,6 +32,8 @@ import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
+import { TermsOfUsePage } from './pages/TermsOfUsePage';
+import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
@@ -95,6 +97,9 @@ export function App() {
         (state) => (state.settings.fontSizePreference as string) || 'm',
     );
     const location = useLocation();
+    // Every other call is refused until the terms are accepted, so this page loads nothing
+    // the shell needs and renders on its own.
+    const onTermsPage = location.pathname === '/terms-of-use';
 
     useEffect(() => {
         clearWorkspaceEditorDrafts();
@@ -102,6 +107,9 @@ export function App() {
 
     useEffect(() => {
         initializeTheme();
+        if (onTermsPage) {
+            return;
+        }
         void load();
         // Loaded at startup rather than when the settings page opens, because preferences
         // shape the chat interface itself — the conversation list reads one of them.
@@ -118,7 +126,7 @@ export function App() {
         // run that was still going. The restored record has no stream behind it; the run
         // history fetched when the panel opens is what settles it.
         restorePersistedRuns();
-    }, [load, loadUserSettings]);
+    }, [load, loadUserSettings, onTermsPage]);
 
     /**
      * Re-read the payload when the tab comes back to the front.
@@ -136,6 +144,9 @@ export function App() {
      * spurious wake-up is one wasted request.
      */
     useEffect(() => {
+        if (onTermsPage) {
+            return undefined;
+        }
         const onVisible = () => {
             if (document.visibilityState === 'visible') {
                 void refreshBootstrap();
@@ -150,7 +161,7 @@ export function App() {
             document.removeEventListener('visibilitychange', onVisible);
             window.removeEventListener('focus', onVisible);
         };
-    }, [refreshBootstrap]);
+    }, [refreshBootstrap, onTermsPage]);
 
     useEffect(() => {
         const title = data?.branding?.app_title;
@@ -196,6 +207,10 @@ export function App() {
     // list's running tag and the results each run posts back to its chat.
     useWorkflowRunTracker(Boolean(data) && !error && workflowRunTrackerShouldRun(data?.features));
 
+    if (onTermsPage) {
+        return <TermsOfUsePage />;
+    }
+
     if (loading) {
         return <BootScreen />;
     }
@@ -229,6 +244,11 @@ export function App() {
                 <Route path="/control-center" element={<ControlCenterPage />} />
                 <Route path="/control-center/:section" element={<ControlCenterPage />} />
                 <Route path="/content-review" element={<ContentReviewPage />} />
+                {/* Categories and the selected request are real paths, so a notification
+                    or a shared link opens the exact request. */}
+                <Route path="/approvals" element={<ApprovalsPage />} />
+                <Route path="/approvals/:category" element={<ApprovalsPage />} />
+                <Route path="/approvals/:category/:itemId" element={<ApprovalsPage />} />
                 <Route
                     path="/agents"
                     element={

@@ -563,6 +563,8 @@ def register_route_backend_users(bp):
                     # Whether the V2 Admin Settings categories rail is collapsed to icons.
                     # Separate from the shell and workspace rails so each keeps its own state.
                     'v2AdminRailCollapsed',
+                    # Whether the V2 Approvals categories rail is collapsed to icons.
+                    'v2ApprovalsRailCollapsed',
                     # Whether the V2 User Settings sections rail is collapsed to icons.
                     'v2UserSettingsRailCollapsed',
                     # Whether the V2 Control Center section rail is collapsed to icons.

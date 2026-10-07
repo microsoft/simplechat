@@ -133,7 +133,7 @@ FOLLOWED_LINKS = [
     (
         "/approvals?approval_id=a-1",
         {"group_id": "g-1"},
-        {"kind": "classic", "href": "/approvals?approval_id=a-1", "groupId": "g-1"},
+        {"kind": "route", "path": "/approvals?approval_id=a-1"},
     ),
     (
         "/workflow-activity?workflowId=w-1&runId=r-1",

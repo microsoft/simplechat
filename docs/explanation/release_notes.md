@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.287)**
+
+#### New Features
+
+*   **V2 Terms of Use Page**
+    *   V2 users who must accept the Terms of Use now see a V2 page at `/v2/terms-of-use` instead of being sent to the classic interface. Accepting returns them to the V2 page they were opening; declining signs them out to the configured destination.
+    *   Acceptance, versioning, recurrence, redirect safety, and audit logging are shared with the classic page. A V2 tab whose acceptance lapses while open is sent to the terms page on its next request.
+    *   (Ref: `app.py` `build_terms_of_use_url`, `/api/v2/terms-of-use` routes in `route_backend_v2.py`, `TermsOfUsePage.tsx`, [V2 Terms of Use and Approval Requests](features/V2_TERMS_AND_APPROVALS.md))
+
+*   **V2 Approval Requests Page**
+    *   **Approval requests** in the V2 sidebar opens a full-page view laid out like Admin Settings: a collapsible category rail, the request list, and a detail pane with the decision controls.
+    *   Covers everything the classic page does: all requests, group requests, Microsoft 365 approvals, content screening (when enabled), outgoing Microsoft 365 actions, waiting requests with resume or connect-and-resume, and admin agent template approvals.
+    *   Each request has its own address. Notification links and classic bookmarks open the matching request, and the Admin Settings agent template link opens the V2 queue.
+    *   (Ref: `ApprovalsPage.tsx`, `components/approvals/`, `approvalsApi.ts`, `notificationLinks.ts`, `Sidebar.tsx`, `v2ApprovalsRailCollapsed` user setting)
+
 ### **(v0.261.286)**
 
 #### Bug Fixes
