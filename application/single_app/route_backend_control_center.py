@@ -58,6 +58,9 @@ CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE = 25
 CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
 CONTROL_CENTER_DASHBOARD_CACHE_TTL_SECONDS = 90
 CONTROL_CENTER_DASHBOARD_CACHE_MAX_ENTRIES = 128
+DASHBOARD_INVALID_RANGE_ERROR = (
+    "Invalid dashboard date range. Use 7, 30, or 90 days or a valid custom range of up to 366 days."
+)
 _control_center_dashboard_cache = {}
 
 # The answers an approved ownership change gives when the group's current copy no
@@ -6274,8 +6277,8 @@ def register_route_backend_control_center(bp):
             start_date, end_date, previous_start, previous_end, period_days = (
                 _dashboard_parse_period(request.args)
             )
-        except ValueError as ex:
-            return jsonify({'error': str(ex)}), 400
+        except ValueError:
+            return jsonify({'error': DASHBOARD_INVALID_RANGE_ERROR}), 400
 
         token_filters = extract_token_filters(request.args)
         cache_key = (
@@ -6496,8 +6499,8 @@ def register_route_backend_control_center(bp):
         """Return aggregate-only dashboard insights available from recorded activity fields."""
         try:
             start_date, end_date, _, _, period_days = _dashboard_parse_period(request.args)
-        except ValueError as ex:
-            return jsonify({'error': str(ex)}), 400
+        except ValueError:
+            return jsonify({'error': DASHBOARD_INVALID_RANGE_ERROR}), 400
 
         token_filters = extract_token_filters(request.args)
         cache_key = (
