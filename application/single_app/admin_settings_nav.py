@@ -151,6 +151,10 @@ ADMIN_NAV = [
                 "icon": "bi-robot",
                 "sections": [
                     {"id": "agents-config", "label": "Agent Runtime", "icon": "bi-robot"},
+                    # The organisation's own agents: created, edited and chosen as the
+                    # default here. V1 draws this as the Global Agents table inside the
+                    # Agent Runtime card; V2 gives it a section of its own.
+                    {"id": "organization-agents-section", "label": "Global Agents", "icon": "bi-stars"},
                     {"id": "agent-toggles-card", "label": "Workspace Agent Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
                     {"id": "agents-page-customization-card", "label": "Agents Page", "icon": "bi-palette"},
                     {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},

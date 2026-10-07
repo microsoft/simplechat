@@ -12,8 +12,9 @@ needed. Failed requests are explicit fixtures; other browser errors and all
 unexpected requests fail the test.
 
 Personal delegation regressions formerly in test_agent_delegation_v2.py are
-covered here through the unified collection and full-page editors. The original
-group/admin wrapper coverage remains in that suite.
+covered here through the unified collection and full-page editors. Group wrapper
+coverage is in test_v2_group_workspace_shell.py, and global Call agent actions are
+ordinary global actions covered by test_v2_admin_global_agents_actions.py.
 """
 
 import copy

@@ -54,6 +54,16 @@ _GROUP_AGENT_TYPES = (
     ("new_foundry", "New Foundry", "allow_group_new_foundry_agents"),
     ("foundry_workflow", "Foundry Workflow", "allow_group_new_foundry_agents"),
 )
+# Global agents may be any type. The classic admin agent editor offers all four, and
+# the tenant-wide ``allow_*foundry_agents`` defaults have no administrator control,
+# so gating on them would take Foundry agents away from the one surface that has
+# always been able to create them.
+_GLOBAL_AGENT_TYPES = (
+    ("local", "Local agent", None),
+    ("aifoundry", "Azure AI Foundry", None),
+    ("new_foundry", "New Foundry", None),
+    ("foundry_workflow", "Foundry Workflow", None),
+)
 _BUILTIN_ACTIONS = (
     ("time", "Time", "enable_time_plugin"),
     ("fact_memory", "Fact memory", "enable_fact_memory_plugin"),
@@ -97,6 +107,23 @@ _GROUP_OPTION_DEFAULTS = {
     "allow_group_custom_endpoints": False,
     "allow_group_ai_foundry_agents": False,
     "allow_group_new_foundry_agents": False,
+    "enable_multi_model_endpoints": False,
+    "default_model_selection": {},
+    "gpt_model": {},
+    "enable_gpt_apim": False,
+    "azure_apim_gpt_deployment": "",
+    "enable_agent_template_gallery": False,
+    "enable_web_search": False,
+    "enable_url_access": False,
+    **{flag: False for _, _, flag in _BUILTIN_ACTIONS},
+}
+# The global agent editor options: the same shape again, with no workspace
+# permission in it, because a global agent is the organisation's and is authored
+# only by an administrator.
+_GLOBAL_OPTION_DEFAULTS = {
+    "enable_semantic_kernel": False,
+    "per_user_semantic_kernel": False,
+    "merge_global_semantic_kernel_with_workspace": False,
     "enable_multi_model_endpoints": False,
     "default_model_selection": {},
     "gpt_model": {},
@@ -471,7 +498,7 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
     return result
 
 
-def _secret_scope(kind, user_id, record, path, group_id=None):
+def _secret_scope(kind, user_id, record, path, group_id=None, *, global_scope=False):
     """Resolve the Key Vault (scope_value, source, scope) for one credential path.
 
     Group resources store their credentials in the group's Key Vault namespace so a
@@ -484,7 +511,15 @@ def _secret_scope(kind, user_id, record, path, group_id=None):
     so ``{agent_id}--agent--group--{name}`` names written by the legacy group route
     resolve, and so a group agent never mints a ``--user--`` secret the legacy
     ``scope="group"`` delete would leave behind (M4C §2.1).
+
+    Global agents and actions are keyed by their own id in the ``global`` namespace,
+    which is how ``save_global_agent`` and ``save_global_action`` name them, so a
+    record saved by the classic admin editor can be edited here and the reverse.
     """
+    if global_scope:
+        if kind == "agents":
+            return (record["id"], "agent", "global")
+        return (record["id"], "action" if path[0] == "auth" else "action-addset", "global")
     if kind == "agents":
         return (record["id"], "agent", "group" if group_id else "user")
     source = "action" if path[0] == "auth" else "action-addset"
@@ -493,7 +528,7 @@ def _secret_scope(kind, user_id, record, path, group_id=None):
     return (user_id, source, "user")
 
 
-def _legacy_editor_secret_reference(record, path, kind, user_id, settings, group_id=None):
+def _legacy_editor_secret_reference(record, path, kind, user_id, settings, group_id=None, *, global_scope=False):
     """Recover a legacy stored trigger only from its owned, conventional Key Vault name."""
     unavailable = "A stored secret is unavailable. Re-enter its value."
     if not settings.get("enable_key_vault_secret_storage") or not settings.get("key_vault_name"):
@@ -518,7 +553,9 @@ def _legacy_editor_secret_reference(record, path, kind, user_id, settings, group
             secret_name = keyvault._build_plugin_additional_field_secret_name(name, f"mcp-custom-header-{path[2]}")
     if not secret_name:
         raise WorkspaceAuthoringValidation(unavailable)
-    scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
+    scope_value, source, kv_scope = _secret_scope(
+        kind, user_id, record, path, group_id, global_scope=global_scope,
+    )
     try:
         reference = keyvault.build_full_secret_name(secret_name, scope_value, source, kv_scope)
         value = keyvault.resolve_secret_reference_for_context(
@@ -545,12 +582,14 @@ def _supported_storage_paths(record, kind):
     }
 
 
-def _check_stored_references(record, kind, user_id, group_id=None):
+def _check_stored_references(record, kind, user_id, group_id=None, *, global_scope=False):
     keyvault = import_module("functions_keyvault")
     for path in editor_secret_paths(record, kind):
         value = _get(record, path)
         if _is_reference(value):
-            scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
+            scope_value, source, kv_scope = _secret_scope(
+                kind, user_id, record, path, group_id, global_scope=global_scope,
+            )
             if not keyvault.secret_reference_matches_context(
                 value, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
             ):
@@ -576,10 +615,10 @@ def _cleanup_staged_secrets(references):
         )
 
 
-def _stage_editor_secrets(record, kind, user_id, settings, staged, group_id=None):
+def _stage_editor_secrets(record, kind, user_id, settings, staged, group_id=None, *, global_scope=False):
     """Fresh names isolate failed CAS writes from every credential in a stored manifest."""
     keyvault = import_module("functions_keyvault")
-    _check_stored_references(record, kind, user_id, group_id)
+    _check_stored_references(record, kind, user_id, group_id, global_scope=global_scope)
     if not settings.get("enable_key_vault_secret_storage", False):
         return
     if not settings.get("key_vault_name"):
@@ -590,7 +629,9 @@ def _stage_editor_secrets(record, kind, user_id, settings, staged, group_id=None
             continue
         if not isinstance(value, str):
             raise WorkspaceAuthoringValidation("Credentials must be text values.")
-        scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
+        scope_value, source, kv_scope = _secret_scope(
+            kind, user_id, record, path, group_id, global_scope=global_scope,
+        )
         secret_name = f"editor-{uuid.uuid4().hex}"
         reference = keyvault.store_secret_in_key_vault(
             secret_name, value, scope_value, source=source, scope=kv_scope,
@@ -603,14 +644,16 @@ def _stage_editor_secrets(record, kind, user_id, settings, staged, group_id=None
         _set(record, path, reference)
 
 
-def _cleanup_replaced_secrets(record, kind, user_id, settings, group_id=None):
+def _cleanup_replaced_secrets(record, kind, user_id, settings, group_id=None, *, global_scope=False):
     if not record or not settings.get("enable_key_vault_secret_storage") or not settings.get("key_vault_name"):
         return
     keyvault = import_module("functions_keyvault")
     references = set()
     for path in _supported_storage_paths(record, kind):
         value = _get(record, path, None)
-        scope_value, source, kv_scope = _secret_scope(kind, user_id, record, path, group_id)
+        scope_value, source, kv_scope = _secret_scope(
+            kind, user_id, record, path, group_id, global_scope=global_scope,
+        )
         if isinstance(value, str) and keyvault.secret_reference_matches_context(
             value, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
         ):
@@ -620,7 +663,11 @@ def _cleanup_replaced_secrets(record, kind, user_id, settings, group_id=None):
     try:
         # Legacy names may be shared after a classic rename. Never delete a reference
         # still used by another owned manifest (including the just-committed one).
-        if group_id:
+        if global_scope:
+            still_used = _container(kind, "global").query_items(
+                query="SELECT * FROM c", enable_cross_partition_query=True,
+            )
+        elif group_id:
             still_used = _container(kind, "group").query_items(
                 query="SELECT * FROM c WHERE c.group_id = @group_id",
                 parameters=[{"name": "@group_id", "value": group_id}], partition_key=group_id,
@@ -644,7 +691,7 @@ def _cleanup_replaced_secrets(record, kind, user_id, settings, group_id=None):
         )
 
 
-def _sync_editor_reminders(saved, kind, user_id, settings, group_id=None):
+def _sync_editor_reminders(saved, kind, user_id, settings, group_id=None, *, global_scope=False):
     if kind != "actions" or not settings.get("enable_key_vault_secret_storage"):
         return saved
     metadata = saved.get("metadata") or {}
@@ -652,15 +699,21 @@ def _sync_editor_reminders(saved, kind, user_id, settings, group_id=None):
         return saved
     keyvault = import_module("functions_keyvault")
     updated = deepcopy(saved)
-    partition = group_id or user_id
-    scope = "group" if group_id else "personal"
+    if global_scope:
+        # Global records are partitioned by their own id.
+        partition, scope = saved["id"], "global"
+    else:
+        partition = group_id or user_id
+        scope = "group" if group_id else "personal"
     try:
         # The main CAS already succeeded. In particular, a stale request cannot
         # update expiration on a previously stored credential or reminder inventory.
         for path in _supported_storage_paths(updated, kind):
             reference = _get(updated, path, None)
             if isinstance(reference, str) and keyvault.validate_secret_name_dynamic(reference):
-                scope_value, source, kv_scope = _secret_scope(kind, user_id, updated, path, group_id)
+                scope_value, source, kv_scope = _secret_scope(
+                    kind, user_id, updated, path, group_id, global_scope=global_scope,
+                )
                 keyvault._sync_plugin_secret_reminder(updated, path, reference, scope_value, source, kv_scope)
         sync_status = (updated.get("metadata") or {}).get("key_vault_secret_reminder_sync")
         if sync_status is not None and sync_status != metadata.get("key_vault_secret_reminder_sync"):
@@ -679,11 +732,17 @@ def _sync_editor_reminders(saved, kind, user_id, settings, group_id=None):
     return saved
 
 
-def _invalidate_editor_catalog(kind, user_id, operation, group_id=None):
+def _invalidate_editor_catalog(kind, user_id, operation, group_id=None, *, global_scope=False):
     builtins.kernel_reload_needed = True
     try:
         cache = import_module("functions_chat_bootstrap_cache")
-        if group_id:
+        if global_scope:
+            # A global agent or action reaches every user, exactly as the classic
+            # global saves invalidate it.
+            cache.bump_chat_bootstrap_global_cache_version(
+                reason=f"global_{'agent' if kind == 'agents' else 'action'}_{operation}",
+            )
+        elif group_id:
             # Group resource changes affect every member, so invalidate globally,
             # exactly as the classic group action and agent saves do (M4C §2.2).
             cache.bump_chat_bootstrap_global_cache_version(
@@ -1072,9 +1131,242 @@ def apply_group_agent_write(user_id, group_id, existing, body, prepare, settings
     return save_group_editor_record("agents", user_id, group_id, prepared, existing, settings)
 
 
+# === Global (administrator) agent and action editor ===
+# Global agents and actions reuse the same engine once more. The administrator
+# boundary is enforced by the routes; these helpers bind the global containers
+# (partitioned by id), the global Key Vault namespace (keyed by the record id, as the
+# classic global saves name it), the global catalogue invalidation, and the two
+# rules the classic admin routes apply: a name is unique among global records of
+# its kind ignoring case, and the selected default agent cannot be deleted.
+
+def _assert_global_record_access(record):
+    """A stored global record must not claim a group or personal owner."""
+    if (
+        record.get("is_group")
+        or record.get("group_id")
+        or record.get("scope") not in (None, "", "global")
+    ):
+        raise LookupError("This resource is unavailable.")
+
+
+def read_global_editor_record(kind, record_id):
+    """Read one raw global record for the editor."""
+    if not isinstance(record_id, str) or not record_id or any(char in record_id for char in "/\\?#"):
+        raise LookupError("This resource is unavailable.")
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        record = _container(kind, "global").read_item(item=record_id, partition_key=record_id)
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise LookupError("This resource is unavailable.") from exc
+    if record.get("id") != record_id:
+        raise LookupError("This resource is unavailable.")
+    _assert_global_record_access(record)
+    return deepcopy(record)
+
+
+def list_global_editor_records(kind):
+    """Return every raw global record of a kind, enabled or not, for the admin list."""
+    records = []
+    for record in _container(kind, "global").query_items(
+        query="SELECT * FROM c", enable_cross_partition_query=True,
+    ):
+        try:
+            _assert_global_record_access(record)
+        except LookupError:
+            continue
+        records.append(record)
+    return records
+
+
+def _assert_global_available_name(kind, record, existing):
+    """Refuse a name another global record of the kind already holds, ignoring case.
+
+    The classic admin routes apply the same rule. An unchanged name is accepted even
+    when a legacy duplicate exists, so an edit is never blocked by data it did not
+    create.
+    """
+    name = record.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise WorkspaceAuthoringValidation("A name is required.")
+    if existing and name == existing.get("name"):
+        return
+    matches = _container(kind, "global").query_items(
+        query="SELECT c.id FROM c WHERE STRINGEQUALS(c.name, @name, true)",
+        parameters=[{"name": "@name", "value": name}], enable_cross_partition_query=True,
+    )
+    if any(match.get("id") != (existing or {}).get("id") for match in matches):
+        label = "agent" if kind == "agents" else "action"
+        raise WorkspaceAuthoringValidation(f"A global {label} with this name already exists.")
+
+
+def save_global_editor_record(kind, user_id, record, existing, settings):
+    """Save one prepared global manifest with a mandatory conditional write."""
+    if existing:
+        try:
+            current = read_global_editor_record(kind, existing["id"])
+        except LookupError as exc:
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.") from exc
+        if not existing.get("_etag") or existing["_etag"] != current.get("_etag"):
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.")
+    delegation = import_module("functions_agent_delegation")
+    if kind == "agents":
+        delegation.validate_agent_delegation_bindings(
+            record, user_id=user_id, scope_type="global", scope_id="global",
+            settings=settings, existing_agent=existing,
+        )
+    else:
+        record = delegation.validate_agent_action_for_scope(
+            record, user_id=user_id, scope_type="global", scope_id="global", settings=settings,
+        )
+        identities = import_module("functions_workspace_identities")
+        identities.validate_action_identity_reference(
+            record, identities.WORKSPACE_IDENTITY_SCOPE_GLOBAL, identities.WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+        )
+    result = {
+        key: deepcopy(value) for key, value in record.items()
+        if not key.startswith("_") and key not in _MANAGED_FIELDS
+    }
+    now = datetime.now(timezone.utc).isoformat()
+    result.update({
+        "id": existing["id"] if existing else record["id"],
+        "created_at": (existing or {}).get("created_at", now),
+        "created_by": (existing or {}).get("created_by", user_id),
+        "modified_at": now, "modified_by": user_id, "updated_at": now,
+        # The stored shape the classic global saves write, which the runtime and the
+        # chat catalogue branch on.
+        "is_global": True, "is_group": False,
+    })
+    if kind == "actions":
+        result.update({"scope": "global", "scope_id": "global"})
+    result["is_enabled"] = bool(result.get("is_enabled", (existing or {}).get("is_enabled", True)))
+    staged = []
+    write_started = False
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        _stage_editor_secrets(result, kind, user_id, settings, staged, global_scope=True)
+        container = _container(kind, "global")
+        write_started = True
+        if existing:
+            saved = container.replace_item(
+                item=existing["id"], body=result, etag=existing["_etag"],
+                match_condition=import_module("azure.core").MatchConditions.IfNotModified,
+            )
+        else:
+            saved = container.create_item(body=result)
+    except Exception as exc:
+        conflict_response = isinstance(exc, exceptions.CosmosHttpResponseError) and (
+            exc.status_code in (409, 412) or (existing is not None and exc.status_code == 404)
+        )
+        if not write_started:
+            _cleanup_staged_secrets(staged)
+        if conflict_response:
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before saving.") from exc
+        raise
+    saved = _sync_editor_reminders(saved, kind, user_id, settings, global_scope=True)
+    _cleanup_replaced_secrets(existing, kind, user_id, settings, global_scope=True)
+    _invalidate_editor_catalog(kind, user_id, "saved", global_scope=True)
+    return saved
+
+
+def delete_global_editor_record(kind, user_id, record, settings):
+    """Delete one global record with a mandatory conditional write."""
+    _assert_global_record_access(record)
+    if not record.get("_etag"):
+        raise WorkspaceAuthoringConflict("Reload this resource before deleting it.")
+    if kind == "agents":
+        selected = settings.get("global_selected_agent")
+        if isinstance(selected, dict) and selected.get("name") == record.get("name"):
+            raise WorkspaceAuthoringValidation("Choose another default agent before deleting this agent.")
+    exceptions = import_module("azure.cosmos.exceptions")
+    try:
+        _container(kind, "global").delete_item(
+            item=record["id"], partition_key=record["id"], etag=record["_etag"],
+            match_condition=import_module("azure.core").MatchConditions.IfNotModified,
+        )
+    except exceptions.CosmosHttpResponseError as exc:
+        if exc.status_code in (404, 412):
+            raise WorkspaceAuthoringConflict("This resource changed. Reload it before deleting.") from exc
+        raise
+    _cleanup_replaced_secrets(record, kind, user_id, settings, global_scope=True)
+    _invalidate_editor_catalog(kind, user_id, "deleted", global_scope=True)
+
+
+def _prepared_or_error(prepared, error, kind):
+    if error:
+        status = error[1] if isinstance(error, tuple) else 400
+        if status == 403:
+            raise PermissionError("This configuration is unavailable.")
+        raise WorkspaceAuthoringValidation(
+            "Invalid agent configuration." if kind == "agents" else "Invalid action configuration."
+        )
+    return prepared
+
+
+def apply_global_action_write(user_id, existing, body, prepare, settings):
+    """Merge editor intent, validate through ``prepare``, and persist one global action.
+
+    Mirrors :func:`apply_group_action_write`: the server allocates a new action's id,
+    and stored secret placeholders resolve against the global Key Vault namespace.
+    ``prepare`` takes ``(user_id, plugin, settings, existing)``.
+    """
+    merged = merge_editor_write(
+        existing or {}, body, "actions", creating=existing is None,
+        resolve_stored_placeholder=lambda record, path: _legacy_editor_secret_reference(
+            record, path, "actions", user_id, settings, global_scope=True,
+        ),
+    )
+    if not existing:
+        merged["id"] = str(uuid.uuid4())
+        merged.setdefault("displayName", merged.get("name", ""))
+        merged.setdefault("description", "")
+    proposed = deepcopy(merged)
+    prepared, error = prepare(
+        user_id, _editor_validation_input("actions", merged, existing), settings, existing,
+    )
+    prepared = _prepared_or_error(prepared, error, "actions")
+    if existing:
+        prepared = _preserve_unedited_values(existing, proposed, prepared)
+    _assert_global_available_name("actions", prepared, existing)
+    return save_global_editor_record("actions", user_id, prepared, existing, settings)
+
+
+def apply_global_agent_write(user_id, existing, body, prepare, settings):
+    """Merge editor intent, validate through ``prepare``, and persist one global agent.
+
+    Mirrors :func:`apply_group_agent_write`: the id is a client-allocated UUID, and the
+    agent-type gate runs against the tenant-wide Foundry flags the classic admin editor
+    reads. ``prepare`` takes ``(user_id, agent, settings, existing)``.
+    """
+    merged = merge_editor_write(
+        existing or {}, body, "agents", creating=existing is None,
+        resolve_stored_placeholder=lambda record, path: _legacy_editor_secret_reference(
+            record, path, "agents", user_id, settings, global_scope=True,
+        ),
+    )
+    if not existing:
+        try:
+            merged["id"] = str(uuid.UUID(merged.get("id", "")))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise WorkspaceAuthoringValidation("Allocate an agent ID before saving.") from exc
+        merged.setdefault("display_name", merged.get("name", ""))
+        merged.setdefault("description", "")
+        merged.setdefault("instructions", "")
+    _validate_agent_editor_changes(merged, existing, settings, user_id, scope="global")
+    proposed = deepcopy(merged)
+    prepared, error = prepare(
+        user_id, _editor_validation_input("agents", merged, existing), settings, existing,
+    )
+    prepared = _prepared_or_error(prepared, error, "agents")
+    if existing:
+        prepared = _preserve_unedited_values(existing, proposed, prepared)
+    _assert_global_available_name("agents", prepared, existing)
+    return save_global_editor_record("agents", user_id, prepared, existing, settings)
+
+
 def _validate_agent_editor_changes(record, existing, settings, user_id, *, scope="personal"):
     is_group = scope == "group"
-    type_table = _GROUP_AGENT_TYPES if is_group else _AGENT_TYPES
+    is_global = scope == "global"
+    type_table = _GROUP_AGENT_TYPES if is_group else _GLOBAL_AGENT_TYPES if is_global else _AGENT_TYPES
     endpoint_flag = "allow_group_custom_endpoints" if is_group else "allow_user_custom_endpoints"
     endpoint_governance = "governance_group_endpoints" if is_group else "governance_user_endpoints"
     surface = "group" if is_group else "personal"
@@ -1086,6 +1378,11 @@ def _validate_agent_editor_changes(record, existing, settings, user_id, *, scope
         raise PermissionError(f"This agent type is disabled for {surface} workspaces.")
     if kind != "local" and record.get("actions_to_load"):
         raise WorkspaceAuthoringValidation("Remove local actions explicitly before selecting a Foundry agent type.")
+    if is_global:
+        # An administrator may give a global agent its own model connection, as the
+        # classic admin editor always allowed; the workspace custom-endpoint
+        # permissions govern people's own agents, not the organisation's.
+        return
     if kind == "local":
         configured_connection = any(
             record.get(field) not in (None, "")
@@ -1315,6 +1612,30 @@ def log_committed_group_editor_change(kind, user_id, group_id, stored, operation
         )
 
 
+def log_committed_global_editor_change(kind, user_id, stored, operation):
+    """Record a committed global editor write, mirroring the group logger.
+
+    Called only after the conditional write has committed, so a refused write is never
+    logged, and a logging failure never fails the write. ``scope`` is ``"global"``,
+    the scope the classic admin routes record.
+    """
+    activity = import_module("functions_activity_logging")
+    prefix = "agent" if kind == "agents" else "action"
+    event = getattr(activity, f"log_{prefix}_{operation}")
+    try:
+        event(
+            user_id=user_id, scope="global",
+            **{f"{prefix}_id": stored.get("id", ""), f"{prefix}_name": stored.get("name", "")},
+            **({"agent_display_name": stored.get("display_name", "")} if prefix == "agent" and operation != "deletion" else {}),
+            **({"action_type": stored.get("type", "")} if prefix == "action" and operation != "deletion" else {}),
+        )
+    except Exception as exc:
+        import_module("functions_appinsights").log_event(
+            "[WORKSPACE_ACTIVITY] Unable to record a committed editor change.",
+            level=logging.WARNING, extra={"error_type": type(exc).__name__},
+        )
+
+
 def build_secret_reminder_defaults(settings):
     """The tenant-level Key Vault reminder defaults both editor option builders share.
 
@@ -1497,6 +1818,58 @@ def build_group_agent_editor_options(user_id, group_id, settings, model_endpoint
         "builtin_actions": [
             {"id": value, "label": label}
             for value, label, flag in _BUILTIN_ACTIONS if can_manage and safe.get(flag)
+        ],
+    }
+
+
+def build_global_agent_editor_options(settings, model_endpoints):
+    """The global agent editor options, for an administrator.
+
+    The personal and group shape, with what a global agent needs: every agent type is
+    offered, as the classic admin editor offers them all, every global model connection
+    is offered (an administrator manages them, so no per-user governance filter
+    applies), and template submission follows the gate the submit route applies to an
+    administrator. Secrets are masked and reminder defaults are shared with the other
+    builders.
+    """
+    settings_module = import_module("functions_settings")
+    sanitized = settings_module.sanitize_settings_for_user({
+        key: deepcopy(settings.get(key, default)) for key, default in _GLOBAL_OPTION_DEFAULTS.items()
+    })
+    safe = {key: sanitized[key] for key in _GLOBAL_OPTION_DEFAULTS if key in sanitized}
+    model_endpoints = settings_module.sanitize_settings_for_user(
+        {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
+    ).get("model_endpoints", [])
+    # These names contain "key"/"secret", but their values are strictly UI flags/defaults.
+    reminder_options = build_secret_reminder_defaults(settings)
+    safe.update({
+        "enable_key_vault_secret_storage": reminder_options["storage_enabled"],
+        "enable_key_vault_secret_expiration_reminders": reminder_options["reminders_enabled"],
+        "key_vault_secret_expiration_default_lead_days": reminder_options["lead_days"],
+        "key_vault_secret_expiration_default_contact_email": reminder_options["contact_email"],
+        "key_vault_secret_expiration_require_expiration": reminder_options["require_expiration"],
+    })
+    templates_module = import_module("functions_agent_templates")
+    safe["agent_template_submission_allowed"] = templates_module.agent_template_submission_decision(
+        settings, True,
+    )[0]
+    endpoints = [deepcopy(endpoint) for endpoint in model_endpoints if endpoint.get("scope") == "global"]
+    for endpoint in endpoints:
+        for path in editor_secret_paths(endpoint, "agents"):
+            _set(endpoint, path, EDITOR_SECRET_MASK)
+    safe["enable_multi_model_endpoints"] = bool(
+        safe.get("enable_multi_model_endpoints") or any(endpoint.get("models") for endpoint in endpoints)
+    )
+    return {
+        "agent_types": [
+            {"value": value, "label": label, "enabled": True}
+            for value, label, _flag in _GLOBAL_AGENT_TYPES
+        ],
+        "settings": safe,
+        "model_endpoints": endpoints,
+        "builtin_actions": [
+            {"id": value, "label": label}
+            for value, label, flag in _BUILTIN_ACTIONS if safe.get(flag)
         ],
     }
 

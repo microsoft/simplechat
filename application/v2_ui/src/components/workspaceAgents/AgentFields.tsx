@@ -3,28 +3,27 @@
 import { useId, useState, type InputHTMLAttributes, type ReactNode } from 'react';
 import { EDITOR_SECRET_MASK } from '../../lib/workspaceAuthoring';
 import { AGENT_INPUT_CLASS, agentText, secretIntent } from '../../lib/workspaceAgentAuthoring';
+import { EditorFieldRow, type EditorFieldWidth } from '../workspace/EditorLayout';
 
 export function AgentField({
-    label, help, children, id,
-}: { label: string; help?: string; children: ReactNode; id: string }) {
+    label, help, children, id, width,
+}: { label: string; help?: string; children: ReactNode; id: string; width?: EditorFieldWidth }) {
     return (
-        <div className="min-w-0">
-            <label htmlFor={id} className="mb-1 block break-words text-sm font-medium text-text-2">{label}</label>
+        <EditorFieldRow htmlFor={id} label={label} help={help} helpId={`${id}-help`} width={width}>
             {children}
-            {help ? <p id={`${id}-help`} className="mt-1 text-xs leading-relaxed text-text-3">{help}</p> : null}
-        </div>
+        </EditorFieldRow>
     );
 }
 
 export function AgentTextField({
-    label, value, onChange, help, ...props
-}: Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'> & {
-    label: string; value: unknown; onChange: (value: string) => void; help?: string;
+    label, value, onChange, help, width, ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value' | 'width'> & {
+    label: string; value: unknown; onChange: (value: string) => void; help?: string; width?: EditorFieldWidth;
 }) {
     const generatedId = useId();
     const id = props.id || generatedId;
     return (
-        <AgentField id={id} label={label} help={help}>
+        <AgentField id={id} label={label} help={help} width={width}>
             <input {...props} id={id} value={agentText(value)} onChange={(event) => onChange(event.target.value)}
                 aria-describedby={help ? `${id}-help` : undefined} className={AGENT_INPUT_CLASS} />
         </AgentField>
@@ -38,8 +37,10 @@ export function AgentSecretField({
     const stored = original === EDITOR_SECRET_MASK;
     const [replacing, setReplacing] = useState(() => stored && secretIntent(value, original) === 'replace');
     const intent = replacing ? 'replace' : secretIntent(value, original);
+    // A fragment, so the keep/replace choice and the replacement sit in the row list as
+    // ordinary rows rather than as one box among them.
     return (
-        <div className="min-w-0 space-y-2">
+        <>
             {stored ? (
                 <AgentField id={`${id}-intent`} label={label} help="The stored value is never sent to this page. Keep it, replace it, or explicitly clear it on save.">
                     <select id={`${id}-intent`} value={intent} className={AGENT_INPUT_CLASS}
@@ -62,15 +63,15 @@ export function AgentSecretField({
                     onChange={(next) => onChange(stored && !next ? EDITOR_SECRET_MASK : next)}
                     help={stored ? 'Enter a replacement. An empty replacement keeps the saved value; use Clear saved value to delete it.' : 'Optional. Never included in template submissions.'} />
             ) : null}
-            {stored && intent === 'clear' ? <p role="status" className="text-xs text-warn">The saved value will be cleared when you save.</p> : null}
-        </div>
+            {stored && intent === 'clear' ? <p role="status" className="pb-2 text-xs text-warn">The saved value will be cleared when you save.</p> : null}
+        </>
     );
 }
 
 export function AgentNotice({ children, error = false }: { children: ReactNode; error?: boolean }) {
     return (
         <div role={error ? 'alert' : 'status'}
-            className={`rounded-xl border p-3 text-sm ${error ? 'border-danger/30 bg-danger-soft text-danger' : 'border-edge bg-surface-2 text-text-2'}`}>
+            className={`rounded-lg border px-3 py-2 text-[0.8125rem] leading-relaxed ${error ? 'border-danger/30 bg-danger-soft text-danger' : 'border-edge bg-surface-2 text-text-2'}`}>
             {children}
         </div>
     );

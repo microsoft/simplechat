@@ -19,6 +19,7 @@ import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
+import { AdminActionEditorPage, AdminAgentEditorPage } from './pages/AdminGlobalEditorPages';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
@@ -211,6 +212,11 @@ export function App() {
                 <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
+                {/* The global editors return here, with their section in view. */}
+                <Route path="/admin/agents" element={<AdminSettingsPage focusSection="organization-agents-section" />} />
+                <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />
+                <Route path="/admin/agents/:resourceId" element={<AdminAgentEditorPage />} />
+                <Route path="/admin/actions/:resourceId" element={<AdminActionEditorPage />} />
                 <Route path="/content-review" element={<ContentReviewPage />} />
                 <Route
                     path="/agents"

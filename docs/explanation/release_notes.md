@@ -2,6 +2,36 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.271)**
+
+#### New Features
+
+*   **Global Agents and Global Actions in V2 Admin Settings**
+    *   Admin Settings › Agents & Actions now lists the organisation's global agents and actions. From the lists you can create, edit, enable, disable and delete them, and choose the default agent. Each change saves on its own rather than through the settings save bar, and Admin Settings asks before opening an editor would drop settings you have not saved.
+    *   Agents and actions open in the same full-page editors My Workspace uses. A global agent's assigned knowledge is limited to public workspaces, its actions are the global actions, and **New action** creates one and attaches it to the agent you came from. Action connection tests and MCP tool discovery run in the global scope.
+    *   **Start from a template** opens a new agent with the approved gallery in view, and **Publish as template** adds a global agent's recipe to the gallery straight away. Agent Template Approvals now links to the approvals queue.
+    *   The separate **Global agent delegation** card is gone. A Call agent action is now an ordinary global action: create it under Global Actions with the **Call agent** type, which lists only global agents as targets, then attach it in a global agent's editor.
+    *   Thirteen admin-only routes under `/api/v2/admin/agents` and `/api/v2/admin/actions` serve the editors through the shared authoring engine, with masked credentials, global Key Vault names, case-insensitive name checks, and revision checks that refuse to overwrite another administrator's save. The classic page can still edit and delete agents and actions saved in V2.
+    *   (Ref: `route_backend_v2_admin_agents_actions.py`, `functions_global_editor_access.py`, `functions_workspace_authoring.py`, `functions_global_agents.py`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminGlobalEditorPages.tsx`, `agentWorkbench.ts`, `actionWorkbench.ts`, `test_v2_admin_global_agents_actions.py`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Choosing a Settings Category Starts at Its Top**
+    *   Choosing a category in the V2 Admin Settings rail, or in the category list on a phone, kept the scroll position of the category you left, so leaving Knowledge near its end opened Security near its end. A category now always opens at its first section, including when you choose the one already shown, and the **On this page** list marks that section.
+    *   (Ref: `AdminSettingsPage.tsx` `selectCategory`, `test_v2_admin_global_agents_actions.py`, [V2 Admin Category Scroll Reset Fix](fixes/V2_ADMIN_CATEGORY_SCROLL_RESET_FIX.md))
+
+*   **Call Agent Targets Come From the Action's Workspace**
+    *   The V2 Call agent target picker always listed the signed-in person's personal targets. It now asks for the targets of the workspace the action belongs to: global agents for a global action, and for a group action the group's agents plus any permitted global ones, which matches what the server accepts when the action is saved.
+    *   (Ref: `CallAgentActionConfiguration.tsx`, `/api/plugins/agent-targets`)
+
+#### User Interface Enhancements
+
+*   **Agent and Action Editors Share the Admin Settings Design**
+    *   The full-page agent and action editors, the same ones in My Workspace, group workspaces and Admin Settings, are now laid out as Admin Settings is. Each section is a card headed by an icon, its title and what it holds. Settings are rows with the label and help beside the control on a wide screen, stacked on a narrow one. A setting others depend on, such as **Restrict to assigned knowledge** or **Track secret expiration**, is highlighted with the settings it controls indented beneath it, and collapsible groups and panels match Admin Settings.
+    *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll or start editing.
+    *   The Global Agents and Global Actions lists now match AI Connections: an Enabled or Disabled badge, a Default agent badge, and icon buttons to make an agent the default, enable or disable, edit, and delete.
+    *   (Ref: `EditorLayout.tsx`, `WorkspaceEditorFrame.tsx`, `theme.css` `.editor-field`, `AgentFields.tsx`, `ActionFields.tsx`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminListPill.tsx`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
 ### **(v0.261.270)**
 
 #### Bug Fixes

@@ -4,7 +4,7 @@ counts:
   capabilities: 126
   admin_groups: 15
   admin_tabs: 49
-  admin_sections: 106
+  admin_sections: 107
   actions: 32
   chat_controls: 47
   sub_elements: 3
@@ -823,6 +823,10 @@ admin_sections:
   label: Images Inside Office Files
   tab: extraction
   group: knowledge
+- id: organization-agents-section
+  label: Global Agents
+  tab: agents
+  group: agents-actions
 - id: permissions-section
   label: Permissions
   tab: access-roles
