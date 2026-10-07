@@ -17,6 +17,7 @@ import { DashboardSection } from '../components/controlCenter/DashboardSection';
 import type { ControlCenterCapabilities } from '../lib/types';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
+import { UsersSection } from '../components/controlCenter/UsersSection';
 
 type SectionId = 'dashboard' | 'users' | 'groups' | 'public-workspaces' | 'activity-logs' | 'data-health';
 
@@ -225,6 +226,7 @@ export function ControlCenterPage() {
                             <p className="mt-2 text-sm text-text-2">Your Control Center permissions do not include this section.</p>
                         </GlassPanel>
                     ) : section === 'dashboard' ? <DashboardSection />
+                        : section === 'users' ? <UsersSection />
                         : section === 'data-health' ? <MigrationDataHealth />
                             : <SectionPlaceholder label={current.label} />}
                 </main>
