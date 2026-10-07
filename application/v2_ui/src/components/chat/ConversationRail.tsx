@@ -659,6 +659,7 @@ export function ConversationRail({
 
     return (
         <div
+            data-tour="conversation-list"
             className={clsx(
                 'relative mt-4 border-t border-edge',
                 // While a search is narrowing the list, the section keeps at least the rail's

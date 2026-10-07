@@ -47,6 +47,9 @@ PROFILE_LOOKUP_MEMBERSHIP_STATUSES = {
     MEMBERSHIP_STATUS_PENDING,
 }
 
+# Guided tours the new interface ships. Must match the ids in v2_ui/src/lib/tours.ts.
+TUTORIAL_IDS = frozenset({"chat", "workspace"})
+
 # /api/userSearch waits at most this long for Graph, the bound the SimpleChat
 # operations' Graph calls use.
 USER_SEARCH_GRAPH_TIMEOUT_SECONDS = 20
@@ -560,6 +563,8 @@ def register_route_backend_users(bp):
                     # Whether the V2 Admin Settings categories rail is collapsed to icons.
                     # Separate from the shell and workspace rails so each keeps its own state.
                     'v2AdminRailCollapsed',
+                    # Whether the V2 User Settings sections rail is collapsed to icons.
+                    'v2UserSettingsRailCollapsed',
                     # Whether the V2 Control Center section rail is collapsed to icons.
                     'v2ControlCenterRailCollapsed',
                     # V2 document explorer: how the workspace documents list is presented
@@ -578,7 +583,7 @@ def register_route_backend_users(bp):
                     'chatCompletionAudioEnabled', 'chatCompletionAudioMuted',
                     'chatCompletionAudioSound', 'chatCompletionAudioVolume',
                     # Tutorial visibility settings
-                    'showTutorialButtons',
+                    'showTutorialButtons', 'tutorialVisibility',
                     # Desktop conversation notification settings
                     'desktopNotificationsEnabled',
                     'recentCollaborators',
@@ -687,6 +692,22 @@ def register_route_backend_users(bp):
                     if volume < 1 or volume > 10:
                         return jsonify({"error": "Completion audio volume must be between 1 and 10"}), 400
                     settings_to_update["chatCompletionAudioVolume"] = volume
+
+                if "showTutorialButtons" in settings_to_update:
+                    if not isinstance(settings_to_update["showTutorialButtons"], bool):
+                        return jsonify({"error": "Invalid tutorial button preference"}), 400
+
+                # Per-tutorial visibility from the new interface, { tutorialId: bool }. Only
+                # the tutorials the application ships are accepted, so the map cannot grow
+                # without bound or carry arbitrary keys into the settings document.
+                if "tutorialVisibility" in settings_to_update:
+                    tutorial_visibility = settings_to_update["tutorialVisibility"]
+                    if not isinstance(tutorial_visibility, dict):
+                        return jsonify({"error": "Invalid tutorial visibility"}), 400
+                    for tutorial_id, visible in tutorial_visibility.items():
+                        if tutorial_id not in TUTORIAL_IDS or not isinstance(visible, bool):
+                            return jsonify({"error": "Invalid tutorial visibility"}), 400
+                    settings_to_update["tutorialVisibility"] = dict(tutorial_visibility)
 
                 if "desktopNotificationsEnabled" in settings_to_update:
                     if not isinstance(settings_to_update["desktopNotificationsEnabled"], bool):

@@ -44,7 +44,14 @@ def _allowed_keys():
     users = _read(APP_DIR / "route_backend_users.py")
     block = re.search(r"allowed_keys = \{(.*?)\}", users, re.DOTALL)
     assert block, "Could not find allowed_keys in route_backend_users.py"
-    return set(re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", block.group(1)))
+    keys = set(re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", block.group(1)))
+    # Some keys are listed through a shared constant rather than a literal.
+    if "LATEST_FEATURES_HIDDEN_VERSION_SETTING" in block.group(1):
+        nav = _read(APP_DIR / "functions_latest_features_nav.py")
+        constant = re.search(r'LATEST_FEATURES_HIDDEN_VERSION_SETTING = "([^"]+)"', nav)
+        assert constant, "Could not resolve LATEST_FEATURES_HIDDEN_VERSION_SETTING"
+        keys.add(constant.group(1))
+    return keys
 
 
 def _writable_keys():
@@ -183,9 +190,15 @@ def test_gated_tabs_are_hidden_rather_than_empty():
         "enable_group_workspaces",
         "enable_public_workspaces",
         "enable_user_feedback",
-        "enable_content_safety",
     ):
         assert flag in tabs, f"The tab registry should gate on {flag}"
+
+    # Violations is always listed, as on the classic profile page. Its tab explains that
+    # content safety is off instead of calling endpoints that would refuse the request.
+    assert "enable_content_safety" not in tabs, "The Violations tab should not be hidden"
+    violations = _read(V2_SRC / "components" / "settings" / "ViolationsTab.tsx")
+    for flag in ("enable_content_safety", "enable_content_screening"):
+        assert flag in violations, f"The Violations tab should check {flag} before loading"
 
     page = _read(V2_SRC / "pages" / "SettingsPage.tsx")
     assert re.search(r"SETTINGS_TABS\.filter\((.|\n)*?features\[tab\.feature\] === true", page), (
@@ -219,17 +232,24 @@ def test_only_settings_this_interface_honours_are_offered():
             f"The {size!r} text scale has no rule, so choosing it would do nothing"
         )
 
+    # Message playback goes through the shared reader, which reads the chosen voice and speed.
     actions = _read(V2_SRC / "components" / "chat" / "MessageActions.tsx")
-    assert "settings.ttsVoice" in actions, (
+    playback = _read(V2_SRC / "lib" / "speechPlayback.ts")
+    assert "speechPlayback" in actions and "settings.ttsVoice" in playback, (
         "The chosen voice must reach the speech call, or the picker does nothing"
     )
 
     # Settings V2 does not act on are deliberately not offered.
-    for absent in ("sidebarToggleStyle", "showTutorialButtons"):
-        assert absent not in preferences, (
-            f"{absent!r} drives a classic-interface surface with no V2 equivalent; offering "
-            "it here would change the other interface with no visible effect in this one"
-        )
+    assert "sidebarToggleStyle" not in preferences, (
+        "'sidebarToggleStyle' drives a classic-interface surface with no V2 equivalent; offering "
+        "it here would change the other interface with no visible effect in this one"
+    )
+
+    # The tour switch is offered now that V2 has guided tours that honour it.
+    guidance = _read(V2_SRC / "components" / "settings" / "GuidanceCards.tsx")
+    assert "showTutorialButtons" in guidance and "TutorialsCard" in preferences, (
+        "The tour master switch must be offered alongside the V2 tours it controls"
+    )
 
     print("Preference honouring test passed!")
     return True

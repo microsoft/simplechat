@@ -11,6 +11,7 @@ import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { LayoutGrid, Lock } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
+import { TourLauncher } from '../../components/tour/TourLauncher';
 import { EmptyState } from '../../components/ui/primitives';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { WorkspaceShell } from '../../components/workspace/WorkspaceShell';
@@ -101,6 +102,7 @@ export function WorkspacePage() {
             header={<PageHeader
                 title="My workspace"
                 description="Documents, prompts and automation that belong to you alone"
+                actions={<TourLauncher tourId="workspace" />}
             />}>
             {renderBody()}
         </WorkspaceShell>
