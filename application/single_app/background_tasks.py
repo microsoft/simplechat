@@ -16,9 +16,9 @@ from azure.core import MatchConditions
 from config import cosmos_m365_execution_runs_container, cosmos_settings_container, exceptions
 from content_screening.jobs import check_due_scan_jobs_once
 from functions_appinsights import log_event
-from functions_control_center import (
+from functions_control_center import execute_control_center_refresh
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
-    execute_control_center_refresh,
     get_control_center_auto_refresh_schedule,
     is_control_center_auto_refresh_due,
     parse_control_center_auto_refresh_datetime,
@@ -36,7 +36,9 @@ from functions_app_maintenance import (
 )
 from functions_debug import debug_print
 from functions_data_management import check_due_data_management_jobs_once
+from functions_documents import process_due_document_search_metadata_syncs
 from functions_file_sync import check_due_file_sync_sources_once
+from functions_logging_timers import LOGGING_TIMERS, is_logging_turnoff_due
 from functions_keyvault_reminders import (
     KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
     check_due_key_vault_secret_reminders_once,
@@ -219,46 +221,30 @@ def _should_run_retention_policy(settings, current_time):
 
 
 def check_logging_timers_once():
-    """Disable temporary logging settings after their timer expires."""
+    """Disable temporary logging settings after their timer expires.
+
+    Turnoff times are compared in UTC. Ones stored before timers were kept in UTC
+    carry no offset and are read as server-local time, which is how they were
+    written, so a timer set before an upgrade still ends when it was meant to.
+    """
     settings = get_settings()
-    current_time = datetime.now()
     settings_updates = {}
 
-    if (
-        settings.get('enable_debug_logging', False)
-        and settings.get('debug_logging_timer_enabled', False)
-        and settings.get('debug_logging_turnoff_time')
-    ):
-        turnoff_time = settings.get('debug_logging_turnoff_time')
-        if isinstance(turnoff_time, str):
-            try:
-                turnoff_time = datetime.fromisoformat(turnoff_time)
-            except Exception:
-                turnoff_time = None
+    for timer_keys in LOGGING_TIMERS.values():
+        enabled_key = timer_keys['enabled_key']
+        timer_key = timer_keys['timer_key']
+        turnoff_key = timer_keys['turnoff_key']
+        if not (settings.get(enabled_key, False) and settings.get(timer_key, False)):
+            continue
 
-        if turnoff_time and current_time >= turnoff_time:
-            debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
-            settings_updates['enable_debug_logging'] = False
-            settings_updates['debug_logging_timer_enabled'] = False
-            settings_updates['debug_logging_turnoff_time'] = None
+        turnoff_time = settings.get(turnoff_key)
+        if not is_logging_turnoff_due(turnoff_time):
+            continue
 
-    if (
-        settings.get('enable_file_processing_logs', False)
-        and settings.get('file_processing_logs_timer_enabled', False)
-        and settings.get('file_processing_logs_turnoff_time')
-    ):
-        turnoff_time = settings.get('file_processing_logs_turnoff_time')
-        if isinstance(turnoff_time, str):
-            try:
-                turnoff_time = datetime.fromisoformat(turnoff_time)
-            except Exception:
-                turnoff_time = None
-
-        if turnoff_time and current_time >= turnoff_time:
-            print(f"File processing logs timer expired at {turnoff_time}. Disabling file processing logs.")
-            settings_updates['enable_file_processing_logs'] = False
-            settings_updates['file_processing_logs_timer_enabled'] = False
-            settings_updates['file_processing_logs_turnoff_time'] = None
+        debug_print(f"[LOGGING_TIMERS] Timer for {enabled_key} expired at {turnoff_time}. Turning it off.")
+        settings_updates[enabled_key] = False
+        settings_updates[timer_key] = False
+        settings_updates[turnoff_key] = None
 
     if settings_updates:
         return update_settings(settings_updates, expected_etag=settings.get('_etag'))
@@ -981,6 +967,36 @@ def run_data_management_scheduler_loop(app=None):
         time.sleep(60)
 
 
+def run_document_search_metadata_sync_loop():
+    """Retry search chunk metadata syncs that failed or never ran in their original process."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock('document_search_metadata_sync_scan', lease_seconds=600)
+            if lock_document:
+                summary = process_due_document_search_metadata_syncs()
+                if summary.get('due'):
+                    log_event(
+                        '[DOCUMENT_SEARCH_SYNC] Reconciled due search metadata syncs.',
+                        extra=summary,
+                        level=logging.INFO,
+                    )
+            else:
+                debug_print('Skipping search metadata sync reconciliation because another worker holds the lease.')
+        except Exception as exc:
+            log_event(
+                '[DOCUMENT_SEARCH_SYNC] Search metadata sync reconciliation failed.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(60)
+
+
 def run_content_screening_scheduler_loop(app=None):
     """Recover completion work even when enrollment of new scans is disabled."""
     while True:
@@ -1086,6 +1102,7 @@ def start_background_task_threads(app=None):
         ('Orchestration scheduler background task started.', lambda: run_orchestration_scheduler_loop(app=app)),
         ('Workflow chat delivery background task started.', lambda: run_workflow_chat_delivery_loop(app=app)),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
+        ('Document search metadata sync background task started.', run_document_search_metadata_sync_loop),
         ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
         ('Key Vault secret reminder background task started.', run_key_vault_secret_reminder_loop),

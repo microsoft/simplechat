@@ -121,6 +121,25 @@ After a reviewed deployment and RBAC propagation, test the chosen identity under
 
 Offline coverage in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py) checks both runtime assignments, vault scopes, and the non-destructive legacy state migration.
 
+## Video Indexer region and permissions
+
+Implemented in application version **0.261.264** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
+
+Azure Video Indexer is not offered in every region. When `param_location` does not offer it, set `param_video_indexer_location` to a region that does; leave it blank to keep Video Indexer in `param_location`:
+
+```hcl
+param_deploy_video_indexer_service = true
+param_video_indexer_location       = "centralus"
+```
+
+A Video Indexer region that differs from `param_location` also creates `azurerm_storage_account.video_indexer_sa`, a Standard general-purpose v2 account named `<param_base_name><param_environment>vi` in that region, because Video Indexer keeps its media in a storage account in its own region. Only Video Indexer uses it. With `param_enable_private_networking = true`, its firewall denies public traffic and admits trusted Azure services, which is how Video Indexer reaches firewalled storage. Choose the region before Video Indexer is first deployed; an existing account cannot move regions.
+
+SimpleChat calls the Video Indexer `generateAccessToken` API with the App Service **system-assigned** identity. `azurerm_role_assignment.app_service_smi_video_indexer_access` grants that identity **Video Indexer Account Contributor** for `AzureCloud` and **Contributor** for `AzureUSGovernment`, where the newer role has not been confirmed. If you already added the same role by hand at the Video Indexer account scope, import that assignment into this address before applying, as described for Key Vault above, rather than deleting it.
+
+The Video Indexer identity is read from `azapi_resource.video_indexer[0].output` directly. azapi 2.x, which `main.tf` requires, returns `output` as an object rather than a JSON string, so it is no longer passed through `jsondecode()`.
+
+Terraform does not write application settings. After `terraform apply`, enter the `video_indexer_account_name`, `video_indexer_account_id`, and `video_indexer_location` outputs, with the resource group and subscription, under **Admin Settings > AI Video Intelligence**.
+
 ## Deploy initial container
 
 Terraform does not build the container image itself. It expects `image_name` to point to an image tag that already exists in your Azure Container Registry.

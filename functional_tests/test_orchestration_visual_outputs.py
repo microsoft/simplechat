@@ -2,9 +2,10 @@
 # test_orchestration_visual_outputs.py
 """
 Functional test for charts, Mermaid diagrams, and image proposals in orchestrated answers.
-Version: 0.261.139
+Version: 0.261.270
 Implemented in: 0.261.132
 Single orchestration contract updated in: 0.261.139
+Action steps run without an invocation capture in: 0.261.270
 
 This test ensures orchestration carries chart payloads safely, builds visual guidance
 only from planner-declared visual flags, preserves saved instruction memory precedence,
@@ -278,7 +279,8 @@ def test_action_step_uses_planner_visual_flags_and_keeps_chart_citations_whole(m
 
     async def invoke_action(action_ref, task, context, **kwargs):
         requests.append((task, kwargs))
-        kwargs['invocation_capture']('action', settings={}, source={'action_ref': action_ref}, selector=action_ref)
+        # Action steps trust the signed-in session, so the engine gets no invocation capture.
+        assert kwargs.get('invocation_capture') is None
         return {'findings': 'Retrieved 900 samples.', 'artifacts': [], 'invocations': invocations,
                 'root_id': 'root', 'calls': 3, 'charts': 1}
 

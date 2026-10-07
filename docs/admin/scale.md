@@ -45,6 +45,8 @@ before users report them.
 
 ## Redis & Caching {#redis-caching}
 
+The workspace search result cache is not configured here. It is part of Azure AI Search on the [Knowledge settings]({{ '/admin/knowledge/#azure-ai-search-section' | relative_url }}) page, and it is stored in Cosmos DB rather than Redis.
+
 ### Redis Cache {#redis-cache-section}
 
 Redis holds sessions, the shared settings record, and the shared caches, so several app
@@ -182,11 +184,8 @@ page: hit rate, hits and misses, bypasses and errors, writes and invalidations, 
 operations, and the most recent cache event and invalidation. Application Insights remains the
 fleet-wide record.
 
-Search result caching (`enable_search_result_caching`, on by default) is a separate cache for
-workspace search results. It stores result payloads with document-set fingerprints, so repeated
-personal, group, public, or all-scope searches reuse results until a document changes or the
-TTL expires. The server-rendered admin page has no control for it; the V2 admin page currently
-lists its switch with the Web Search settings under Knowledge.
+Workspace search results have a separate cache, with its own switch under Knowledge > Search
+Index > Azure AI Search. See [Knowledge settings]({{ '/admin/knowledge/' | relative_url }}#azure-ai-search-section).
 
 #### Settings
 
@@ -223,9 +222,10 @@ While a backfill batch is running, the card refreshes itself every few seconds.
 
 #### Diagnostics
 
-Diagnostics appear only when `enable_dai_debug` is set to true in the settings document. That
-flag has no control in Admin Settings, in either interface; it is meant for support sessions,
-not everyday operation. With it set, the card adds shadow-validation and rolling RU metrics, the
+Diagnostics appear only while **Document Access Index diagnostics** (`enable_dai_debug`) is on,
+under Operations > Logging & Health > Debug Logging. The classic page has no control for that
+flag and shows the same diagnostics only while it is set. It is meant for support sessions, not
+everyday operation. While it is on, the card adds shadow-validation and rolling RU metrics, the
 settings below, and two actions: **Run one backfill batch**, and **Reset checkpoint**, which
 restarts the backfill from the beginning and asks for confirmation first.
 

@@ -2,8 +2,8 @@
 # test_v2_admin_scale_normalization.py
 """
 Functional test for what a V2 save does to the Admin Settings Scale group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 The Scale settings have rules that relate several values, and the server-rendered
 page enforces them when its form is saved: Scale Up At must stay above Scale Down
@@ -60,7 +60,7 @@ def test_redis_port_is_stored_as_text_or_refused():
     """The connection test calls .strip() on the port, so it must stay a string."""
     print("Testing the Redis port...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.273")
 
     for submitted, stored in ((" 6380 ", "6380"), (10000, "10000"), ("", ""), (None, "")):
         normalized, errors, _ = normalize({"redis_port": submitted})

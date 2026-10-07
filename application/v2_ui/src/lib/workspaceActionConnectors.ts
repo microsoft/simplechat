@@ -5,7 +5,10 @@ import {
     buildEditorWrite, EDITOR_SECRET_MASK, isRecord, pointerPart,
     type ActionConfiguration, type AuthoringResource,
 } from './workspaceAuthoring';
-import type { ActionIdentity, ActionTestGroupScope } from './workspaceActionTypes';
+import {
+    actionTestScopeName, isGroupActionTestScope,
+    type ActionIdentity, type ActionTestScope,
+} from './workspaceActionTypes';
 
 export type ApiConnector = 'openapi' | 'mcp';
 export type ConnectorResource = AuthoringResource<ActionConfiguration> | null;
@@ -477,8 +480,12 @@ export async function fetchMcpPresets(signal?: AbortSignal): Promise<McpCatalogE
     return parseMcpCatalogue(await api.get<unknown>('/api/plugins/mcp/presets', signal), 'presets');
 }
 
-export async function fetchMcpPreconfigurations(signal?: AbortSignal): Promise<McpCatalogEntry[]> {
-    return parseMcpCatalogue(await api.get<unknown>('/api/plugins/mcp/preconfigurations?scope=personal', signal), 'preconfigurations');
+/**
+ * The MCP preconfigurations offered to an action. Eligibility depends on the scope the action is
+ * saved in, so a global action reads the global list, which the server opens only to administrators.
+ */
+export async function fetchMcpPreconfigurations(signal?: AbortSignal, scope: 'personal' | 'global' = 'personal'): Promise<McpCatalogEntry[]> {
+    return parseMcpCatalogue(await api.get<unknown>(`/api/plugins/mcp/preconfigurations?scope=${scope}`, signal), 'preconfigurations');
 }
 
 export function allowedMcpTransports(preset?: McpCatalogEntry): ConnectorOption[] {
@@ -876,10 +883,15 @@ export function connectorFeedback(value: unknown): ConnectorFeedback {
 
 export function buildConnectorSupportPayload(
     draft: ActionConfiguration, original: ConnectorResource, kind: ApiConnector,
-    purpose: 'test' | 'discover' | 'validate' = 'test', groupScope?: ActionTestGroupScope,
+    purpose: 'test' | 'discover' | 'validate' = 'test', testScope?: ActionTestScope,
 ): Record<string, unknown> {
-    // A group connector is testable only from its own group workspace, carrying action_scope 'group'.
-    if (original?.read_only || draft.is_global || (draft.is_group && !groupScope)) throw new Error('Provided actions are read-only and cannot be tested.');
+    const scopeName = actionTestScopeName(testScope);
+    const groupScope = isGroupActionTestScope(testScope) ? testScope : undefined;
+    // A connector is testable only from its own scope: a group connector from its group workspace
+    // and a global connector from Admin Settings, each carrying its own action_scope.
+    if (original?.read_only || (draft.is_global && scopeName !== 'global') || (draft.is_group && !groupScope)) {
+        throw new Error('Provided actions are read-only and cannot be tested.');
+    }
     if (original && !connectorText(original.record.id).trim()) throw new Error('Reload this action before testing: its stable owned ID is missing.');
     const errors = {
         ...validateConnectorConfiguration(draft, kind),
@@ -929,21 +941,21 @@ export function buildConnectorSupportPayload(
     return {
         ...manifest,
         ...(purpose !== 'validate' ? {
-            action_scope: groupScope ? 'group' : 'personal',
+            action_scope: scopeName,
             ...(groupScope ? { group_id: groupScope.id } : {}),
-            ...(original ? { plugin_context: { scope: groupScope ? 'group' : 'personal', id: original.record.id, name: original.record.name } } : {}),
+            ...(original ? { plugin_context: { scope: scopeName, id: original.record.id, name: original.record.name } } : {}),
             clear_secret_paths: [...clearPaths],
         } : {}),
     };
 }
 
-export function testApiConnector(draft: ActionConfiguration, original: ConnectorResource, kind: ApiConnector, signal?: AbortSignal, groupScope?: ActionTestGroupScope): Promise<unknown> {
-    const payload = buildConnectorSupportPayload(draft, original, kind, 'test', groupScope);
+export function testApiConnector(draft: ActionConfiguration, original: ConnectorResource, kind: ApiConnector, signal?: AbortSignal, testScope?: ActionTestScope): Promise<unknown> {
+    const payload = buildConnectorSupportPayload(draft, original, kind, 'test', testScope);
     return api.post(`/api/plugins/test-${kind}-connection`, payload, signal);
 }
 
-export function validateApiConnector(draft: ActionConfiguration, original: ConnectorResource, kind: ApiConnector, signal?: AbortSignal, groupScope?: ActionTestGroupScope): Promise<unknown> {
-    return api.post('/api/plugins/validate', buildConnectorSupportPayload(draft, original, kind, 'validate', groupScope), signal);
+export function validateApiConnector(draft: ActionConfiguration, original: ConnectorResource, kind: ApiConnector, signal?: AbortSignal, testScope?: ActionTestScope): Promise<unknown> {
+    return api.post('/api/plugins/validate', buildConnectorSupportPayload(draft, original, kind, 'validate', testScope), signal);
 }
 
 export interface McpDiscoveryResult {
@@ -958,8 +970,8 @@ export interface McpDiscoveryResult {
     mcp_operation_id?: string;
 }
 
-export async function discoverMcpAction(draft: ActionConfiguration, original: ConnectorResource, signal?: AbortSignal, groupScope?: ActionTestGroupScope): Promise<McpDiscoveryResult> {
-    const result = await api.post<McpDiscoveryResult>('/api/plugins/mcp/discover', buildConnectorSupportPayload(draft, original, 'mcp', 'discover', groupScope), signal);
+export async function discoverMcpAction(draft: ActionConfiguration, original: ConnectorResource, signal?: AbortSignal, testScope?: ActionTestScope): Promise<McpDiscoveryResult> {
+    const result = await api.post<McpDiscoveryResult>('/api/plugins/mcp/discover', buildConnectorSupportPayload(draft, original, 'mcp', 'discover', testScope), signal);
     if (!result || (result.success === true && (!Array.isArray(result.tools) ||
         parseMcpTools(result.tools).length !== result.tools.length))) {
         throw new Error('The server returned an invalid MCP tool catalogue.');

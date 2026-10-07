@@ -32,6 +32,7 @@ from functions_documents import (
     process_document_upload_background,
     process_metadata_extraction_background,
     select_current_documents,
+    summarize_document_search_sync,
     update_document,
     validate_tag_color,
     validate_tags,
@@ -272,9 +273,10 @@ def update_group_document_metadata(
         authorize_group_document_operation, user_id, group_id, document_id, operation,
         expected_version=document.get("version"),
     )
-    saved = update_document(
+    saved, search_sync = update_document(
         document_id=document_id, user_id=user_id, group_id=group_id,
-        strict=True, expected_etag=document.get("_etag"), operation_guard=guard, **changes,
+        strict=True, expected_etag=document.get("_etag"), operation_guard=guard,
+        return_search_sync=True, **changes,
     )
     if not isinstance(saved, dict) or saved.get("id") != document_id or saved.get("group_id") != group_id:
         raise DocumentMutationPropagationError("The scoped document update could not be confirmed.")
@@ -285,11 +287,13 @@ def update_group_document_metadata(
         updated_fields={name: "[updated]" for name in changes} if SCREENING_FIELD in document else changes,
         file_type=document.get("file_type"),
     )
-    # Metadata edits apply directly; they never start a new screening hold.
+    # Metadata edits apply directly; they never start a new screening hold. Search chunks pick the
+    # change up from a background sync, which search_sync reports.
     return {
         "message": "Group document metadata updated.",
         "document_id": document_id, "group_id": group_id,
         "updated_fields": list(changes), "status": "updated",
+        "search_sync": search_sync,
     }
 
 
@@ -313,6 +317,7 @@ def tag_group_documents(user_id, group_id, payload):
         # the whole batch with no document written.
         _ensure_document_tag_definitions(user_id, group_id, tags)
     result = {"success": [], "errors": []}
+    search_syncs = []
     for document_id in document_ids:
         try:
             document = authorize_group_document_operation(user_id, group_id, document_id, "tag_documents")
@@ -323,14 +328,16 @@ def tag_group_documents(user_id, group_id, payload):
                 updated_tags = [tag for tag in current_tags if normalize_tag(tag) not in tags]
             else:
                 updated_tags = tags
-            update_group_document_metadata(
+            receipt = update_group_document_metadata(
                 user_id, group_id, document_id, {"tags": updated_tags}, operation="tag_documents",
                 ensure_definitions=False,
             )
+            search_syncs.append(receipt.get("search_sync"))
             result["success"].append({"document_id": document_id, "tags": updated_tags})
         except Exception as error:
             failure, _status = group_operation_error(error, "tag_documents", document_id=document_id, group_id=group_id)
             result["errors"].append(failure)
+    result["search_sync"] = summarize_document_search_sync(search_syncs)
     return result, 207 if result["errors"] else 200
 
 
@@ -388,6 +395,7 @@ def change_group_document_tag(user_id, group_id, tag_name, payload=None, *, dele
             definition["color"] = _new_tag_definition(old_name, new_color)["color"]
         _patch_tag_definitions(user_id, group_id, group, {old_name: definition}, removals=old_keys)
         result["tag"] = {"name": old_name, "color": definition["color"]}
+        result["search_sync"] = summarize_document_search_sync([])
         return result, 200
 
     changes = {}
@@ -403,6 +411,7 @@ def change_group_document_tag(user_id, group_id, tag_name, payload=None, *, dele
         changes[new_name] = target_definition
         result["tag"] = {"name": new_name, "color": target_definition.get("color") or get_default_tag_color(new_name)}
     group = _patch_tag_definitions(user_id, group_id, group, changes)
+    search_syncs = []
     for target in targets:
         document_id = target["id"]
         try:
@@ -414,14 +423,16 @@ def change_group_document_tag(user_id, group_id, tag_name, payload=None, *, dele
                 if not (delete and normalize_tag(tag) == old_name)
             ]
             updated_tags = list(dict.fromkeys(updated_tags))
-            update_group_document_metadata(
+            receipt = update_group_document_metadata(
                 user_id, group_id, document_id, {"tags": updated_tags}, operation="tag_documents", ensure_definitions=False,
             )
+            search_syncs.append(receipt.get("search_sync"))
             result["success"].append({"document_id": document_id, "tags": updated_tags})
         except Exception as error:
             failure, _status = group_operation_error(error, "manage_tags", document_id=document_id, group_id=group_id)
             result["errors"].append(failure)
     result["documents_updated"] = len(result["success"])
+    result["search_sync"] = summarize_document_search_sync(search_syncs)
     if not result["errors"]:
         try:
             _patch_tag_definitions(user_id, group_id, group, {}, removals=old_keys)

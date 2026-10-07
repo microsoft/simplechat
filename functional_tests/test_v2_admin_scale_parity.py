@@ -2,8 +2,8 @@
 # test_v2_admin_scale_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Scale group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 Before this, the Scale group had no declared fields. Its two tabs drew whatever
 ``enable_*`` booleans the fallback scan matched by word stems, so the Redis
@@ -16,7 +16,8 @@ These are the structural checks. They read the two V1 panes and hold the schema 
 them: every submitted field is claimed and none is invented; selects, number bounds
 and the Redis credential agree; the nesting V1 expresses with enclosing divs and
 Jinja blocks is carried on each field, including the index diagnostics V1 shows only
-while ``enable_dai_debug`` is set; the always-on index flags stay uneditable;
+while ``enable_dai_debug`` is set, which V2 offers as a switch under Operations; the
+always-on index flags stay uneditable;
 defaults and mirrored constants agree with ``functions_cosmos_throughput.py``; and
 the V2 surface drives the same admin APIs, with the same request bodies, that V1
 does.
@@ -68,10 +69,12 @@ SCALE_SECTION_IDS = {section for sections in SCALE_PANES.values() for section in
 
 EXPECTED_SECRET_KEYS = {"redis_key"}
 
-# V1 wraps the index diagnostics in this Jinja condition; V2 gates the same fields on
-# the runtime flag the settings API derives from it.
+# V1 wraps the index diagnostics in this Jinja condition. V2 gates the same fields on the
+# same setting, which it declares as a switch under Operations > Debug Logging -- the
+# classic page has no control for it.
 V1_DAI_DEBUG_CONDITION = "settings.enable_dai_debug"
-DAI_DEBUG_FLAG = "dai_debug_enabled"
+DAI_DEBUG_KEY = "enable_dai_debug"
+DAI_DEBUG_SWITCH_SECTION = "debug-logging-section"
 
 # Forced to True by normalize_document_access_index_required_settings on every read and
 # write. A switch for one of these would appear to save and then revert.
@@ -83,7 +86,7 @@ ALWAYS_ON_DAI_KEYS = (
 )
 
 REDIS_ON = ("enable_redis_cache", "==", True)
-DAI_DEBUG = (f"flag:{DAI_DEBUG_FLAG}", "==", True)
+DAI_DEBUG = (DAI_DEBUG_KEY, "==", True)
 AUTOMATION_ON = ("cosmos_throughput_autoscale_enabled", "==", True)
 
 # Each entry is the full set of conditions the field carries.
@@ -327,7 +330,7 @@ def test_scale_panes_match_navigation():
     """The panes this test reads must be the ones ADMIN_NAV puts in the group."""
     print("Testing Scale pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.273")
 
     group = next((g for g in ADMIN_NAV if g["id"] == SCALE_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines a 'scale' group."
@@ -585,27 +588,40 @@ def test_index_diagnostics_follow_the_debug_flag():
             problems.append(f"{name}: inside V1's debug block but not declared")
             continue
         if DAI_DEBUG not in dependency_conditions(field):
-            problems.append(f"{name}: inside V1's debug block but not gated on {DAI_DEBUG_FLAG}")
+            problems.append(f"{name}: inside V1's debug block but not gated on {DAI_DEBUG_KEY}")
 
     for key, field in sorted(schema_fields.items()):
         if DAI_DEBUG in dependency_conditions(field) and key not in gated_in_v1:
-            problems.append(f"{key}: gated on {DAI_DEBUG_FLAG}, but V1 always shows it")
+            problems.append(f"{key}: gated on {DAI_DEBUG_KEY}, but V1 always shows it")
 
-    # The flag itself is an App Service setting, not an admin control, in both interfaces.
+    # V1 never offers a control for the flag. V2 offers exactly one, under Operations,
+    # recorded as V2-only, and never inside Scale, which only reads it.
     for pane_id in SCALE_PANES:
-        if 'name="enable_dai_debug"' in read_pane(pane_id):
-            problems.append(f"{pane_id}.html: renders a control for enable_dai_debug")
-    if "enable_dai_debug" in schema_fields:
-        problems.append("enable_dai_debug: declared as an editable field")
-    if "enable_dai_debug" not in fields_module.SUPPRESSED_CAPABILITY_KEYS:
-        problems.append("enable_dai_debug: not suppressed, so the fallback scan draws a switch")
+        if f'name="{DAI_DEBUG_KEY}"' in read_pane(pane_id):
+            problems.append(f"{pane_id}.html: renders a control for {DAI_DEBUG_KEY}")
+    owners = [
+        (section_id, field)
+        for section_id, field in fields_module.iter_fields()
+        if field.get("key") == DAI_DEBUG_KEY
+    ]
+    if [section_id for section_id, _field in owners] != [DAI_DEBUG_SWITCH_SECTION]:
+        problems.append(
+            f"{DAI_DEBUG_KEY}: declared in {[section_id for section_id, _field in owners]}, "
+            f"expected only {DAI_DEBUG_SWITCH_SECTION}"
+        )
+    elif owners[0][1].get("type") != "switch":
+        problems.append(f"{DAI_DEBUG_KEY}: declared as {owners[0][1].get('type')!r}, expected a switch")
+    if not fields_module.V2_ONLY_FIELDS.get(DAI_DEBUG_KEY):
+        problems.append(f"{DAI_DEBUG_KEY}: not recorded in V2_ONLY_FIELDS, though V1 has no control")
+    if DAI_DEBUG_KEY in fields_module.SUPPRESSED_CAPABILITY_KEYS:
+        problems.append(f"{DAI_DEBUG_KEY}: suppressed, though it is declared as a switch")
 
     assert not problems, (
         "The index diagnostics no longer follow the debug flag the way V1 does:\n  "
         + "\n  ".join(problems)
     )
 
-    print(f"  {len(gated_in_v1)} V1 diagnostic field(s) follow {DAI_DEBUG_FLAG}.")
+    print(f"  {len(gated_in_v1)} V1 diagnostic field(s) follow {DAI_DEBUG_KEY}.")
     return True
 
 
@@ -854,15 +870,10 @@ def test_maintenance_runs_send_the_v1_request_bodies():
 
 
 def test_settings_api_sends_the_scale_context():
-    """The page reads the debug flag and the resolved Cosmos target from the GET."""
+    """The page reads the resolved Cosmos target from the GET."""
     print("\nTesting the V2 settings GET for Scale context...")
 
     source = read_text(APP_ROOT / "route_backend_v2.py")
-
-    assert '"dai_debug_enabled": bool(settings.get("enable_dai_debug", False))' in source, (
-        "The settings GET should send enable_dai_debug as the dai_debug_enabled runtime "
-        "flag, which is what reveals the index diagnostics as V1 does."
-    )
 
     missing = []
     for _section_id, field in scale_schema_entries():
@@ -877,7 +888,7 @@ def test_settings_api_sends_the_scale_context():
         "The saved throughput target readout is built by _build_cosmos_throughput_readout."
     )
 
-    print("  The GET sends the debug flag and every declared Scale readout.")
+    print("  The GET sends every declared Scale readout.")
     return True
 
 

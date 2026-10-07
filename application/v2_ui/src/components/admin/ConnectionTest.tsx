@@ -5,10 +5,11 @@
 // out is to try them. Without this, configuring a connection means saving blind and
 // waiting for a user to hit the failure.
 //
-// The test runs against the values currently on screen, not the saved ones, so a
-// connection can be verified before it is committed. The one value the browser cannot
-// supply is a stored credential: it holds only the redaction placeholder, and the server
-// swaps that back for the real secret before making the call.
+// The test runs against the values currently on screen, unsaved edits included, so a
+// connection can be verified before it is committed. A saved value is read from wherever
+// its field declares it is stored, which is not always a top-level key. The one value the
+// browser cannot supply is a stored credential: it holds only the redaction placeholder,
+// and the server swaps that back for the real secret before making the call.
 //
 // Nothing here knows about a specific service. Which test to run and how to shape its
 // payload are both read from the field definition, so a new connection test is a schema
@@ -18,7 +19,7 @@ import { useState } from 'react';
 import { clsx } from 'clsx';
 import { CheckCircle2, Loader2, PlugZap, XCircle } from 'lucide-react';
 import { ApiError, api } from '../../lib/apiClient';
-import { evaluateDependency, type AdminField } from '../../lib/adminFields';
+import { buildConnectionTestPayload, type AdminField } from '../../lib/adminFields';
 import type { Json } from '../../lib/types';
 
 /** What the shared connection-test dispatcher returns. Shapes vary by test. */
@@ -35,27 +36,6 @@ interface TestOutcome {
     message: string;
     details: string[];
     guidance: string[];
-}
-
-/**
- * Write a value at a dotted path, creating intermediate objects.
- *
- * Payload shapes are nested -- `direct.endpoint`, `apim.subscription_key` -- because that
- * is what the existing test handlers expect. Declaring them flat and expanding here keeps
- * the schema readable.
- */
-function assignPath(target: Json, path: string, value: unknown): void {
-    const parts = path.split('.');
-    let cursor = target as Record<string, unknown>;
-
-    for (const part of parts.slice(0, -1)) {
-        if (typeof cursor[part] !== 'object' || cursor[part] === null) {
-            cursor[part] = {};
-        }
-        cursor = cursor[part] as Record<string, unknown>;
-    }
-
-    cursor[parts[parts.length - 1]] = value;
 }
 
 /**
@@ -85,21 +65,21 @@ export function ConnectionTest({
     field,
     settings,
     draft,
+    fieldsByKey,
     disabled,
     onSuccess,
 }: {
     field: AdminField;
     settings: Json;
     draft: Json;
+    /** Every declared field by key, so a value saved at a nested path is found. */
+    fieldsByKey: Map<string, AdminField>;
     disabled?: boolean;
     /** Runs after a test passes, for a readout that should look again, such as Redis Metrics. */
     onSuccess?: () => void;
 }) {
     const [running, setRunning] = useState(false);
     const [outcome, setOutcome] = useState<TestOutcome | null>(null);
-
-    const read = (key: string): unknown =>
-        Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key];
 
     const run = async () => {
         if (!field.test_type) {
@@ -109,17 +89,7 @@ export function ConnectionTest({
         setRunning(true);
         setOutcome(null);
 
-        const payload: Json = { test_type: field.test_type };
-        for (const [path, source] of Object.entries(field.test_payload ?? {})) {
-            // A payload entry can be conditional, which is how one declaration covers
-            // both sides of an APIM-or-direct choice without sending the branch that is
-            // not in use.
-            if (!evaluateDependency(source.when, read)) {
-                continue;
-            }
-            const value = source.key !== undefined ? read(source.key) : source.value;
-            assignPath(payload, path, value ?? '');
-        }
+        const payload = buildConnectionTestPayload(field, settings, draft, fieldsByKey);
 
         try {
             const response = await api.post<ConnectionTestResponse>(

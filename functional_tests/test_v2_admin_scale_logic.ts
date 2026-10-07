@@ -1,8 +1,8 @@
 // test_v2_admin_scale_logic.ts
 //
 // Runtime test for the browser logic behind the Admin Settings Scale group.
-// Version: 0.261.260
-// Implemented in: 0.261.260
+// Version: 0.261.273
+// Implemented in: 0.261.273
 //
 // The Scale panels explain themselves before anything is sent: the throughput rules a save
 // must pass, the RU/s a manual scale will land on, which capacity actions apply, and what a
@@ -220,8 +220,8 @@ check('the Key Vault prerequisite applies only while Redis reads its key from a 
 
 check('"Used by" lists exactly the sections that show a prerequisite notice', () => {
     const { sections } = requireCases();
-    const usedBy = (settings: Json, target: string, flags?: Record<string, boolean>) =>
-        (buildSectionDependents(sections, settings, {}, flags).get(target) ?? []).map(
+    const usedBy = (settings: Json, target: string) =>
+        (buildSectionDependents(sections, settings, {}).get(target) ?? []).map(
             (dependent) => dependent.sectionId,
         );
     const settings = { enable_redis_cache: true, redis_auth_type: 'key', enable_document_access_index_cache: true };
@@ -230,15 +230,15 @@ check('"Used by" lists exactly the sections that show a prerequisite notice', ()
     for (const sectionId of ['conversation-cache-section', 'redis-monitoring-section', 'file-sync-section']) {
         assert.ok(redis.includes(sectionId), `Redis Cache should be used by ${sectionId}`);
     }
-    // The index's Redis switch is a diagnostic, hidden without the debug flag.
+    // The index's Redis switch is a diagnostic, hidden until Document Access Index
+    // diagnostics is switched on under Operations.
     assert.ok(!redis.includes('document-access-index-section'), 'a hidden switch adds no "Used by" entry');
+    const diagnostics = { ...settings, enable_dai_debug: true };
+    assert.ok(usedBy(diagnostics, 'redis-cache-section').includes('document-access-index-section'));
     assert.ok(
-        usedBy(settings, 'redis-cache-section', { dai_debug_enabled: true }).includes('document-access-index-section'),
-    );
-    assert.ok(
-        !usedBy({ ...settings, enable_document_access_index_cache: false }, 'redis-cache-section', {
-            dai_debug_enabled: true,
-        }).includes('document-access-index-section'),
+        !usedBy({ ...diagnostics, enable_document_access_index_cache: false }, 'redis-cache-section').includes(
+            'document-access-index-section',
+        ),
         'a switched-off cache does not rely on Redis',
     );
 

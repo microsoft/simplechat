@@ -16,7 +16,7 @@ the per-container workbench.
 This work describes all seven Scale sections, builds native panels over the existing admin APIs,
 enforces the throughput policy rules on the V2 save, and adds two generic schema descriptors.
 
-**Implemented in version:** 0.261.260
+**Implemented in version:** 0.261.273
 
 **Dependencies:** `admin_settings_nav.py` for section ids; the existing admin APIs under
 `/api/admin/settings/redis-monitoring`, `/redis-explorer`, `/app-maintenance`, and
@@ -35,8 +35,9 @@ enforces the throughput policy rules on the V2 save, and adds two generic schema
 | Cosmos DB Throughput | Not rendered, because none of its keys are named `enable_*` | Console, saved target readout, resource, metrics window, guardrails |
 | Cosmos Metrics | Not rendered | Container workbench with per-container policies |
 
-`enable_dai_debug` had also been guessed into Operations > Debug Logging, although neither
-interface offers a control for it.
+The index diagnostics follow `enable_dai_debug`, as on the classic page. The classic page has no
+control for that flag; V2 offers it under Operations > Logging & Health > Debug Logging as
+**Document Access Index diagnostics**, declared by the V2 Operations work.
 
 ## Technical specifications
 
@@ -44,9 +45,9 @@ interface offers a control for it.
 
 The seven sections use the existing vocabulary: section capabilities (`role: capability`),
 groups, `depends_on` chains copied from the server-rendered page's nesting, `requires` for
-cross-section prerequisites, and the `secret` type for `redis_key`. The index diagnostics are
-gated on a runtime flag, `{"flag": "dai_debug_enabled", "equals": True}`, which the settings
-GET derives from `enable_dai_debug`.
+cross-section prerequisites, and the `secret` type for `redis_key`. The index diagnostics depend
+on `{"key": "enable_dai_debug", "equals": True}`, so they appear as soon as the Operations switch
+is turned on, like any other dependent setting.
 
 Two descriptors were added for every group:
 
@@ -59,7 +60,7 @@ A `requires.target_section` now also drives a **Used by** line on the target car
 the same rules as the prerequisite notices (`buildSectionDependents` reads `collectRequirements`),
 so Redis Cache lists exactly the sections that show a Redis notice.
 
-The four always-on index flags and `enable_dai_debug` are in `SUPPRESSED_CAPABILITY_KEYS`.
+The four always-on index flags are in `SUPPRESSED_CAPABILITY_KEYS`.
 `cosmos_throughput_container_policies` claims V1's `cosmos_throughput_container_policies_json`
 through `LEGACY_FIELD_NAMES`. The schema mirrors three constants from
 `functions_cosmos_throughput.py` (10,000 RU/s ceiling, 1,000 RU/s minimum, `SimpleChat`
@@ -82,9 +83,8 @@ messages as before.
 
 ### Settings GET
 
-`runtime_flags.dai_debug_enabled` reports `enable_dai_debug`, and the `cosmos_throughput_resource`
-status readout names the account and database automation manages, and whether each value comes
-from saved settings or App Service settings.
+The `cosmos_throughput_resource` status readout names the account and database automation
+manages, and whether each value comes from saved settings or App Service settings.
 
 ### Browser
 
@@ -136,8 +136,9 @@ Open **Admin Settings > Scale**. The group has two tabs, **Redis & Caching** and
 - **Redis.** Enable Redis Cache, open **Connection**, and enter the host name and how
   SimpleChat signs in. **Test Redis connection** checks the values on screen before saving.
   Changing Redis needs a coordinated restart of every worker and the scheduler.
-- **Index diagnostics.** Set `enable_dai_debug` to true in the settings document. DAI Metrics
-  then shows shadow validation, batch sizes, the list cache settings, and the backfill actions.
+- **Index diagnostics.** Turn on **Document Access Index diagnostics** under Operations > Logging
+  & Health > Debug Logging. DAI Metrics then shows shadow validation, batch sizes, the list cache
+  settings, and the backfill actions.
 - **Throughput.** Leave the resource blank to use App Service settings, or fill it in, and use
   **Validate access** before turning on automation. **Scale up**, **Scale down**, and **Convert
   to autoscale** confirm the change first and use the saved policy.
@@ -150,7 +151,7 @@ The admin documentation for the group is `docs/admin/scale.md`.
 
 | Test | Coverage |
 | --- | --- |
-| `functional_tests/test_v2_admin_scale_parity.py` | Panes match navigation; every V1 field is claimed and none invented; secret, selects, number bounds, and port range match V1; dependency chains; diagnostics follow the debug flag; always-on flags stay uneditable; defaults and mirrored constants; routes, methods, and maintenance request bodies match V1; the GET sends the debug flag and readout |
+| `functional_tests/test_v2_admin_scale_parity.py` | Panes match navigation; every V1 field is claimed and none invented; secret, selects, number bounds, and port range match V1; dependency chains; diagnostics follow `enable_dai_debug`, whose one switch lives in Operations; always-on flags stay uneditable; defaults and mirrored constants; routes, methods, and maintenance request bodies match V1; the GET sends the throughput readout |
 | `functional_tests/test_v2_admin_scale_normalization.py` | Port storage, selects and secret round trip, bounds, every policy rule against V1's messages, partial saves, automation off, RU/s rounding warnings, both policy shapes, stored timestamps, unrelated saves |
 | `functional_tests/test_v2_admin_scale_logic.py` with `.ts` | Generates rounding, validation, container policy, and manual scale cases from the Python functions and requires the browser mirrors to agree; label variants, conditional prerequisites, "Used by", status wording, sorting, actions, formatting |
 | `ui_tests/test_v2_admin_scale_settings.py` | Key Vault relabelling and prerequisite, lazy metrics, explorer paging and errors, connection test refresh, diagnostics gate, confirmations and request bodies, validate access with draft values, scale confirmation, workbench edit and save, enforced policy, no overflow at phone and desktop widths in both themes |
@@ -166,5 +167,3 @@ The admin documentation for the group is `docs/admin/scale.md`.
   target and its result is reported after the change.
 - The Key Vault secret name is held in the `redis_key` secret, so V2 shows it as stored rather
   than in a password box as V1 does.
-- `enable_search_result_caching` has no control on the server-rendered page, and the V2 fallback
-  scan still places its switch with Web Search under Knowledge.

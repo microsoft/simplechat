@@ -425,76 +425,47 @@ def register_route_external_public_documents(bp):
         
         # Track which fields were updated
         updated_fields = {}
+        document_updates = {}
 
         try:
             if 'title' in data:
-                update_document(
-                    document_id=document_id,
-                    public_workspace_id=active_workspace_id,
-                    user_id=user_id,
-                    title=data['title']
-                )
+                document_updates['title'] = data['title']
                 updated_fields['title'] = data['title']
             if 'abstract' in data:
-                update_document(
-                    document_id=document_id,
-                    public_workspace_id=active_workspace_id,
-                    user_id=user_id,
-                    abstract=data['abstract']
-                )
+                document_updates['abstract'] = data['abstract']
                 updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 if isinstance(data['keywords'], list):
-                    update_document(
-                        document_id=document_id,
-                        public_workspace_id=active_workspace_id,
-                        user_id=user_id,
-                        keywords=data['keywords']
-                    )
+                    document_updates['keywords'] = data['keywords']
                     updated_fields['keywords'] = data['keywords']
                 else:
                     keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
-                    update_document(
-                        document_id=document_id,
-                        public_workspace_id=active_workspace_id,
-                        user_id=user_id,
-                        keywords=keywords_list
-                    )
+                    document_updates['keywords'] = keywords_list
                     updated_fields['keywords'] = keywords_list
             if 'publication_date' in data:
-                update_document(
-                    document_id=document_id,
-                    public_workspace_id=active_workspace_id,
-                    user_id=user_id,
-                    publication_date=data['publication_date']
-                )
+                document_updates['publication_date'] = data['publication_date']
                 updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
-                update_document(
-                    document_id=document_id,
-                    public_workspace_id=active_workspace_id,
-                    user_id=user_id,
-                    document_classification=data['document_classification']
-                )
+                document_updates['document_classification'] = data['document_classification']
                 updated_fields['document_classification'] = data['document_classification']
             if 'authors' in data:
                 if isinstance(data['authors'], list):
-                    update_document(
-                        document_id=document_id,
-                        public_workspace_id=active_workspace_id,
-                        user_id=user_id,
-                        authors=data['authors']
-                    )
+                    document_updates['authors'] = data['authors']
                     updated_fields['authors'] = data['authors']
                 else:
                     authors_list = [data['authors']]
-                    update_document(
-                        document_id=document_id,
-                        public_workspace_id=active_workspace_id,
-                        user_id=user_id,
-                        authors=authors_list
-                    )
+                    document_updates['authors'] = authors_list
                     updated_fields['authors'] = authors_list
+
+            # Save every change in one update; search chunks are synced in the background
+            update_result = {}
+            if document_updates:
+                update_result = update_document(
+                    document_id=document_id,
+                    public_workspace_id=active_workspace_id,
+                    user_id=user_id,
+                    **document_updates,
+                ) or {}
 
             # Log the metadata update transaction if any fields were updated
             if updated_fields:
@@ -520,9 +491,17 @@ def register_route_external_public_documents(bp):
                         public_workspace_id=active_workspace_id
                     )
 
-            return jsonify({'message': 'Public document metadata updated successfully'}), 200
+            response_payload = {'message': 'Public document metadata updated successfully'}
+            if isinstance(update_result, dict) and update_result.get('search_sync'):
+                response_payload['search_sync'] = update_result['search_sync']
+            return jsonify(response_payload), 200
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to update public document metadata through the external API',
+                {'document_id': document_id, 'public_workspace_id': active_workspace_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to update document metadata'}), 500
    
 
 

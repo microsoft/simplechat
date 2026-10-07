@@ -1,8 +1,9 @@
 # test_v2_workflow_flow_authoring.py
 """
 Offline real-bundle browser regressions for M5B workflow Flow authoring.
-Version: 0.261.231
+Version: 0.261.271
 Implemented in: 0.261.122
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 Uses the existing fictional, closed API harness and real Python compiler.
 Only explicit scoped Save and data-only compiler previews may write requests.
@@ -39,6 +40,15 @@ from ui_tests.fixtures.workflow_flow import (
 )
 from ui_tests.fixtures.workflow_loops import record_contract
 from ui_tests.fixtures.workflow_repeat_until import WorkflowRepeatFixture
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    discard_and_leave,
+    edit_workflow,
+    leave_prompt,
+    open_workflow_flow,
+    open_workflow_runs,
+    workflow_editor,
+    workflow_editor_path,
+)
 from functions_workflow_definitions import workflow_definition_revision
 from functions_workflow_flow import compile_workflow_flow
 
@@ -162,10 +172,10 @@ def open_editor(ui, workflow_id=FLOW_WORKFLOW_ID, *, group_id=None, **options):
         ui.open("/groups", **options)
         ui.select_group(group_id)
         name = ui.group_workflows[group_id][workflow_id]["name"]
-        ui.page.get_by_role("button", name=f"Edit {name}", exact=True).click()
+        editor = edit_workflow(ui.page, name)
     else:
-        ui.open(f"/workspace/workflows?workflow_id={workflow_id}", **options)
-    editor = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
+        ui.open(workflow_editor_path(workflow_id), **options)
+        editor = workflow_editor(ui.page)
     expect(editor).to_be_visible()
     switch = editor.get_by_role("group", name="Workflow authoring surface", exact=True)
     expect(switch.get_by_role("button", name="List authoring", exact=True)).to_have_attribute("aria-pressed", "true")
@@ -664,7 +674,7 @@ def test_escape_cancels_impact_confirmation_without_closing_or_changing_authorin
         page.keyboard.press("Escape")
         expect(confirmation).to_have_count(0)
         expect(editor).to_be_visible()
-        expect(page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)).to_have_count(0)
+        expect(leave_prompt(page)).to_have_count(0)
         expect(node_button(view, node_id)).to_have_attribute("aria-pressed", "true")
         expect(node_button(view, node_id)).to_be_focused()
         expect(editor.get_by_label("Description", exact=True)).to_have_value(description)
@@ -762,8 +772,8 @@ def test_unfinished_field_builder_alone_participates_in_unsaved_change_protectio
     fields.get_by_label("Decision field type", exact=True).select_option("enum")
     fields.get_by_label("Decision enum values", exact=True).fill("one\none\n")
     switch_surface(editor, "List")
-    editor.get_by_role("button", name="Close", exact=True).click()
-    confirmation = page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    confirmation = leave_prompt(page)
     expect(confirmation).to_be_visible()
     confirmation.get_by_role("button", name="Keep editing", exact=True).click()
     view = switch_surface(editor, "Flow")
@@ -794,16 +804,13 @@ def test_delayed_preview_cannot_cross_closed_editor_workflow_or_group_scope(auth
     expect(view.get_by_role("status").filter(has_text=re.compile(r"^Validating draft\."))).to_be_visible()
     expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
     assert len(ui.held_flow_responses) == 1
-    editor.get_by_role("button", name="Close", exact=True).click()
-    page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True).get_by_role(
-        "button", name="Discard changes", exact=True,
-    ).click()
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    discard_and_leave(page)
     if group:
         ui.select_group(SECOND_GROUP_ID)
-        page.get_by_role("button", name="Edit Beta read-only Flow", exact=True).click()
+        editor = edit_workflow(page, "Beta read-only Flow")
     else:
-        page.get_by_role("button", name="Edit Authoring seed", exact=True).click()
-    editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
+        editor = edit_workflow(page, "Authoring seed")
     expect(editor.get_by_role("button", name="List authoring", exact=True)).to_have_attribute("aria-pressed", "true")
     if group:
         accounts = editor.get_by_label("Microsoft 365 Run as", exact=True)
@@ -877,13 +884,13 @@ def test_pending_save_disables_semantic_edits_and_cannot_issue_a_second_write(au
         expect(fields.get_by_label("Task name", exact=True)).to_be_disabled()
         for name in ("Add block in Flow", "Move selected block", "Remove selected block"):
             expect(view.get_by_role("button", name=name, exact=True)).to_be_disabled()
-        close = editor.get_by_role("button", name="Close", exact=True)
-        if close.is_enabled():
-            close.click()
-        expect(page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)).to_have_count(0)
+        cancel = editor.get_by_role("button", name="Cancel", exact=True)
+        if cancel.is_enabled():
+            cancel.click()
+        expect(leave_prompt(page)).to_have_count(0)
         expect(editor).to_be_visible()
         page.keyboard.press("Escape")
-        expect(page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)).to_have_count(0)
+        expect(leave_prompt(page)).to_have_count(0)
         expect(editor).to_be_visible()
         assert len([request for request in ui.writes if request.path in SAVE_PATHS]) == 1
     finally:
@@ -934,8 +941,8 @@ def test_layout_selection_collapse_and_surface_switches_never_dirty_or_save(auth
     switch_surface(editor, "List")
     view = switch_surface(editor, "Flow")
     expect(node_button(view, "finish")).to_have_attribute("aria-pressed", "true")
-    editor.get_by_role("button", name="Close", exact=True).click()
-    expect(page.get_by_role("dialog")).to_have_count(0)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(editor).to_have_count(0)
     assert not ui.workflow_writes
     assert ui.personal_workflows[FLOW_WORKFLOW_ID] == original
     assert page.evaluate("JSON.stringify({local: {...localStorage}, session: {...sessionStorage}})") == storage
@@ -1086,8 +1093,8 @@ def test_task_limit_rejects_add_atomically_without_dirtying_the_draft(authoring_
     assert ui.personal_workflows[AUTHORING_ID] == original
     placement.get_by_role("button", name="Cancel block placement", exact=True).click()
     expect(placement).to_have_count(0)
-    editor.get_by_role("button", name="Close", exact=True).click()
-    expect(page.get_by_role("dialog")).to_have_count(0)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(editor).to_have_count(0)
     assert not ui.workflow_writes
 
 
@@ -1098,9 +1105,8 @@ def test_read_only_access_boundaries_never_offer_flow_authoring(authoring_ui, re
         ui.group_can_manage = False
         ui.open("/groups")
         ui.select_group(GROUP_ID)
-        page.get_by_role("button", name="View Alpha read-only Flow", exact=True).click()
-        reader = page.get_by_role("dialog", name="Edit workflow", exact=True)
-        expect(reader).to_contain_text("This workflow is read-only.")
+        reader = edit_workflow(page, "Alpha read-only Flow", action="View")
+        expect(reader).to_contain_text("View workflow")
         expect(reader.get_by_label("Workflow name", exact=True)).to_be_disabled()
         for field in reader.get_by_label("Task name", exact=True).all():
             expect(field).to_be_disabled()
@@ -1110,17 +1116,17 @@ def test_read_only_access_boundaries_never_offer_flow_authoring(authoring_ui, re
         expect(reader.get_by_role("group", name="Workflow authoring surface", exact=True)).to_have_count(0)
         reader.get_by_role("button", name="Close", exact=True).last.click()
         expect(reader).to_have_count(0)
-        page.get_by_role("button", name="View Flow for Alpha read-only Flow", exact=True).click()
+        open_workflow_flow(page, "Alpha read-only Flow")
     elif restriction == "active_run":
         ui.personal_workflows[FLOW_WORKFLOW_ID].update(active_run_id=FLOW_RUN_ID, status="running")
         ui.open("/workspace/workflows")
         expect(page.get_by_role(
             "button", name=f"{FLOW_NAME} is running; cancel or wait before editing", exact=True,
         )).to_be_disabled()
-        page.get_by_role("button", name=f"View Flow for {FLOW_NAME}", exact=True).click()
+        open_workflow_flow(page, FLOW_NAME)
     else:
         ui.personal_workflows[FLOW_WORKFLOW_ID]["flow"]["nodes"][0]["future_executor"] = {"unchanged": True}
-        ui.open(f"/workspace/workflows?workflow_id={FLOW_WORKFLOW_ID}")
+        ui.open(workflow_editor_path(FLOW_WORKFLOW_ID))
         expect(page.get_by_role("alert").filter(has_text=re.compile("cannot safely save|unsupported", re.I)).first).to_be_visible()
         expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     expect(page.get_by_role("group", name="Workflow authoring surface", exact=True)).to_have_count(0)
@@ -1166,19 +1172,15 @@ def test_saved_and_frozen_run_flow_remain_inspection_only_after_authoring_save(a
     view = switch_surface(editor, "Flow")
     select_node(view, "evaluate").get_by_label("Task name", exact=True).fill("Saved authored evaluation")
     save(ui, editor)
-    page.get_by_role("button", name=f"View Flow for {FLOW_NAME}", exact=True).click()
-    saved = page.get_by_role("dialog", name="Workflow Flow", exact=True)
+    saved_panel = open_workflow_flow(page, FLOW_NAME)
+    saved = saved_panel.get_by_role("region", name="Workflow Flow", exact=True)
     expect(saved.get_by_role("heading", name="Read-only Flow", exact=True)).to_be_visible()
     expect(node_button(saved, "evaluate")).to_have_accessible_name("Select Saved authored evaluation (Task)")
     expect(saved.get_by_role("button", name="Add block in Flow", exact=True)).to_have_count(0)
     expect(saved.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
-    saved.get_by_role("button", name="Close", exact=True).click()
-    row = page.get_by_role("listitem").filter(has=page.get_by_role(
-        "button", name=f"View Flow for {FLOW_NAME}", exact=True,
-    )).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    row.get_by_role("button", name="Show Flow for this run", exact=True).click()
+    runs = open_workflow_runs(page, FLOW_NAME)
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    runs.get_by_role("button", name="Show Flow for this run", exact=True).click()
     run = page.get_by_role("region", name="Workflow Flow", exact=True)
     expect(run.get_by_text("Run's frozen definition", exact=True)).to_be_visible()
     expect(node_button(run, "evaluate")).to_have_accessible_name("Select Frozen evaluation (Task)")

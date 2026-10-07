@@ -87,6 +87,7 @@ from route_backend_group_prompts import *
 from route_backend_group_prompts_scoped import *
 from route_backend_group_actions_scoped import *
 from route_backend_group_agents_scoped import *
+from route_backend_v2_admin_agents_actions import register_route_backend_v2_admin_agents_actions
 from route_backend_group_identities_scoped import *
 from route_backend_group_endpoints_scoped import *
 from route_backend_group_file_sources_scoped import *
@@ -1411,6 +1412,7 @@ register_route_blueprint('backend_analysis_results', register_route_backend_anal
 # ------------------- API V2 UI Routes -------------------
 register_route_blueprint('backend_v2', register_route_backend_v2, user_required_blueprint)
 register_route_blueprint('backend_v2_admin', register_route_backend_v2_admin, admin_required_blueprint)
+register_route_blueprint('backend_v2_admin_agents_actions', register_route_backend_v2_admin_agents_actions, admin_required_blueprint)
 
 # ------------------- API Orchestration Routes ----------
 register_route_blueprint('backend_orchestration', register_route_backend_orchestration, user_required_blueprint)

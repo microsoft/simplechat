@@ -90,7 +90,7 @@ export function WorkspacePage() {
                 />
             );
         }
-        if (resourceId && !['agents', 'actions'].includes(activeEntry.section.id)) {
+        if (resourceId && !['agents', 'actions', 'workflows'].includes(activeEntry.section.id)) {
             return <EmptyState title="Editor not found" description="That editor does not exist in this workspace section." />;
         }
         return activeEntry.section.render(context);

@@ -68,6 +68,16 @@ export async function fetchGroupAgentKnowledgeCatalog(groupId: string, signal?: 
     );
 }
 
+/**
+ * The catalogue a global agent may draw on: public workspaces only, since a global agent answers
+ * everyone and can hold no person's or group's documents. The server opens it only to administrators.
+ */
+export async function fetchGlobalAgentKnowledgeCatalog(signal?: AbortSignal): Promise<AgentKnowledgeCatalog> {
+    return validateAgentKnowledgeCatalog(
+        await api.get<AgentKnowledgeCatalog>('/api/agents/assigned-knowledge/catalog?agent_scope=global', signal),
+    );
+}
+
 function validateAgentKnowledgeCatalog(response: AgentKnowledgeCatalog): AgentKnowledgeCatalog {
     if (!response || !Array.isArray(response.sources) || !Array.isArray(response.documents) || !Array.isArray(response.tags)) {
         throw new Error('The assigned knowledge catalogue returned an invalid response.');

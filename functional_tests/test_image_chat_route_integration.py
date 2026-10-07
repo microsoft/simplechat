@@ -224,7 +224,6 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
             "debug_print": Mock(),
             "log_event": self.logs,
             "is_mixed_source_chat_search_enabled": Mock(return_value=False),
-            "is_mixed_source_manifest_enabled": Mock(return_value=False),
             "is_source_review_enabled_for_user": Mock(return_value=False),
             "is_url_access_enabled_for_user": Mock(return_value=False),
             "extract_urls_from_text": Mock(return_value=[]),
@@ -257,7 +256,7 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
         load_route_functions("route_backend_chats.py", (
             "_metadata_item_count", "_safe_metadata_int", "_normalize_capability_action",
             "_normalize_conversation_task_document_ids", "_normalize_chat_document_context_contract",
-            "_maybe_resolve_chat_source_manifest", "_source_review_metadata_used", "_deep_research_query_count",
+            "_source_review_metadata_used", "_deep_research_query_count",
             "_build_capability_usage_metadata", "_conversation_title_is_default", "_set_initial_conversation_title",
             "_resolve_pending_generated_file_format", "_resolve_generated_file_guidance_format",
             "_resolve_canonical_chat_agent", "_get_chat_agent_selection_name", "_has_chat_agent_selection",

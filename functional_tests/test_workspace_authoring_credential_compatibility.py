@@ -1,15 +1,19 @@
 # test_workspace_authoring_credential_compatibility.py
 """Regression coverage for conditional editor writes and classic credential cleanup.
 
-Version: 0.261.096
+Version: 0.261.271
 Implemented in: 0.261.096
+Classic global agent delete of an editor-keyed credential: 0.261.271
 
 The real editor and classic functions share isolated Cosmos/Key Vault services.
 Lost write responses must not delete committed credentials, and classic operations
 must use the actual stored references created by the V2 staging path.
 """
 
+import logging
 import sys
+import traceback
+import uuid
 from copy import deepcopy
 from datetime import datetime
 from types import SimpleNamespace
@@ -206,3 +210,65 @@ def test_classic_edit_and_delete_preserve_then_clean_actual_editor_reference(env
     assert ("actor", agent_id) not in records
     assert stored_reference in env.services.secret_deletes
     assert stored_reference not in env.services.vault
+
+
+def test_classic_global_delete_removes_the_editor_reference_it_holds(environment):
+    """The classic admin route deletes a global agent whose key the V2 editor stored.
+
+    The V2 global editor names a credential afresh (``{id}--agent--global--editor-...``).
+    The classic delete used to read the agent masked and rebuild the classic name from
+    the placeholder, so on a vault without that name it failed: the agent could not be
+    deleted, and its real credential would have been left behind.
+    """
+    env = environment
+    env.services.settings["enable_key_vault_secret_storage"] = True
+    agent_id = str(uuid.uuid4())
+    record = {
+        **agent_payload(), "id": agent_id, "is_global": True, "is_group": False,
+        "azure_openai_gpt_key": "global-test-credential",
+    }
+    staged = []
+    env.helper._stage_editor_secrets(record, "agents", "admin", env.services.settings, staged, global_scope=True)
+    reference = record["azure_openai_gpt_key"]
+    assert staged == [reference]
+    assert reference.startswith(f"{agent_id}--agent--global--editor-")
+    assert env.services.vault[reference] == "global-test-credential"
+
+    records = env.services.records["agents", "global"]
+    records[agent_id, agent_id] = {**deepcopy(record), "_etag": '"stored"'}
+    container = env.services.containers["agents", "global"]
+    deleted = []
+
+    def delete_item(*, item, partition_key):
+        assert partition_key == item, "Global agents are partitioned by their own id."
+        deleted.append(item)
+        del records[partition_key, item]
+
+    container.delete_item.side_effect = delete_item
+    namespace = {
+        "cosmos_global_agents_container": container,
+        "keyvault_agent_get_helper": env.keyvault.keyvault_agent_get_helper,
+        "keyvault_agent_delete_helper": env.keyvault.keyvault_agent_delete_helper,
+        "get_current_user_id": lambda: "admin",
+        "bump_chat_bootstrap_global_cache_version": Mock(),
+        "log_event": Mock(),
+        "logging": logging,
+        "traceback": traceback,
+    }
+    execute_functions("functions_global_agents.py", {"get_global_agent", "delete_global_agent"}, namespace)
+    # The classic list and editor still see only the placeholder.
+    assert namespace["get_global_agent"](agent_id)["azure_openai_gpt_key"] == "Stored_In_KeyVault"
+
+    def strict_delete(_client, name):
+        if name not in env.services.vault:
+            error = LookupError("The requested test secret does not exist.")
+            error.status_code = 404
+            raise error
+        env.services.secret_deletes.append(name)
+        del env.services.vault[name]
+
+    with patch.object(env.keyvault.SecretClient, "begin_delete_secret", strict_delete):
+        assert namespace["delete_global_agent"](agent_id) is True
+    assert deleted == [agent_id]
+    assert env.services.secret_deletes == [reference]
+    assert reference not in env.services.vault

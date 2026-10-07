@@ -437,6 +437,47 @@ def _search_acl(document, *, operation_guard):
         )
 
 
+def _search_acl_is_current(document):
+    """Whether every search chunk of the document carries the group access list Cosmos records."""
+    client = _get_search_client(group_id=document["group_id"])
+    escaped_id = document["id"].replace("'", "''")
+    available = _available(document) and is_current_group_document(document)
+    expected = sorted(set(document.get("shared_group_ids") or [])) if available else []
+    for chunk in client.search(search_text="*", filter=f"document_id eq '{escaped_id}'", select=["id", "shared_group_ids"]):
+        if sorted(set(chunk.get("shared_group_ids") or [])) != expected:
+            return False
+    return True
+
+
+def _repair_approved_share_search_acl(user_id, group_id, document):
+    """Re-run the search effect when an approved share's chunks miss the recorded access list.
+
+    Approving a share that is already approved completes an approval whose search update did not
+    finish, such as one made through the classic workspace or before this repair existed. Chunks
+    that already match are left alone, so a repeat has no effects. Returns receipt errors, if any.
+    """
+    def guard():
+        current = read_group_document_record(document["id"])
+        _require_share_action(user_id, group_id, current, "approve_share", group_id)
+        return current
+
+    try:
+        if _search_acl_is_current(document):
+            return []
+        _search_acl(document, operation_guard=guard)
+    except Exception as error:
+        log_event(
+            "[DOCUMENT_SHARING] An approved group share could not be projected to search again.",
+            extra={"document_id": document["id"], "group_id": document["group_id"], "exception_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+        return [{
+            "stage": "search", "code": "search_repair_required",
+            "message": "The search update could not be confirmed. Refresh before retrying.",
+        }]
+    return []
+
+
 def _notification_effect(document, operation, *, operation_guard):
     target_id = operation["target_group_id"]
     source_id = document["group_id"]
@@ -606,6 +647,10 @@ def change_group_document_share(user_id, group_id, document_id, action, payload,
     )
     unchanged = action == "share" and before in {"approved", "not_approved"} or action == "approve_share" and before == "approved"
     if unchanged:
+        if action == "approve_share":
+            errors = _repair_approved_share_search_acl(user_id, group_id, document)
+            if errors:
+                return _operation_receipt(group_id, document, action, target_group_id, "partial", state, errors), 207
         return _operation_receipt(group_id, document, action, target_group_id, "unchanged", state, []), 200
     if action == "unshare" and before is None and existing and existing.get("target_group_id") == target_group_id and not _unfinished(existing):
         return _operation_receipt(group_id, document, action, target_group_id, "unchanged", "removed", []), 200

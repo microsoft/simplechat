@@ -1,57 +1,92 @@
 // WorkflowsSection.tsx
-// Personal and group workflows: list, author, run, cancel, inspect history and delete.
+// Personal and group workflows as a workbench: find a workflow, see where it stands, run it, read
+// its runs, and open its editor.
+//
 // A group section offers each control from the context's workflow hint, the routes' own rule: every
 // member may run and cancel, and only the management roles create, edit and delete.
+//
+// The list used to be a column of rows, each with a strip of icon buttons and its run history
+// expanding inside the row, so reading one run pushed every other workflow down the page. It is
+// Admin's Model Catalog shape now: one-line rows beside a detail pane whose tabs scroll on their
+// own -- Overview, Runs, and for a structured workflow its Flow. The editor is a page of its own
+// (WorkflowEditorPage), at the address Edit and Create workflow open.
+//
+// Links still arrive as `?workflow_id=` (select that workflow) and `&run_id=` (open its Runs tab
+// with that run expanded); see workflowRunLink.ts. Each navigation that names a workflow is acted
+// on once.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Ban, ChevronDown, ChevronRight, Edit3, GitBranch, Play, Plus, Trash2, Workflow } from 'lucide-react';
-import { WorkflowEditorDialog } from '../../components/workflows/WorkflowEditorDialog';
-import { WorkflowFlowDialog } from '../../components/workflows/WorkflowFlowDialog';
-import { WorkflowRunHistory } from '../../components/workflows/WorkflowRunHistory';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { clsx } from 'clsx';
+import { AlertTriangle, CircleCheck, Plus, Workflow } from 'lucide-react';
+import { EmptyState, GlassButton, Skeleton } from '../../components/ui/primitives';
+import { SectionError, SectionIntro, SectionSearch } from '../../components/workspace/primitives';
+import { errorMessage, useSectionResource } from '../../components/workspace/useSectionResource';
+import { WorkflowStatusChip } from '../../components/workflows/WorkflowStatusChip';
 import {
-    ConfirmAction,
-    Pill,
-    ResourceRow,
-    RowAction,
-    SectionIntro,
-    SectionList,
-    SectionSearch,
-} from '../../components/workspace/primitives';
-import {
-    errorMessage,
-    useSectionResource,
-} from '../../components/workspace/useSectionResource';
+    WorkflowWorkbenchDetail,
+    type WorkflowDetailTab,
+} from '../../components/workflows/WorkflowWorkbenchDetail';
 import {
     cancelScopedWorkflow,
     DEFAULT_WORKFLOW_SCOPE,
     deleteScopedWorkflow,
     fetchScopedWorkflows,
-    fetchWorkflowEditorOptions,
     startScopedWorkflowRun,
-    workflowErrorMessage,
-    workflowScheduleLabel,
     workflowScopeKey,
     type WorkflowDefinition,
-    type WorkflowEditorOptions,
     type WorkflowRunStartResponse,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
-import { readWorkflowRunLink } from '../../lib/workflowRunLink';
+import { readWorkflowRunLink, workflowEditorHref } from '../../lib/workflowRunLink';
+import {
+    DEFAULT_WORKFLOW_WORKBENCH_FILTERS,
+    filterWorkflows,
+    workflowFiltersApplied,
+    workflowNeedsAttention,
+    workflowRowMeta,
+    workflowStatusTone,
+    WORKFLOW_STATUS_FILTER_LABELS,
+    WORKFLOW_TRIGGER_FILTER_LABELS,
+    type WorkflowStatusFilter,
+    type WorkflowTriggerFilter,
+    type WorkflowWorkbenchFilters,
+} from '../../lib/workflowWorkbench';
 
-/** Map a run or workflow status onto a pill colour. */
-export function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral' {
-    const value = String(status ?? '').toLowerCase();
-    if (['completed', 'succeeded', 'success', 'finished'].includes(value)) {
-        return 'ok';
-    }
-    if (['running', 'queued', 'pending', 'in_progress', 'started', 'completed_partial'].includes(value)) {
-        return 'warn';
-    }
-    if (['failed', 'error', 'cancelled', 'canceled'].includes(value)) {
-        return 'danger';
-    }
-    return 'neutral';
+/** Map a run or workflow status onto a pill colour. The File sources sections read it from here. */
+export const statusTone = workflowStatusTone;
+
+const filterSelectClass = clsx(
+    'min-h-9 min-w-0 max-w-full rounded-lg border border-edge bg-surface-1 px-2.5 py-1.5 text-sm text-text-1',
+    'focus:border-accent focus:outline-none',
+);
+
+function FilterSelect<T extends string>({ label, value, options, onChange }: {
+    label: string;
+    value: T;
+    options: Readonly<Record<T, string>>;
+    onChange: (value: T) => void;
+}) {
+    // Labelled by reference rather than by wrapping, so the select's name is the label alone and
+    // not the label plus the option it shows.
+    const id = useId();
+    return (
+        <div className="flex max-w-full min-w-0 items-center gap-2">
+            <label htmlFor={id} className="text-xs font-medium text-text-2">{label}</label>
+            <select id={id} className={filterSelectClass} value={value} onChange={(event) => onChange(event.target.value as T)}>
+                {(Object.keys(options) as T[]).map((key) => <option key={key} value={key}>{options[key]}</option>)}
+            </select>
+        </div>
+    );
+}
+
+function CreateWorkflowButton({ onClick }: { onClick: () => void }) {
+    return (
+        <GlassButton type="button" variant="primary" size="sm" onClick={onClick}>
+            <Plus size={14} aria-hidden="true" />
+            Create workflow
+        </GlassButton>
+    );
 }
 
 export function WorkflowsSection({
@@ -78,26 +113,19 @@ export function WorkflowsSection({
     const canCancel = offered ? offered.has('cancel') : allowManage;
     const scopeKey = workflowScopeKey(scope);
     const location = useLocation();
+    const navigate = useNavigate();
+    const baseId = useId();
     const loadWorkflows = useCallback((signal?: AbortSignal) => fetchScopedWorkflows(scope, signal), [scopeKey]);
     const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkflowDefinition>(loadWorkflows, 'Failed to load workflows.');
 
-    const [query, setQuery] = useState('');
+    const [filters, setFilters] = useState<WorkflowWorkbenchFilters>(DEFAULT_WORKFLOW_WORKBENCH_FILTERS);
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
+    const [tab, setTab] = useState<WorkflowDetailTab>('overview');
     const [busyId, setBusyId] = useState<string | null>(null);
-    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [actionError, setActionError] = useState<{ workflowId: string; message: string } | null>(null);
     const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
-    const [editing, setEditing] = useState<WorkflowDefinition | null | 'new'>(null);
-    // Reloading the workflow opens a fresh editor on the saved version.
-    const [editorInstance, setEditorInstance] = useState(0);
-    // Opening, closing or saving an editor supersedes a reload still loading, so it cannot
-    // reopen a closed editor or replace another workflow's.
-    const editorRequest = useRef(0);
-    const [viewingFlow, setViewingFlow] = useState<{ workflowId: string; scopeKey: string } | null>(null);
-    const [options, setOptions] = useState<WorkflowEditorOptions | null>(null);
-    const [optionsLoading, setOptionsLoading] = useState(false);
-    const [optionsError, setOptionsError] = useState('');
-    const [editorDirty, setEditorDirty] = useState(false);
-    const [editorSaving, setEditorSaving] = useState(false);
     const [linkedRun, setLinkedRun] = useState<{
         scopeKey: string;
         workflowId: string;
@@ -105,86 +133,39 @@ export function WorkflowsSection({
         /** The navigation that named the run; a new one remounts the history. */
         navigation: string;
     } | null>(null);
+    // A link that selected a workflow moves focus to its title once the detail has drawn it.
+    const [focusRequest, setFocusRequest] = useState(0);
+    // A row chosen while the detail sits below the list, as on a narrow screen, scrolls it into view.
+    const [revealRequest, setRevealRequest] = useState(0);
+    const detailHeadingRef = useRef<HTMLHeadingElement>(null);
     // The last navigation whose workflow link was acted on, and the last one that re-read the list
     // because the link named a workflow the list did not have yet.
     const handledNavigation = useRef<string | null>(null);
     const relistedNavigation = useRef<string | null>(null);
 
+    // The workbench never holds an unsaved draft, so it clears any flag an editor left behind.
     useEffect(() => {
-        onDirtyChange?.(editorDirty);
-        return () => onDirtyChange?.(false);
-    }, [editorDirty, onDirtyChange]);
+        onDirtyChange?.(false);
+    }, [onDirtyChange]);
 
     useEffect(() => {
-        onBusyChange?.(editorSaving || busyId !== null);
+        onBusyChange?.(busyId !== null);
         return () => onBusyChange?.(false);
-    }, [editorSaving, busyId, onBusyChange]);
+    }, [busyId, onBusyChange]);
 
-    const visible = useMemo(() => {
-        const needle = query.trim().toLowerCase();
-        if (!needle) {
-            return items;
-        }
-        return items.filter((workflow) =>
-            `${workflow.name ?? ''} ${workflow.description ?? ''}`
-                .toLowerCase()
-                .includes(needle),
-        );
-    }, [items, query]);
+    const visible = useMemo(() => filterWorkflows(items, filters), [items, filters]);
+    const attention = useMemo(() => items.filter(workflowNeedsAttention).length, [items]);
+    const filtersApplied = workflowFiltersApplied(filters) + Number(Boolean(filters.query.trim()));
+    const selected = visible.find((workflow) => workflow.id === selectedId) ?? null;
 
-    const openEditor = useCallback(async (workflow: WorkflowDefinition | 'new') => {
-        editorRequest.current += 1;
-        if (interactionDisabled || (workflow === 'new' && !canCreate)) {
-            setOptionsError('You cannot create workflows with the current workspace access.');
-            return;
-        }
-        if (workflow !== 'new' && workflow.active_run_id) {
-            setOptionsError('This workflow has an active run. Cancel it or wait for it to finish before editing.');
-            return;
-        }
-        setOptionsLoading(true);
-        setOptionsError('');
-        try {
-            setOptions(await fetchWorkflowEditorOptions(scope));
-            setEditing(workflow);
-        } catch (cause) {
-            setOptionsError(workflowErrorMessage(cause, 'Could not load workflow editor options.'));
-        } finally {
-            setOptionsLoading(false);
-        }
-    }, [scopeKey, interactionDisabled, canCreate]);
+    // The detail pane always has something to show while the list does: the first workflow until
+    // another is chosen, and the next one along when the selected workflow is filtered out or deleted.
+    useEffect(() => {
+        if (loading) return;
+        if (selectedId && visible.some((workflow) => workflow.id === selectedId)) return;
+        setSelectedId(visible.find((workflow) => workflow.id)?.id ?? null);
+    }, [loading, visible, selectedId]);
 
-    // Ask AI offers this after the saved workflow changed while the editor was open. It discards
-    // the draft and opens the saved version; a failure leaves the editor as it was.
-    const reloadEditing = async () => {
-        if (!editing || editing === 'new' || !editing.id) return;
-        const workflowId = editing.id;
-        const request = ++editorRequest.current;
-        const [workflows, freshOptions] = await Promise.all([
-            fetchScopedWorkflows(scope),
-            fetchWorkflowEditorOptions(scope),
-        ]);
-        if (request !== editorRequest.current) return;
-        setItems(workflows);
-        setOptions(freshOptions);
-        const fresh = workflows.find((item) => item.id === workflowId);
-        if (!fresh || fresh.active_run_id) {
-            setEditing(null);
-            setEditorDirty(false);
-            setOptionsError(fresh
-                ? 'This workflow has an active run. Cancel it or wait for it to finish before editing.'
-                : 'This workflow was deleted, so it could not be reloaded.');
-            return;
-        }
-        setEditorDirty(false);
-        setEditing(fresh);
-        setEditorInstance((count) => count + 1);
-    };
-
-    // Each navigation that names a workflow is acted on once: a document's provenance link, or a
-    // workflow alert's Open workflow while this list is already open. The router gives every
-    // navigation its own key, so following the same link again acts again, and nothing else that
-    // changes here (the list refreshing after a run, say) acts on a link already handled.
     useEffect(() => {
         const navigation = `${scopeKey}:${location.key}`;
         if (handledNavigation.current === navigation) {
@@ -195,7 +176,7 @@ export function WorkflowsSection({
             handledNavigation.current = navigation;
             return;
         }
-        if (loading || editing || optionsLoading) {
+        if (loading) {
             return;
         }
         const workflow = items.find((item) => item.id === link.workflowId);
@@ -209,55 +190,54 @@ export function WorkflowsSection({
         if (!workflow) {
             return;
         }
+        // A filter left on from earlier must not hide the workflow the link came for.
+        if (!filterWorkflows([workflow], filters).length) {
+            setFilters(DEFAULT_WORKFLOW_WORKBENCH_FILTERS);
+        }
+        setSelectedId(link.workflowId);
         if (link.runId) {
-            // A run link opens the run history, not the editor.
             setLinkedRun({ scopeKey, workflowId: link.workflowId, runId: link.runId, navigation });
-            setExpandedId(link.workflowId);
+            setTab('runs');
         } else {
-            void openEditor(workflow);
+            setTab('overview');
         }
-    }, [editing, items, loading, location.key, location.search, openEditor, optionsLoading, refresh, scopeKey]);
+        setFocusRequest((count) => count + 1);
+    }, [filters, items, loading, location.key, location.search, refresh, scopeKey]);
 
-    const runAction = async (
-        workflow: WorkflowDefinition,
-        action: (id: string) => Promise<unknown>,
-        failure: string,
-    ) => {
-        if (interactionDisabled || !canCancel) {
-            setError('You cannot change workflows with the current workspace access.');
-            return;
-        }
-        if (!workflow.id) {
-            setError('This workflow has no stable identifier. Reload before trying again.');
-            return;
-        }
-        setBusyId(workflow.id);
-        setError(null);
-        try {
-            await action(workflow.id);
-            await refresh();
-        } catch (actionError) {
-            setExpandedId(workflow.id);
-            await refresh();
-            setError(errorMessage(actionError, failure));
-        } finally {
-            setHistoryRefreshToken((value) => value + 1);
-            setBusyId(null);
-        }
-    };
+    useEffect(() => {
+        if (!focusRequest) return;
+        const frame = requestAnimationFrame(() => detailHeadingRef.current?.focus());
+        return () => cancelAnimationFrame(frame);
+    }, [focusRequest]);
+
+    useEffect(() => {
+        if (!revealRequest) return;
+        const heading = detailHeadingRef.current;
+        if (!heading) return;
+        // Beside the list the detail is already in sight; stacked under it, it opened out of sight.
+        const rect = heading.getBoundingClientRect();
+        if (rect.top >= 0 && rect.bottom <= window.innerHeight) return;
+        const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        heading.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+    }, [revealRequest]);
+
+    const setFilter = <K extends keyof WorkflowWorkbenchFilters>(key: K, value: WorkflowWorkbenchFilters[K]) =>
+        setFilters((current) => ({ ...current, [key]: value }));
+
+    const reportError = (workflowId: string, message: string) => setActionError({ workflowId, message });
 
     const onRun = async (workflow: WorkflowDefinition) => {
-        if (interactionDisabled || !canRun) {
-            setError('You cannot run workflows with the current workspace access.');
-            return;
-        }
         if (!workflow.id) {
             setError('This workflow has no stable identifier. Reload before trying again.');
             return;
         }
+        if (interactionDisabled || !canRun) {
+            reportError(workflow.id, 'You cannot run workflows with the current workspace access.');
+            return;
+        }
         setBusyId(workflow.id);
-        setError(null);
-        setExpandedId(workflow.id);
+        setActionError(null);
+        setTab('runs');
         try {
             const response: WorkflowRunStartResponse = await startScopedWorkflowRun(scope, workflow.id);
             const nextWorkflow = response.workflow
@@ -271,10 +251,32 @@ export function WorkflowsSection({
                     : workflow;
             setItems(items.map((item) => item.id === workflow.id ? nextWorkflow : item));
             await refresh();
-        } catch (actionError) {
-            setExpandedId(workflow.id);
+        } catch (actionFailure) {
             await refresh();
-            setError(errorMessage(actionError, 'Could not start the workflow.'));
+            reportError(workflow.id, errorMessage(actionFailure, 'Could not start the workflow.'));
+        } finally {
+            setHistoryRefreshToken((value) => value + 1);
+            setBusyId(null);
+        }
+    };
+
+    const onCancel = async (workflow: WorkflowDefinition) => {
+        if (!workflow.id) {
+            setError('This workflow has no stable identifier. Reload before trying again.');
+            return;
+        }
+        if (interactionDisabled || !canCancel) {
+            reportError(workflow.id, 'You cannot change workflows with the current workspace access.');
+            return;
+        }
+        setBusyId(workflow.id);
+        setActionError(null);
+        try {
+            await cancelScopedWorkflow(scope, workflow.id);
+            await refresh();
+        } catch (actionFailure) {
+            await refresh();
+            reportError(workflow.id, errorMessage(actionFailure, 'Could not cancel the workflow.'));
         } finally {
             setHistoryRefreshToken((value) => value + 1);
             setBusyId(null);
@@ -283,7 +285,7 @@ export function WorkflowsSection({
 
     const onDelete = async (workflow: WorkflowDefinition) => {
         if (interactionDisabled || !canDelete) {
-            setError('You cannot delete workflows with the current workspace access.');
+            if (workflow.id) reportError(workflow.id, 'You cannot delete workflows with the current workspace access.');
             return;
         }
         const previous = items;
@@ -291,207 +293,240 @@ export function WorkflowsSection({
             return;
         }
         setBusyId(workflow.id);
+        setActionError(null);
         setItems(items.filter((item) => item.id !== workflow.id));
         try {
             await deleteScopedWorkflow(scope, workflow.id);
         } catch (deleteError) {
             setItems(previous);
+            setSelectedId(workflow.id);
             setError(errorMessage(deleteError, 'Could not delete the workflow.'));
         } finally {
             setBusyId(null);
         }
     };
 
+    const openEditor = (workflow: WorkflowDefinition | null) => {
+        if (workflow && !workflow.id) {
+            setError('This workflow has no stable identifier. Reload before trying again.');
+            return;
+        }
+        navigate(workflowEditorHref(scope, workflow?.id ?? null));
+    };
+
+    const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            return;
+        }
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-workflow-row]'));
+        if (!buttons.length) {
+            return;
+        }
+        event.preventDefault();
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === 'Home' ? 0
+            : event.key === 'End' ? buttons.length - 1
+                : event.key === 'ArrowDown' ? Math.min(buttons.length - 1, index + 1)
+                    : Math.max(0, index - 1);
+        buttons[next]?.focus();
+    };
+
+    const tabStopId =
+        (focusedRowId && visible.some((workflow) => workflow.id === focusedRowId) && focusedRowId) ||
+        (selectedId && visible.some((workflow) => workflow.id === selectedId) && selectedId) ||
+        visible.find((workflow) => workflow.id)?.id;
+
+    const clearFilters = () => setFilters(DEFAULT_WORKFLOW_WORKBENCH_FILTERS);
+    const showWorkbench = !loadFailed && (loading || items.length > 0);
+
     return (
-        <fieldset disabled={interactionDisabled} className="min-w-0 space-y-4">
+        <fieldset disabled={interactionDisabled} className="@container flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <legend className="sr-only">Workspace workflows</legend>
-            <SectionIntro
-                title="Workflows"
-                description="Repeatable tasks that run on their own, using a model or one of your agents. A workflow can run on a schedule or whenever you start it."
-                actions={canCreate ?
-                    <GlassCreateButton
-                        busy={optionsLoading}
-                        onClick={() => void openEditor('new')}
-                    /> : undefined}
-            />
-
-            <p className="text-xs text-text-3">
-                Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows, and for their alerts. Publication settings from existing workflows are preserved unchanged.
-            </p>
-            {scope.type === 'group' ? (
-                <p className="text-xs text-text-3">Workflow requests stay scoped to this group, even if your active workspace changes elsewhere.</p>
-            ) : null}
-            {optionsError ? <p role="alert" className="text-sm text-danger">{optionsError}</p> : null}
-
-            <SectionSearch value={query} onChange={setQuery} placeholder="Search workflows" />
-
-            <SectionList
-                items={visible}
-                loading={loading}
-                error={error}
-                loadFailed={loadFailed}
-                onRetry={() => void refresh()}
-                retryLabel="Retry workflows"
-                emptyIcon={<Workflow size={28} />}
-                emptyTitle={
-                    items.length === 0 ? 'No workflows yet' : 'No workflows match your search'
-                }
-                emptyDescription={
-                    items.length === 0
-                        ? 'A workflow repeats a task you would otherwise run by hand.'
-                        : undefined
-                }
-                emptyAction={canCreate ? <GlassCreateButton busy={optionsLoading} onClick={() => void openEditor('new')} /> : undefined}
-                getKey={(workflow, index) => String(workflow.id ?? index)}
-                renderItem={(workflow) => {
-                    const running = Boolean(workflow.active_run_id);
-                    const workflowId = workflow.id ?? '';
-                    const expanded = expandedId === workflowId;
-                    const linked = linkedRun?.scopeKey === scopeKey && linkedRun.workflowId === workflowId ? linkedRun : null;
-                    const description = String(workflow.description ?? '');
-                    const scheduleLabel = workflowScheduleLabel(workflow.trigger_type, workflow.schedule);
-                    return (
-                        <div>
-                            <ResourceRow
-                                icon={<Workflow size={17} />}
-                                title={String(workflow.name ?? 'Untitled workflow')}
-                                subtitle={scheduleLabel ? (
-                                    <>
-                                        {description ? <span className="block truncate">{description}</span> : null}
-                                        <span className="block truncate">Schedule: {scheduleLabel}</span>
-                                    </>
-                                ) : description}
-                                meta={
-                                    workflow.status ? (
-                                        <Pill tone={statusTone(workflow.status)}>
-                                            {String(workflow.status)}
-                                        </Pill>
-                                    ) : undefined
-                                }
-                                actions={
-                                    <>
-                                        {workflow.definition_version === 3 ? <RowAction
-                                            icon={<GitBranch size={15} />}
-                                            label={`View Flow for ${workflow.name || 'workflow'}`}
-                                            disabled={!workflowId}
-                                            onClick={() => setViewingFlow({ workflowId, scopeKey })}
-                                        /> : null}
-                                        <RowAction
-                                            icon={<Edit3 size={15} />}
-                                            label={!canEdit ? `View ${workflow.name || 'workflow'}` : running ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing` : `Edit ${workflow.name || 'workflow'}`}
-                                            disabled={optionsLoading || running}
-                                            busy={optionsLoading && editing === workflow}
-                                            onClick={() => void openEditor(workflow)}
-                                        />
-                                        <RowAction
-                                            icon={
-                                                expanded ? (
-                                                    <ChevronDown size={15} />
-                                                ) : (
-                                                    <ChevronRight size={15} />
-                                                )
-                                            }
-                                            label={
-                                                expanded
-                                                    ? 'Hide run history'
-                                                    : 'Show run history'
-                                            }
-                                            onClick={() =>
-                                                setExpandedId(expanded ? null : workflowId)
-                                            }
-                                            disabled={!workflowId}
-                                        />
-                                        {running ? (canCancel ? (
-                                            <RowAction
-                                                icon={<Ban size={15} />}
-                                                label={`Cancel ${workflow.name ?? 'workflow'}`}
-                                                busy={busyId === workflow.id}
-                                                onClick={() =>
-                                                    void runAction(
-                                                        workflow,
-                                                        (id) => cancelScopedWorkflow(scope, id),
-                                                        'Could not cancel the workflow.',
-                                                    )
-                                                }
-                                            />
-                                        ) : null) : canRun ? (
-                                            <RowAction
-                                                icon={<Play size={15} />}
-                                                label={`Run ${workflow.name ?? 'workflow'}`}
-                                                busy={busyId === workflow.id}
-                                                onClick={() => void onRun(workflow)}
-                                            />
-                                        ) : null}
-                                        {canDelete ? <ConfirmAction
-                                            icon={<Trash2 size={15} />}
-                                            label={`Delete ${workflow.name ?? 'workflow'}`}
-                                            confirmLabel="Delete"
-                                            busy={busyId === workflow.id}
-                                            onConfirm={() => void onDelete(workflow)}
-                                        /> : null}
-                                    </>
-                                }
-                            />
-                            {expanded && workflowId ? (
-                                <WorkflowRunHistory
-                                    // Following a run link again remounts the history: a fresh read,
-                                    // with the run expanded again even if it was collapsed since.
-                                    key={`${scopeKey}:${workflowId}:${linked?.navigation ?? ''}`}
-                                    scope={scope}
-                                    workflowId={workflowId}
-                                    refreshToken={historyRefreshToken}
-                                    initialRunId={linked?.runId ?? null}
-                                    onWorkflowRefresh={() => void refresh()}
-                                />
-                            ) : null}
+            <div className="shrink-0 space-y-3">
+                <SectionIntro
+                    title="Workflows"
+                    description="Repeatable tasks that run on their own, using a model or one of your agents. A workflow can run on a schedule or whenever you start it."
+                    actions={canCreate ? <CreateWorkflowButton onClick={() => openEditor(null)} /> : undefined}
+                />
+                <p className="max-w-[72ch] text-xs leading-relaxed text-text-3">
+                    Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows, and for their alerts. Publication settings from existing workflows are preserved unchanged.
+                    {scope.type === 'group' ? ' Workflow requests stay scoped to this group, even if your active workspace changes elsewhere.' : ''}
+                </p>
+                {location.state?.workspaceEditorSaved === true ? (
+                    <p role="status" className="inline-flex items-center gap-1.5 text-xs text-text-2">
+                        <CircleCheck size={13} aria-hidden="true" className="shrink-0 text-ok" />
+                        Workflow saved.
+                    </p>
+                ) : null}
+                {error ? (
+                    <SectionError
+                        message={error}
+                        action={loadFailed ? (
+                            <GlassButton size="sm" disabled={loading} onClick={() => void refresh()}>Retry workflows</GlassButton>
+                        ) : undefined}
+                    />
+                ) : null}
+                {showWorkbench ? (
+                    <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                            <div className="min-w-[min(100%,16rem)] flex-1">
+                                <SectionSearch value={filters.query} onChange={(query) => setFilter('query', query)} placeholder="Search workflows" />
+                            </div>
+                            <FilterSelect<WorkflowStatusFilter> label="Status" value={filters.status}
+                                options={WORKFLOW_STATUS_FILTER_LABELS} onChange={(value) => setFilter('status', value)} />
+                            <FilterSelect<WorkflowTriggerFilter> label="Trigger" value={filters.trigger}
+                                options={WORKFLOW_TRIGGER_FILTER_LABELS} onChange={(value) => setFilter('trigger', value)} />
                         </div>
-                    );
-                }}
-            />
-            {viewingFlow?.scopeKey === scopeKey ? <WorkflowFlowDialog
-                key={`${scopeKey}:${viewingFlow.workflowId}`} scope={scope} workflowId={viewingFlow.workflowId}
-                onClose={() => setViewingFlow(null)} /> : null}
-            {editing && options ? (
-                <WorkflowEditorDialog
-                    key={`${scopeKey}:${editing === 'new' ? 'new' : editing.id}:${editorInstance}`}
-                    scope={scope}
-                    workflow={editing === 'new' ? null : editing}
-                    options={{ ...options, can_manage: options.can_manage && (editing === 'new' ? canCreate : canEdit) }}
-                    interactionDisabled={interactionDisabled}
-                    onBusyChange={setEditorSaving}
-                    onDirtyChange={setEditorDirty}
-                    onReload={editing === 'new' ? undefined : reloadEditing}
-                    onClose={() => {
-                        editorRequest.current += 1;
-                        setEditing(null);
-                        setEditorDirty(false);
-                    }}
-                    onSaved={(workflow) => {
-                        editorRequest.current += 1;
-                        const index = items.findIndex((item) => item.id === workflow.id);
-                        setItems(index < 0
-                            ? [workflow, ...items]
-                            : items.map((item, itemIndex) => itemIndex === index ? workflow : item));
-                        setEditing(null);
-                        setEditorDirty(false);
-                        void refresh();
-                    }}
+                        {!loading ? (
+                            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-3">
+                                <span>
+                                    <span className="font-semibold text-text-1 tabular-nums">{visible.length}</span>
+                                    {' of '}
+                                    <span className="tabular-nums">{items.length}</span>
+                                    {items.length === 1 ? ' workflow' : ' workflows'}
+                                </span>
+                                {attention ? (
+                                    <span className="inline-flex items-center gap-1 text-text-2">
+                                        <AlertTriangle size={12} aria-hidden="true" className="text-warn" />
+                                        {attention} {attention === 1 ? 'needs' : 'need'} attention
+                                    </span>
+                                ) : null}
+                                {filtersApplied ? (
+                                    <button type="button" className="text-accent underline underline-offset-2" onClick={clearFilters}>
+                                        Clear filters ({filtersApplied})
+                                    </button>
+                                ) : null}
+                            </p>
+                        ) : null}
+                    </div>
+                ) : null}
+            </div>
+
+            {!loading && !loadFailed && items.length === 0 ? (
+                <EmptyState
+                    icon={<Workflow size={28} />}
+                    title="No workflows yet"
+                    description="A workflow repeats a task you would otherwise run by hand."
+                    action={canCreate ? <CreateWorkflowButton onClick={() => openEditor(null)} /> : undefined}
                 />
             ) : null}
-        </fieldset>
-    );
-}
 
-function GlassCreateButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            disabled={busy}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-accent px-3 text-sm font-medium text-on-accent shadow-sm transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-            <Plus size={14} />
-            {busy ? 'Loading…' : 'Create workflow'}
-        </button>
+            {showWorkbench ? (
+                <div className="min-h-0 flex-1 overflow-y-auto @3xl:overflow-hidden">
+                    <div className="grid min-w-0 overflow-hidden rounded-xl border border-edge-strong bg-surface-solid @3xl:h-full @3xl:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
+                        <div className="max-h-[24rem] min-h-0 overflow-y-auto border-b border-edge-strong @3xl:max-h-none @3xl:border-r @3xl:border-b-0">
+                            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-edge-strong bg-surface-solid px-3 py-2 text-xs font-semibold text-text-2">
+                                <span>Workflow</span>
+                                <span>Status</span>
+                            </div>
+                            {loading && !items.length ? (
+                                <div role="status" className="space-y-2 p-3">
+                                    <span className="sr-only">Loading workflows</span>
+                                    {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-10 w-full" />)}
+                                </div>
+                            ) : visible.length ? (
+                                <ul aria-label="Workflows" onKeyDown={onListKeyDown}>
+                                    {visible.map((workflow, index) => {
+                                        const workflowId = workflow.id ?? '';
+                                        const isSelected = Boolean(workflowId) && workflowId === selectedId;
+                                        const metaId = `${baseId}-row-${index}`;
+                                        const name = String(workflow.name ?? '') || 'Untitled workflow';
+                                        return (
+                                            <li key={workflowId || `index-${index}`}>
+                                                <button
+                                                    type="button"
+                                                    data-workflow-row
+                                                    aria-pressed={isSelected}
+                                                    aria-label={name}
+                                                    aria-describedby={metaId}
+                                                    disabled={!workflowId}
+                                                    title={workflowId ? undefined : 'This workflow has no stable identifier. Reload before trying again.'}
+                                                    tabIndex={workflowId && workflowId === tabStopId ? 0 : -1}
+                                                    onFocus={() => setFocusedRowId(workflowId)}
+                                                    onClick={() => {
+                                                        setSelectedId(workflowId);
+                                                        setRevealRequest((count) => count + 1);
+                                                    }}
+                                                    className={clsx(
+                                                        'flex w-full items-center gap-2.5 border-b border-edge px-3 py-2.5 text-left transition-colors',
+                                                        'disabled:cursor-not-allowed disabled:opacity-60',
+                                                        isSelected
+                                                            ? 'bg-accent-soft ring-1 ring-accent/40 ring-inset'
+                                                            : 'hover:bg-surface-sunken',
+                                                    )}
+                                                >
+                                                    {/* Wraps under the name while the list is stacked; beside the
+                                                        detail a row is one line, and the facts give way first. */}
+                                                    <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 @3xl:flex-nowrap">
+                                                        <span className={clsx(
+                                                            'min-w-0 truncate text-sm font-semibold',
+                                                            isSelected ? 'text-accent' : 'text-text-1',
+                                                        )}>
+                                                            {name}
+                                                        </span>
+                                                        <span id={metaId} className="min-w-0 shrink-[4] truncate text-xs text-text-3">
+                                                            {workflowRowMeta(workflow)}
+                                                        </span>
+                                                    </span>
+                                                    <span aria-hidden="true" className="inline-flex shrink-0">
+                                                        <WorkflowStatusChip workflow={workflow} compact />
+                                                    </span>
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            ) : (
+                                <div className="space-y-2 px-3 py-6">
+                                    <p className="text-sm font-medium text-text-1">
+                                        {workflowFiltersApplied(filters) ? 'No workflows match these filters' : 'No workflows match your search'}
+                                    </p>
+                                    <p className="text-[0.8125rem] leading-relaxed text-text-3">
+                                        Try another name or description, or clear the filters.
+                                    </p>
+                                    <GlassButton type="button" size="sm" variant="subtle" onClick={clearFilters}>Clear filters</GlassButton>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="@container min-h-0 min-w-0 @3xl:overflow-y-auto">
+                            {loading && !items.length ? (
+                                <div className="space-y-3 p-5" aria-hidden="true">
+                                    <Skeleton className="h-7 w-2/3" />
+                                    <Skeleton className="h-4 w-1/3" />
+                                    <Skeleton className="h-32 w-full" />
+                                </div>
+                            ) : selected ? (
+                                <WorkflowWorkbenchDetail
+                                    key={`${scopeKey}:${selected.id}`}
+                                    scope={scope}
+                                    workflow={selected}
+                                    tab={tab}
+                                    onTabChange={setTab}
+                                    headingRef={detailHeadingRef}
+                                    permissions={{ canRun, canCancel, canEdit, canDelete }}
+                                    busy={busyId === selected.id}
+                                    actionError={actionError && actionError.workflowId === selected.id ? actionError.message : null}
+                                    historyRefreshToken={historyRefreshToken}
+                                    linkedRun={linkedRun?.scopeKey === scopeKey && linkedRun.workflowId === selected.id ? linkedRun : null}
+                                    onRun={() => void onRun(selected)}
+                                    onCancel={() => void onCancel(selected)}
+                                    onEdit={() => openEditor(selected)}
+                                    onDelete={() => void onDelete(selected)}
+                                    onWorkflowRefresh={() => void refresh()}
+                                />
+                            ) : (
+                                <div className="flex h-full min-h-[12rem] flex-col items-center justify-center px-6 py-10 text-center">
+                                    <p className="text-sm font-medium text-text-1">No workflow selected</p>
+                                    <p className="mt-1 max-w-sm text-[0.8125rem] leading-relaxed text-text-3">
+                                        Select a workflow to see where it stands, run it, and read its runs.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+        </fieldset>
     );
 }

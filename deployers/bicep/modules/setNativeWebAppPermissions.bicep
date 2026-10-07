@@ -27,6 +27,9 @@ managed grants data access through an Azure Managed Redis access policy assignme
 ])
 param redisCacheKind string = 'managed'
 param contentSafetyName string
+param videoIndexerName string = ''
+@description('Role definition ID granted to the native web app identity on the Video Indexer account.')
+param videoIndexerAppRoleDefinitionId string = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 
 var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
 
@@ -75,6 +78,10 @@ resource managedRedisDatabase 'Microsoft.Cache/redisEnterprise/databases@2025-07
 
 resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
   name: contentSafetyName
+}
+
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2024-01-01' existing = if (videoIndexerName != '') {
+  name: videoIndexerName
 }
 
 // Use a new assignment name rather than changing the immutable Secrets User assignment.
@@ -227,6 +234,20 @@ resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       'a97b65f3-24c7-4388-baec-2e87135dc908'
+    )
+    principalId: webApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The native app calls Video Indexer generateAccessToken with its own managed identity, whatever authenticationType is.
+resource videoIndexerAppAccessRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '') {
+  name: guid(videoIndexerService.id, webApp.id, 'video-indexer-app-access', videoIndexerAppRoleDefinitionId)
+  scope: videoIndexerService
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      videoIndexerAppRoleDefinitionId
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'

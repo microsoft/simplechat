@@ -633,11 +633,13 @@ export function WorkflowEditorSidePanel({ id, tabs, className, selected: selecte
 }
 
 /** The footer button that opens and closes the side panel, with the number of unsaved changes. */
-export function WorkflowChangesToggle({ id, open, controls, onToggle }: {
+export function WorkflowChangesToggle({ id, open, controls, onToggle, labelAlwaysVisible = false }: {
     id: string;
     open: boolean;
     controls: string;
     onToggle: () => void;
+    /** Show the word at every width, where the toggles have a row of their own. */
+    labelAlwaysVisible?: boolean;
 }) {
     const tracking = useWorkflowChanges();
     if (!tracking) return null;
@@ -646,8 +648,8 @@ export function WorkflowChangesToggle({ id, open, controls, onToggle }: {
         <GlassButton id={id} type="button" className="mr-auto shrink-0" aria-label={`Changes (${count} unsaved)`}
             aria-expanded={open} aria-controls={open ? controls : undefined} onClick={onToggle}>
             {/* Below sm an icon stands in for the label so Cancel and Save stay on one line. */}
-            <FileDiff size={16} aria-hidden="true" className="sm:hidden" />
-            <span className="hidden sm:inline">Changes</span>
+            {labelAlwaysVisible ? null : <FileDiff size={16} aria-hidden="true" className="sm:hidden" />}
+            <span className={labelAlwaysVisible ? undefined : 'hidden sm:inline'}>Changes</span>
             {count ? (
                 <span aria-hidden="true" className="rounded-full bg-surface-2 px-2 text-xs font-semibold text-text-1">{count}</span>
             ) : null}

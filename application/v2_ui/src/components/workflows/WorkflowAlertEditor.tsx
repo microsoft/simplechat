@@ -2,9 +2,18 @@
 // Native alert authoring for personal and group workflows: when to alert, and the rules that decide it.
 
 import { useId } from 'react';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, BellRing, Plus, Trash2 } from 'lucide-react';
 import { GlassButton, Toggle } from '../ui/primitives';
+import { SectionCard } from '../ui/SectionCard';
 import { Pill } from '../workspace/primitives';
+import {
+    WorkflowCardHelp,
+    WorkflowField,
+    WorkflowFieldEmphasis,
+    WorkflowFieldList,
+    workflowFieldInputClass,
+    type WorkflowCardFrame,
+} from './WorkflowField';
 import {
     describeWorkflowAlertCondition,
     newWorkflowAlertRule,
@@ -167,15 +176,18 @@ function optionValue(value: unknown, allowed: readonly string[], fallback: strin
     return text && allowed.includes(text) ? text : fallback;
 }
 
-function Select({ label, value, options, onChange, disabled }: {
+function Select({ id, label, value, options, onChange, disabled, className }: {
+    id?: string;
     label: string;
     value: string;
     options: Option[];
     onChange: (value: string) => void;
     disabled?: boolean;
+    /** Replaces the rule-row field styling, for a select drawn in a card's field row. */
+    className?: string;
 }) {
     return (
-        <select className={fieldClass} aria-label={label} value={value} disabled={disabled}
+        <select id={id} className={className ?? fieldClass} aria-label={label} value={value} disabled={disabled}
             onChange={(event) => onChange(event.target.value)}>
             {withCurrent(options, value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
@@ -508,10 +520,13 @@ function AlertRuleRow({
 export function WorkflowAlertEditor({
     workflow,
     scope,
+    card,
     onChange,
 }: {
     workflow: WorkflowDefinition;
     scope: WorkflowScope;
+    /** The Alerts card's place in the editor and how it reads at a glance. */
+    card: WorkflowCardFrame;
     onChange: (update: (workflow: WorkflowDefinition) => WorkflowDefinition) => void;
 }) {
     const titleId = useId();
@@ -548,80 +563,86 @@ export function WorkflowAlertEditor({
         return key;
     });
     const atLimit = rules.length >= WORKFLOW_ALERT_MAX_RULES;
+    const leadsSettings = mode === 'every_run' || mode === 'rules' || rules.length > 0 || usesModel;
 
     return (
-        <section aria-labelledby={titleId} className="space-y-4 rounded-2xl border border-edge p-4">
-            <div>
-                <h3 id={titleId} className="text-base font-semibold text-text-1">Alerts</h3>
-                <p className="mt-0.5 max-w-prose text-xs text-text-3">
-                    Alerts notify you when a run meets a condition you define. A run that matches nothing stays silent.
-                </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-                <label className="min-w-0 text-sm text-text-2">
-                    When to alert
-                    <Select label="When to alert" value={mode} options={MODE_OPTIONS}
+        <SectionCard id={card.id} title="Alerts" icon={BellRing} status={card.status} meta={card.meta}
+            headingLevel={card.headingLevel}>
+            <WorkflowCardHelp>
+                Alerts notify you when a run meets a condition you define. A run that matches nothing stays silent.
+            </WorkflowCardHelp>
+            <WorkflowFieldList>
+                <WorkflowField label="When to alert" htmlFor={`${titleId}-mode`} width="standard">
+                    <Select id={`${titleId}-mode`} label="When to alert" value={mode} options={MODE_OPTIONS}
+                        className={workflowFieldInputClass}
                         onChange={(next) => edit((settings) => ({ ...settings, alert_mode: next }))} />
-                </label>
-                {mode === 'every_run' ? (
-                    <label className="min-w-0 text-sm text-text-2">
-                        Pop-up alert priority
-                        <Select label="Pop-up alert priority" value={priority} options={PRIORITY_OPTIONS}
-                            onChange={(next) => edit((settings) => ({ ...settings, alert_priority: next }))} />
-                    </label>
-                ) : null}
-            </div>
-            {mode === 'rules' || rules.length ? (
-                <div className="space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h4 className="text-sm font-semibold text-text-1">Alert rules</h4>
-                        {mode === 'rules' ? (
-                            <GlassButton type="button" size="sm" disabled={atLimit}
-                                onClick={() => editRules((current) => [...current, newWorkflowAlertRule()])}>
-                                <Plus size={14} /> Add alert rule
-                            </GlassButton>
+                </WorkflowField>
+            </WorkflowFieldList>
+            {leadsSettings ? (
+                <WorkflowFieldEmphasis emphasis="dependent">
+                    <WorkflowFieldList>
+                        {mode === 'every_run' ? (
+                            <WorkflowField label="Pop-up alert priority" htmlFor={`${titleId}-priority`} width="standard">
+                                <Select id={`${titleId}-priority`} label="Pop-up alert priority" value={priority}
+                                    options={PRIORITY_OPTIONS} className={workflowFieldInputClass}
+                                    onChange={(next) => edit((settings) => ({ ...settings, alert_priority: next }))} />
+                            </WorkflowField>
                         ) : null}
-                    </div>
-                    {mode !== 'rules' ? (
-                        <p className="max-w-prose text-xs text-text-3">
-                            These saved rules send alerts only when you choose “Only when a condition is met”. They are kept, and still checked, when you save.
-                        </p>
-                    ) : null}
-                    {mode === 'rules' && !rules.length ? (
-                        <p className="text-sm text-text-3">No alert rules yet. Add a rule to choose what should notify you.</p>
-                    ) : null}
-                    {mode === 'rules' && atLimit ? (
-                        <p role="status" className="text-xs text-text-3">A workflow can have up to {WORKFLOW_ALERT_MAX_RULES} alert rules.</p>
-                    ) : null}
-                    {rules.length ? (
-                        <ol aria-label="Alert rules" className="list-none space-y-4">
-                            {rules.map((rule, index) => (
-                                <AlertRuleRow key={ruleKeys[index]}
-                                    rule={rule} position={index + 1} count={rules.length} tasks={tasks}
-                                    error={errors.get(index + 1)} workflowScope={workflowScope} soundsEnabled={soundsEnabled}
-                                    onChange={(next) => editRules((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
-                                    onMove={(direction) => moveRule(index, direction)}
-                                    onRemove={() => editRules((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
-                            ))}
-                        </ol>
-                    ) : null}
-                    {mode === 'rules' && rules.length ? (
-                        <p className="max-w-prose text-xs text-text-3">
-                            When several rules match the same run, the highest severity wins and every matched rule is listed in the alert.
-                            Info and low severities go to the notification bell only. Medium and above open the pop-up alert.
-                        </p>
-                    ) : null}
-                </div>
+                        {mode === 'rules' || rules.length ? (
+                            <div className="space-y-3 py-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <h4 className="text-sm font-semibold text-text-1">Alert rules</h4>
+                                    {mode === 'rules' ? (
+                                        <GlassButton type="button" size="sm" disabled={atLimit}
+                                            onClick={() => editRules((current) => [...current, newWorkflowAlertRule()])}>
+                                            <Plus size={14} /> Add alert rule
+                                        </GlassButton>
+                                    ) : null}
+                                </div>
+                                {mode !== 'rules' ? (
+                                    <p className="max-w-prose text-xs text-text-3">
+                                        These saved rules send alerts only when you choose “Only when a condition is met”. They are kept, and still checked, when you save.
+                                    </p>
+                                ) : null}
+                                {mode === 'rules' && !rules.length ? (
+                                    <p className="text-sm text-text-3">No alert rules yet. Add a rule to choose what should notify you.</p>
+                                ) : null}
+                                {mode === 'rules' && atLimit ? (
+                                    <p role="status" className="text-xs text-text-3">A workflow can have up to {WORKFLOW_ALERT_MAX_RULES} alert rules.</p>
+                                ) : null}
+                                {rules.length ? (
+                                    <ol aria-label="Alert rules" className="list-none space-y-4">
+                                        {rules.map((rule, index) => (
+                                            <AlertRuleRow key={ruleKeys[index]}
+                                                rule={rule} position={index + 1} count={rules.length} tasks={tasks}
+                                                error={errors.get(index + 1)} workflowScope={workflowScope} soundsEnabled={soundsEnabled}
+                                                onChange={(next) => editRules((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
+                                                onMove={(direction) => moveRule(index, direction)}
+                                                onRemove={() => editRules((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
+                                        ))}
+                                    </ol>
+                                ) : null}
+                                {mode === 'rules' && rules.length ? (
+                                    <p className="max-w-prose text-xs text-text-3">
+                                        When several rules match the same run, the highest severity wins and every matched rule is listed in the alert.
+                                        Info and low severities go to the notification bell only. Medium and above open the pop-up alert.
+                                    </p>
+                                ) : null}
+                            </div>
+                        ) : null}
+                        {usesModel ? (
+                            <WorkflowField label="If a model evaluated condition cannot be judged" htmlFor={`${titleId}-on-error`}
+                                width="standard">
+                                <Select id={`${titleId}-on-error`} label="If a model evaluated condition cannot be judged"
+                                    value={onError} options={ON_ERROR_OPTIONS} className={workflowFieldInputClass}
+                                    onChange={(next) => edit((settings) => ({
+                                        ...settings, alert_evaluation: { ...record(settings.alert_evaluation), on_error: next },
+                                    }))} />
+                            </WorkflowField>
+                        ) : null}
+                    </WorkflowFieldList>
+                </WorkflowFieldEmphasis>
             ) : null}
-            {usesModel ? (
-                <label className="block max-w-md text-sm text-text-2">
-                    If a model evaluated condition cannot be judged
-                    <Select label="If a model evaluated condition cannot be judged" value={onError} options={ON_ERROR_OPTIONS}
-                        onChange={(next) => edit((settings) => ({
-                            ...settings, alert_evaluation: { ...record(settings.alert_evaluation), on_error: next },
-                        }))} />
-                </label>
-            ) : null}
-        </section>
+        </SectionCard>
     );
 }

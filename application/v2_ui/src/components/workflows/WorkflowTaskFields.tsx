@@ -1,15 +1,17 @@
 // WorkflowTaskFields.tsx
 // Shared task fields and runner pickers for native workflow authoring.
 
-import { useState } from 'react';
-import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react';
-import { GlassButton, GlassPanel, Toggle } from '../ui/primitives';
+import { useId, useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronRight, Sparkles, Trash2 } from 'lucide-react';
+import { GlassButton, Toggle } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
 import { WorkflowChangedField, WorkflowItemChangeBadge } from './WorkflowChangeTracking';
+import { WorkflowField, WorkflowFieldList, WorkflowSwitch, workflowFieldInputClass } from './WorkflowField';
 import { workflowTaskKey } from '../../lib/workflowChangeTracking';
+import { workflowTaskValidationErrors } from '../../lib/workflowEditorSections';
 import {
     defaultFlowPredicate,
     enclosingFlowLoopControls,
@@ -73,10 +75,6 @@ const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 
 const textareaClass = `${inputClass} min-h-24`;
 const outputOptions: WorkflowInputOutput[] = ['authoritative', 'text', 'records', 'json', 'documents'];
 
-function fieldLabel(name: string, required = false) {
-    return `${name}${required ? ' *' : ''}`;
-}
-
 function taskInputMode(task: WorkflowTask): 'auto' | 'none' | 'custom' {
     if (task.inputs == null) {
         return 'auto';
@@ -98,33 +96,11 @@ function runnerLabel(runner: WorkflowTaskRunner): string {
     return runner.type === 'agent' ? 'Specific agent' : 'Specific model';
 }
 
-function taskValidationErrors(
-    task: WorkflowTask,
-    index: number,
-    tasks: WorkflowTask[],
-    workflow: WorkflowDefinition,
-): string[] {
-    const errors: string[] = [];
-    const indexes = new Map(tasks.map((item, position) => [item.id, position]));
-    for (const input of task.inputs ?? []) {
-        if (workflow.definition_version === 3 || !isLegacyWorkflowBinding(input)) continue;
-        const producer = indexes.get(input.task_id);
-        if (producer === undefined) {
-            errors.push(`${input.name || 'Input'} points to a missing task.`);
-        } else if (producer >= index) {
-            errors.push(`${input.name || 'Input'} points to a later task.`);
-        }
-    }
-    for (const referenceId of task.reference_ids ?? []) {
-        if (!workflow.reference_inputs.some((reference) => reference.id === referenceId)) {
-            errors.push('This task references a removed shared document.');
-        }
-    }
-    if (task.instructions.length > WORKFLOW_TASK_INSTRUCTIONS_LIMIT) {
-        errors.push('Instructions exceed the workflow authoring limit.');
-    }
-    return errors;
-}
+/**
+ * How a runner picker draws itself. `stacked` is a label above its select, for the task's own
+ * runner fields; `field` is a workflow editor row, label beside control, for the Basics card.
+ */
+type RunnerPickerVariant = 'stacked' | 'field';
 
 export function WorkflowAgentPicker({
     value,
@@ -132,32 +108,42 @@ export function WorkflowAgentPicker({
     onChange,
     label = 'Agent',
     localOnly = false,
+    variant = 'stacked',
 }: {
     value?: WorkflowAgentReference;
     options: WorkflowEditorOptions;
     onChange: (value: WorkflowAgentReference | undefined) => void;
     label?: string;
     localOnly?: boolean;
+    variant?: RunnerPickerVariant;
 }) {
+    const id = useId();
     const selectedKey = workflowAgentKey(value);
+    const select = (
+        <select
+            id={variant === 'field' ? id : undefined}
+            className={variant === 'field' ? workflowFieldInputClass : `${inputClass} mt-1`}
+            aria-label={label}
+            value={selectedKey}
+            onChange={(event) => onChange(findWorkflowAgent(options, event.target.value))}
+        >
+            <option value="">Select an agent</option>
+            {options.agents.map((agent) => (
+                <option key={workflowAgentKey(agent)} value={workflowAgentKey(agent)} disabled={localOnly && agent.loop_eligible !== true}>
+                    {agent.display_name || agent.name}
+                    {agent.is_global ? ' · Provided' : agent.is_group ? ' · Group' : ''}
+                    {localOnly && agent.loop_eligible !== true ? ' · unavailable for locally metered work' : ''}
+                </option>
+            ))}
+        </select>
+    );
+    if (variant === 'field') {
+        return <WorkflowField label={label} htmlFor={id} width="standard">{select}</WorkflowField>;
+    }
     return (
         <label className="text-sm text-text-2">
             {label}
-            <select
-                className={`${inputClass} mt-1`}
-                aria-label={label}
-                value={selectedKey}
-                onChange={(event) => onChange(findWorkflowAgent(options, event.target.value))}
-            >
-                <option value="">Select an agent</option>
-                {options.agents.map((agent) => (
-                    <option key={workflowAgentKey(agent)} value={workflowAgentKey(agent)} disabled={localOnly && agent.loop_eligible !== true}>
-                        {agent.display_name || agent.name}
-                        {agent.is_global ? ' · Provided' : agent.is_group ? ' · Group' : ''}
-                        {localOnly && agent.loop_eligible !== true ? ' · unavailable for locally metered work' : ''}
-                    </option>
-                ))}
-            </select>
+            {select}
         </label>
     );
 }
@@ -169,6 +155,7 @@ export function WorkflowModelPicker({
     onChange,
     label = 'Model',
     localOnly = false,
+    variant = 'stacked',
 }: {
     endpointId?: string;
     modelId?: string;
@@ -176,39 +163,49 @@ export function WorkflowModelPicker({
     onChange: (endpointId: string, modelId: string) => void;
     label?: string;
     localOnly?: boolean;
+    variant?: RunnerPickerVariant;
 }) {
+    const id = useId();
     const selected = options.models.findIndex((model) =>
         model.endpoint_id === (endpointId ?? '') && model.model_id === (modelId ?? ''));
     const selectedKey = selected >= 0 ? String(selected) : '';
     const defaultLabel = options.default_model?.label || 'App default model';
     const defaultInvalid = options.default_model?.valid === false;
+    const select = (
+        <select
+            id={variant === 'field' ? id : undefined}
+            className={variant === 'field' ? workflowFieldInputClass : `${inputClass} mt-1`}
+            aria-label={label}
+            value={selectedKey}
+            onChange={(event) => {
+                const model = options.models[Number(event.target.value)];
+                onChange(model?.endpoint_id ?? '', model?.model_id ?? '');
+            }}
+        >
+            <option value="" disabled={localOnly && options.default_model?.loop_eligible === false}>
+                {defaultInvalid || localOnly && options.default_model?.loop_eligible === false ? `${defaultLabel} · unavailable` : defaultLabel}
+            </option>
+            {options.models.map((model, index) => (
+                <option key={`${index}:${model.endpoint_id}:${model.model_id}`} value={String(index)} disabled={localOnly && model.loop_eligible === false}>
+                    {model.label} · {model.provider}
+                    {localOnly && model.loop_eligible === false ? ' · unavailable for locally metered work' : ''}
+                </option>
+            ))}
+        </select>
+    );
+    const warning = defaultInvalid && !endpointId && !modelId ? (
+        <span className="mt-1 block text-xs text-warn">
+            The default model is not valid here. Choose an explicit authorized model before saving.
+        </span>
+    ) : null;
+    if (variant === 'field') {
+        return <WorkflowField label={label} htmlFor={id} width="standard">{select}{warning}</WorkflowField>;
+    }
     return (
         <label className="text-sm text-text-2">
             {label}
-            <select
-                className={`${inputClass} mt-1`}
-                aria-label={label}
-                value={selectedKey}
-                onChange={(event) => {
-                    const model = options.models[Number(event.target.value)];
-                    onChange(model?.endpoint_id ?? '', model?.model_id ?? '');
-                }}
-            >
-                <option value="" disabled={localOnly && options.default_model?.loop_eligible === false}>
-                    {defaultInvalid || localOnly && options.default_model?.loop_eligible === false ? `${defaultLabel} · unavailable` : defaultLabel}
-                </option>
-                {options.models.map((model, index) => (
-                    <option key={`${index}:${model.endpoint_id}:${model.model_id}`} value={String(index)} disabled={localOnly && model.loop_eligible === false}>
-                        {model.label} · {model.provider}
-                        {localOnly && model.loop_eligible === false ? ' · unavailable for locally metered work' : ''}
-                    </option>
-                ))}
-            </select>
-            {defaultInvalid && !endpointId && !modelId ? (
-                <span className="mt-1 block text-xs text-warn">
-                    The default model is not valid here. Choose an explicit authorized model before saving.
-                </span>
-            ) : null}
+            {select}
+            {warning}
         </label>
     );
 }
@@ -316,22 +313,24 @@ function OutputContractFields({
                 onChange={(checked) => onChange({ ...contract, allow_partial: checked })}
                 description="Partial remains visible as partial in run inspection; it is not treated as a fully complete answer."
             />
-            <details className="rounded-xl border border-edge p-3">
-                <summary className="cursor-pointer text-sm font-medium text-text-1">Optional JSON schema</summary>
-                <p className="mt-2 text-xs text-text-3">
-                    The schema describes the entire final value. Passing schema validation
-                    does not prove the workflow result is factually correct. V2 accepts a
-                    bounded Draft 2020-12 subset up to {WORKFLOW_SCHEMA_LIMIT / 1024} KiB;
-                    $ref, pattern, allOf and oneOf are intentionally not supported.
-                </p>
-                <textarea
-                    className={`${textareaClass} mt-2 font-mono text-xs`}
-                    aria-label="Optional JSON schema"
-                    value={schema.value}
-                    onChange={(event) => updateSchema(event.target.value)}
-                    onBlur={() => updateSchema(schema.value)}
-                />
-                {schema.error ? <p role="alert" className="mt-1 text-xs text-danger">{schema.error}</p> : null}
+            <details className="workflow-disclosure">
+                <summary><ChevronRight size={14} aria-hidden="true" className="workflow-disclosure-chevron" />Optional JSON schema</summary>
+                <div className="workflow-disclosure-body">
+                    <p className="text-xs text-text-3">
+                        The schema describes the entire final value. Passing schema validation
+                        does not prove the workflow result is factually correct. V2 accepts a
+                        bounded Draft 2020-12 subset up to {WORKFLOW_SCHEMA_LIMIT / 1024} KiB;
+                        $ref, pattern, allOf and oneOf are intentionally not supported.
+                    </p>
+                    <textarea
+                        className={`${textareaClass} mt-2 font-mono text-xs`}
+                        aria-label="Optional JSON schema"
+                        value={schema.value}
+                        onChange={(event) => updateSchema(event.target.value)}
+                        onBlur={() => updateSchema(schema.value)}
+                    />
+                    {schema.error ? <p role="alert" className="mt-1 text-xs text-danger">{schema.error}</p> : null}
+                </div>
             </details>
         </div>
     );
@@ -1010,9 +1009,9 @@ function MergeActionFields({
                     </ol>
                 </div>
             ) : null}
-            <details className="rounded-xl border border-edge p-3">
-                <summary className="cursor-pointer text-sm font-medium text-text-1">More merge options</summary>
-                <div className="mt-3 space-y-3">
+            <details className="workflow-disclosure">
+                <summary><ChevronRight size={14} aria-hidden="true" className="workflow-disclosure-chevron" />More merge options</summary>
+                <div className="workflow-disclosure-body space-y-3">
                     {kind === 'tabular' ? (
                         <>
                             <label className="text-sm text-text-2">
@@ -1530,11 +1529,18 @@ export function WorkflowTaskFields({
     draftWithAi?: WorkflowTaskDraftWithAi;
 }) {
     const previousTasks = workflow.tasks.slice(0, index);
-    const errors = taskValidationErrors(task, index, workflow.tasks, workflow);
+    const errors = workflowTaskValidationErrors(task, index, workflow.tasks, workflow);
     const drafts = useWorkflowFieldDrafts();
     const draftOwner: WorkflowFieldDraftOwner = ['task', task.id];
     const taskLabel = task.name || `Task ${index + 1}`;
     const classicControls = !structuredNode && onMove && onRemove ? { onMove, onRemove } : null;
+    // A structured block already frames its task, so the task draws its own frame only in the
+    // ordered list, where it is the item. A second border inside the block would only nest.
+    const framed = !structuredNode;
+    const fieldIds = useId();
+    const nameId = `${fieldIds}-name`;
+    const instructionsId = `${fieldIds}-instructions`;
+    const instructionsCountId = `${fieldIds}-instructions-count`;
     const defaultOutputContract = (kind: WorkflowOutputKind): WorkflowOutputContract => ({
         kind,
         require_complete_coverage: false,
@@ -1542,12 +1548,16 @@ export function WorkflowTaskFields({
     });
 
     return (
-        <div data-workflow-history-kind="task" data-workflow-history-owner={task.id} data-workflow-change-item={workflowTaskKey(task.id)}>
-        <GlassPanel elevation="flat" className="space-y-4 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <p className="text-sm font-semibold text-text-1">{taskLabel}</p>
-                    <p className="text-xs text-text-3">
+        <div data-workflow-history-kind="task" data-workflow-history-owner={task.id} data-workflow-change-item={workflowTaskKey(task.id)}
+            className={framed
+                ? '@container min-w-0 rounded-xl border border-edge-strong bg-surface-solid'
+                : '@container min-w-0'}>
+            <div className={framed
+                ? 'flex flex-wrap items-start justify-between gap-3 rounded-t-xl border-b border-edge-strong bg-surface-sunken px-3 py-2.5 sm:px-4'
+                : 'flex flex-wrap items-start justify-between gap-3'}>
+                <div className="min-w-0 flex-1 basis-48">
+                    <p className="text-sm font-semibold break-words text-text-1">{taskLabel}</p>
+                    <p className="mt-0.5 text-xs text-text-3">
                         {runnerLabel(task.runner)} · {taskInputMode(task) === 'auto' ? 'automatic input' : `${task.inputs?.length ?? 0} bound inputs`}
                     </p>
                     <WorkflowItemChangeBadge itemKey={workflowTaskKey(task.id)} unframed={['placement']} className="mt-2" />
@@ -1572,41 +1582,43 @@ export function WorkflowTaskFields({
                     </> : null}
                 </div> : null}
             </div>
+            <div className={framed ? 'space-y-3 px-3 pb-3 sm:px-4' : 'space-y-3'}>
             {errors.length ? (
-                <div role="alert" className="rounded-xl bg-danger-soft p-3 text-sm text-danger">
-                    {errors.map((error) => <p key={error}>{error}</p>)}
+                <div role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/5 px-3 py-2 text-sm text-danger">
+                    <div>{errors.map((error) => <p key={error}>{error}</p>)}</div>
                 </div>
             ) : null}
-            <div className="grid gap-3 md:grid-cols-2">
+            <WorkflowFieldList>
                 <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'name')}>
-                <label className="text-sm text-text-2">
-                    {fieldLabel('Task name', true)}
-                    <input
-                        className={`${inputClass} mt-1`}
-                        aria-label="Task name"
-                        value={task.name}
-                        required
-                        onChange={(event) => onChange({ ...task, name: event.target.value })}
-                    />
-                </label>
+                    <WorkflowField label="Task name" required htmlFor={nameId} width="wide">
+                        <input
+                            id={nameId}
+                            className={workflowFieldInputClass}
+                            aria-label="Task name"
+                            value={task.name}
+                            required
+                            onChange={(event) => onChange({ ...task, name: event.target.value })}
+                        />
+                    </WorkflowField>
                 </WorkflowChangedField>
-            </div>
-            <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'instructions')}>
-            <label className="block text-sm text-text-2">
-                {fieldLabel('Instructions', true)}
-                <textarea
-                    className={`${textareaClass} mt-1`}
-                    maxLength={WORKFLOW_TASK_INSTRUCTIONS_LIMIT}
-                    aria-label="Instructions"
-                    value={task.instructions}
-                    required
-                    onChange={(event) => onChange({ ...task, instructions: event.target.value })}
-                />
-                <span className="mt-1 block text-xs text-text-3">
-                    {task.instructions.length.toLocaleString()} / {WORKFLOW_TASK_INSTRUCTIONS_LIMIT.toLocaleString()} characters
-                </span>
-            </label>
-            </WorkflowChangedField>
+                <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'instructions')}>
+                    <WorkflowField label="Instructions" required htmlFor={instructionsId} width="full">
+                        <textarea
+                            id={instructionsId}
+                            className={`${workflowFieldInputClass} min-h-28`}
+                            maxLength={WORKFLOW_TASK_INSTRUCTIONS_LIMIT}
+                            aria-label="Instructions"
+                            aria-describedby={instructionsCountId}
+                            value={task.instructions}
+                            required
+                            onChange={(event) => onChange({ ...task, instructions: event.target.value })}
+                        />
+                        <span id={instructionsCountId} className="mt-1 block text-xs text-text-3">
+                            {task.instructions.length.toLocaleString()} / {WORKFLOW_TASK_INSTRUCTIONS_LIMIT.toLocaleString()} characters
+                        </span>
+                    </WorkflowField>
+                </WorkflowChangedField>
+            </WorkflowFieldList>
             {draftWithAi && (!task.instructions.trim() || draftWithAi.message) ? (
                 <div className="flex flex-wrap items-center gap-2">
                     {!task.instructions.trim() ? (
@@ -1622,7 +1634,7 @@ export function WorkflowTaskFields({
             ) : null}
             {structuredNode && onStructuredNodeChange ? (
                 <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'run_when')} className="space-y-3">
-                    <Toggle label="Run when" checked={structuredNode.run_when !== undefined}
+                    <WorkflowSwitch label="Run when" checked={structuredNode.run_when !== undefined}
                         description="False intentionally skips this task before approval or execution. A skipped task produces no output."
                         onChange={(checked) => {
                             const next = { ...structuredNode };
@@ -1637,9 +1649,9 @@ export function WorkflowTaskFields({
                     ) : null}
                 </WorkflowChangedField>
             ) : null}
-            <details className="rounded-xl border border-edge p-3">
-                <summary className="cursor-pointer text-sm font-medium text-text-1">Runner, inputs, references and outputs</summary>
-                <div className="mt-4 space-y-5">
+            <details className="workflow-disclosure">
+                <summary><ChevronRight size={14} aria-hidden="true" className="workflow-disclosure-chevron" />Runner, inputs, references and outputs</summary>
+                <div className="workflow-disclosure-body space-y-5">
                     {structuredNode ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'publication')}>
                         <TaskPublicationFields task={task} options={options}
                         durableExecution={durableExecution} onChange={(next) => {
@@ -1732,7 +1744,7 @@ export function WorkflowTaskFields({
                     </WorkflowChangedField>
                 </div>
             </details>
-        </GlassPanel>
+            </div>
         </div>
     );
 }

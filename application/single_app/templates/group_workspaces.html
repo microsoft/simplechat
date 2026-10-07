@@ -6749,6 +6749,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       )
       .then((updatedDoc) => {
         if (docMetadataModal) docMetadataModal.hide();
+        if (updatedDoc?.search_sync?.status === "pending" && typeof window.showToast === "function") {
+          window.showToast("Metadata saved. Search and chat results will reflect the change once the search index finishes updating.", "info");
+        }
         fetchGroupDocuments(); // Refresh group documents list
         loadGroupWorkspaceTags(); // Refresh tag counts
       })

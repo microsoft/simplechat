@@ -6,8 +6,9 @@
 // served from it or falling back to the source, and is the Redis list cache hitting.
 //
 // The manual controls -- run one backfill batch, reset the checkpoint -- and the shadow
-// validation figures appear only in diagnostics mode, as on the server-rendered page, which
-// shows them only while `enable_dai_debug` is set in the settings document.
+// validation figures appear only in diagnostics mode: while Document Access Index
+// diagnostics (`enable_dai_debug`) is on under Operations > Debug Logging. The
+// server-rendered page shows them only while that flag is set.
 //
 // While a batch is running the status is re-read every few seconds, so the card shows the
 // batch finishing instead of a stale "Running".
@@ -181,7 +182,8 @@ export function DocumentAccessIndexPanel({ field, diagnostics }: { field: AdminF
                 <OpsMessage message={message ?? loadError} />
                 {diagnostics ? (
                     <OpsNote>
-                        Diagnostics are showing because enable_dai_debug is set in the settings document.
+                        Diagnostics are showing because Document Access Index diagnostics is on under
+                        Operations › Logging &amp; Health › Debug Logging.
                     </OpsNote>
                 ) : null}
 

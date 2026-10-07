@@ -67,7 +67,13 @@ export function agentDraftFromTemplate(template: AgentTemplate, actions: ActionC
     };
 }
 
-export function agentTemplateSubmission(draft: AgentConfiguration) {
+/**
+ * The template the gallery stores for a draft. `sourceScope` records where it came from: an
+ * administrator's global agent is a `global` submission, which the template service publishes
+ * straight to the approved gallery; personal and group agents submit as `personal`, as the classic
+ * workspaces do.
+ */
+export function agentTemplateSubmission(draft: AgentConfiguration, sourceScope: 'personal' | 'global' = 'personal') {
     return {
         template: {
             title: draft.display_name.trim(),
@@ -79,7 +85,7 @@ export function agentTemplateSubmission(draft: AgentConfiguration) {
             actions_to_load: draft.actions_to_load,
             tags: draft.tags ?? [],
             ...(draft.id ? { source_agent_id: draft.id } : {}),
-            source_scope: 'personal',
+            source_scope: sourceScope,
         },
     };
 }

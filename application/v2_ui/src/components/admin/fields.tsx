@@ -10,8 +10,8 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, Check, CheckCircle2, Info, KeyRound, Lock, RotateCcw } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { AlertCircle, Check, CheckCircle2, Info, KeyRound, LocateFixed, Lock, RotateCcw } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
     asBoolean,
     asNumber,
@@ -21,6 +21,12 @@ import {
     SECRET_PLACEHOLDER,
     type AdminField,
 } from '../../lib/adminFields';
+import {
+    formatUtcOffset,
+    isKnownTimeZone,
+    listTimeZones,
+    viewerTimeZone,
+} from '../../lib/adminOperations';
 import { Toggle } from '../ui/primitives';
 
 const inputClass = clsx(
@@ -147,9 +153,29 @@ export interface FieldControlProps {
 }
 
 function TextControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    if (field.input_type === 'timezone') {
+        return (
+            <TimezoneControl
+                field={field}
+                value={value}
+                error={error}
+                warning={warning}
+                disabled={disabled}
+                onChange={onChange}
+            />
+        );
+    }
+
     const id = `admin-field-${field.key}`;
+    const isTime = field.input_type === 'time';
     return (
-        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            width={isTime ? 'compact' : 'wide'}
+        >
             <input
                 id={id}
                 type={field.input_type ?? 'text'}
@@ -160,6 +186,67 @@ function TextControl({ field, value, error, warning, disabled, onChange }: Field
                 disabled={disabled}
                 onChange={(event) => onChange(event.target.value)}
             />
+        </FieldShell>
+    );
+}
+
+/**
+ * An IANA timezone, typed or picked from the zones this browser knows.
+ *
+ * A free list of four hundred names is unusable as a select, so this is a text box with
+ * suggestions, plus the one choice most administrators want: their own zone. The server
+ * validates the name on save, so a typo is reported rather than silently replaced.
+ */
+function TimezoneControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const listId = `${id}-zones`;
+    const zones = useMemo(() => listTimeZones(), []);
+    const viewerZone = useMemo(() => viewerTimeZone(), []);
+    const current = asString(value, asString(field.default));
+    const known = isKnownTimeZone(current);
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
+            <div className="flex flex-wrap items-center gap-2">
+                <input
+                    id={id}
+                    type="text"
+                    list={listId}
+                    className={clsx(inputClass, 'min-w-0 flex-1 basis-48')}
+                    value={current}
+                    maxLength={field.max_length}
+                    spellCheck={false}
+                    autoComplete="off"
+                    disabled={disabled}
+                    aria-describedby={`${id}-offset`}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+                <datalist id={listId}>
+                    {zones.map((zone) => (
+                        <option key={zone} value={zone} />
+                    ))}
+                </datalist>
+                {viewerZone && viewerZone !== current ? (
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onChange(viewerZone)}
+                        className={clsx(
+                            'inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-edge px-3 py-2',
+                            'text-sm text-text-2 transition-colors',
+                            disabled ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <LocateFixed size={14} aria-hidden="true" />
+                        Use my timezone ({viewerZone})
+                    </button>
+                ) : null}
+            </div>
+            <p id={`${id}-offset`} className={clsx('mt-1.5 text-xs', known ? 'text-text-3' : 'text-warn')}>
+                {known
+                    ? `Currently ${formatUtcOffset(current, new Date())}.`
+                    : 'Not a timezone this browser recognises. Pick one from the suggestions.'}
+            </p>
         </FieldShell>
     );
 }

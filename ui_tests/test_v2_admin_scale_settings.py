@@ -1,8 +1,8 @@
 # test_v2_admin_scale_settings.py
 """
 Browser coverage for the V2 Admin Settings Scale group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 Exercise the built application with the real field schema and in-memory admin
 APIs. Check that the Redis connection reads the way the server-rendered page does
@@ -551,7 +551,8 @@ def test_index_diagnostics_need_the_debug_flag(scale_ui):
 
 
 def test_index_diagnostics_reset_asks_first(scale_ui):
-    scale_ui.payload["runtime_flags"] = {"dai_debug_enabled": True}
+    # Document Access Index diagnostics, switched on under Operations > Debug Logging.
+    scale_ui.settings["enable_dai_debug"] = True
     scale_ui.open(width=1920, height=1080, ready_region="Redis Cache")
     page = scale_ui.page
     api = scale_ui.api
@@ -753,7 +754,8 @@ def test_an_enforced_global_policy_locks_container_policies(scale_ui):
 @pytest.mark.parametrize("theme", ["light", "dark"])
 @pytest.mark.parametrize("width,font_size", [(390, "m"), (1920, "xl")])
 def test_the_scale_group_never_overflows(scale_ui, theme, width, font_size):
-    scale_ui.payload["runtime_flags"] = {"dai_debug_enabled": True}
+    # Document Access Index diagnostics, switched on under Operations > Debug Logging.
+    scale_ui.settings["enable_dai_debug"] = True
     scale_ui.open(theme=theme, width=width, font_size=font_size, ready_region="Redis Cache")
     page = scale_ui.page
     for name in ("Redis Metrics", "DAI Metrics", "Cosmos Maintenance", "Cosmos DB Throughput", "Cosmos Metrics"):

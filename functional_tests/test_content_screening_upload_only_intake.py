@@ -1,8 +1,9 @@
 # test_content_screening_upload_only_intake.py
 """
 Functional tests for upload-only content screening intake.
-Version: 0.261.230
+Version: 0.261.268
 Implemented in: 0.261.230
+Model-generated metadata reaches the search chunks through the background search sync: 0.261.268
 
 This test ensures that, with content screening on and an active policy, documents
 SimpleChat generates or publishes into a workspace never receive a screening marker,
@@ -525,7 +526,10 @@ def test_model_generated_metadata_applies_without_a_hold(management):
     assert document_is_available(current)
     available = env.access.assert_document_available("document-a", user_id="owner", group_id="group-a")
     assert available["title"] == "Generated title"
-    assert {write.get("title") for write in env.chunk_writes} == {"Generated title"}
+    # Model-generated metadata reaches the search chunks through the background search sync.
+    [result] = env.run_search_syncs()
+    assert result["status"] == "complete"
+    assert {action.get("title") for batch in env.search_index.merge_batches for action in batch} == {"Generated title"}
     assert env.blobs.metadata_writes == []
     assert env.queue.jobs == []
 

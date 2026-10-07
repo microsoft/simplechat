@@ -9,9 +9,12 @@
 import {
     asBoolean,
     asString,
+    asStringArray,
     evaluateDependency,
     evaluateSectionStatus,
     readFieldGroup,
+    readFieldValue,
+    readSettingValue,
     type AdminField,
     type AdminFieldDependency,
     type AdminFieldRequirement,
@@ -28,9 +31,19 @@ import type { Json } from './types';
  */
 export type SectionStatus = 'off' | 'blocked' | 'incomplete' | 'ready' | 'none';
 
-/** Read a field's current value, preferring an unsaved edit over the stored one. */
-export function readSectionValue(settings: Json, draft: Json, key: string): unknown {
-    return Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key];
+/**
+ * Read a field's current value, preferring an unsaved edit over the stored one.
+ *
+ * Given the field index, a value saved at a nested path is found where its field
+ * declares it, so a configured Web Search connection does not read as blank.
+ */
+export function readSectionValue(
+    settings: Json,
+    draft: Json,
+    key: string,
+    fieldsByKey?: Map<string, AdminField>,
+): unknown {
+    return readSettingValue(key, settings, draft, fieldsByKey);
 }
 
 /**
@@ -75,6 +88,7 @@ export function collectRequirements(
     fields: AdminField[],
     settings?: Json,
     draft: Json = {},
+    fieldsByKey?: Map<string, AdminField>,
     runtimeFlags?: Record<string, boolean>,
 ): AdminFieldRequirement[] {
     const seen = new Map<string, AdminFieldRequirement>();
@@ -83,7 +97,7 @@ export function collectRequirements(
             continue;
         }
         if (settings) {
-            const read = (key: string) => readSectionValue(settings, draft, key);
+            const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
             if (field.role !== 'capability') {
                 if (!evaluateDependency(field.depends_on, read, runtimeFlags)) continue;
                 if (field.type === 'switch' && field.key && !asBoolean(read(field.key) ?? field.default)) continue;
@@ -115,12 +129,13 @@ export function buildSectionDependents(
     sections: { sectionId: string; label: string; fields: AdminField[] }[],
     settings: Json,
     draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
     runtimeFlags?: Record<string, boolean>,
 ): Map<string, SectionDependent[]> {
     const dependents = new Map<string, SectionDependent[]>();
     for (const section of sections) {
         const targets = new Set<string>();
-        for (const requirement of collectRequirements(section.fields, settings, draft, runtimeFlags)) {
+        for (const requirement of collectRequirements(section.fields, settings, draft, fieldsByKey, runtimeFlags)) {
             const target = requirement.target_section;
             if (target && target !== section.sectionId) {
                 targets.add(target);
@@ -147,12 +162,13 @@ export function deriveSectionStatus(
     fields: AdminField[],
     settings: Json,
     draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
     runtimeFlags?: Record<string, boolean>,
 ): SectionStatus {
-    const read = (key: string) => readSectionValue(settings, draft, key);
+    const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
     const capability = findCapabilityField(fields);
 
-    const unmet = collectRequirements(fields, settings, draft, runtimeFlags).some(
+    const unmet = collectRequirements(fields, settings, draft, fieldsByKey, runtimeFlags).some(
         (requirement) => !asBoolean(read(requirement.key)),
     );
     if (unmet) {
@@ -198,13 +214,14 @@ export function computeSectionStatus(
     settings: Json,
     draft: Json,
     statusRule?: AdminSectionStatusRule,
+    fieldsByKey?: Map<string, AdminField>,
     runtimeFlags?: Record<string, boolean>,
 ): SectionStatus {
     const declared = evaluateSectionStatus(statusRule, settings, draft);
     if (declared) {
         return DECLARED_STATUS_MAP[declared];
     }
-    return deriveSectionStatus(fields, settings, draft, runtimeFlags);
+    return deriveSectionStatus(fields, settings, draft, fieldsByKey, runtimeFlags);
 }
 
 /** How a field sits relative to the switch that governs it. */
@@ -349,11 +366,17 @@ export function deriveFieldHierarchy(fields: AdminField[]): FieldHierarchy {
  * the capability is on and something required is still blank; everything else stays shut.
  * Turning a capability on therefore reveals the next step rather than forty controls, and
  * a section that is already working stays a summary.
+ *
+ * An optional connection cannot be `required` -- Enhanced extraction works without
+ * Content Understanding -- so a group may instead name the key it waits on with
+ * `open_until_set`. It opens while that key is blank and the capability is on, which is
+ * when an administrator has just turned the capability on and is choosing an engine.
  */
 export function shouldGroupStartOpen(
     group: RenderedFieldGroup,
     status: SectionStatus,
     capabilityOn: boolean,
+    read?: (key: string) => unknown,
 ): boolean {
     if (!group.id) {
         // Ungrouped fields are the section's own preamble; collapsing them would hide
@@ -368,5 +391,79 @@ export function shouldGroupStartOpen(
     if (!capabilityOn) {
         return false;
     }
+    if (group.openUntilSet && read && !hasValue(read(group.openUntilSet))) {
+        return true;
+    }
     return group.variant === 'connection' && status === 'incomplete';
+}
+
+/** Where a section's groups are drawn. */
+export interface GroupPlacement {
+    /** Groups drawn in the card body, in declared order. */
+    topLevel: RenderedFieldGroup[];
+    /** Groups drawn beneath a switch, keyed by that switch's settings key. */
+    anchored: ReadonlyMap<string, RenderedFieldGroup[]>;
+}
+
+/**
+ * Decide which groups sit beneath a switch and which in the card body.
+ *
+ * A group names its switch with `anchor`, and is placed there only while that switch is
+ * actually drawn. A search that matches a panel's settings but not its switch would
+ * otherwise leave the panel nowhere to appear, so it falls back to the card body -- and
+ * takes the switch's name into its label, because three panels all called "Access" are
+ * indistinguishable without the toggle above them.
+ */
+export function placeAnchoredGroups(
+    groups: RenderedFieldGroup[],
+    renderedKeys: ReadonlySet<string>,
+    labelOf: (key: string) => string | undefined,
+): GroupPlacement {
+    const topLevel: RenderedFieldGroup[] = [];
+    const anchored = new Map<string, RenderedFieldGroup[]>();
+
+    for (const group of groups) {
+        const anchor = group.anchor;
+        if (!anchor) {
+            topLevel.push(group);
+            continue;
+        }
+        if (renderedKeys.has(anchor)) {
+            anchored.set(anchor, [...(anchored.get(anchor) ?? []), group]);
+            continue;
+        }
+        const anchorLabel = labelOf(anchor);
+        topLevel.push(
+            anchorLabel
+                ? { ...group, label: `${anchorLabel} · ${group.label ?? group.id}` }
+                : group,
+        );
+    }
+
+    return { topLevel, anchored };
+}
+
+/**
+ * What a collapsed group's header says about its contents.
+ *
+ * A count is all most groups can offer. A group holding a single choice list can say how
+ * much is chosen instead, which is what an administrator scanning a configured card
+ * wants: "3 selected" under Source types answers a question "1 setting" does not. Only
+ * declared options are counted, the same ones the control draws as checked.
+ */
+export function describeCollapsedGroup(
+    group: RenderedFieldGroup,
+    settings: Json,
+    draft: Json,
+): string {
+    const [only] = group.fields;
+    if (group.fields.length === 1 && only?.type === 'checkbox_set') {
+        const selected = asStringArray(readFieldValue(only, settings, draft));
+        const count = (only.options ?? []).filter((option) =>
+            selected.includes(option.value),
+        ).length;
+        return `${count} selected`;
+    }
+    const total = group.fields.length;
+    return `${total} ${total === 1 ? 'setting' : 'settings'}`;
 }

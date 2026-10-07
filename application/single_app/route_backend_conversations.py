@@ -9,7 +9,11 @@ from azure.core.exceptions import AzureError
 
 from content_screening.access import build_available_document_response, public_history_messages, read_available_document_bytes
 from content_screening.contracts import ScreeningError
-from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
+from collaboration_models import (
+    GROUP_MULTI_USER_CHAT_TYPE,
+    PERSONAL_MULTI_USER_CHAT_TYPE,
+    is_shared_conversation_backing,
+)
 from config import *
 from functions_appinsights import log_event
 from functions_chat_content_checks import attach_chat_check, check_chat_content, strip_private_chat_checks
@@ -87,11 +91,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
 from functions_orchestration_recovery import cleanup_conversation_checkpoints
-from functions_orchestration_artifacts import (
-    ORCHESTRATION_ARTIFACT_KEY_PREFIX,
-    ORCHESTRATION_ARTIFACT_KIND,
-    is_orchestration_artifact_source,
-)
+from functions_orchestration_artifacts import is_retained_orchestration_file
 from functions_orchestration_external_configuration import ExternalConfigurationServiceError
 from functions_orchestration_external_identity import ExternalIdentityServiceError
 from functions_orchestration_output_store import OutputError, OutputStorageError
@@ -115,17 +115,7 @@ from utils_cache import invalidate_personal_search_cache
 
 def _is_retained_orchestration_file(message):
     """Leave retained file records and bytes to conditional output cleanup."""
-    if not isinstance(message, dict) or message.get('role') != 'file':
-        return False
-    metadata = message.get('metadata')
-    if not isinstance(metadata, dict):
-        return False
-    key = metadata.get('generated_artifact_idempotency_key')
-    return (
-        is_orchestration_artifact_source(metadata.get('generated_artifact_source'))
-        or metadata.get('generated_artifact_origin') == ORCHESTRATION_ARTIFACT_KIND
-        or isinstance(key, str) and key.startswith(ORCHESTRATION_ARTIFACT_KEY_PREFIX)
-    )
+    return is_retained_orchestration_file(message)
 
 
 def _enroll_retained_orchestration_outputs(user_id, conversation_id, run_id):
@@ -661,9 +651,11 @@ def _query_legacy_conversations_for_feed(
 
 
 def _count_hidden_legacy_conversations(user_id):
+    # A shared conversation's orchestration backing record is not a hidden conversation.
     query = (
         'SELECT VALUE COUNT(1) FROM c '
-        'WHERE c.user_id = @user_id AND c.is_hidden = true'
+        'WHERE c.user_id = @user_id AND c.is_hidden = true '
+        'AND (NOT IS_DEFINED(c.collaboration_conversation_id) OR c.collaboration_conversation_id != c.id)'
     )
     results = list(cosmos_conversations_container.query_items(
         query=query,
@@ -772,10 +764,16 @@ def _build_conversation_feed(user_id, page_size, source_offsets, include_priorit
         collaboration_conversations = []
 
     hidden_count += sum(1 for conversation in collaboration_conversations if conversation.get('is_hidden', False))
+    # A shared conversation's own id also names its orchestration backing record, and a
+    # record an earlier version created there; neither is a separate conversation.
     collaboration_source_ids = {
         str(conversation.get('source_conversation_id') or '').strip()
         for conversation in collaboration_conversations
         if conversation.get('source_conversation_id')
+    } | {
+        str(conversation.get('id') or '').strip()
+        for conversation in collaboration_conversations
+        if conversation.get('id')
     }
 
     filtered_collaboration_conversations = _filter_collaboration_conversations_for_feed(
@@ -942,7 +940,12 @@ def _promote_remaining_thread_attempt(conversation_id, thread_id, deleted_attemp
 
 
 def _authorize_personal_conversation_read(user_id, conversation_id):
-    """Load a personal conversation and ensure the caller owns it."""
+    """Load a personal conversation and ensure the caller owns it.
+
+    A shared conversation's Orchestrate backing record has the shared conversation's id but is
+    part of the shared conversation, so it is reported as not found here. Callers that also
+    serve shared conversations then fall through to them.
+    """
     try:
         conversation_item = cosmos_conversations_container.read_item(
             item=conversation_id,
@@ -951,6 +954,8 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
+    if is_shared_conversation_backing(conversation_item):
+        raise LookupError(f"Conversation {conversation_id} not found")
     if conversation_item.get('user_id') != user_id:
         raise PermissionError('Forbidden')
 
@@ -1108,9 +1113,12 @@ def _load_scope_lock_conversation(conversation_id, user_id):
             item=conversation_id,
             partition_key=conversation_id,
         )
-        if conversation_item.get('user_id') != user_id:
-            raise PermissionError('Forbidden')
-        return conversation_item, 'personal'
+        # Orchestrate's backing record follows its shared conversation's lock; the lock itself
+        # belongs to the shared conversation below.
+        if not is_shared_conversation_backing(conversation_item):
+            if conversation_item.get('user_id') != user_id:
+                raise PermissionError('Forbidden')
+            return conversation_item, 'personal'
     except CosmosResourceNotFoundError:
         pass
 
@@ -2291,23 +2299,26 @@ def register_route_backend_conversations(bp):
         A conversation the caller may not see is reported as absent rather than forbidden. The
         two are indistinguishable to someone who should not know it exists, and the client treats
         them identically.
+
+        A personal record stored under a shared conversation's id is part of that shared
+        conversation: Orchestrate's backing record (0.261.270), or a private copy an earlier
+        version made there. The shared conversation is reported for anyone who can see it, so
+        reopening it never turns it into a personal chat. A private copy stays reachable as
+        personal only for an owner who can no longer see the shared conversation.
         """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+        personal_response = ({'conversation_id': conversation_id, 'kind': 'personal'}, 200)
+        not_found_response = ({'error': 'Conversation not found'}, 404)
 
         try:
             conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id,
                 partition_key=conversation_id,
             )
-            if conversation_item.get('user_id') == user_id:
-                return jsonify({
-                    'conversation_id': conversation_id,
-                    'kind': 'personal',
-                }), 200
         except CosmosResourceNotFoundError:
-            pass
+            conversation_item = None
         except Exception as e:
             log_event(
                 f"[CONVERSATION_KIND] Failed to read personal conversation {conversation_id}: {e}",
@@ -2315,13 +2326,23 @@ def register_route_backend_conversations(bp):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to resolve conversation'}), 500
+        owns_personal = bool(
+            conversation_item
+            and conversation_item.get('user_id') == user_id
+            and not is_shared_conversation_backing(conversation_item)
+        )
+
+        def personal_or(response, status):
+            if owns_personal:
+                return jsonify(personal_response[0]), personal_response[1]
+            return jsonify(response), status
 
         # Checked before answering "collaborative": with the feature off, the collaboration
         # endpoints refuse everything, so naming a conversation as shared would only send the
         # client somewhere it cannot go.
         settings = get_settings() or {}
         if not settings.get('enable_collaborative_conversations', False):
-            return jsonify({'error': 'Conversation not found'}), 404
+            return personal_or(*not_found_response)
 
         try:
             collaboration_item = get_collaboration_conversation(conversation_id)
@@ -2331,20 +2352,21 @@ def register_route_backend_conversations(bp):
                 allow_pending=True,
             )
         except CosmosResourceNotFoundError:
-            return jsonify({'error': 'Conversation not found'}), 404
+            return personal_or(*not_found_response)
         except LookupError:
             # Raised when the stored document is not a collaboration conversation, which for a
             # question about kind is the same answer as it not being there.
-            return jsonify({'error': 'Conversation not found'}), 404
+            return personal_or(*not_found_response)
         except PermissionError:
-            return jsonify({'error': 'Conversation not found'}), 404
+            return personal_or(*not_found_response)
         except Exception as e:
             log_event(
                 f"[CONVERSATION_KIND] Failed to resolve shared conversation {conversation_id}: {e}",
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
-            return jsonify({'error': 'Failed to resolve conversation'}), 500
+            # A personal conversation still opens while shared conversations can't be read.
+            return personal_or({'error': 'Failed to resolve conversation'}, 500)
 
         # Returned alongside the kind because the caller needs this exact document next, and
         # asking for it twice is the cost the old probe was paying to avoid.
@@ -2430,13 +2452,10 @@ def register_route_backend_conversations(bp):
         is_collaboration_summary = False
 
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
-            if conversation_item.get('user_id') != user_id:
-                return jsonify({'error': 'Forbidden'}), 403
-        except CosmosResourceNotFoundError:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+        except LookupError:
+            # Orchestrate's backing record shares its shared conversation's id; the summary is
+            # the shared conversation's.
             try:
                 conversation_item = get_collaboration_conversation(conversation_id)
                 assert_user_can_view_collaboration_conversation(
@@ -2452,6 +2471,8 @@ def register_route_backend_conversations(bp):
             except Exception as e:
                 debug_print(f"Error reading collaborative conversation for summary: {e}")
                 return jsonify({'error': 'Failed to read conversation'}), 500
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
         except Exception as e:
             debug_print(f"Error reading conversation for summary: {e}")
             return jsonify({'error': 'Failed to read conversation'}), 500
