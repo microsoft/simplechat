@@ -9,12 +9,19 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from functions_action_manifest import get_action_origin, resolve_action_type
 from functions_appinsights import log_event
+from functions_mcp_fingerprint_metadata import (
+    MCP_PROMPTS_FIELD,
+    MCP_TOOL_DRIFT_FIELD,
+    MCP_TOOL_FINGERPRINTS_FIELD,
+    normalize_mcp_prompt_metadata,
+    normalize_mcp_tool_fingerprints,
+)
+from functions_mcp_operations import normalize_mcp_additional_fields, normalize_mcp_tool_metadata
 
 
-MCP_TOOL_FINGERPRINTS_FIELD = "mcp_tool_fingerprints"
-MCP_TOOL_DRIFT_FIELD = "mcp_tool_drift"
-MCP_PROMPTS_FIELD = "mcp_prompts"
 MCP_DRIFT_NOTIFICATION_TYPE = "mcp_tool_drift_detected"
+MCP_DRIFT_NOTIFICATION_TTL_SECONDS = 60 * 24 * 60 * 60
+MCP_DRIFT_NOTIFICATION_IDEMPOTENCY_KEY_MAX_LENGTH = 512
 MCP_PLUGIN_TYPE = "mcp"
 
 
@@ -32,40 +39,6 @@ def _tool_payload(tool: Dict[str, Any]) -> Dict[str, Any]:
         "outputSchema": tool.get("outputSchema") if isinstance(tool.get("outputSchema"), dict) else tool.get("output_schema") if isinstance(tool.get("output_schema"), dict) else {},
         "annotations": tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {},
     }
-
-
-def normalize_mcp_prompt_metadata(value: Any) -> List[Dict[str, Any]]:
-    """Return normalized MCP prompt metadata entries."""
-    if not isinstance(value, list):
-        return []
-
-    prompts = []
-    seen_names = set()
-    for prompt in value:
-        if not isinstance(prompt, dict):
-            continue
-        name = str(prompt.get("name") or "").strip()
-        if not name or name in seen_names:
-            continue
-        seen_names.add(name)
-        arguments = prompt.get("arguments")
-        if not isinstance(arguments, list):
-            arguments = []
-        prompts.append({
-            "name": name,
-            "description": str(prompt.get("description") or "").strip(),
-            "arguments": [
-                argument for argument in arguments
-                if isinstance(argument, dict) and str(argument.get("name") or "").strip()
-            ],
-        })
-    return prompts
-
-
-def _normalize_mcp_tool_metadata(value: Any) -> List[Dict[str, Any]]:
-    from functions_mcp_operations import normalize_mcp_tool_metadata
-
-    return normalize_mcp_tool_metadata(value)
 
 
 def _prompt_payload(prompt: Dict[str, Any]) -> Dict[str, Any]:
@@ -93,7 +66,7 @@ def build_mcp_tool_fingerprints(
     discovered_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the approved fingerprint manifest for discovered MCP tools and prompts."""
-    normalized_tools = _normalize_mcp_tool_metadata(list(tools or []))
+    normalized_tools = normalize_mcp_tool_metadata(list(tools or []))
     normalized_prompts = normalize_mcp_prompt_metadata(list(prompts or []))
     tool_hashes = {
         tool["original_name"]: compute_mcp_tool_hash(tool)
@@ -115,30 +88,6 @@ def build_mcp_tool_fingerprints(
         "prompts": prompt_hashes,
         "discovered_at": discovered_at or datetime.now(timezone.utc).isoformat(),
     }
-
-
-def normalize_mcp_tool_fingerprints(value: Any) -> Dict[str, Any]:
-    """Return a normalized approved fingerprint object, or an empty dict."""
-    if not isinstance(value, dict):
-        return {}
-    manifest_hash = str(value.get("manifest_hash") or "").strip()
-    tools = value.get("tools") if isinstance(value.get("tools"), dict) else {}
-    prompts = value.get("prompts") if isinstance(value.get("prompts"), dict) else {}
-    normalized = {
-        "manifest_hash": manifest_hash,
-        "tools": {
-            str(name): str(fingerprint)
-            for name, fingerprint in tools.items()
-            if str(name).strip() and str(fingerprint).strip()
-        },
-        "prompts": {
-            str(name): str(fingerprint)
-            for name, fingerprint in prompts.items()
-            if str(name).strip() and str(fingerprint).strip()
-        },
-        "discovered_at": str(value.get("discovered_at") or "").strip(),
-    }
-    return normalized if normalized["manifest_hash"] and normalized["discovered_at"] else {}
 
 
 def compare_mcp_fingerprints(
@@ -181,7 +130,7 @@ def filter_pinned_mcp_tools(
     fingerprints: Dict[str, Any],
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Return only tools matching approved fingerprints, plus drift metadata."""
-    normalized_tools = _normalize_mcp_tool_metadata(list(tools or []))
+    normalized_tools = normalize_mcp_tool_metadata(list(tools or []))
     approved = normalize_mcp_tool_fingerprints(fingerprints)
     approved_tools = approved.get("tools", {})
     if not approved_tools:
@@ -235,9 +184,6 @@ def validate_mcp_tool_pinning_for_save(action: Dict[str, Any], existing_action: 
             **{key: additional.get(key) for key in relevant_keys if key not in {"endpoint", "identity_id", "auth"}},
         }
 
-    # Lazy import: functions_mcp_operations imports this module.
-    from functions_mcp_operations import normalize_mcp_additional_fields
-
     changed = existing_action is None or (
         relevant(action, normalize_mcp_additional_fields(fields))
         != relevant(existing_action, normalize_mcp_additional_fields(existing_fields))
@@ -248,7 +194,7 @@ def validate_mcp_tool_pinning_for_save(action: Dict[str, Any], existing_action: 
         raise ValueError("Discover and approve MCP tools before saving this action.")
 
     current = build_mcp_tool_fingerprints(
-        _normalize_mcp_tool_metadata(fields.get("mcp_tools")),
+        normalize_mcp_tool_metadata(fields.get("mcp_tools")),
         normalize_mcp_prompt_metadata(fields.get(MCP_PROMPTS_FIELD)),
         discovered_at=fingerprints.get("discovered_at"),
     )
@@ -305,27 +251,85 @@ def persist_mcp_tool_drift(action: Dict[str, Any], drift: Dict[str, Any]) -> Non
         )
 
     try:
-        from functions_notifications import create_notification
+        from config import cosmos_notifications_container
 
-        notification_kwargs = {
+        notification_doc = {
+            "user_id": origin.scope_id if origin.scope_type == "personal" else None,
+            "group_id": origin.scope_id if origin.scope_type == "group" else None,
+            "public_workspace_id": None,
+            "scope": "assignment" if origin.scope_type == "global" else origin.scope_type,
             "notification_type": MCP_DRIFT_NOTIFICATION_TYPE,
             "title": "MCP tools changed — review required",
             "message": "An MCP server changed its tool or prompt manifest. Review and re-approve the action before new or changed tools can run.",
+            "created_at": detected_at,
+            "ttl": MCP_DRIFT_NOTIFICATION_TTL_SECONDS,
+            "read_by": [],
+            "dismissed_by": [],
+            "link_url": "",
+            "link_context": {},
             "metadata": {
                 "action_id": origin.action_id,
                 "scope_type": origin.scope_type,
                 "scope_id": origin.scope_id,
                 "manifest_hash": manifest_hash,
             },
-            "idempotency_key": f"mcp-tool-drift:{origin.scope_type}:{origin.scope_id}:{origin.action_id}:{manifest_hash}",
+            "assignment": {"roles": ["Admin", "ControlCenterAdmin"]}
+            if origin.scope_type == "global"
+            else None,
         }
-        if origin.scope_type == "personal":
-            notification_kwargs["user_id"] = origin.scope_id
-        elif origin.scope_type == "group":
-            notification_kwargs["group_id"] = origin.scope_id
-        else:
-            notification_kwargs["assignment"] = {"roles": ["Admin", "ControlCenterAdmin"]}
-        create_notification(**notification_kwargs)
+        idempotency_key = (
+            f"mcp-tool-drift:{origin.scope_type}:{origin.scope_id}:"
+            f"{origin.action_id}:{manifest_hash}"
+        )
+        if len(idempotency_key) > MCP_DRIFT_NOTIFICATION_IDEMPOTENCY_KEY_MAX_LENGTH:
+            raise ValueError("The MCP drift notification retry key is too long.")
+        retry_identity = {
+            "version": 1,
+            "key": idempotency_key,
+            **{
+                field: notification_doc.get(field)
+                for field in (
+                    "scope",
+                    "user_id",
+                    "group_id",
+                    "public_workspace_id",
+                    "notification_type",
+                    "assignment",
+                )
+            },
+        }
+        encoded_identity = json.dumps(
+            retry_identity,
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        notification_doc["id"] = (
+            f"notification-{hashlib.sha256(encoded_identity).hexdigest()}"
+        )
+        try:
+            cosmos_notifications_container.create_item(notification_doc)
+        except Exception as exc:
+            if getattr(exc, "status_code", None) != 409:
+                raise
+            existing = cosmos_notifications_container.read_item(
+                item=notification_doc["id"],
+                partition_key=notification_doc.get("user_id"),
+            )
+            if not isinstance(existing, dict) or any(
+                existing.get(field) != notification_doc.get(field)
+                for field in (
+                    "id",
+                    "scope",
+                    "user_id",
+                    "group_id",
+                    "public_workspace_id",
+                    "notification_type",
+                    "assignment",
+                )
+            ):
+                raise ValueError("The stored MCP drift notification does not match its retry identity.")
     except Exception as exc:
         log_event(
             "[MCP_PINNING] Failed to deliver MCP tool drift notification",

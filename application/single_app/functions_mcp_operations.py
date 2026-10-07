@@ -8,7 +8,7 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
 
 from functions_action_manifest import McpConfigurationError, McpStdioRemovedError
-from functions_mcp_tool_pinning import (
+from functions_mcp_fingerprint_metadata import (
     MCP_PROMPTS_FIELD,
     MCP_TOOL_DRIFT_FIELD,
     MCP_TOOL_FINGERPRINTS_FIELD,

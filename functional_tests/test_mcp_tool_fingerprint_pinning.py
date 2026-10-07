@@ -13,12 +13,7 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "application", "single_app"))
 
-from functions_mcp_tool_pinning import (
-    build_mcp_tool_fingerprints,
-    compare_mcp_fingerprints,
-    compute_mcp_tool_hash,
-    filter_pinned_mcp_tools,
-)
+import functions_mcp_tool_pinning as pinning
 
 
 def _tool(name="search", description="Search docs", extra_schema_order=False):
@@ -44,20 +39,20 @@ def _tool(name="search", description="Search docs", extra_schema_order=False):
 def test_tool_hash_is_canonical_and_stable():
     first = _tool()
     second = _tool(extra_schema_order=True)
-    assert compute_mcp_tool_hash(first) == compute_mcp_tool_hash(second)
+    assert pinning.compute_mcp_tool_hash(first) == pinning.compute_mcp_tool_hash(second)
 
 
 def test_manifest_drift_detects_new_changed_and_removed_tools():
-    approved = build_mcp_tool_fingerprints([
+    approved = pinning.build_mcp_tool_fingerprints([
         _tool("search"),
         _tool("fetch", "Fetch document"),
     ], [{"name": "summarize", "description": "Summarize", "arguments": [{"name": "topic"}]}])
-    current = build_mcp_tool_fingerprints([
+    current = pinning.build_mcp_tool_fingerprints([
         _tool("search", "Changed description"),
         _tool("new_tool", "New tool"),
     ], [{"name": "summarize", "description": "Changed", "arguments": [{"name": "topic"}]}])
 
-    drift = compare_mcp_fingerprints(approved, current)
+    drift = pinning.compare_mcp_fingerprints(approved, current)
 
     assert drift["has_drift"] is True
     assert drift["new"] == ["new_tool"]
@@ -68,10 +63,10 @@ def test_manifest_drift_detects_new_changed_and_removed_tools():
 
 def test_runtime_filtering_keeps_only_approved_unchanged_tools():
     approved_tools = [_tool("search"), _tool("fetch")]
-    approved = build_mcp_tool_fingerprints(approved_tools, [])
+    approved = pinning.build_mcp_tool_fingerprints(approved_tools, [])
     current_tools = [_tool("search"), _tool("fetch", "Changed"), _tool("extra")]
 
-    filtered, drift = filter_pinned_mcp_tools(current_tools, approved)
+    filtered, drift = pinning.filter_pinned_mcp_tools(current_tools, approved)
 
     assert [tool["original_name"] for tool in filtered] == ["search"]
     assert drift["has_drift"] is True
@@ -81,7 +76,6 @@ def test_runtime_filtering_keeps_only_approved_unchanged_tools():
 
 
 def test_legacy_unpinned_action_is_not_blocked_by_normalized_defaults():
-    from functions_mcp_tool_pinning import validate_mcp_tool_pinning_for_save
     from functions_mcp_operations import normalize_mcp_additional_fields
 
     existing = {
@@ -93,12 +87,12 @@ def test_legacy_unpinned_action_is_not_blocked_by_normalized_defaults():
     }
     edited = dict(existing)
     edited["additionalFields"] = normalize_mcp_additional_fields(existing["additionalFields"])
-    validate_mcp_tool_pinning_for_save(edited, existing)
+    pinning.validate_mcp_tool_pinning_for_save(edited, existing)
 
     changed = dict(edited)
     changed["endpoint"] = "https://other.example.test/mcp"
     try:
-        validate_mcp_tool_pinning_for_save(changed, existing)
+        pinning.validate_mcp_tool_pinning_for_save(changed, existing)
     except ValueError:
         pass
     else:
@@ -107,7 +101,6 @@ def test_legacy_unpinned_action_is_not_blocked_by_normalized_defaults():
 
 def test_drift_persistence_and_notification_failures_are_logged_not_raised():
     import types
-    import functions_mcp_tool_pinning as pinning
 
     origin = types.SimpleNamespace(scope_type="personal", scope_id="user-1", action_id="action-1")
     failing_config = types.ModuleType("config")

@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.279)**
+
+#### Bug Fixes
+
+*   **MCP Fingerprint Import Cycle**
+    *   Shared MCP fingerprint metadata normalization now lives in a dependency-neutral module, avoiding cyclic imports during action loading and notification delivery.
+    *   (Ref: `functions_mcp_fingerprint_metadata.py`, `functions_mcp_operations.py`, `functions_mcp_tool_pinning.py`)
+
 ### **(v0.261.278)**
 
 #### New Features
