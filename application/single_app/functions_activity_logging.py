@@ -40,37 +40,6 @@ def _create_activity_record(record, idempotency_key=None):
     return record
 
 
-def has_activity_log_for_resource(user_id, activity_type, resource_id, workspace_type=None):
-    """Check for an existing creation record within its user partition."""
-    if not user_id or not resource_id:
-        return False
-
-    if activity_type == 'conversation_creation':
-        resource_path = 'c.conversation.conversation_id'
-    elif activity_type == 'document_creation':
-        resource_path = 'c.document.document_id'
-    else:
-        raise ValueError("Unsupported activity type for resource lookup.")
-
-    query = (
-        "SELECT TOP 1 VALUE c.id FROM c "
-        f"WHERE c.activity_type = @activity_type AND {resource_path} = @resource_id"
-    )
-    parameters = [
-        {'name': '@activity_type', 'value': activity_type},
-        {'name': '@resource_id', 'value': resource_id},
-    ]
-    if workspace_type:
-        query += " AND c.workspace_type = @workspace_type"
-        parameters.append({'name': '@workspace_type', 'value': workspace_type})
-    matches = cosmos_activity_logs_container.query_items(
-        query=query,
-        parameters=parameters,
-        partition_key=user_id,
-    )
-    return next(iter(matches), None) is not None
-
-
 def coerce_activity_log_user_id(user_id: Any) -> str:
     """Extract a stable string user id from a scalar or session-style identity payload."""
     if user_id is None:

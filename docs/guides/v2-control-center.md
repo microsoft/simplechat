@@ -1,7 +1,7 @@
 ---
 layout: page
 title: "Use the V2 Control Center"
-description: "Review usage trends in the V2 Control Center and check activity-log data only when needed."
+description: "Review usage trends and manage users, groups, public workspaces and activity in the V2 Control Center."
 section: "Guides"
 audience: admin
 ---
@@ -14,7 +14,7 @@ The section rail is filtered to your permissions. The Dashboard is available to 
 
 ## Manage users
 
-Open **Users** to find accounts by email or display name, filter by access, upload permission, recent login, or document ownership, and sort usage columns. Filters and sorting are reflected in the URL, so a filtered view can be bookmarked or opened from a Dashboard drill-through. The list reports when its cached usage metrics were calculated and how many accounts on the current page have not yet received a metrics refresh.
+Open **Users** to find accounts by email or display name, filter by access, upload permission, recent login, or document ownership, and sort usage columns. Accounts without a recorded value for the sort column, such as users whose metrics have not been refreshed yet, are listed after the others in either direction. Filters and sorting are reflected in the URL, so a filtered view can be bookmarked or opened from a Dashboard drill-through. The list reports when its cached usage metrics were calculated and how many accounts on the current page have not yet received a metrics refresh.
 
 Select rows to allow or deny access or uploads. Selection can include all users matching the current filters across pages, with an option to exclude individual accounts. Restrictions may have an optional expiry. Open a user to review the account, recent activity, group and public-workspace memberships, and ownership. Changes reconcile against the server and report failures rather than leaving the list in an optimistic-only state.
 
@@ -26,7 +26,7 @@ Choose a 7-, 30-, or 90-day period, or set an inclusive custom UTC date range of
 
 The charts use recorded logins, conversation creation, document creation by workspace type, token usage type, token models, and workspace activity. Select chart points or KPI cards to open the related section with query filters. Use **Export** to download trend data as CSV, or **Chat with these trends** to start a conversation containing the selected trend data. Token filters apply to token totals and token charts; they do not change login, conversation, or upload counts.
 
-The login heatmap reports UTC hours with Monday as weekday zero. Charts include data tables for screen-reader and text-based access. Dashboard summaries are cached for 90 seconds; choose **Refresh** to bypass the cache.
+The login heatmap totals the logins for each UTC weekday and hour across the selected period, with Monday as weekday zero, so it shows recurring busy times rather than a single day. Charts include data tables for screen-reader and text-based access. Dashboard summaries are cached for 90 seconds; choose **Refresh** to bypass the cache.
 
 ## Manage groups
 
@@ -68,19 +68,9 @@ Individual document deletion, workspace deletion, take-ownership and transfer-to
 
 Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links open the broader investigation with public workspace scope.
 
-## Check activity-log data health
-
-The **Data health** section is available to users with maintenance access. Its backfill is a legacy repair operation for conversation and document creation events; ordinary application workflows already write activity logs, so the backfill is normally unnecessary.
-
-1. Select **Data health** and choose **Check activity-log status** to request the current legacy-flag counts. The check is not performed automatically when the page opens.
-2. Read the results carefully: they count records missing a legacy flag and do not establish that their activity events are absent.
-3. Use **Run backfill** only when you have a known need. Confirm the operation in the dialog. The backfill checks the relevant user's activity-log partition and skips existing creation records.
-
-The status and backfill APIs remain protected by the Control Center maintenance permission. Running a backfill may take time on large datasets.
-
 ## Permission model
 
-The V2 pane uses the same server-side role and setting rules as the existing Control Center endpoints. A dashboard reader can see only the dashboard section when the dashboard-reader role setting is enabled. Management, activity-log, and maintenance sections require full Control Center access. Hiding a section in the browser is not an authorization boundary; the APIs enforce their own access checks.
+The V2 pane uses the same server-side role and setting rules as the existing Control Center endpoints. A dashboard reader can see only the dashboard section when the dashboard-reader role setting is enabled. Management and activity-log sections require full Control Center access. Hiding a section in the browser is not an authorization boundary; the APIs enforce their own access checks.
 
 ## Related
 
