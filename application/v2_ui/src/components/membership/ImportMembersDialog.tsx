@@ -45,12 +45,14 @@ function outcomeText(outcome: ImportRowOutcome | null): string {
 
 export function ImportMembersDialog({
     roles, onAddRow, onRunningChange, onFinished, onClose,
+    identityDescription = "Each person is looked up in the directory by their user ID. The name and email in the file are used only when the directory can't be reached.",
 }: {
     roles: readonly AssignableMemberRole[];
     onAddRow: (row: MemberCsvRow) => Promise<ImportRowOutcome>;
     onRunningChange: (running: boolean) => void;
     onFinished: () => void;
     onClose: () => void;
+    identityDescription?: string;
 }) {
     const [stage, setStage] = useState<Stage>('choose');
     const [fileName, setFileName] = useState('');
@@ -139,7 +141,7 @@ export function ImportMembersDialog({
                                 onChange={(event) => void chooseFile(event.target.files?.[0])} />
                         </label>
                         <p className="text-xs text-text-3">
-                            Each person is looked up in the directory by their user ID. The name and email in the file are used only when the directory can't be reached.
+                            {identityDescription}
                         </p>
                         {errors.length ? (
                             <div role="alert" className="space-y-1 rounded-xl border border-danger/30 bg-danger-soft p-3 text-xs text-danger">

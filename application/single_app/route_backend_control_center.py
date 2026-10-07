@@ -3,10 +3,12 @@
 import csv
 import logging
 import math
+import re
 import time
 from io import StringIO
 
-from flask import make_response
+from flask import Response, make_response, stream_with_context
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from config import *
 from functions_authentication import *
@@ -15,6 +17,14 @@ from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
     parse_control_center_auto_refresh_datetime,
+)
+from functions_control_center_activity import (
+    ACTIVITY_PAGE_MAX,
+    activity_csv_stream,
+    activity_page,
+    activity_summary,
+    parse_activity_filters,
+    query_activity_rows,
 )
 from functions_settings import *
 from functions_logging import *
@@ -30,7 +40,24 @@ from functions_group import (
     GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     delete_group,
+    get_user_role_in_group,
     update_group_document_with_etag_guard,
+)
+from functions_control_center_groups import (
+    GROUP_SNAPSHOT_TTL,
+    GroupRequestError,
+    filter_group_inventory,
+    group_members,
+    group_row,
+    load_group_inventory,
+    parse_group_filters,
+    select_group_bulk_ids,
+    validate_group_id,
+    validate_group_status_payload,
+)
+from functions_control_center_public_workspaces import (
+    WORKSPACE_EXPORT_LIMIT, parse_workspace_filters, query_workspaces,
+    select_workspace_ids, workspace_members, workspace_row,
 )
 from functions_safety_remediation import (
     execute_safety_violation_action,
@@ -42,6 +69,7 @@ from functions_public_workspaces import (
     PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
     PublicWorkspaceDocumentWriteConflict,
     update_public_workspace_document_with_etag_guard,
+    get_user_role_in_public_workspace,
 )
 from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
@@ -61,6 +89,21 @@ DASHBOARD_INVALID_RANGE_ERROR = (
     "Invalid dashboard date range. Use 7, 30, or 90 days or a valid custom range of up to 366 days."
 )
 _control_center_dashboard_cache = {}
+_control_center_group_snapshot_cache = {}
+
+
+def _control_center_group_inventory(force_refresh=False):
+    now = time.monotonic()
+    cached = _control_center_group_snapshot_cache.get("inventory")
+    if cached and not force_refresh and now < cached["expires_at"]:
+        return cached["payload"]
+    payload = load_group_inventory(
+        cosmos_groups_container, cosmos_group_documents_container, cosmos_activity_logs_container,
+    )
+    _control_center_group_snapshot_cache["inventory"] = {
+        "expires_at": now + GROUP_SNAPSHOT_TTL, "payload": payload,
+    }
+    return payload
 
 # The answers an approved ownership change gives when the group's current copy no
 # longer matches the request. Each is stored on the approval as its failure reason.
@@ -1009,7 +1052,8 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
-                }
+                },
+                'token_metrics': {'total_tokens': 0}
             },
             'access_status': 'allow',  # default
             'file_upload_status': 'allow'  # default
@@ -1066,6 +1110,8 @@ def enhance_user_with_activity(user, force_refresh=False):
                         cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
                         # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
                         enhanced['activity']['document_metrics'] = cached_doc_metrics
+                    if 'token_metrics' in cached_metrics:
+                        enhanced['activity']['token_metrics'] = cached_metrics['token_metrics']
                     return enhanced
                 except Exception as cache_e:
                     debug_print(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
@@ -1360,6 +1406,25 @@ def enhance_user_with_activity(user, force_refresh=False):
                 
         except Exception as e:
             debug_print(f"Could not get document metrics for user {user.get('id')}: {e}")
+
+        try:
+            token_total_query = """
+                SELECT VALUE SUM(c.usage.total_tokens) FROM c
+                WHERE c.user_id = @user_id
+                AND c.activity_type = 'token_usage'
+                AND IS_DEFINED(c.usage.total_tokens)
+                AND IS_NUMBER(c.usage.total_tokens)
+            """
+            token_totals = list(cosmos_activity_logs_container.query_items(
+                query=token_total_query,
+                parameters=[{"name": "@user_id", "value": user_id}],
+                partition_key=user_id
+            ))
+            enhanced['activity']['token_metrics']['total_tokens'] = int(
+                token_totals[0] or 0
+            ) if token_totals else 0
+        except Exception as token_error:
+            debug_print(f"Could not get token metrics for user {user_id}: {token_error}")
         
         # Save calculated metrics to user settings for caching (only if we calculated fresh data)
         if force_refresh or not user.get('settings', {}).get('metrics', {}).get('calculated_at'):
@@ -1371,6 +1436,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat(),
                     'login_metrics': enhanced['activity']['login_metrics'],
                     'chat_metrics': enhanced['activity']['chat_metrics'],
+                    'token_metrics': enhanced['activity']['token_metrics'],
                     'document_metrics': {
                         'total_documents': enhanced['activity']['document_metrics']['total_documents'],
                         'ai_search_size': enhanced['activity']['document_metrics']['ai_search_size'],
@@ -1396,6 +1462,202 @@ def enhance_user_with_activity(user, force_refresh=False):
     except Exception as e:
         debug_print(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
+
+
+CONTROL_CENTER_USERS_MAX_BULK = 500
+CONTROL_CENTER_USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+CONTROL_CENTER_USER_SORTS = {
+    "name": "c.display_name",
+    "email": "c.email",
+    "last_login": "c.settings.metrics.login_metrics.last_login",
+    "conversations": "c.settings.metrics.chat_metrics.total_conversations",
+    "documents": "c.settings.metrics.document_metrics.total_documents",
+    "tokens": "c.settings.metrics.token_metrics.total_tokens",
+}
+
+
+def _control_center_validate_user_id(user_id):
+    """Reject malformed route/body identifiers before using them in lookups or links."""
+    normalized = str(user_id or "").strip()
+    if not CONTROL_CENTER_USER_ID_PATTERN.fullmatch(normalized):
+        raise ValueError("Invalid user ID.")
+    return normalized
+
+
+def _control_center_parse_user_filters(values, now=None):
+    """Normalize the shared Users list, export, and filter-selection query contract."""
+    current_time = now or datetime.now(timezone.utc)
+    search = str(values.get("search", "") or "").strip()
+    if len(search) > 200:
+        raise ValueError("Search text is too long.")
+
+    legacy_filter = str(values.get("filter", "") or "").strip().lower()
+    status = str(values.get("status", "") or "").strip().lower()
+    access_status = str(values.get("access_status", "all") or "all").strip().lower()
+    if status == "blocked":
+        access_status = "deny"
+    elif status in {"allow", "deny"} and not access_status:
+        access_status = status
+    if legacy_filter == "active" and not values.get("last_login"):
+        last_login = "30"
+    else:
+        last_login = str(values.get("last_login", "all") or "all").strip().lower()
+
+    upload_status = str(values.get("upload_status", "all") or "all").strip().lower()
+    has_documents = str(values.get("has_documents", "all") or "all").strip().lower()
+    sort = str(values.get("sort", "name") or "name").strip().lower()
+    direction = str(values.get("direction", "asc") or "asc").strip().lower()
+
+    if access_status not in {"all", "allow", "deny"}:
+        raise ValueError("Invalid access status filter.")
+    if upload_status not in {"all", "allow", "deny"}:
+        raise ValueError("Invalid file-upload status filter.")
+    if last_login not in {"all", "never", "7", "30", "90", "90_plus"}:
+        raise ValueError("Invalid last-login filter.")
+    if has_documents not in {"all", "yes", "no"}:
+        raise ValueError("Invalid document filter.")
+    if sort not in CONTROL_CENTER_USER_SORTS:
+        raise ValueError("Invalid user sort field.")
+    if direction not in {"asc", "desc"}:
+        raise ValueError("Invalid sort direction.")
+
+    return {
+        "search": search,
+        "access_status": access_status,
+        "upload_status": upload_status,
+        "last_login": last_login,
+        "has_documents": has_documents,
+        "sort": sort,
+        "direction": direction,
+        "now": current_time,
+    }
+
+
+def _control_center_user_where(filters):
+    """Build a parameterized Cosmos WHERE clause from normalized Users filters."""
+    clauses = []
+    parameters = []
+
+    def add_clause(clause, name, value):
+        clauses.append(clause)
+        parameters.append({"name": name, "value": value})
+
+    if filters["search"]:
+        add_clause(
+            "(CONTAINS(LOWER(c.email), @search) OR CONTAINS(LOWER(c.display_name), @search))",
+            "@search",
+            filters["search"].lower(),
+        )
+
+    now_iso = filters["now"].astimezone(timezone.utc).isoformat()
+    for field, value, parameter_prefix in (
+        ("access", filters["access_status"], "access"),
+        ("file_uploads", filters["upload_status"], "upload"),
+    ):
+        if value == "deny":
+            add_clause(
+                f"(c.settings.{field}.status = @{parameter_prefix}_status "
+                f"AND (NOT IS_DEFINED(c.settings.{field}.datetime_to_allow) "
+                f"OR IS_NULL(c.settings.{field}.datetime_to_allow) "
+                f"OR c.settings.{field}.datetime_to_allow > @{parameter_prefix}_now))",
+                f"@{parameter_prefix}_status",
+                "deny",
+            )
+            parameters.append({"name": f"@{parameter_prefix}_now", "value": now_iso})
+        elif value == "allow":
+            add_clause(
+                f"(NOT IS_DEFINED(c.settings.{field}.status) "
+                f"OR c.settings.{field}.status != 'deny' "
+                f"OR (IS_DEFINED(c.settings.{field}.datetime_to_allow) "
+                f"AND NOT IS_NULL(c.settings.{field}.datetime_to_allow) "
+                f"AND c.settings.{field}.datetime_to_allow <= @{parameter_prefix}_now))",
+                f"@{parameter_prefix}_now",
+                now_iso,
+            )
+
+    login_path = "c.settings.metrics.login_metrics.last_login"
+    if filters["last_login"] == "never":
+        clauses.append(
+            f"(NOT IS_DEFINED({login_path}) OR IS_NULL({login_path}) OR {login_path} = 'Never' OR {login_path} = '')"
+        )
+    elif filters["last_login"] in {"7", "30", "90", "90_plus"}:
+        days = 90 if filters["last_login"] == "90_plus" else int(filters["last_login"])
+        cutoff = (filters["now"] - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+        if filters["last_login"] == "90_plus":
+            clauses.append(
+                f"IS_DEFINED({login_path}) AND NOT IS_NULL({login_path}) "
+                f"AND {login_path} != 'Never' AND {login_path} < @last_login_cutoff"
+            )
+        else:
+            clauses.append(
+                f"IS_DEFINED({login_path}) AND {login_path} >= @last_login_cutoff"
+            )
+        parameters.append({"name": "@last_login_cutoff", "value": cutoff})
+
+    document_count_path = "c.settings.metrics.document_metrics.total_documents"
+    if filters["has_documents"] == "yes":
+        clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} > 0")
+    elif filters["has_documents"] == "no":
+        clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} = 0")
+
+    return (" AND ".join(clauses) if clauses else "1=1"), parameters
+
+
+def _control_center_effective_restriction(settings, setting_key, now=None):
+    """Return the effective allow/deny state and any stored expiry for one user setting."""
+    value = settings.get(setting_key, {})
+    if not isinstance(value, dict):
+        value = {}
+    expires_at = value.get("datetime_to_allow")
+    status = "deny" if value.get("status") == "deny" else "allow"
+    if status == "deny" and expires_at:
+        try:
+            expiry = datetime.fromisoformat(
+                str(expires_at).replace("Z", "+00:00")
+            )
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= (now or datetime.now(timezone.utc)):
+                status = "allow"
+        except (TypeError, ValueError):
+            # A malformed stored expiry must not lift an active deny.
+            pass
+    return {"status": status, "expires_at": expires_at}
+
+
+def _control_center_user_row(user, now=None):
+    """Project a user document onto the non-sensitive Users table response shape."""
+    settings = user.get("settings", {})
+    if not isinstance(settings, dict):
+        settings = {}
+    metrics = settings.get("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+    login_metrics = metrics.get("login_metrics", {})
+    chat_metrics = metrics.get("chat_metrics", {})
+    document_metrics = metrics.get("document_metrics", {})
+    token_metrics = metrics.get("token_metrics", {})
+    return {
+        "id": user.get("id", ""),
+        "email": user.get("email", ""),
+        "display_name": user.get("display_name", ""),
+        "access": _control_center_effective_restriction(settings, "access", now),
+        "file_uploads": _control_center_effective_restriction(settings, "file_uploads", now),
+        "last_login": login_metrics.get("last_login"),
+        "total_logins": login_metrics.get("total_logins"),
+        "conversations": chat_metrics.get("total_conversations"),
+        "documents": document_metrics.get("total_documents"),
+        "tokens": token_metrics.get("total_tokens"),
+        "metrics_calculated_at": metrics.get("calculated_at"),
+    }
+
+
+def _control_center_csv_safe_cell(value):
+    """Prevent formula execution in spreadsheet applications for every CSV cell type."""
+    serialized = "" if value is None else str(value)
+    if serialized.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{serialized}"
+    return serialized
 
 def enhance_public_workspace_with_activity(workspace, force_refresh=False):
     """
@@ -3046,6 +3308,69 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
 
 
 def register_route_backend_control_center(bp):
+    @bp.route('/api/v2/control-center/activity-logs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_logs():
+        try:
+            filters = parse_activity_filters(request.args)
+            payload = activity_page(
+                cosmos_activity_logs_container, filters,
+                page_size=int(request.args.get('page_size', 50)), cursor_value=request.args.get('cursor'),
+            )
+            return jsonify(payload)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters, page size, or cursor. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity feed query failed.',
+                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to load activity logs. Check the activity-log composite index in App Maintenance, then retry.'}), 500
+
+    @bp.route('/api/v2/control-center/activity-logs/summary', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_summary():
+        try:
+            filters = parse_activity_filters(request.args)
+            return jsonify(activity_summary(cosmos_activity_logs_container, filters))
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity summary query failed.',
+                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to load the activity summary. Check App Maintenance indexing status and retry.'}), 500
+
+    @bp.route('/api/v2/control-center/activity-logs/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_export():
+        try:
+            filters = parse_activity_filters(request.args)
+            rows, snapshot = query_activity_rows(cosmos_activity_logs_container, filters, ACTIVITY_PAGE_MAX)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity export filters. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity export query failed.',
+                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to export activity logs. Check App Maintenance indexing status and retry.'}), 500
+
+        def generate():
+            try:
+                yield from activity_csv_stream(cosmos_activity_logs_container, filters, rows, snapshot)
+            except Exception as ex:
+                log_event('[CONTROL_CENTER] Activity export stream interrupted.',
+                          extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+                raise
+
+        response = Response(stream_with_context(generate()), mimetype='text/csv')
+        response.headers['Content-Disposition'] = 'attachment; filename="activity_logs.csv"'
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-Export-Row-Limit'] = '10000'
+        return response
+
     
     # User Management APIs
     @bp.route('/api/admin/control-center/users', methods=['GET'])
@@ -3427,7 +3752,573 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
+    # V2 User Management APIs
+    @bp.route('/api/v2/control-center/users', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users():
+        """Return filtered user rows with cached activity metrics and explicit freshness."""
+        try:
+            filters = _control_center_parse_user_filters(request.args)
+            page, per_page = parse_control_center_management_pagination(request.args)
+            where_clause, parameters = _control_center_user_where(filters)
+
+            count_result = list(cosmos_user_settings_container.query_items(
+                query=f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}",
+                parameters=parameters,
+                enable_cross_partition_query=True,
+            ))
+            total = int(count_result[0] or 0) if count_result else 0
+            total_pages = get_control_center_total_pages(total, per_page)
+            page = clamp_control_center_page(page, total_pages)
+            sort_expression = CONTROL_CENTER_USER_SORTS[filters["sort"]]
+            query = (
+                "SELECT c.id, c.email, c.display_name, c.settings FROM c "
+                f"WHERE {where_clause} ORDER BY {sort_expression} {filters['direction'].upper()}, c.id ASC "
+                "OFFSET @offset LIMIT @limit"
+            )
+            paged_parameters = parameters + [
+                {"name": "@offset", "value": (page - 1) * per_page},
+                {"name": "@limit", "value": per_page},
+            ]
+            user_docs = list(cosmos_user_settings_container.query_items(
+                query=query,
+                parameters=paged_parameters,
+                enable_cross_partition_query=True,
+            ))
+            users = [_control_center_user_row(user, filters["now"]) for user in user_docs]
+            metric_times = sorted(
+                user["metrics_calculated_at"] for user in users
+                if isinstance(user.get("metrics_calculated_at"), str)
+            )
+            return jsonify({
+                "users": users,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total_items": total,
+                    "total_pages": total_pages,
+                    "has_prev": page > 1,
+                    "has_next": page < total_pages,
+                },
+                "metrics_freshness": {
+                    "oldest_calculated_at": metric_times[0] if metric_times else None,
+                    "newest_calculated_at": metric_times[-1] if metric_times else None,
+                    "missing_count": sum(not user.get("metrics_calculated_at") for user in users),
+                    "source": "user metrics refresh cache",
+                },
+            }), 200
+        except ValueError:
+            return jsonify({"error": "Invalid user filters or pagination value."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user list query failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve users."}), 500
+
+    @bp.route('/api/v2/control-center/users/<user_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_user_detail(user_id):
+        """Return a user's profile, cached usage, recent activity and workspace memberships."""
+        try:
+            normalized_user_id = _control_center_validate_user_id(user_id)
+            exists = list(cosmos_user_settings_container.query_items(
+                query="SELECT VALUE COUNT(1) FROM c WHERE c.id = @user_id",
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            if not exists or not exists[0]:
+                return jsonify({"error": "User not found."}), 404
+
+            user_doc = read_user_settings_snapshot(
+                normalized_user_id,
+                allow_cross_user=True,
+            )
+            settings = user_doc.get("settings", {})
+            metrics = settings.get("metrics", {}) if isinstance(settings, dict) else {}
+            login_metrics = metrics.get("login_metrics", {})
+            chat_metrics = metrics.get("chat_metrics", {})
+            document_metrics = metrics.get("document_metrics", {})
+            token_metrics = metrics.get("token_metrics", {})
+
+            activity_items = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT TOP 20 c.id, c.timestamp, c.created_at, c.activity_type, "
+                    "c.resource_name, c.workspace_type, c.token_type, c.status, c.usage "
+                    "FROM c WHERE c.user_id = @user_id "
+                    "ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                partition_key=normalized_user_id,
+            ))
+
+            group_docs = list(cosmos_groups_container.query_items(
+                query=(
+                    "SELECT c.id, c.name, c.owner, c.admins, c.documentManagers, c.users "
+                    "FROM c WHERE c.owner.id = @user_id "
+                    "OR ARRAY_CONTAINS(c.admins, @user_id) "
+                    "OR ARRAY_CONTAINS(c.documentManagers, @user_id) "
+                    "OR EXISTS (SELECT VALUE member FROM member IN c.users WHERE member.userId = @user_id)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            group_memberships = []
+            for group in group_docs:
+                if (group.get("owner") or {}).get("id") == normalized_user_id:
+                    role = "Owner"
+                elif normalized_user_id in (group.get("admins") or []):
+                    role = "Admin"
+                elif normalized_user_id in (group.get("documentManagers") or []):
+                    role = "DocumentManager"
+                else:
+                    role = "User"
+                group_memberships.append({
+                    "id": group.get("id", ""),
+                    "name": group.get("name", ""),
+                    "role": role,
+                    "owned": role == "Owner",
+                })
+
+            public_docs = list(cosmos_public_workspaces_container.query_items(
+                query=(
+                    "SELECT c.id, c.name, c.owner, c.admins, c.documentManagers "
+                    "FROM c WHERE c.owner.userId = @user_id "
+                    "OR ARRAY_CONTAINS(c.admins, @user_id) "
+                    "OR EXISTS (SELECT VALUE manager FROM manager IN c.documentManagers "
+                    "WHERE manager.userId = @user_id OR manager = @user_id)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            public_memberships = []
+            for workspace in public_docs:
+                owner_id = (workspace.get("owner") or {}).get("userId")
+                is_admin = normalized_user_id in (workspace.get("admins") or [])
+                is_manager = any(
+                    manager == normalized_user_id
+                    or isinstance(manager, dict) and manager.get("userId") == normalized_user_id
+                    for manager in (workspace.get("documentManagers") or [])
+                )
+                role = "Owner" if owner_id == normalized_user_id else "Admin" if is_admin else "DocumentManager" if is_manager else "Member"
+                public_memberships.append({
+                    "id": workspace.get("id", ""),
+                    "name": workspace.get("name", ""),
+                    "role": role,
+                    "owned": role == "Owner",
+                })
+
+            activity_tokens = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT VALUE SUM(c.usage.total_tokens) FROM c "
+                    "WHERE c.user_id = @user_id AND c.activity_type = 'token_usage' "
+                    "AND IS_DEFINED(c.usage.total_tokens) AND IS_NUMBER(c.usage.total_tokens)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                partition_key=normalized_user_id,
+            ))
+            total_tokens = (
+                activity_tokens[0]
+                if activity_tokens and activity_tokens[0] is not None
+                else token_metrics.get("total_tokens")
+            )
+
+            return jsonify({
+                "user": {
+                    "id": normalized_user_id,
+                    "email": user_doc.get("email", ""),
+                    "display_name": user_doc.get("display_name", ""),
+                    "access": _control_center_effective_restriction(settings, "access"),
+                    "file_uploads": _control_center_effective_restriction(settings, "file_uploads"),
+                },
+                "usage": {
+                    "last_login": login_metrics.get("last_login"),
+                    "total_logins": login_metrics.get("total_logins"),
+                    "conversations": chat_metrics.get("total_conversations"),
+                    "documents": document_metrics.get("total_documents"),
+                    "tokens": total_tokens,
+                    "metrics_calculated_at": metrics.get("calculated_at"),
+                },
+                "activity": [
+                    {
+                        "id": item.get("id", ""),
+                        "activity_type": item.get("activity_type", ""),
+                        "timestamp": item.get("timestamp") or item.get("created_at"),
+                        "resource_name": item.get("resource_name"),
+                        "workspace_type": item.get("workspace_type"),
+                        "token_type": item.get("token_type"),
+                        "status": item.get("status"),
+                        "usage": item.get("usage"),
+                    }
+                    for item in activity_items
+                ],
+                "memberships": {
+                    "groups": group_memberships,
+                    "public_workspaces": public_memberships,
+                },
+            }), 200
+        except ValueError:
+            return jsonify({"error": "Invalid user ID."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user detail query failed.",
+                extra={"user_id": str(user_id), "error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve user details."}), 500
+
+    @bp.route('/api/v2/control-center/users/bulk-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users_bulk_action():
+        """Apply one access or upload setting to at most 500 explicitly or filter-selected users."""
+        try:
+            data = request.get_json(silent=True) or {}
+            action_type = data.get("action_type")
+            action_settings = data.get("settings")
+            if action_type not in {"access", "file_uploads"} or not isinstance(action_settings, dict):
+                return jsonify({"error": "Choose an access or file-upload action."}), 400
+            status = action_settings.get("status")
+            if status not in {"allow", "deny"}:
+                return jsonify({"error": "Status must be allow or deny."}), 400
+            expires_at = action_settings.get("datetime_to_allow")
+            if expires_at:
+                try:
+                    parsed_expiry = datetime.fromisoformat(
+                        str(expires_at).replace("Z", "+00:00")
+                    )
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Expiry must be an ISO 8601 datetime."}), 400
+                if parsed_expiry.tzinfo is None:
+                    parsed_expiry = parsed_expiry.replace(tzinfo=timezone.utc)
+                expires_at = parsed_expiry.astimezone(timezone.utc).isoformat()
+
+            if isinstance(data.get("user_ids"), list):
+                user_ids = [
+                    _control_center_validate_user_id(value)
+                    for value in data["user_ids"]
+                ]
+                user_ids = list(dict.fromkeys(user_ids))
+            elif isinstance(data.get("filter"), dict):
+                filters = _control_center_parse_user_filters(data["filter"])
+                where_clause, parameters = _control_center_user_where(filters)
+                excluded = data.get("exclude_ids", [])
+                if not isinstance(excluded, list) or len(excluded) > CONTROL_CENTER_USERS_MAX_BULK:
+                    return jsonify({"error": "The exclusion list is too large."}), 400
+                excluded_ids = list(dict.fromkeys(
+                    _control_center_validate_user_id(value) for value in excluded
+                ))
+                if excluded_ids:
+                    exclusion_params = []
+                    placeholders = []
+                    for index, excluded_id in enumerate(excluded_ids):
+                        name = f"@excluded_{index}"
+                        placeholders.append(name)
+                        exclusion_params.append({"name": name, "value": excluded_id})
+                    where_clause += f" AND c.id NOT IN ({', '.join(placeholders)})"
+                    parameters += exclusion_params
+                bounded_query = (
+                    "SELECT c.id FROM c WHERE "
+                    f"{where_clause} OFFSET 0 LIMIT @selection_limit"
+                )
+                selected_rows = list(cosmos_user_settings_container.query_items(
+                    query=bounded_query,
+                    parameters=parameters + [{
+                        "name": "@selection_limit",
+                        "value": CONTROL_CENTER_USERS_MAX_BULK + 1,
+                    }],
+                    enable_cross_partition_query=True,
+                ))
+                if len(selected_rows) > CONTROL_CENTER_USERS_MAX_BULK:
+                    return jsonify({
+                        "error": f"Bulk actions are limited to {CONTROL_CENTER_USERS_MAX_BULK} users."
+                    }), 400
+                user_ids = [
+                    _control_center_validate_user_id(item.get("id"))
+                    for item in selected_rows
+                ]
+            else:
+                return jsonify({"error": "Provide user_ids or a filter with optional exclude_ids."}), 400
+
+            if not user_ids:
+                return jsonify({"error": "Select at least one user."}), 400
+            if len(user_ids) > CONTROL_CENTER_USERS_MAX_BULK:
+                return jsonify({
+                    "error": f"Bulk actions are limited to {CONTROL_CENTER_USERS_MAX_BULK} users."
+                }), 400
+
+            setting_value = {
+                "status": status,
+                "datetime_to_allow": expires_at,
+            }
+            successful_ids = []
+            failed_ids = []
+            for target_user_id in user_ids:
+                try:
+                    updated = update_user_settings(
+                        target_user_id,
+                        {action_type: setting_value},
+                        allow_cross_user=True,
+                    )
+                    (successful_ids if updated else failed_ids).append(target_user_id)
+                except Exception as update_error:
+                    debug_print(
+                        f"[CONTROL_CENTER] Bulk user update failed for {target_user_id}: "
+                        f"{type(update_error).__name__}"
+                    )
+                    failed_ids.append(target_user_id)
+
+            admin_user = session.get("user", {})
+            log_event("[CONTROL_CENTER] Bulk User Action", {
+                "admin_user": admin_user.get("preferred_username", "unknown"),
+                "action_type": action_type,
+                "user_count": len(user_ids),
+                "success_count": len(successful_ids),
+                "failed_count": len(failed_ids),
+                "settings": setting_value,
+            })
+            return jsonify({
+                "success_count": len(successful_ids),
+                "failed_count": len(failed_ids),
+                "failed_user_ids": failed_ids,
+            }), 200
+        except ValueError:
+            return jsonify({"error": "Invalid bulk user action request."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 bulk user action failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to complete the bulk user action."}), 500
+
+    @bp.route('/api/v2/control-center/users/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users_export():
+        """Stream a CSV export of users matching the same filters as the Users list."""
+        try:
+            filters = _control_center_parse_user_filters(request.args)
+            where_clause, parameters = _control_center_user_where(filters)
+            sort_expression = CONTROL_CENTER_USER_SORTS[filters["sort"]]
+            query = (
+                "SELECT c.id, c.email, c.display_name, c.settings FROM c "
+                f"WHERE {where_clause} ORDER BY {sort_expression} {filters['direction'].upper()}, c.id ASC"
+            )
+            user_docs = cosmos_user_settings_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True,
+            )
+
+            def stream_csv():
+                buffer = StringIO()
+                writer = csv.writer(buffer)
+                headers = (
+                    "id", "display_name", "email", "access_status", "access_expires_at",
+                    "file_upload_status", "file_upload_expires_at", "last_login",
+                    "conversations", "documents", "tokens", "metrics_calculated_at",
+                )
+                writer.writerow(headers)
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                for user_doc in user_docs:
+                    row = _control_center_user_row(user_doc, filters["now"])
+                    values = (
+                        row["id"], row["display_name"], row["email"],
+                        row["access"]["status"], row["access"]["expires_at"],
+                        row["file_uploads"]["status"], row["file_uploads"]["expires_at"],
+                        row["last_login"], row["conversations"], row["documents"],
+                        row["tokens"], row["metrics_calculated_at"],
+                    )
+                    writer.writerow(_control_center_csv_safe_cell(value) for value in values)
+                    yield buffer.getvalue()
+                    buffer.seek(0)
+                    buffer.truncate(0)
+
+            response = Response(
+                stream_with_context(stream_csv()),
+                mimetype="text/csv",
+                headers={"Content-Disposition": 'attachment; filename="control-center-users.csv"'},
+            )
+            response.headers["Cache-Control"] = "private, no-store"
+            return response
+        except ValueError:
+            return jsonify({"error": "Invalid user export filters."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user export query failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to export users."}), 500
+
     # Group Management APIs
+    @bp.route('/api/v2/control-center/groups', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups():
+        """Filter and sort the batched server inventory before paging."""
+        try:
+            filters = parse_group_filters(request.args)
+            page, per_page = parse_control_center_management_pagination(request.args)
+            inventory = _control_center_group_inventory(request.args.get("force_refresh") == "1")
+            rows = filter_group_inventory(inventory["rows"], filters)
+            total_pages = get_control_center_total_pages(len(rows), per_page)
+            page = clamp_control_center_page(page, total_pages)
+            return jsonify({
+                "groups": rows[(page - 1) * per_page:page * per_page],
+                "pagination": {
+                    "page": page, "per_page": per_page, "total_items": len(rows),
+                    "total_pages": total_pages, "has_prev": page > 1, "has_next": page < total_pages,
+                },
+                "metrics_freshness": {
+                    "calculated_at": inventory["calculated_at"],
+                    "ttl_seconds": GROUP_SNAPSHOT_TTL,
+                    "source": "batched group inventory, document metadata and activity logs",
+                },
+            }), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group list failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve groups."}), 500
+
+    @bp.route('/api/v2/control-center/groups/<group_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_group_detail(group_id):
+        """Admin-authorized overview with a fresh membership/status read and bounded activity."""
+        try:
+            validate_group_id(group_id)
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            inventory = _control_center_group_inventory()
+            cached = next((row for row in inventory["rows"] if row["id"] == group_id), None)
+            if cached is None:
+                inventory = _control_center_group_inventory(force_refresh=True)
+                cached = next((row for row in inventory["rows"] if row["id"] == group_id), None)
+            if cached is None:
+                return jsonify({"error": "Group not found."}), 404
+            row = group_row(group, cached["documents"], cached["tokens"], cached["last_activity"])
+            activity = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, "
+                    "c.user_id, c.admin_user_id, c.admin_email, c.group, c.workspace_context, "
+                    "c.status_change, c.added_member, c.removed_member, c.member_email, "
+                    "c.member_name, c.member_role, c.document, c.usage, c.token_type "
+                    "FROM c WHERE c.group_id = @group_id OR c.group.group_id = @group_id "
+                    "OR c.workspace_context.group_id = @group_id ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@group_id", "value": group_id}],
+                enable_cross_partition_query=True,
+            ))
+            user = session.get("user") or {}
+            role = get_user_role_in_group(group, user.get("oid") or user.get("sub"))
+            settings = get_settings()
+            can_edit_members = role in ("Owner", "Admin") and bool(settings.get("enable_group_workspaces"))
+            return jsonify({
+                "group": row,
+                "members": group_members(group),
+                "status_history": group.get("statusHistory") or [],
+                "retention": {
+                    "conversation_retention_days": (group.get("retention_policy") or {}).get("conversation_retention_days", "default"),
+                    "document_retention_days": (group.get("retention_policy") or {}).get("document_retention_days", "default"),
+                    "enabled": bool(settings.get("enable_retention_policy_group")),
+                    "can_edit": can_edit_members and bool(settings.get("enable_retention_policy_group")),
+                },
+                "permissions": {"can_edit_members": can_edit_members, "current_role": role},
+                "documents_summary": {
+                    "count": row["documents"],
+                    "cached_metrics": (group.get("metrics") or {}).get("document_metrics") or {},
+                    "metrics_calculated_at": (group.get("metrics") or {}).get("calculated_at"),
+                },
+                "tokens": row["tokens"],
+                "activity": activity,
+                "activity_limit": 20,
+                "metrics_calculated_at": inventory["calculated_at"],
+            }), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group ID."}), 400
+        except CosmosResourceNotFoundError:
+            return jsonify({"error": "Group not found."}), 404
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group detail failed.",
+                      extra={"group_id": group_id, "error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve group details."}), 500
+
+    @bp.route('/api/v2/control-center/groups/bulk-status', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups_bulk_status():
+        """Apply the same guarded status writer to a validated, capped population."""
+        try:
+            data = request.get_json(silent=True)
+            status, reason = validate_group_status_payload(data)
+            ids = select_group_bulk_ids(data, lambda: _control_center_group_inventory(force_refresh=True))
+        except GroupRequestError:
+            return jsonify({"error": "Invalid bulk group status request."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group selection failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to select groups."}), 500
+        failed = []
+        for group_id in ids:
+            response, code = _update_group_status(group_id, {"status": status, "reason": reason})
+            if code != 200:
+                failed.append({"id": group_id, "status": code, "error": response.get_json()["error"]})
+        return jsonify({
+            "success_count": len(ids) - len(failed), "failed_count": len(failed), "failed_groups": failed,
+        }), 200
+
+    @bp.route('/api/v2/control-center/groups/<group_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_group_status(group_id):
+        try:
+            validate_group_id(group_id)
+            status, reason = validate_group_status_payload(request.get_json(silent=True))
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group status request."}), 400
+        return _update_group_status(group_id, {"status": status, "reason": reason})
+
+    @bp.route('/api/v2/control-center/groups/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups_export():
+        try:
+            filters = parse_group_filters(request.args)
+            rows = filter_group_inventory(_control_center_group_inventory()["rows"], filters)
+            buffer = StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "name", "owner", "status", "members", "documents", "tokens", "last_activity"])
+            for row in rows:
+                writer.writerow(_control_center_csv_safe_cell(value) for value in (
+                    row["id"], row["name"], row["owner"]["email"], row["status"],
+                    row["members"], row["documents"], row["tokens"], row["last_activity"],
+                ))
+            return Response(buffer.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="control-center-groups.csv"'}), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group export filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group export failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to export groups."}), 500
+
     @bp.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -3546,12 +4437,14 @@ def register_route_backend_control_center(bp):
     @login_required
     @control_center_required('admin')
     def api_update_group_status(group_id):
+        return _update_group_status(group_id, request.get_json(silent=True))
+
+    def _update_group_status(group_id, data):
         """
         Update group status (active, locked, upload_disabled, inactive)
         Tracks who made the change and when, logs to activity_logs
         """
         try:
-            data = request.get_json()
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
                 
@@ -3620,6 +4513,7 @@ def register_route_backend_control_center(bp):
                 return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
             if group is None:
                 return jsonify({'error': 'Group not found'}), 404
+            _control_center_group_snapshot_cache.clear()
             old_status = transition['old_status']
             
             # Log to activity_logs container for audit trail
@@ -3743,7 +4637,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating group deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request group deletion.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -3806,7 +4700,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating document deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request document deletion.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -3908,7 +4802,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating take ownership request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request group ownership.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -3991,7 +4885,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating transfer ownership request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request ownership transfer.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -4069,6 +4963,7 @@ def register_route_backend_control_center(bp):
                 return jsonify({'error': 'Group not found'}), 404
             
             # Determine the action source (single add vs bulk CSV)
+            _control_center_group_snapshot_cache.clear()
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
             action_type = 'add_member_directly' if source == 'single' else 'admin_add_member_csv'
             
@@ -4331,6 +5226,148 @@ def register_route_backend_control_center(bp):
             import traceback
             traceback.print_exc()
             return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces():
+        try:
+            filters = parse_workspace_filters(request.args)
+            return jsonify(query_workspaces(cosmos_public_workspaces_container, filters)), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace query failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve public workspaces."}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces/<workspace_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspace_detail(workspace_id):
+        try:
+            validate_group_id(workspace_id)
+            workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            parameters = [{"name": "@id", "value": workspace_id}]
+            documents = list(cosmos_public_documents_container.query_items(
+                query="SELECT VALUE COUNT(1) FROM c WHERE c.type = 'document_metadata' AND c.public_workspace_id = @id",
+                parameters=parameters, enable_cross_partition_query=True,
+            ))[0]
+            tokens = list(cosmos_activity_logs_container.query_items(
+                query=("SELECT VALUE SUM(c.usage.total_tokens) FROM c WHERE c.activity_type = 'token_usage' "
+                       "AND c.workspace_context.public_workspace_id = @id AND IS_NUMBER(c.usage.total_tokens)"),
+                parameters=parameters, enable_cross_partition_query=True,
+            ))
+            activity = list(cosmos_activity_logs_container.query_items(
+                query=("SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, c.user_id, "
+                       "c.admin_user_id, c.admin_email, c.workspace_context, c.public_workspace, c.changed_by, c.status_change, "
+                       "c.document, c.usage, c.token_type, c.member_email, c.member_name, c.member_role "
+                       "FROM c WHERE c.workspace_context.public_workspace_id = @id OR c.workspace_id = @id "
+                       "OR c.public_workspace.workspace_id = @id ORDER BY c.timestamp DESC"),
+                parameters=parameters, enable_cross_partition_query=True,
+            ))
+            user = session.get("user") or {}
+            # Normalize legacy bare-string owner for the existing role helper.
+            role_workspace = dict(workspace)
+            if isinstance(role_workspace.get("owner"), str):
+                role_workspace["owner"] = {"userId": role_workspace["owner"]}
+            role = get_user_role_in_public_workspace(role_workspace, user.get("oid") or user.get("sub"))
+            settings = get_settings()
+            can_edit = role in ("Owner", "Admin") and bool(settings.get("enable_public_workspaces"))
+            retention = workspace.get("retention_policy") or {}
+            row = workspace_row(workspace)
+            return jsonify({
+                "workspace": row, "members": workspace_members(workspace),
+                "status_history": workspace.get("statusHistory") or [],
+                "permissions": {"can_edit_members": can_edit, "current_user_id": user.get("oid") or user.get("sub")},
+                "retention": {
+                    "conversation_retention_days": retention.get("conversation_retention_days", "default"),
+                    "document_retention_days": retention.get("document_retention_days", "default"),
+                    "enabled": bool(settings.get("enable_retention_policy_public")),
+                    "can_edit": can_edit and bool(settings.get("enable_retention_policy_public")),
+                },
+                "documents_summary": {"count": documents,
+                                      "cached_metrics": (workspace.get("metrics") or {}).get("document_metrics") or {},
+                                      "metrics_calculated_at": row["metrics_calculated_at"]},
+                "tokens": tokens[0] if tokens and tokens[0] is not None else 0,
+                "activity": activity, "metrics_calculated_at": datetime.now(timezone.utc).isoformat(),
+            }), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace ID."}), 400
+        except CosmosResourceNotFoundError:
+            return jsonify({"error": "Public workspace not found."}), 404
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace detail failed.",
+                      extra={"workspace_id": workspace_id, "error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve workspace details."}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces/bulk-status', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces_bulk_status():
+        try:
+            data = request.get_json(silent=True)
+            validate_group_status_payload(data)
+            ids = select_workspace_ids(cosmos_public_workspaces_container, data)
+        except GroupRequestError:
+            return jsonify({"error": "Invalid bulk public workspace status request."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace selection failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to select public workspaces."}), 500
+        failed = []
+        for workspace_id in ids:
+            response, code = api_update_public_workspace_status(workspace_id)
+            if code != 200:
+                failed.append({"id": workspace_id, "status": code, "error": response.get_json()["error"]})
+        return jsonify({"success_count": len(ids) - len(failed), "failed_count": len(failed),
+                        "failed_workspaces": failed}), 200
+
+    @bp.route('/api/v2/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspace_status(workspace_id):
+        try:
+            validate_group_id(workspace_id)
+            validate_group_status_payload(request.get_json(silent=True))
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace status request."}), 400
+        return api_update_public_workspace_status(workspace_id)
+
+    @bp.route('/api/v2/control-center/public-workspaces/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces_export():
+        try:
+            filters = parse_workspace_filters(request.args)
+            filters.update(page=1, per_page=250)
+            payload = query_workspaces(cosmos_public_workspaces_container, filters)
+            if payload["pagination"]["total_items"] > WORKSPACE_EXPORT_LIMIT:
+                return jsonify({"error": "Export is limited to 10000 workspaces. Narrow the filters."}), 400
+            rows = payload["workspaces"]
+            for page in range(2, payload["pagination"]["total_pages"] + 1):
+                rows.extend(query_workspaces(cosmos_public_workspaces_container, {**filters, "page": page})["workspaces"])
+            buffer = StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "name", "owner", "status", "members", "documents", "tokens", "last_activity", "metrics_calculated_at"])
+            for row in rows:
+                writer.writerow(_control_center_csv_safe_cell(value) for value in (
+                    row["id"], row["name"], row["owner"]["email"], row["status"], row["members"],
+                    row["documents"], row["tokens"], row["last_activity"], row["metrics_calculated_at"],
+                ))
+            return Response(buffer.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="control-center-public-workspaces.csv"'}), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace export filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace export failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to export public workspaces."}), 500
 
     # Public Workspaces API
     @bp.route('/api/admin/control-center/public-workspaces', methods=['GET'])
@@ -5381,7 +6418,7 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error creating take workspace ownership request: {e}")
             import traceback
             traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace ownership.'}), 500
 
     @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
     @swagger_route(security=get_auth_security())
@@ -5569,7 +6606,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating document deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace document deletion.'}), 500
 
 
     @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
@@ -5637,7 +6674,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating workspace deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace deletion.'}), 500
 
     @bp.route('/api/v2/control-center/dashboard/summary', methods=['GET'])
     @swagger_route(security=get_auth_security())

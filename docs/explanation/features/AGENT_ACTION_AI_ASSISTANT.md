@@ -1,4 +1,4 @@
-# Ask AI in the Agent and Action Editors (v0.261.282)
+# Ask AI in the Agent and Action Editors (v0.261.287)
 
 ## Overview
 
@@ -12,9 +12,9 @@ secrets or other credentials, and only offers what the person could choose in th
 In the agent editor the assistant can also draft up to three new actions for the agent. They are
 created in the agent's workspace only when the agent is saved.
 
-Implemented in version: **0.261.278** (the shared backend), **0.261.279** (agent editor),
-**0.261.280** (action editor), **0.261.281** (drafted actions) and **0.261.282** (tests,
-documentation and the drafted-action hand-off fix), tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.287**, tracked in `application/single_app/config.py`. It was
+built in phases (shared backend, agent editor, action editor, drafted actions, then tests,
+documentation and the drafted-action hand-off fix) and ships as one release.
 
 Dependencies:
 

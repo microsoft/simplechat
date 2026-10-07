@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.250.104
+Version: 0.261.284
 Implemented in: 0.250.008
 Maintenance cleanup integration updated in: 0.250.038
 Manual admin apply override updated in: 0.250.039
 Data Management history pagination index updated in: 0.250.103
 CodeQL remediation version alignment updated in: 0.250.104
+Activity Logs keyset index updated in: 0.261.284
 
 This test ensures expected Cosmos indexing policies can be compared, safely
 merged, and invoked through the app maintenance framework without live Azure
@@ -146,6 +147,7 @@ class FakeCosmosDatabase:
 
 def _build_fake_environment():
     containers = {
+        "activity_logs": FakeCosmosContainer("activity_logs"),
         "conversations": FakeCosmosContainer("conversations"),
         "messages": FakeCosmosContainer("messages"),
         "data_management_jobs": FakeCosmosContainer("data_management_jobs"),
@@ -201,6 +203,8 @@ def _load_wave3_modules():
     fake_config = types.ModuleType("config")
     fake_config.VERSION = "0.250.039"
     fake_config.cosmos_database = database
+    fake_config.cosmos_activity_logs_container = containers["activity_logs"]
+    fake_config.cosmos_activity_logs_container_name = "activity_logs"
     fake_config.cosmos_settings_container = settings_container
     fake_config.cosmos_governance_policies_container = governance_container
     fake_config.cosmos_conversations_container = containers["conversations"]
@@ -266,7 +270,17 @@ def test_indexing_policy_report_is_read_only():
         for definition in indexing.COSMOS_INDEXING_POLICY_DEFINITIONS
         if definition["container_name"] == "data_management_jobs"
     )
-    assert indexing.COSMOS_INDEXING_POLICY_DEFINITION_VERSION == 2
+    assert indexing.COSMOS_INDEXING_POLICY_DEFINITION_VERSION == 3
+    activity_definition = next(
+        definition for definition in indexing.COSMOS_INDEXING_POLICY_DEFINITIONS
+        if definition["container_name"] == "activity_logs"
+    )
+    assert activity_definition["partition_key_path"] == "/user_id"
+    assert activity_definition["expected_policy"]["compositeIndexes"] == [[
+        {"path": "/timestamp", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+        {"path": "/user_id", "order": "descending"},
+    ]]
     assert data_management_definition["expected_policy"]["compositeIndexes"] == [[
         {"path": "/created_at", "order": "descending"},
         {"path": "/id", "order": "descending"},
