@@ -1,7 +1,7 @@
 // test_v2_orchestration_deliverables.mjs
-// Version: 0.261.292
+// Version: 0.261.293
 // Implemented in: 0.261.135
-// Server chart and diagram checks after a run added in: 0.261.292
+// Server chart and diagram checks after a run added in: 0.261.293
 // Executes the shared plan normalization for deliverables: what a plan says the user asked
 // for, how each deliverable's state follows its producing steps, and the image helpers.
 // Also reads a terminal frame shaped as the harness publishes it through the real run

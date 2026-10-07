@@ -82,7 +82,7 @@ The step summary reports the result, for example "Used Simulation (3 function ca
 created 1 chart." The chart travels in the step's tool citations, untruncated, and the answer
 places it from the planned visual binding.
 
-Since **0.261.292**, the plan must bind the step's `prepared` output to the compose step
+Since **0.261.293**, the plan must bind the step's `prepared` output to the compose step
 that writes the answer, because only a Reason step reads what a gather step found. A plan
 with only the action step is refused while planning, and the planner corrects it. The
 answer step receives each chart as its `[[chart:<id>]]` token rather than a second copy of

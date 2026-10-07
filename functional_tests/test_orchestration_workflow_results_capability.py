@@ -1,7 +1,7 @@
 # test_orchestration_workflow_results_capability.py
 """
 Functional test for the workflow_results orchestration capability (registry, gates, catalog, schema, planner).
-Version: 0.261.292
+Version: 0.261.293
 Implemented in: 0.261.217
 
 This test ensures stored workflow results are offered, planned, validated, degraded, and surfaced only through the approved read-only workflow_results path.
