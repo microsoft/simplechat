@@ -257,7 +257,7 @@ export function GovernanceFeaturePolicies({
     onNavigate: (sectionId: string) => void;
     /**
      * Whether a policy has unsaved edits. Leaving the category or searching would unmount
-     * this section and discard them, so the page locks both, as it does for Call agent edits.
+     * this section and discard them, so the page locks both until the edit is settled.
      */
     onDirtyChange?: (dirty: boolean) => void;
 }) {

@@ -1,11 +1,14 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.188
+Version: 0.261.271
 Implemented in: 0.261.127
 Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
 The workflow editor takes focus and hands it back to Edit on close: 0.261.188
 A failed workflow read offers a retry and never the empty state: 0.261.188
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: a
+workflow's actions belong to its selected detail, the editor is a page that returns focus to the
+edited workflow's heading, and a legacy workflow target selects the workflow: 0.261.271
 """
 
 import copy
@@ -17,6 +20,13 @@ from ui_tests.fixtures.group_workspace import (
     connect_options, group_context, group_ui,  # noqa: F401
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN
+from ui_tests.fixtures.workflow_workbench import (
+    create_workflow,
+    select_workflow,
+    workflow_detail,
+    workflow_editor,
+    workflow_row,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -166,18 +176,21 @@ def test_group_action_delete_preserves_callers(group_ui):
 def test_native_workflows_and_read_only_roles(group_ui):
     ui = group_ui
     ui.open("/groups/group-a/workflows")
-    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, "Review group files")).to_be_visible()
+    select_workflow(ui.page, "Review group files")
     ui.page.get_by_role("button", name="Run Review group files", exact=True).click()
     expect(ui.page.get_by_role("button", name="Cancel Review group files", exact=True)).to_be_visible()
     assert ui.writes[-1].query == {"group_id": ["group-a"]}
     ui.page.get_by_role("button", name="Cancel Review group files", exact=True).click()
     expect(ui.page.get_by_role("button", name="Run Review group files", exact=True)).to_be_visible()
-    ui.page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(ui.page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    editor = create_workflow(ui.page)
     ui.page.get_by_label("Workflow name", exact=True).fill("Unsaved group workflow")
     expect(ui.page.get_by_role("combobox", name="Group workspace")).to_be_disabled()
-    ui.page.get_by_role("button", name="Cancel", exact=True).click()
-    ui.page.get_by_role("button", name="Discard changes", exact=True).click()
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    ui.page.get_by_role("dialog", name="Discard unsaved changes?", exact=True).get_by_role(
+        "button", name="Discard changes", exact=True
+    ).click()
+    expect(editor).to_have_count(0)
     ui.page.get_by_role("combobox", name="Group workspace").select_option("group-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-b/workflows")
     expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
@@ -188,6 +201,8 @@ def test_a_member_runs_and_cancels_a_group_workflow_but_cannot_manage_it(group_u
     ui = group_ui
     ui.open("/groups/group-b/workflows")
     expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
+    # A workflow's actions are drawn only in its selected detail, so select it first.
+    select_workflow(ui.page, "Review group files")
     expect(ui.page.get_by_role("button", name="Delete Review group files", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name="Edit Review group files", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name="View Review group files", exact=True)).to_be_visible()
@@ -216,7 +231,8 @@ def test_group_workflow_controls_are_read_only_when_owner_group_is_not_active(gr
     ui = group_ui
     ui.groups["group-a"] = group_context("group-a", "Research group", role="Owner", status=status)
     ui.open("/groups/group-a/workflows")
-    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    # A workflow's actions are drawn only in its selected detail, so select it first.
+    select_workflow(ui.page, "Review group files")
     expect(ui.page.get_by_role("button", name="Run Review group files", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name="Cancel Review group files", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
@@ -228,6 +244,7 @@ def test_group_workflow_controls_are_read_only_when_owner_group_is_not_active(gr
 def test_a_manager_deletes_a_group_workflow(group_ui):
     ui = group_ui
     ui.open("/groups/group-a/workflows")
+    select_workflow(ui.page, "Review group files")
     ui.page.get_by_role("button", name="Delete Review group files", exact=True).click()
     ui.page.get_by_role("button", name="Delete", exact=True).click()
     delete_requests = [
@@ -260,35 +277,43 @@ def test_group_workflow_search_filters_by_name_and_description(group_ui):
 
     search = ui.page.get_by_role("searchbox", name="Search workflows", exact=True)
     search.fill("review group")
-    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, "Review group files")).to_be_visible()
     expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_have_count(0)
     search.fill("CALIBRATION")
     expect(ui.page.get_by_text("Review group files", exact=True)).to_have_count(0)
-    expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, "Quarterly audit")).to_be_visible()
+    # The detail follows the filter: the only visible workflow is the one shown.
+    expect(workflow_detail(ui.page, "Quarterly audit")).to_be_visible()
     search.fill("not present")
     expect(ui.page.get_by_text("No workflows match your search", exact=True)).to_be_visible()
     search.fill("")
-    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
-    expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, "Review group files")).to_be_visible()
+    expect(workflow_row(ui.page, "Quarterly audit")).to_be_visible()
     assert len([entry for entry in ui.requests if entry.method == "GET" and entry.path == "/api/group/workflows"]) == 1
 
 
-def test_the_workflow_editor_hands_focus_back_to_edit(group_ui):
-    """Edit disables itself while the editor's options load, so focus falls to the page before the
-    dialog opens; the editor still takes focus, and closing it returns focus to Edit (M11, WCAG 2.4.3)."""
+def test_the_workflow_editor_takes_focus_and_returns_it_to_the_workflow(group_ui):
+    """Edit opens the editor page with focus on its title, and leaving it returns focus to the edited
+    workflow's heading in the workbench, where Edit is the next stop (M11, WCAG 2.4.3). Until
+    0.261.271 the editor was a dialog that handed focus back to Edit itself."""
     ui = group_ui
     ui.open("/groups/group-a/workflows")
-    edit = ui.page.get_by_role("button", name="Edit Review group files", exact=True)
+    detail = select_workflow(ui.page, "Review group files")
+    edit = detail.get_by_role("button", name="Edit Review group files", exact=True)
     edit.focus()
     ui.page.keyboard.press("Enter")
-    dialog = ui.page.get_by_role("dialog")
-    expect(dialog).to_be_visible()
-    ui.page.wait_for_function(
-        "() => Boolean(document.activeElement && document.activeElement.closest('[role=\"dialog\"]'))"
-    )
-    ui.page.keyboard.press("Escape")
-    expect(dialog).to_have_count(0)
-    expect(edit).to_be_focused()
+    editor = workflow_editor(ui.page)
+    expect(editor).to_be_visible()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-a/workflows/workflow-1")
+    expect(editor.get_by_role("heading", name="Review group files", level=2)).to_be_focused()
+    editor.get_by_role("button", name="Cancel", exact=True).focus()
+    ui.page.keyboard.press("Enter")
+    expect(editor).to_have_count(0)
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-a/workflows?workflow_id=workflow-1")
+    heading = workflow_detail(ui.page, "Review group files").get_by_role("heading", name="Review group files", level=3)
+    expect(heading).to_be_focused()
+    ui.page.keyboard.press("Tab")
+    expect(ui.page.get_by_role("button", name="Run Review group files", exact=True)).to_be_focused()
 
 
 def test_a_failed_workflow_read_offers_a_retry_and_never_the_empty_state(group_ui):
@@ -304,7 +329,7 @@ def test_a_failed_workflow_read_offers_a_retry_and_never_the_empty_state(group_u
     # Only the header's Create workflow remains: the empty state's invitation is gone with it.
     expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(1)
     alert.get_by_role("button", name="Retry workflows", exact=True).click()
-    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, "Review group files")).to_be_visible()
     expect(alert).to_have_count(0)
 
 
@@ -409,15 +434,35 @@ def test_back_navigation_can_keep_or_discard_a_group_draft(group_ui):
 
 
 def test_legacy_workflow_target_survives_restore_but_not_a_group_switch(group_ui):
+    """A legacy `?workflow_id=` survives the restore that resolves the group and selects that
+    workflow in the workbench (until 0.261.271 it opened the editor dialog); a group switch drops it."""
     ui = group_ui
     ui.active_group = "group-a"
+    # Listed first, so selecting workflow-1 proves the target was honoured, not the default.
+    ui.workflows["group-a"].insert(0, {
+        "id": "workflow-2",
+        "name": "Quarterly audit",
+        "definition_version": 2,
+        "description": "Find calibration gaps across approved sources.",
+        "status": "idle",
+        "task_prompt": "Audit the selected files.",
+        "group_id": "group-a",
+        "durable_execution": True,
+        "runner_type": "model",
+        "trigger_type": "manual",
+    })
     ui.open("/groups?workflow_id=workflow-1")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-a/workflows?workflow_id=workflow-1")
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
-    ui.page.get_by_role("button", name="Cancel", exact=True).click()
+    expect(workflow_row(ui.page, "Review group files")).to_have_attribute("aria-pressed", "true")
+    expect(workflow_row(ui.page, "Quarterly audit")).to_have_attribute("aria-pressed", "false")
+    detail = workflow_detail(ui.page, "Review group files")
+    expect(detail.get_by_role("heading", name="Review group files", level=3)).to_be_focused()
+    expect(detail.get_by_role("tab", name="Overview", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(workflow_editor(ui.page)).to_have_count(0)
     expect(ui.page.get_by_role("dialog")).to_have_count(0)
     ui.page.get_by_role("combobox", name="Group workspace").select_option("group-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-b/workflows")
+    expect(workflow_editor(ui.page)).to_have_count(0)
     expect(ui.page.get_by_role("dialog")).to_have_count(0)
 
 

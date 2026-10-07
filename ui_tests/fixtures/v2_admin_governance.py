@@ -1,8 +1,8 @@
 # v2_admin_governance.py
 """
 In-memory governance APIs for V2 Admin Settings browser tests.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 Extends the schema-backed Admin Settings fixture with the governance endpoints the
 Governance group and its tie-ins call: feature policies, delegated item policies,

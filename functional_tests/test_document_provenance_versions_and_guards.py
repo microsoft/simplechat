@@ -48,7 +48,11 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 # Resolve application modules only after configuring the standalone path.
-from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
+from collaboration_models import (
+    GROUP_MULTI_USER_CHAT_TYPE,
+    PERSONAL_MULTI_USER_CHAT_TYPE,
+    is_shared_conversation_backing,
+)
 from content_screening import access
 from content_screening.contracts import SCREENING_FIELD, ScreeningValidationError
 import functions_document_provenance as provenance
@@ -881,6 +885,7 @@ def chat_upload(tmp_path):
         "get_current_user_info": lambda: {"userId": "actor"},
         "cosmos_conversations_container": conversations,
         "CosmosResourceNotFoundError": ConversationNotFound,
+        "is_shared_conversation_backing": is_shared_conversation_backing,
         "get_collaboration_conversation": get_collaboration_conversation,
         "assert_user_can_participate_in_collaboration_conversation": (
             assert_user_can_participate_in_collaboration_conversation

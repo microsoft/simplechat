@@ -21,8 +21,12 @@ import {
     type WorkflowScheduleUnit,
 } from '../../lib/workflowEditor';
 import { WorkflowChangedField } from './WorkflowChangeTracking';
-
-const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
+import {
+    WorkflowField,
+    WorkflowFieldEmphasis,
+    WorkflowFieldList,
+    workflowFieldInputClass,
+} from './WorkflowField';
 
 type Repeats = 'interval' | WorkflowScheduleFrequency;
 
@@ -71,7 +75,7 @@ export function WorkflowScheduleFields({
     scheduled,
     onChange,
 }: {
-    /** The trigger select, laid out beside Repeats. */
+    /** The Trigger row, drawn first; the schedule's rows nest beneath it. */
     triggerField: ReactNode;
     schedule: WorkflowSchedule;
     options: WorkflowEditorOptions;
@@ -135,79 +139,80 @@ export function WorkflowScheduleFields({
     ));
 
     return (
-        <WorkflowChangedField changeKey="schedule" className="space-y-3">
-            <div className="grid gap-3 md:grid-cols-3">
-                {triggerField}
-                {calendarOffered ? (
-                    <label className="text-sm text-text-2">
-                        Repeats
-                        <select
-                            className={`${inputClass} mt-1`}
-                            aria-label="Repeats"
-                            value={calendar ? calendar.frequency : 'interval'}
-                            disabled={!scheduled}
-                            onChange={(event) => changeRepeats(event.target.value as Repeats)}
-                        >
-                            {REPEAT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
-                    </label>
-                ) : null}
-            </div>
-            {interval ? (
-                <div className="grid gap-3 md:grid-cols-3">
-                    <label className="text-sm text-text-2">
-                        Interval value
-                        <input
-                            className={`${inputClass} mt-1`}
-                            type="number"
-                            min={1}
-                            aria-label="Interval value"
-                            value={interval.value}
-                            disabled={!scheduled}
-                            onChange={(event) => updateInterval({ value: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })}
-                        />
-                    </label>
-                    <label className="text-sm text-text-2">
-                        Interval unit
-                        <select
-                            className={`${inputClass} mt-1`}
-                            aria-label="Interval unit"
-                            value={interval.unit}
-                            disabled={!scheduled}
-                            onChange={(event) => updateInterval({ unit: event.target.value as WorkflowScheduleUnit })}
-                        >
-                            <option value="seconds">Seconds</option>
-                            <option value="minutes">Minutes</option>
-                            <option value="hours">Hours</option>
-                        </select>
-                    </label>
-                </div>
-            ) : null}
-            {calendar?.frequency === 'weekly' ? (
-                <fieldset disabled={!scheduled} className="min-w-0">
-                    <legend className="text-sm text-text-2">Days of the week</legend>
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                        {WORKFLOW_SCHEDULE_DAYS.map((day) => (
-                            <label key={day} className="flex items-center gap-2 text-sm text-text-1">
-                                <input
-                                    type="checkbox"
-                                    className="accent-[var(--accent)]"
-                                    checked={calendar.days_of_week.includes(day)}
-                                    onChange={(event) => toggleDay(day, event.target.checked)}
-                                />
-                                {dayName(day)}
-                            </label>
-                        ))}
-                    </div>
-                </fieldset>
-            ) : null}
-            {calendar ? (
-                <div className="grid gap-3 md:grid-cols-3">
-                    {calendar.frequency === 'monthly' ? (
-                        <label className="text-sm text-text-2">
-                            Day of the month
+        <WorkflowChangedField changeKey="schedule" className="min-w-0">
+            {triggerField}
+            {/* The schedule belongs to the trigger, so it sits beneath it. It stays visible, though
+                disabled, while the trigger is Manual, so a schedule is never silently lost. */}
+            <WorkflowFieldEmphasis emphasis="dependent">
+                <WorkflowFieldList>
+                    {calendarOffered ? (
+                        <WorkflowField label="Repeats" htmlFor={`${baseId}-repeats`} width="standard">
+                            <select
+                                id={`${baseId}-repeats`}
+                                className={workflowFieldInputClass}
+                                aria-label="Repeats"
+                                value={calendar ? calendar.frequency : 'interval'}
+                                disabled={!scheduled}
+                                onChange={(event) => changeRepeats(event.target.value as Repeats)}
+                            >
+                                {REPEAT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                        </WorkflowField>
+                    ) : null}
+                    {interval ? (
+                        <WorkflowField label="Interval value" htmlFor={`${baseId}-interval-value`} width="compact">
                             <input
-                                className={`${inputClass} mt-1`}
+                                id={`${baseId}-interval-value`}
+                                className={workflowFieldInputClass}
+                                type="number"
+                                min={1}
+                                aria-label="Interval value"
+                                value={interval.value}
+                                disabled={!scheduled}
+                                onChange={(event) => updateInterval({ value: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })}
+                            />
+                        </WorkflowField>
+                    ) : null}
+                    {interval ? (
+                        <WorkflowField label="Interval unit" htmlFor={`${baseId}-interval-unit`} width="standard">
+                            <select
+                                id={`${baseId}-interval-unit`}
+                                className={workflowFieldInputClass}
+                                aria-label="Interval unit"
+                                value={interval.unit}
+                                disabled={!scheduled}
+                                onChange={(event) => updateInterval({ unit: event.target.value as WorkflowScheduleUnit })}
+                            >
+                                <option value="seconds">Seconds</option>
+                                <option value="minutes">Minutes</option>
+                                <option value="hours">Hours</option>
+                            </select>
+                        </WorkflowField>
+                    ) : null}
+                    {calendar?.frequency === 'weekly' ? (
+                        <WorkflowField label="Days of the week" labelId={`${baseId}-days`} group width="full">
+                            <div className="flex min-h-10 flex-wrap items-center gap-x-4 gap-y-2">
+                                {WORKFLOW_SCHEDULE_DAYS.map((day) => (
+                                    <label key={day} className="flex items-center gap-2 text-sm text-text-1">
+                                        <input
+                                            type="checkbox"
+                                            className="accent-[var(--accent)]"
+                                            checked={calendar.days_of_week.includes(day)}
+                                            disabled={!scheduled}
+                                            onChange={(event) => toggleDay(day, event.target.checked)}
+                                        />
+                                        {dayName(day)}
+                                    </label>
+                                ))}
+                            </div>
+                        </WorkflowField>
+                    ) : null}
+                    {calendar?.frequency === 'monthly' ? (
+                        <WorkflowField label="Day of the month" htmlFor={`${baseId}-month-day`} width="compact"
+                            help="Months without this day run on their last day." helpId={`${baseId}-month-help`}>
+                            <input
+                                id={`${baseId}-month-day`}
+                                className={workflowFieldInputClass}
                                 type="number"
                                 min={1}
                                 max={31}
@@ -219,65 +224,67 @@ export function WorkflowScheduleFields({
                                     day_of_month: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
                                 })}
                             />
-                            <span id={`${baseId}-month-help`} className="mt-1 block text-xs text-text-3">
-                                Months without this day run on their last day.
-                            </span>
-                        </label>
+                        </WorkflowField>
                     ) : null}
-                    <label className="text-sm text-text-2">
-                        Time
-                        <input
-                            className={`${inputClass} mt-1`}
-                            type="time"
-                            step={60}
-                            aria-label="Time"
-                            value={calendar.time_of_day}
-                            disabled={!scheduled}
-                            onChange={(event) => updateCalendar({ time_of_day: event.target.value })}
-                        />
-                    </label>
-                    <label className="text-sm text-text-2">
-                        Time zone
-                        <input
-                            className={`${inputClass} mt-1`}
-                            type="text"
-                            list={`${baseId}-zones`}
-                            aria-label="Time zone"
-                            aria-describedby={zoneNote ? `${baseId}-zone-note` : undefined}
-                            autoComplete="off"
-                            spellCheck={false}
-                            value={calendar.timezone}
-                            disabled={!scheduled}
-                            onChange={(event) => {
-                                setZoneNote(false);
-                                updateCalendar({ timezone: event.target.value });
-                            }}
-                        />
-                        <datalist id={`${baseId}-zones`}>
-                            {(options.schedule?.timezones ?? []).map((zone) => <option key={zone} value={zone} />)}
-                        </datalist>
-                    </label>
-                </div>
-            ) : null}
-            {calendar && zoneNote ? (
-                <p id={`${baseId}-zone-note`} role="status" className="rounded-lg bg-warn-soft p-2 text-xs text-warn">
-                    {zoneDefault.browser
-                        ? `Your browser's time zone, ${zoneDefault.browser}, isn't available, so this schedule starts in UTC.`
-                        : "Your browser didn't report a time zone, so this schedule starts in UTC."}
-                    {' '}Choose the time zone it should follow.
-                </p>
-            ) : null}
-            {!supported ? (
-                <p role="status" className="text-xs text-text-3">
-                    This workflow&apos;s schedule can&apos;t be shown or changed in this editor.
-                </p>
-            ) : null}
-            {label ? (
-                <p className="text-xs text-text-3">
-                    Schedule: {label}
-                    {calendar ? '. Runs follow local time in this zone, including daylight saving changes.' : null}
-                </p>
-            ) : null}
+                    {calendar ? (
+                        <WorkflowField label="Time" htmlFor={`${baseId}-time`} width="compact">
+                            <input
+                                id={`${baseId}-time`}
+                                className={workflowFieldInputClass}
+                                type="time"
+                                step={60}
+                                aria-label="Time"
+                                value={calendar.time_of_day}
+                                disabled={!scheduled}
+                                onChange={(event) => updateCalendar({ time_of_day: event.target.value })}
+                            />
+                        </WorkflowField>
+                    ) : null}
+                    {calendar ? (
+                        <WorkflowField label="Time zone" htmlFor={`${baseId}-zone`} width="standard"
+                            help="An IANA time zone, such as America/New_York.">
+                            <input
+                                id={`${baseId}-zone`}
+                                className={workflowFieldInputClass}
+                                type="text"
+                                list={`${baseId}-zones`}
+                                aria-label="Time zone"
+                                aria-describedby={zoneNote ? `${baseId}-zone-note` : undefined}
+                                autoComplete="off"
+                                spellCheck={false}
+                                value={calendar.timezone}
+                                disabled={!scheduled}
+                                onChange={(event) => {
+                                    setZoneNote(false);
+                                    updateCalendar({ timezone: event.target.value });
+                                }}
+                            />
+                            <datalist id={`${baseId}-zones`}>
+                                {(options.schedule?.timezones ?? []).map((zone) => <option key={zone} value={zone} />)}
+                            </datalist>
+                        </WorkflowField>
+                    ) : null}
+                </WorkflowFieldList>
+                {calendar && zoneNote ? (
+                    <p id={`${baseId}-zone-note`} role="status" className="mb-2 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn">
+                        {zoneDefault.browser
+                            ? `Your browser's time zone, ${zoneDefault.browser}, isn't available, so this schedule starts in UTC.`
+                            : "Your browser didn't report a time zone, so this schedule starts in UTC."}
+                        {' '}Choose the time zone it should follow.
+                    </p>
+                ) : null}
+                {!supported ? (
+                    <p role="status" className="py-2 text-xs text-text-3">
+                        This workflow&apos;s schedule can&apos;t be shown or changed in this editor.
+                    </p>
+                ) : null}
+                {label ? (
+                    <p className="border-t border-edge-strong py-2.5 text-xs text-text-3">
+                        Schedule: {label}
+                        {calendar ? '. Runs follow local time in this zone, including daylight saving changes.' : null}
+                    </p>
+                ) : null}
+            </WorkflowFieldEmphasis>
         </WorkflowChangedField>
     );
 }

@@ -451,6 +451,24 @@ def get_appinsights_logger():
     
     return None
 
+
+def get_appinsights_runtime_state() -> Dict[str, bool]:
+    """Report how Application Insights was wired when this process started.
+
+    The settings document records what an administrator asked for; this reports
+    what the running process is doing. The two differ until the App Service
+    restarts, because ``setup_appinsights_logging`` configures the exporter and the
+    global logger once, at startup. Only booleans are returned, so the connection
+    string itself never leaves the server.
+    """
+    return {
+        'connection_configured': bool(os.environ.get('APPLICATIONINSIGHTS_CONNECTION_STRING')),
+        'exporter_configured': bool(_azure_monitor_configured),
+        'global_logging_active': (
+            _appinsights_logger is not None and _appinsights_logger is logging.getLogger()
+        ),
+    }
+
 # --- Logging function for Application Insights ---
 def log_event(
     message: Any,

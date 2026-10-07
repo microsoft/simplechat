@@ -5,7 +5,8 @@ import { RefreshCw } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { ActionField, ACTION_INPUT_CLASS } from './ActionFields';
 import {
-    actionTarget, fetchAgentTargets, PERSONAL_DELEGATION_SCOPE, referenceKey, type AgentTargetCatalog,
+    actionTarget, fetchAgentTargets, GLOBAL_DELEGATION_SCOPE, PERSONAL_DELEGATION_SCOPE, referenceKey,
+    type AgentTargetCatalog, type DelegationScope,
 } from '../../lib/agentDelegation';
 import { actionFieldError, withActionValue } from '../../lib/workspaceActionLogic';
 import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
@@ -20,10 +21,17 @@ export function CallAgentActionConfiguration(props: ActionConnectorProps) {
     const [version, setVersion] = useState(0);
     const callback = useRef(props.onValidityChange);
     callback.current = props.onValidityChange;
+    // Targets come from the action's own workspace, because the server only accepts a target
+    // there (or a permitted global agent): a global action calls global agents, and a group
+    // action calls its group's agents, never the author's personal ones.
+    const scopeType = props.globalScope ? 'global' : props.groupScope ? 'group' : 'personal';
+    const groupId = props.groupScope?.id ?? '';
     useEffect(() => {
         const controller = new AbortController();
+        const scope: DelegationScope = scopeType === 'global' ? GLOBAL_DELEGATION_SCOPE
+            : scopeType === 'group' ? { type: 'group', groupId } : PERSONAL_DELEGATION_SCOPE;
         setLoading(true); setError(null);
-        void fetchAgentTargets(PERSONAL_DELEGATION_SCOPE, controller.signal).then((result) => {
+        void fetchAgentTargets(scope, controller.signal).then((result) => {
             if (controller.signal.aborted) return;
             if (!result || !Array.isArray(result.targets)) throw new Error('The target catalogue returned an invalid response.');
             setCatalogue(result);
@@ -31,7 +39,7 @@ export function CallAgentActionConfiguration(props: ActionConnectorProps) {
             if (!controller.signal.aborted) setError(errorMessage(cause, 'Could not load permitted target agents.'));
         }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => controller.abort();
-    }, [version]);
+    }, [version, scopeType, groupId]);
     const target = actionTarget(props.draft);
     const selectedKey = target ? referenceKey(target) : '';
     const targets = catalogue?.targets ?? [];
@@ -49,8 +57,8 @@ export function CallAgentActionConfiguration(props: ActionConnectorProps) {
     }, [props.readOnly, validation]);
     return (
         <div className="space-y-4" data-testid="call-agent-configuration">
-            <p className="text-sm text-text-2">This action calls one explicitly selected agent using your current permissions.</p>
-            <ActionField id={`${id}-search`} label="Search target agents">
+            <p className="text-[0.8125rem] leading-relaxed text-text-2">This action calls one explicitly selected agent using your current permissions.</p>
+            <ActionField id={`${id}-search`} label="Search target agents" width="standard">
                 <input id={`${id}-search`} type="search" className={ACTION_INPUT_CLASS} value={query}
                     onChange={(event) => setQuery(event.target.value)} />
             </ActionField>
@@ -82,11 +90,11 @@ export function CallAgentActionConfiguration(props: ActionConnectorProps) {
                 The saved target is unavailable or access was revoked. Its scope and ID are retained; no same-name agent will be selected automatically.
             </p> : null}
             {selected ? <p className="break-words text-sm text-text-2">{selected.description || 'Only this selected agent can be called by the action.'}</p> : null}
-            {target ? <dl className="grid gap-1 break-all text-xs text-text-3">
+            {target ? <dl className="grid gap-1 break-all rounded-lg border border-edge bg-surface-1 px-3 py-2 text-xs text-text-3">
                 <div><dt className="inline font-medium">Scope: </dt><dd className="inline">{target.scope_type} · {target.scope_id}</dd></div>
                 <div><dt className="inline font-medium">Agent ID: </dt><dd className="inline">{target.id}</dd></div>
             </dl> : null}
-            <p className="text-xs leading-relaxed text-text-3">
+            <p className="border-t border-edge pt-3 text-xs leading-relaxed text-text-3">
                 Only the task and explicit context are passed, not the full conversation. Self-calls and cycles are blocked by the server.
                 Limits are 3 levels, 10 calls per turn, and 120 seconds per call. No endpoint, credential, or connection test is needed.
             </p>

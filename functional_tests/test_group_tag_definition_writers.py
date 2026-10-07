@@ -1,8 +1,9 @@
 # test_group_tag_definition_writers.py
 """
 Functional test for the group tag definition writers on the etag guard.
-Version: 0.261.189
+Version: 0.261.268
 Implemented in: 0.261.160
+Updated in: 0.261.268 (renames update each document once; search chunks sync in the background)
 
 The classic group tag routes (create, rename or recolour, delete) and
 ``get_or_create_tag_definition`` read the group, changed its ``tag_definitions`` and
@@ -116,8 +117,6 @@ def tag_environment():
             validate_tags=document_namespace["validate_tags"],
             validate_tag_color=document_namespace["validate_tag_color"],
             update_document=documents.update_document,
-            propagate_tags_to_chunks=lambda document_id, tags, user_id, **kwargs: events.append(
-                ("propagate_tags_to_chunks", document_id)),
             get_or_create_tag_definition=document_namespace["get_or_create_tag_definition"],
         )
 
@@ -381,7 +380,7 @@ def test_a_rename_moves_the_definition_before_any_document(env):
     assert definitions(env) == {"beta": DEFINED, "gamma": DEFINED}
     assert env.tags.documents.tags() == {"d1": ["gamma"], "d2": ["gamma", "beta"], "d3": ["beta"], "other": ["alpha"]}
     assert [event[0] for event in env.tags.events] == [
-        "group_write", "update_document", "propagate_tags_to_chunks", "update_document", "propagate_tags_to_chunks",
+        "group_write", "update_document", "update_document",
         "invalidate",
     ]
     assert env.bumps == []

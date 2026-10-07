@@ -941,6 +941,17 @@ The static page designer writes to the same `/api/admin/custom-pages` CRUD as th
 designer, so a page created in either interface is identical. Python-registered pages are
 listed but not editable, because they are defined in code.
 
+#### Data Lifecycle group
+
+| Tab | What V2 now renders |
+| --- | --- |
+| Retention | A switch per workspace type, each with its two organization defaults nested beneath it while it is on; the daily run hour in UTC with the administrator's own clock, the last and next run; **Reset to the defaults** and **Run retention now** as inline reviews that use saved settings only, wait while retention edits are unsaved, and report per-type results |
+| Classification | The capability switch and a category editor -- label, colour, hex, reorder, remove -- with per-row validation and a badge preview |
+| Archiving | The archiving switch, with how retention follows it |
+
+Saving a workspace type or the run hour reschedules the next run as the classic form does. See
+[V2 Admin Data Lifecycle Settings](V2_ADMIN_DATA_LIFECYCLE_SETTINGS.md).
+
 #### Keeping the two interfaces in step
 
 The schema is a second description of settings the server-rendered panes also describe, so

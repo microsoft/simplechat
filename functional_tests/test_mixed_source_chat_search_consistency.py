@@ -2,8 +2,9 @@
 # test_mixed_source_chat_search_consistency.py
 """
 Functional test for mixed-source Chat and Search consistency.
-Version: 0.260.025
-Implemented in: 0.250.064; additive tabular evidence gating updated in 0.260.025
+Version: 0.261.266
+Implemented in: 0.250.064; additive tabular evidence gating updated in 0.260.025;
+derived from Enhanced Citations in 0.261.266
 
 This test ensures Phase 2 of #1057 consumes the Phase 1 #1056 contracts for
 standard and streaming Chat plus workflow Search without implementing later
@@ -772,14 +773,29 @@ def test_replay_collaboration_foundry_and_chat_path_contracts():
     assert "if hybrid_search_enabled or history_grounded_search_used" not in route_source
 
 
-def test_flag_defaults_off_and_diagnostics_are_privacy_safe():
+def _derived_mixed_source_keys(settings_source):
+    """Read MIXED_SOURCE_DERIVED_SETTING_KEYS without importing configuration."""
+    for node in ast.parse(settings_source).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "MIXED_SOURCE_DERIVED_SETTING_KEYS"
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    raise AssertionError("MIXED_SOURCE_DERIVED_SETTING_KEYS is missing from functions_settings.py")
+
+
+def test_flag_follows_enhanced_citations_and_diagnostics_are_privacy_safe():
     settings_source = _read(SETTINGS_PATH)
-    assert "'enable_mixed_source_chat_search': False" in settings_source
-    assert "'enable_mixed_source_relevance_candidates': False" in settings_source
-    assert "enable_mixed_source_manifest" not in _read(ROUTE_PATH)[
-        _read(ROUTE_PATH).find("def _normalize_chat_document_context_contract"):
-        _read(ROUTE_PATH).find("def _resolve_chat_mixed_source_manifest")
-    ]
+    route_source = _read(ROUTE_PATH)
+    # Chat and Search behavior follows Enhanced Citations on every load and save rather
+    # than being a stored rollout switch; relevance candidates are an admin choice, on.
+    assert "enable_mixed_source_chat_search" in _derived_mixed_source_keys(settings_source)
+    assert "normalize_mixed_source_derived_settings(merged)" in settings_source
+    assert "normalize_mixed_source_derived_settings(settings_item)" in settings_source
+    assert "'enable_mixed_source_relevance_candidates': True" in settings_source
+    # The Phase 1 shadow manifest is retired; Chat resolves its manifest for real.
+    assert "enable_mixed_source_manifest" not in route_source
+    assert "_maybe_resolve_chat_source_manifest" not in route_source
 
     captured_events = []
     original_log_event = orchestration.log_event

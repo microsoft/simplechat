@@ -15,7 +15,7 @@ This work describes all five Governance sections, builds editors for the four ki
 policy on the existing governance API, ties governance into the settings it qualifies, and
 records V2 governance switch changes in the governance audit log.
 
-**Implemented in version:** 0.261.260
+**Implemented in version:** 0.261.273
 
 **Dependencies:** the governance API in `route_backend_governance.py`, the policy store and
 evaluation in `functions_governance.py`, MCP destination evaluation in
@@ -118,8 +118,8 @@ with empty allow lists, because the server reads a non-empty list as a restricte
 
 An inline feature policy edit lives in its section, so changing category or searching it
 out of view would discard it. While one has unsaved changes it reports that to the page,
-which locks the category navigation and search and refuses cross-category navigation, the
-same lock the Call agent manager uses.
+which disables the category navigation and search and refuses navigation to another
+category until the policy is saved or discarded.
 
 Only one governance dialog is open at a time, because every open `AdminModal` closes on
 Escape. An editor opened from a resource's access list hands back to that list when it
@@ -167,7 +167,7 @@ The administrator guide is `docs/admin/governance.md`.
 | `functional_tests/test_v2_admin_governance_parity.py` | Every V1 governance field is claimed; switches warn and are never coerced; global endpoint governance is read-only; V2 saves write the same audit entry as V1; review filters, the group directory, and the catalog route behave through the real blueprint; route guards; the hyphenated transport never matches on the server; the environment readout reports no patterns; related settings resolve; the inbound shortcut is flag-gated |
 | `functional_tests/test_v2_admin_governance_logic.ts` | Normalization, save payloads, enforcement states checked against the schema's prerequisites, duplicate and inverse, pattern round-trips and checks, inbound sources, request building, principal resolution, and the dialog store |
 | `ui_tests/test_v2_admin_governance_settings.py` | The group replaces the fallback switch; prerequisite and related links navigate; a feature policy saves without the Save bar; an unsaved feature policy edit locks navigation; item policy create, inverse, duplicate, delete; the destination builder refuses bad patterns and saves a group pattern; the inbound shortcut; AI connection access, including Escape during a save; narrow dark layouts |
-| `functional_tests/test_v2_admin_section_logic.ts` | A field gated on a runtime flag renders when the server sends the flag |
+| `functional_tests/test_v2_admin_section_logic.ts` | The governance switches keep their person, group, or everyone icons, and only icons are declared by hand |
 
 ## Known limitations
 
@@ -181,6 +181,7 @@ The administrator guide is `docs/admin/governance.md`.
 
 ## Related
 
-- Fix: `docs/explanation/fixes/V2_ADMIN_RUNTIME_FLAG_FIELD_VISIBILITY_FIX.md`
 - Feature: `docs/explanation/features/V2_ADMIN_SECURITY_SETTINGS.md`
+- Feature: `docs/explanation/features/V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md`, which made
+  section cards honor runtime flags, so the flag-gated Inbound MCP governance shortcut renders
 - Administrator guide: `docs/admin/governance.md`

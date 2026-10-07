@@ -1,8 +1,8 @@
 // test_v2_admin_governance_logic.ts
 //
 // Runtime test for the rules the V2 Admin Settings governance editors apply.
-// Version: 0.261.260
-// Implemented in: 0.261.260
+// Version: 0.261.273
+// Implemented in: 0.261.273
 //
 // The governance API stores whatever it is sent, so the mistakes worth catching are the
 // ones that save cleanly and then mean something else: an Allow all policy sent with its

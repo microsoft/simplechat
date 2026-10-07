@@ -73,8 +73,8 @@ grounded-document-search:
   name: "Grounded document search"
   area: "Chat and retrieval"
   audience: "End users"
-  summary: "Controls Azure AI Search-backed retrieval, cached search results, and mixed-source evidence reuse in chat."
-  why: "Use this when answers must be grounded in workspace documents and citations rather than only model memory. The mixed-source options are staged rollout controls, so enable them deliberately when follow-up questions should reuse previously authorized evidence."
+  summary: "Controls Azure AI Search-backed retrieval, cached search results, and how chat grounds answers in selected documents and spreadsheets."
+  why: "Use this when answers must be grounded in workspace documents and citations rather than only model memory. Grounding across documents and spreadsheets follows Enhanced Citations, which provides the spreadsheet engine; the remaining choice is whether chats that search without selected files also look for relevant spreadsheets, which adds a search and can add model calls."
   default_state: "Mixed"
   admin_tab: knowledge
   setting_keys:
@@ -82,8 +82,6 @@ grounded-document-search:
     - enable_search_result_caching
     - enable_mixed_source_chat_search
     - enable_mixed_source_conversation_continuity
-    - enable_mixed_source_development_telemetry
-    - enable_mixed_source_manifest
     - enable_mixed_source_relevance_candidates
   reference:
     - title: "Chat interface reference"
@@ -354,11 +352,12 @@ tabular-analysis:
   area: "Media and ingestion"
   audience: "End users"
   summary: "Runs structured CSV and spreadsheet analysis with durable planning, batching, checkpoints, and response controls."
-  why: "Use this when users need computed answers, grouped results, exports, or charts from spreadsheet data rather than prose guesses. The many rollout flags exist because large workbook analysis needs reliability controls for planning, retries, batching, and durable checkpoints."
+  why: "Use this when users need computed answers, grouped results, exports, or charts from spreadsheet data rather than prose guesses. The many rollout flags exist because large workbook analysis needs reliability controls for planning, retries, batching, and durable checkpoints. The Analyze All Documents target stays off and hidden because no chat or workflow screen offers it yet."
   default_state: "Mixed"
   admin_tab: agents-actions
   setting_keys:
     - enable_analysis_deliverable_contract_telemetry
+    - enable_mixed_source_analyze_all
     - enable_tabular_analyze_durable_preflight
     - enable_tabular_compact_response_protocol
     - enable_tabular_completion_driven_checkpointing
@@ -380,10 +379,10 @@ document-compare:
   name: "Cross-format document compare"
   area: "Media and ingestion"
   audience: "End users"
-  summary: "Compares documents across supported formats, including staged one-to-many comparison behavior."
-  why: "Use this when users need revision review across PDFs, Office files, or other supported sources instead of manually reading each file. The one-to-many flag should be staged separately because it expands the amount of source material processed in one comparison."
-  default_state: "Disabled"
-  admin_tab: knowledge
+  summary: "Compares a Source with one or more Targets, including documents and spreadsheets in the same comparison."
+  why: "Use this when users need to review revisions or check the figures in a spreadsheet against a written document instead of reading each file by hand. Comparing documents with spreadsheets follows Enhanced Citations, which provides the spreadsheet engine; without it such a comparison is refused rather than treating the spreadsheet as text."
+  default_state: "Follows Enhanced Citations"
+  admin_tab: chat
   setting_keys:
     - enable_cross_format_compare
     - enable_cross_format_compare_one_to_many
@@ -656,12 +655,13 @@ logging-and-diagnostics:
   name: "Logging and diagnostics"
   area: "Platform and operations"
   audience: "Operators"
-  summary: "Controls diagnostic logging, Application Insights global logging, and user-visible file processing logs."
-  why: "Use diagnostics when operators need to troubleshoot ingestion, settings, or runtime behavior. Keep verbose debug logging temporary because it can increase noise and operational cost."
+  summary: "Controls diagnostic logging, Application Insights global logging, mixed document and spreadsheet metrics, and user-visible file processing logs."
+  why: "Use diagnostics when operators need to troubleshoot ingestion, settings, or runtime behavior. Keep verbose debug logging and the mixed document and spreadsheet metrics temporary because they increase log volume and operational cost."
   default_state: "Mixed"
   admin_tab: operations
   setting_keys:
     - enable_appinsights_global_logging
+    - enable_mixed_source_development_telemetry
     - enable_debug_logging
     - enable_file_processing_logs
   reference:

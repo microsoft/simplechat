@@ -2,8 +2,8 @@
 # test_v2_admin_governance_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings governance group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 Before this, the V2 admin page had no governance section at all. One switch, MCP
 destination governance, surfaced through the generic fallback as "Mcp destination
@@ -126,7 +126,7 @@ def test_every_governance_section_is_declared():
     """An undeclared section falls back to guessing a switch from the key name."""
     print("Testing the governance section declarations...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.273")
 
     group = next((group for group in ADMIN_NAV if group["id"] == "governance"), None)
     assert group, "ADMIN_NAV no longer defines a governance group."

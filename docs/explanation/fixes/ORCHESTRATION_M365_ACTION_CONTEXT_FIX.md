@@ -197,6 +197,12 @@ The V2 UI type-checks and builds with `npm run typecheck` and `npm run build`.
 
 ## Limitations
 
+Since **0.261.270**, shared conversations and agents' Microsoft 365 actions are
+supported. See the
+[session-trusted action and agent steps fix](ORCHESTRATION_SESSION_TRUSTED_ACTION_AGENT_STEPS_FIX.md)
+and the [shared conversations fix](ORCHESTRATION_SHARED_CONVERSATIONS_FIX.md). The
+limits below describe 0.261.238.
+
 - Plans only read Microsoft 365 data. Sending mail or invitations from a plan
   needs pending-action review designed for plan steps.
 - Shared conversations are refused. Plan steps would need their own

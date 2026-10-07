@@ -1,8 +1,8 @@
 # test_v2_admin_governance_settings.py
 """
 Browser coverage for the V2 Admin Settings governance group and its tie-ins.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 Exercise the built application, the real field schema, and in-memory governance
 APIs. Check that the governance group replaces the fallback switch, that feature and

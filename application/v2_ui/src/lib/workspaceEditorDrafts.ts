@@ -5,9 +5,11 @@ import { useCallback, useState, type Dispatch, type SetStateAction } from 'react
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import {
     agentEditorReturnPath,
+    GLOBAL_AGENT_RETURN_SCOPE,
     sameEditorValue,
     type ActionConfiguration,
     type AgentConfiguration,
+    type AgentEditorReturnScope,
     type AuthoringResource,
 } from './workspaceAuthoring';
 
@@ -18,16 +20,25 @@ type EditorKind = 'agents' | 'actions';
  * Which workspace a draft belongs to. Personal is the default and, to keep personal behaviour
  * byte-identical, contributes nothing to the cache key. A group scope adds its id, so a draft
  * opened in group A can never be restored into group B or into personal scope -- the isolation
- * the created-action handoff needs too.
+ * the created-action handoff needs too. The global scope is the administrator's own partition for
+ * global agents and actions edited from Admin Settings.
  */
 export type EditorWorkspaceScope =
     | { kind: 'personal' }
-    | { kind: 'group'; id: string };
+    | { kind: 'group'; id: string }
+    | { kind: 'global' };
 
 const PERSONAL_EDITOR_SCOPE: EditorWorkspaceScope = { kind: 'personal' };
 
 function editorScopeSegments(scope: EditorWorkspaceScope): string[] {
-    return scope.kind === 'group' ? ['group', scope.id] : [];
+    if (scope.kind === 'group') return ['group', scope.id];
+    return scope.kind === 'global' ? ['global'] : [];
+}
+
+/** The return-path scope `agentEditorReturnPath` checks a handed-off action against. */
+function returnPathScope(scope: EditorWorkspaceScope): AgentEditorReturnScope | undefined {
+    if (scope.kind === 'group') return scope.id;
+    return scope.kind === 'global' ? GLOBAL_AGENT_RETURN_SCOPE : undefined;
 }
 
 interface DraftState<T extends Configuration> {
@@ -138,8 +149,7 @@ export function queueCreatedWorkspaceAction(
     action: ActionConfiguration,
     workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
 ): void {
-    const groupId = workspaceScope.kind === 'group' ? workspaceScope.id : undefined;
-    if (!agentEditorReturnPath(returnPath, groupId)) throw new Error('Invalid agent editor return path.');
+    if (!agentEditorReturnPath(returnPath, returnPathScope(workspaceScope))) throw new Error('Invalid agent editor return path.');
     createdActions.set(JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), returnPath]), action);
     syncDraftUnloadProtection();
 }

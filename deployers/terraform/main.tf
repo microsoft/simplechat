@@ -114,6 +114,12 @@ variable "param_deploy_video_indexer_service" {
   default     = false
 }
 
+variable "param_video_indexer_location" {
+  description = "Optional Azure region for Azure Video Indexer. Leave blank to use param_location. Set it when param_location does not offer Video Indexer; a different region gets a dedicated Video Indexer storage account there. Set it before Video Indexer is first deployed because an existing account cannot move regions."
+  type        = string
+  default     = ""
+}
+
 variable "param_cosmos_capacity_mode" {
   description = "Cosmos DB capacity mode. Defaults to provisioned throughput; use serverless only for short-lived MVP/evaluation environments."
   type        = string
@@ -313,6 +319,8 @@ locals {
   storage_account_base  = "${var.param_base_name}${var.param_environment}sa"
   storage_account_name  = substr(replace(local.storage_account_base, "/[^a-z0-9]/", ""), 0, 24)
 
+  video_indexer_storage_account_name = substr(replace(lower("${var.param_base_name}${var.param_environment}vi"), "/[^a-z0-9]/", ""), 0, 24)
+
   acr_base_url          = local.is_usgovernment_cloud ? "${var.acr_name}.azurecr.us" : "${var.acr_name}.azurecr.io"
   param_registry_server = local.is_usgovernment_cloud ? "https://${var.acr_name}.azurecr.us" : "https://${var.acr_name}.azurecr.io"
 
@@ -325,13 +333,20 @@ locals {
   video_indexer_endpoint                   = local.is_usgovernment_cloud ? "https://api.videoindexer.ai.azure.us" : (local.is_custom_cloud && var.param_custom_video_indexer_endpoint != "" ? var.param_custom_video_indexer_endpoint : "https://api.videoindexer.ai")
   video_indexer_supports_openai            = local.video_indexer_arm_api_version == "2025-04-01"
   video_indexer_supports_private_endpoints = local.video_indexer_arm_api_version == "2025-04-01"
+  video_indexer_location                   = lower(replace(var.param_video_indexer_location != "" ? var.param_video_indexer_location : var.param_location, " ", ""))
+  # Video Indexer keeps its media in a storage account in its own region.
+  video_indexer_uses_dedicated_storage = var.param_deploy_video_indexer_service && local.video_indexer_location != lower(replace(var.param_location, " ", ""))
+  video_indexer_storage_account_id     = local.video_indexer_uses_dedicated_storage ? azurerm_storage_account.video_indexer_sa[0].id : azurerm_storage_account.sa.id
+  # The app identity needs generateAccessToken. Video Indexer Account Contributor is the least-privilege
+  # built-in role; Contributor is used where that newer role has not been confirmed.
+  video_indexer_app_role_name = local.is_usgovernment_cloud || local.is_custom_cloud ? "Contributor" : "Video Indexer Account Contributor"
   video_indexer_body_json = local.video_indexer_supports_openai ? jsonencode({
     identity = {
       type = "SystemAssigned"
     }
     properties = {
       storageServices = {
-        resourceId = azurerm_storage_account.sa.id
+        resourceId = local.video_indexer_storage_account_id
       }
       openAiServices = {
         resourceId = local.openai_resource_id
@@ -345,7 +360,7 @@ locals {
     }
     properties = {
       storageServices = {
-        resourceId = azurerm_storage_account.sa.id
+        resourceId = local.video_indexer_storage_account_id
       }
     }
     tags = local.common_tags
@@ -560,6 +575,30 @@ resource "azurerm_storage_account" "sa" {
   public_network_access_enabled   = var.param_enable_private_networking ? false : true
   shared_access_key_enabled       = false
   tags                            = local.common_tags
+}
+
+# Video Indexer keeps its media in a storage account in its own region, so a Video Indexer
+# region that differs from param_location gets its own Standard GPv2 account.
+resource "azurerm_storage_account" "video_indexer_sa" {
+  count                           = local.video_indexer_uses_dedicated_storage ? 1 : 0
+  name                            = local.video_indexer_storage_account_name
+  resource_group_name             = azurerm_resource_group.rg.name
+  location                        = local.video_indexer_location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  account_kind                    = "StorageV2"
+  access_tier                     = "Hot"
+  allow_nested_items_to_be_public = false
+  min_tls_version                 = "TLS1_2"
+  shared_access_key_enabled       = false
+  # Only Video Indexer uses this account, and it connects as a trusted Azure service. A disabled
+  # public endpoint would also block that path, so private networking denies all other traffic instead.
+  public_network_access_enabled = true
+  network_rules {
+    default_action = var.param_enable_private_networking ? "Deny" : "Allow"
+    bypass         = ["AzureServices"]
+  }
+  tags = local.common_tags
 }
 
 # --- User-Assigned Managed Identity ---
@@ -1030,7 +1069,7 @@ resource "azapi_resource" "video_indexer" {
   type                      = "Microsoft.VideoIndexer/accounts@${local.video_indexer_arm_api_version}"
   name                      = local.video_indexer_name
   parent_id                 = azurerm_resource_group.rg.id
-  location                  = azurerm_resource_group.rg.location
+  location                  = local.video_indexer_location
   schema_validation_enabled = false
   response_export_values    = ["identity.principalId", "properties.accountId"]
 
@@ -1158,25 +1197,34 @@ resource "azurerm_role_assignment" "app_service_smi_storage_contributor" {
   principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
 }
 
+# azapi 2.x exposes output as an object, so read the exported identity directly.
 resource "azurerm_role_assignment" "video_indexer_storage_contributor" {
   count                = var.param_deploy_video_indexer_service ? 1 : 0
-  scope                = azurerm_storage_account.sa.id
+  scope                = local.video_indexer_storage_account_id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = jsondecode(azapi_resource.video_indexer[0].output).identity.principalId
+  principal_id         = azapi_resource.video_indexer[0].output.identity.principalId
 }
 
 resource "azurerm_role_assignment" "video_indexer_openai_contributor" {
   count                = var.param_deploy_video_indexer_service && local.video_indexer_supports_openai && local.openai_resource_id != "" ? 1 : 0
   scope                = local.openai_resource_id
   role_definition_name = "Cognitive Services Contributor"
-  principal_id         = jsondecode(azapi_resource.video_indexer[0].output).identity.principalId
+  principal_id         = azapi_resource.video_indexer[0].output.identity.principalId
 }
 
 resource "azurerm_role_assignment" "video_indexer_openai_user" {
   count                = var.param_deploy_video_indexer_service && local.video_indexer_supports_openai && local.openai_resource_id != "" ? 1 : 0
   scope                = local.openai_resource_id
   role_definition_name = "Cognitive Services User"
-  principal_id         = jsondecode(azapi_resource.video_indexer[0].output).identity.principalId
+  principal_id         = azapi_resource.video_indexer[0].output.identity.principalId
+}
+
+# SimpleChat calls Video Indexer generateAccessToken with the App Service system-assigned identity.
+resource "azurerm_role_assignment" "app_service_smi_video_indexer_access" {
+  count                = var.param_deploy_video_indexer_service ? 1 : 0
+  scope                = azapi_resource.video_indexer[0].id
+  role_definition_name = local.video_indexer_app_role_name
+  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
 }
 
 # Storage Blob Data Contributor on Storage Account
@@ -1211,4 +1259,20 @@ output "web_app_url" {
 output "resource_group_name" {
   description = "Name of the created Resource Group."
   value       = azurerm_resource_group.rg.name
+}
+
+# Terraform does not write application settings; enter these in Admin Settings > AI Video Intelligence.
+output "video_indexer_account_name" {
+  description = "Video Indexer account name for the application settings."
+  value       = var.param_deploy_video_indexer_service ? azapi_resource.video_indexer[0].name : null
+}
+
+output "video_indexer_account_id" {
+  description = "Video Indexer account ID for the application settings."
+  value       = var.param_deploy_video_indexer_service ? azapi_resource.video_indexer[0].output.properties.accountId : null
+}
+
+output "video_indexer_location" {
+  description = "Video Indexer region for the application settings."
+  value       = var.param_deploy_video_indexer_service ? local.video_indexer_location : null
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from 'react';
 import { GlassButton } from '../ui/primitives';
+import { WorkflowField, workflowFieldInputClass } from './WorkflowField';
 import {
     fetchWorkflowM365RunAsUsers,
     workflowScopeKey,
@@ -70,34 +71,30 @@ export function WorkflowMicrosoft365RunAs({
     }, [scopeKey, scopeType, groupId, attempt, canListAccounts]);
 
     const help = (
-        <p id={helpId} className="text-xs text-text-3">
+        <>
             Microsoft 365 actions use this account for manual and scheduled runs. The selected person
             must connect Microsoft 365. Selecting an account does not grant consent: when someone else saves
             the workflow or changes an agent or action it uses, the selected person approves that revision
             before it runs as them. A revision they saved themselves needs no separate approval.
-        </p>
+        </>
     );
 
     if (!canListAccounts) {
         return (
-            <div className="space-y-2">
-                <label htmlFor={selectId} className="block text-sm text-text-2">
-                    Microsoft 365 Run as
-                </label>
+            <WorkflowField label="Microsoft 365 Run as" htmlFor={selectId} width="standard" help={help} helpId={helpId}>
                 <select
                     id={selectId}
-                    className="w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none"
+                    className={workflowFieldInputClass}
                     value={value}
                     disabled
                     aria-describedby={`${helpId} ${statusId}`}
                 >
                     <option value={value}>{value ? 'Account selected' : 'No Microsoft 365 account selected'}</option>
                 </select>
-                {help}
-                <p id={statusId} className="text-xs text-text-3">
+                <p id={statusId} className="mt-1.5 text-xs text-text-3">
                     Only workflow managers can see which account is selected or change it.
                 </p>
-            </div>
+            </WorkflowField>
         );
     }
 
@@ -122,13 +119,10 @@ export function WorkflowMicrosoft365RunAs({
                     : '';
 
     return (
-        <div className="space-y-2">
-            <label htmlFor={selectId} className="block text-sm text-text-2">
-                Microsoft 365 Run as
-            </label>
+        <WorkflowField label="Microsoft 365 Run as" htmlFor={selectId} width="standard" help={help} helpId={helpId}>
             <select
                 id={selectId}
-                className="w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none"
+                className={workflowFieldInputClass}
                 value={value}
                 disabled={disabled || loading}
                 aria-busy={loading}
@@ -139,23 +133,23 @@ export function WorkflowMicrosoft365RunAs({
                 {missingSelection ? <option value={value}>{missingLabel}</option> : null}
                 {users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}
             </select>
-            {help}
             {statusMessage ? (
                 <p
                     id={statusId}
                     role={failed ? 'alert' : 'status'}
                     className={failed || missingSelection
-                        ? 'rounded-xl bg-warn-soft p-3 text-sm text-warn'
-                        : 'text-xs text-text-3'}
+                        ? 'mt-2 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn'
+                        : 'mt-1.5 text-xs text-text-3'}
                 >
                     {statusMessage}
                 </p>
             ) : null}
             {failed ? (
-                <GlassButton type="button" size="sm" disabled={disabled} onClick={() => setAttempt((current) => current + 1)}>
+                <GlassButton type="button" size="sm" className="mt-2" disabled={disabled}
+                    onClick={() => setAttempt((current) => current + 1)}>
                     Retry Microsoft 365 account list
                 </GlassButton>
             ) : null}
-        </div>
+        </WorkflowField>
     );
 }

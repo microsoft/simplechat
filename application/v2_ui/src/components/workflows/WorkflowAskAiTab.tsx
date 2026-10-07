@@ -43,18 +43,20 @@ export function WorkflowAssistElapsed({ startedAt, testId }: { startedAt: number
 }
 
 /** The footer button that opens the side panel on Ask AI. */
-export function WorkflowAskAiToggle({ id, open, controls, onToggle }: {
+export function WorkflowAskAiToggle({ id, open, controls, onToggle, labelAlwaysVisible = false }: {
     id: string;
     open: boolean;
     controls: string;
     onToggle: () => void;
+    /** Show the words at every width, where the toggles have a row of their own. */
+    labelAlwaysVisible?: boolean;
 }) {
     return (
         <GlassButton id={id} type="button" className="shrink-0" aria-label="Ask AI" aria-expanded={open}
             aria-controls={open ? controls : undefined} onClick={onToggle}>
             {/* Below sm an icon stands in for the label so Cancel and Save stay on one line. */}
-            <Sparkles size={16} aria-hidden="true" className="sm:hidden" />
-            <span className="hidden sm:inline">Ask AI</span>
+            {labelAlwaysVisible ? null : <Sparkles size={16} aria-hidden="true" className="sm:hidden" />}
+            <span className={labelAlwaysVisible ? undefined : 'hidden sm:inline'}>Ask AI</span>
         </GlassButton>
     );
 }

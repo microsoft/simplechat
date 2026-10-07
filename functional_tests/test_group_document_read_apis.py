@@ -34,6 +34,7 @@ from test_cosmos_wave5a_document_access_read_switch import (
     _succeeded_backfill_state,
 )
 from test_support.agent_delegation import APP_ROOT, execute_functions, module_stub
+from test_support.document_search_sync import load_document_search_sync_definitions
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -269,6 +270,9 @@ def environment(monkeypatch):
             document_namespace["validate_document_access_index_shadow"] = Mock()
             document_namespace["_execute_document_search_write"] = Mock(side_effect=AssertionError("Read tests cannot write Search."))
             document_namespace["_get_search_client"] = Mock(side_effect=AssertionError("Read tests cannot query Search ACLs."))
+            # Document management and collaboration import the search sync helpers. They run against
+            # an in-memory settings container, queued work is only recorded, and Search still refuses.
+            load_document_search_sync_definitions(document_namespace)
             scoped.setitem(sys.modules, "functions_documents", module_stub("functions_documents", **document_namespace))
             # Resolve screening only after replacing application bootstrap dependencies.
             from content_screening import access
