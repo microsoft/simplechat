@@ -1,7 +1,7 @@
 # Chat orchestration workflow hand-off
 
 Implemented in version: **0.261.250**. The V2 hand-off card was added in
-version **0.261.294**.
+version **0.261.295**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -18,7 +18,7 @@ describes all the phases.
 Phase 7 shipped in two halves. The server half, described below, is in
 **0.261.250** (#1640, with the lineage follow-up #1647). The V2 hand-off card,
 where the user accepts, edits or declines a hand-off and follows its run, is in
-**0.261.294**; see [The V2 hand-off card](#the-v2-hand-off-card).
+**0.261.295**; see [The V2 hand-off card](#the-v2-hand-off-card).
 
 ## Overview and dependencies
 
@@ -608,7 +608,7 @@ task's model, the report fails with `indivisible_record`, and so does the run.
 
 ### The V2 hand-off card
 
-Since **0.261.294**, V2 shows each hand-off on a card under the answer that
+Since **0.261.295**, V2 shows each hand-off on a card under the answer that
 prepared it, and the user decides there. The card mounts only under an answer
 whose plan completed a hand-off step (`workflow_handoff` in the plan summary's
 `capabilities_used`), in a conversation that's private to the user, for the

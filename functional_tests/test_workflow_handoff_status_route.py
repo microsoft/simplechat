@@ -3,7 +3,7 @@
 """
 Functional test for following an accepted workflow hand-off's run through the status route V2 polls.
 Version: 0.261.253
-Implemented in: 0.261.294
+Implemented in: 0.261.295
 
 V2's hand-off card follows the run an accept queued through 6b-2's run tracker, which reads 6b-1's
 status route, ``GET /api/v2/orchestration/workflow-runs/status``. The card finds its run's row by the
