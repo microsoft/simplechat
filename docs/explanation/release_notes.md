@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.279)**
+
+#### New Features
+
+*   **Feedback and Safety Review in V2**
+    *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
+    *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
+    *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](../guides/admin-review-feedback.md), [Safety Violation Review](../guides/admin-review-safety-violations.md))
+
 ### **(v0.261.278)**
 
 #### New Features
@@ -20,7 +29,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
     *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
     *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
-
 ### **(v0.261.276)**
 
 #### New Features
