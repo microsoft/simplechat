@@ -78,6 +78,7 @@ from functions_branding_urls import (
 )
 from functions_authentication import (
     admin_required,
+    get_control_center_capabilities,
     get_current_user_id,
     get_current_user_info,
     login_required,
@@ -201,7 +202,8 @@ from functions_model_endpoint_validation import (
 )
 from functions_documents import get_audio_runtime_capabilities
 from functions_cosmos_throughput import get_cosmos_resource_config
-from config import VERSION
+from config import IS_DEVELOPMENT, VERSION
+from support_menu_config import has_visible_support_latest_features
 from swagger_wrapper import are_swagger_routes_registered, get_auth_security, swagger_route
 
 logger = logging.getLogger(__name__)
@@ -401,7 +403,7 @@ def _build_navigation(raw_settings, user_roles):
             # Re-checked on the way out, not just on the way in. The V2 settings PATCH
             # is the only write path that applies the scheme rule, so a link stored
             # through the server-rendered admin form, or already in the document, could
-            # otherwise put a javascript: URL into every user's navigation.
+            # otherwise put a script-scheme URL into every user's navigation.
             if not is_safe_external_link_url(url):
                 log_event(
                     "[V2_BOOTSTRAP] Dropped an external link with an unsupported URL "
@@ -428,6 +430,41 @@ def _build_navigation(raw_settings, user_roles):
             "force_menu": bool(raw_settings.get("external_links_force_menu")),
             "items": external_links,
         },
+        "latest_features": _build_latest_features_nav(raw_settings, user_roles),
+    }
+
+
+def _build_latest_features_nav(raw_settings, user_roles):
+    """Describe the Support menu's Latest Features shortcut for the SPA rail.
+
+    Mirrors the gate in ``_sidebar_nav.html``: a real application role, the Support menu
+    and its Latest Features page switched on, and at least one feature left visible.
+    Whether this user hid the shortcut is not decided here; the browser compares the
+    user's ``latestFeaturesHiddenVersion`` with the bootstrap ``version`` so hiding and
+    unhiding take effect without a reload.
+    """
+    may_see_support = any(role in ("Admin", "User") for role in user_roles or [])
+    available = False
+    if (
+        may_see_support
+        and raw_settings.get("enable_support_menu")
+        and raw_settings.get("enable_support_latest_features", True)
+    ):
+        try:
+            available = bool(has_visible_support_latest_features(raw_settings))
+        except Exception as exc:
+            log_event(
+                f"[V2_BOOTSTRAP] Could not resolve latest features visibility: {exc}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            available = False
+
+    return {
+        "available": available,
+        "hidden_by_development": bool(IS_DEVELOPMENT),
+        "url": "/support/latest-features",
+        "menu_name": _menu_name(raw_settings.get("support_menu_name"), "Support"),
     }
 
 
@@ -877,6 +914,7 @@ def register_route_backend_v2(bp):
                 "navigation": _build_navigation(settings, current_user_roles),
                 "features": _build_feature_flags(public_settings, per_user_overrides),
                 "capabilities": _build_capabilities(settings),
+                "control_center": get_control_center_capabilities(session_user, settings),
                 "orchestration": _build_orchestration(settings, public_settings),
                 "catalogs": {
                     "models": models,

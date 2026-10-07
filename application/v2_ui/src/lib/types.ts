@@ -1059,8 +1059,26 @@ export interface PublicWorkspaceLabels {
     max_length: number;
 }
 
+/** Whether this deployment offers the Latest Features shortcut, before the user's own choice. */
+export interface LatestFeaturesNav {
+    available: boolean;
+    /** Development builds hide the shortcut for everyone, as the classic interface does. */
+    hidden_by_development: boolean;
+    url: string;
+    menu_name: string;
+}
+
 export interface BootstrapFeatures extends Record<string, boolean | undefined> {
     enable_workflow_alert_sounds?: boolean;
+}
+
+export interface ControlCenterCapabilities {
+    can_view_dashboard: boolean;
+    can_manage_users: boolean;
+    can_manage_groups: boolean;
+    can_manage_workspaces: boolean;
+    can_view_activity_logs: boolean;
+    can_run_maintenance: boolean;
 }
 
 export interface BootstrapPayload {
@@ -1101,8 +1119,11 @@ export interface BootstrapPayload {
     navigation: {
         custom_pages: NavGroup<CustomPageNavItem>;
         external_links: NavGroup<ExternalLinkNavItem>;
+        /** The Support menu's Latest Features shortcut. Absent from older servers. */
+        latest_features?: LatestFeaturesNav;
     };
     features: BootstrapFeatures;
+    control_center: ControlCenterCapabilities;
     /**
      * What the deployment can do, where the answer is not an `enable_*` settings flag.
      *

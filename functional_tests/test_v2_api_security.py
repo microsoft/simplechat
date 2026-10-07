@@ -2,8 +2,9 @@
 """
 Functional test for V2 API security posture.
 
-Version: 0.261.003
+Version: 0.261.279
 Implemented in: 0.261.003
+Control Center dashboard route security coverage: 0.261.279
 
 This test ensures that the V2 bootstrap endpoint never returns raw settings to the
 browser, that every V2 route carries the required swagger security decorator, and that the
@@ -22,6 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "application" / "single_app"
 BACKEND_V2 = APP_DIR / "route_backend_v2.py"
+BACKEND_CONTROL_CENTER = APP_DIR / "route_backend_control_center.py"
 FRONTEND_V2 = APP_DIR / "route_frontend_v2.py"
 
 sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
@@ -120,6 +122,20 @@ def test_all_v2_routes_declare_swagger_security():
             assert "login_required" in decorators, (
                 f"{path.name}:{node.name} is missing @login_required"
             )
+
+    dashboard_routes = [
+        (node, decorators)
+        for node, decorators in _iter_route_functions(_parse(BACKEND_CONTROL_CENTER))
+        if node.name.startswith("api_v2_control_center_dashboard_")
+    ]
+    assert {node.name for node, _ in dashboard_routes} == {
+        "api_v2_control_center_dashboard_summary",
+        "api_v2_control_center_dashboard_insights",
+    }
+    for node, decorators in dashboard_routes:
+        assert {"swagger_route", "login_required", "control_center_required"} <= set(decorators), (
+            f"{node.name} must declare Swagger, login, and dashboard capability guards"
+        )
 
     print("Swagger security decorator test passed!")
     return True

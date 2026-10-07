@@ -959,6 +959,47 @@ def safety_violation_admin_required(f):
             return "Forbidden", 403
     return decorated_function
 
+def get_control_center_capabilities(user=None, settings=None):
+    """Return the Control Center permissions implied by the user's roles and settings."""
+    user = session.get('user', {}) if user is None else user
+    settings = get_settings() if settings is None else settings
+    require_admin_role = settings.get("require_member_of_control_center_admin", False)
+    require_dashboard_reader_role = settings.get(
+        "require_member_of_control_center_dashboard_reader", False
+    )
+
+    has_control_center_admin_role = (
+        'roles' in user and 'ControlCenterAdmin' in user['roles']
+        if isinstance(user, dict)
+        else False
+    )
+    has_dashboard_reader_role = (
+        'roles' in user and 'ControlCenterDashboardReader' in user['roles']
+        if isinstance(user, dict)
+        else False
+    )
+    has_regular_admin_role = (
+        'roles' in user and 'Admin' in user['roles']
+        if isinstance(user, dict)
+        else False
+    )
+
+    has_full_access = (
+        has_control_center_admin_role if require_admin_role else has_regular_admin_role
+    )
+    can_view_dashboard = has_full_access or (
+        require_dashboard_reader_role and has_dashboard_reader_role
+    )
+    return {
+        'can_view_dashboard': bool(can_view_dashboard),
+        'can_manage_users': bool(has_full_access),
+        'can_manage_groups': bool(has_full_access),
+        'can_manage_workspaces': bool(has_full_access),
+        'can_view_activity_logs': bool(has_full_access),
+        'can_run_maintenance': bool(has_full_access),
+    }
+
+
 def control_center_required(access_level='admin'):
     """
     Unified Control Center access control decorator.
@@ -984,48 +1025,34 @@ def control_center_required(access_level='admin'):
             user = session.get('user', {})
             settings = get_settings()
             require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
-            require_member_of_control_center_dashboard_reader = settings.get("require_member_of_control_center_dashboard_reader", False)
-
-            has_control_center_admin_role = 'roles' in user and 'ControlCenterAdmin' in user['roles']
-            has_dashboard_reader_role = 'roles' in user and 'ControlCenterDashboardReader' in user['roles']
-            has_regular_admin_role = 'roles' in user and 'Admin' in user['roles']
-            
-            # Check if ControlCenterAdmin role requirement is enforced
-            if require_member_of_control_center_admin:
-                # ControlCenterAdmin role is REQUIRED for access
-                # Only ControlCenterAdmin role grants full access
-                if has_control_center_admin_role:
-                    return f(*args, **kwargs)
-                
-                # For dashboard access, check if DashboardReader role grants access
-                if access_level == 'dashboard':
-                    if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
-                        return f(*args, **kwargs)
-                
-                # User doesn't have ControlCenterAdmin role, deny access
-                # Note: Regular Admin role does NOT grant access when this setting is enabled
-                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
-                if is_api_request:
-                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (ControlCenterAdmin role required)"}), 403
-                else:
-                    return "Forbidden: ControlCenterAdmin role required", 403
-            
-            # ControlCenterAdmin requirement is NOT enforced (default behavior)
-            # Only regular Admin role grants access - ControlCenterAdmin role is IGNORED
-            if has_regular_admin_role:
+            capabilities = get_control_center_capabilities(user, settings)
+            permitted = (
+                capabilities['can_view_dashboard']
+                if access_level == 'dashboard'
+                else capabilities['can_manage_users']
+            )
+            if permitted:
                 return f(*args, **kwargs)
-            
-            # For dashboard-only access, check if DashboardReader role is enabled and user has it
-            if access_level == 'dashboard':
-                if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
-                    return f(*args, **kwargs)
             
             # User is not an admin and doesn't have special roles - deny access
             is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
             if is_api_request:
-                return jsonify({"error": "Forbidden", "message": "Insufficient permissions (Admin role required)"}), 403
+                required_role = (
+                    "ControlCenterAdmin"
+                    if require_member_of_control_center_admin
+                    else "Admin"
+                )
+                return jsonify({
+                    "error": "Forbidden",
+                    "message": f"Insufficient permissions ({required_role} role required)",
+                }), 403
             else:
-                return "Forbidden: Admin role required", 403
+                required_role = (
+                    "ControlCenterAdmin"
+                    if require_member_of_control_center_admin
+                    else "Admin"
+                )
+                return f"Forbidden: {required_role} role required", 403
         return decorated_function
     return decorator
 

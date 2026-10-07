@@ -13,9 +13,74 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Administrators can turn each panel off with **Enable Ask AI in the Agent Editor** and **Enable Ask AI in the Action Editor** in Agents and Actions settings. Both are on by default.
     *   (Ref: `functions_editor_assist.py`, `POST /api/agents/assist`, `POST /api/actions/assist`, `EditorAskAiPanel.tsx`, `agentEditorAssist.ts`, `actionEditorAssist.ts`, `AgentActionPicker.tsx`, `workspaceEditorDrafts.ts`, [Ask AI in the Agent and Action Editors](features/AGENT_ACTION_AI_ASSISTANT.md))
 
+### **(v0.261.280)**
+
+#### New Features
+
+*   **Guided Tours and Latest Features in V2**
+    *   Chat and Personal Workspace have step-by-step guided tours, started from a help button in the page header or with **Start now** in User Settings. Tours skip controls that are not on screen, support the keyboard, and respect reduced motion.
+    *   A new **Help and guidance** group in Preferences turns tours off one by one, or all at once with **Show tour buttons**. That switch is shared with the classic tutorial buttons.
+    *   A **Latest Features** shortcut appears in the V2 navigation rail when the Support menu offers it. Hiding it lasts until the next release, and the setting is shared with the classic interface.
+    *   (Ref: `lib/tours.ts`, `GuidedTour.tsx`, `TourLauncher.tsx`, `LatestFeaturesLink.tsx`, `GuidanceCards.tsx`, `_build_latest_features_nav`, `tutorialVisibility`, [V2 User Settings Redesign](features/V2_USER_SETTINGS_REDESIGN.md))
+
+#### Bug Fixes
+
+*   **Dashboard Date-Range Error Safety**
+    *   Dashboard summary and insights APIs now return a generic validation message for invalid date ranges instead of returning exception text.
+    *   (Ref: `route_backend_control_center.py`, `DASHBOARD_INVALID_RANGE_ERROR`)
+
+### **(v0.261.279)**
+
+#### Bug Fixes
+
+*   **MCP Fingerprint Import Cycle**
+    *   Shared MCP fingerprint metadata normalization now lives in a dependency-neutral module, avoiding cyclic imports during action loading and notification delivery.
+    *   (Ref: `functions_mcp_fingerprint_metadata.py`, `functions_mcp_operations.py`, `functions_mcp_tool_pinning.py`)
+
+#### New Features
+
+*   **Fact Memory Workbench and Microsoft 365 Cards in V2 User Settings**
+    *   Fact memory is now one workbench: add, search, filter, edit, and delete (with confirmation) instructions and facts.
+    *   Microsoft 365 sharing, chat connection, workflow connection, and workflow authorizations match the classic page, including CSRF-protected writes and confirmed revocations.
+    *   (Ref: `FactMemoryBench.tsx`, `M365Cards.tsx`, `PreferencesTab.tsx`)
+
+*   **V2 Control Center Dashboard**
+    *   Adds period-based summary metrics, correct group and public-workspace status counts, login/activity/token charts, token filters, CSV export, and chat-with-trends.
+    *   Aggregates use activity-log and workspace data with a 90-second cache. Metrics without retained historical snapshots are identified as current state instead of presenting misleading period deltas.
+    *   Dashboard readers can access the dashboard APIs without receiving management capabilities.
+    *   (Ref: `route_backend_control_center.py`, `DashboardSection.tsx`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
+*   **Feedback and Safety Review in V2**
+    *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
+    *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
+    *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](../guides/admin-review-feedback.md), [Safety Violation Review](../guides/admin-review-safety-violations.md))
+
+### **(v0.261.278)**
+
+#### New Features
+
+*   **Voice, Audio and Retention in V2 User Settings**
+    *   Completion sounds with preview and mute, spoken reply voice, speed, and auto-play, microphone permission status, and personal retention for conversations and documents.
+    *   (Ref: `PreferencesTab.tsx`, `lib/speechPlayback.ts`, `/api/retention-policy/user`)
+
+*   **V2 Control Center Foundation**
+    *   Adds the permission-aware V2 Control Center pane, reusable management primitives, and a manually invoked activity-log data-health check and backfill.
+    *   The classic page no longer scans for migration status on every visit; the retained backfill skips existing activity events and uses stable IDs for reruns.
+    *   (Ref: `ControlCenterPage.tsx`, `functions_authentication.py`, `route_backend_v2.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md), [Activity Log Migration Prompt Fix](fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
+#### Bug Fixes
+
+*   **Personal Retention Default Value**
+    *   Choosing the organization default for personal retention is now accepted.
+    *   (Ref: [Personal Retention Default Value Fix](fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md))
+
 ### **(v0.261.277)**
 
 #### User Interface Enhancements
+
+*   **V2 User Settings Follows the Admin Settings Design**
+    *   A collapsible section rail remembered per user, full-width settings cards, and an **On this page** index on every tab. Preferences are grouped instead of listed, and the Violations tab is always listed.
+    *   (Ref: `SettingsPage.tsx`, `SettingsCard.tsx`, `v2UserSettingsRailCollapsed`)
 
 *   **Agent Editor No Longer Shows GUIDs**
     *   The agent editor for personal, group and global agents no longer shows internal identifiers. The header shows the agent's own icon, such as the Microsoft 365 logo, and its description instead of a stable ID.
@@ -23,9 +88,33 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
     *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
 
+#### Bug Fixes
+
+*   **Feedback Tab Loads in V2**
+    *   The Feedback tab failed with "too many values to unpack". The user's own feedback now loads.
+    *   (Ref: [Feedback My Routes Filter Unpack Fix](fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md))
+
 ### **(v0.261.276)**
 
 #### New Features
+
+*   **Action Configuration Pane Cleanup**
+    *   The V2 action editor now hides empty configuration sections, removes ad hoc custom fields, keeps unknown legacy values in Advanced JSON, and moves connection checks into Authentication where credentials are visible.
+    *   Action-specific configuration now reflects the actual supported settings: Document Search scopes and summary targets, Microsoft 365 capability switches and read-only Graph endpoint, OpenAPI spec-derived base URL and operation switches, MCP server templates and tool fingerprint approval, and Yamcs reverse proxy authentication.
+    *   (Ref: `ActionEditorPage.tsx`, `ActionConfigurationFields.tsx`, `ActionAuthentication.tsx`, `DocumentSearchActionConfiguration.tsx`, `McpActionConfiguration.tsx`, `OpenApiActionConfiguration.tsx`, [Action Configuration Pane Cleanup](features/ACTION_CONFIGURATION_PANE_CLEANUP.md))
+
+#### Bug Fixes
+
+*   **Action Catalogue Deduplication and Legacy Type Hiding**
+    *   Databricks no longer appears multiple times in the new-action picker, SQL actions display as SQL Database with schema discovery included, and legacy/internal-only types are hidden from new-action creation while existing actions remain editable.
+    *   (Ref: `route_backend_plugins.py`, `functions_workspace_authoring.py`, action reference docs)
+
+#### User Interface Enhancements
+
+*   **Safer Action Validation and Review Badges**
+    *   MCP actions now require discovery approval before saving new or changed server manifests, runtime calls block changed tools, and Actions/Agents lists flag drift with a "Tools changed — review" badge.
+    *   OpenAPI actions show the chosen spec file name, offer explicit operation enablement, and reject disabled operations before an HTTP request is sent.
+    *   (Ref: `functions_mcp_tool_pinning.py`, `mcp_plugin_factory.py`, `openapi_plugin.py`, `ActionsSection.tsx`, `AgentsSection.tsx`)
 
 *   **V2 Admin Help Group Matches the Classic Page**
     *   **Support** now offers the Menu Name, the Send Feedback destination and its Support Recipient Email, nested under the Support menu switch. The card reads **Needs configuration** while Send Feedback is on with no recipient, and the empty recipient field is marked **Required**. A malformed address is refused beside the field instead of being cleared, and turning the menu on no longer switches Send Feedback off.
@@ -34,12 +123,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Admin Latest Features** is now a V2 card marked **New**, and the Help category carries the same marker. Each release opens to details, why it matters, rollout notes, screenshots, and shortcuts. Shortcuts jump to the matching V2 card, or open the classic tab when V2 does not show it yet. Page search finds announcements by their content.
     *   The **Registered** / **Unregistered** release notifications badge now sits beside the version in V2 and opens the registration dialog.
     *   (Ref: `admin_settings_fields.py`, `functions_support_latest_features.py`, `GET /api/v2/admin/latest-features`, `AdminSettingsPage.tsx`, `SendFeedback.tsx`, `LatestFeaturesVisibility.tsx`, `AdminLatestFeatures.tsx`, `ReleaseNotificationsBadge.tsx`, [V2 Admin Help Settings](features/V2_ADMIN_HELP_SETTINGS.md))
-
-#### Bug Fixes
-
-*   **Application Title No Longer Doubles in Latest Features**
-    *   An application title containing "SimpleChat", such as "SimpleChat Contoso", was substituted twice in Latest Features copy and showed up as "SimpleChat Contoso Contoso". The title is now applied once, on both the classic pages and V2.
-    *   (Ref: `support_menu_config.py`, `test_v2_admin_latest_features_api.py`)
 
 ### **(v0.261.275)**
 

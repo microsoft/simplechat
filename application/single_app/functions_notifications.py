@@ -234,6 +234,10 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-trash',
         'color': 'secondary'
     },
+    'mcp_tool_drift_detected': {
+        'icon': 'bi-shield-exclamation',
+        'color': 'warning'
+    },
     'generated_file_approval_pending': {
         'icon': 'bi-file-earmark-lock',
         'color': 'warning'

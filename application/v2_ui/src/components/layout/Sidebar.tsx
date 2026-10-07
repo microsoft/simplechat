@@ -26,9 +26,11 @@ import {
     Globe2,
     LogOut,
     MessageSquarePlus,
+    MessageSquareHeart,
     MessagesSquare,
     Moon,
     Settings,
+    ShieldAlert,
     ShieldCheck,
     SlidersHorizontal,
     Sparkles,
@@ -36,12 +38,14 @@ import {
     Users,
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
+import { safeSameOriginUrl } from '../../lib/adminOperations';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
+import { LatestFeaturesLink } from './LatestFeaturesLink';
 import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
 import { useWorkflowAlertCalloutShown, WorkflowAlertRowSlot } from '../notifications/WorkflowAlertNotice';
@@ -144,8 +148,26 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
 }
 
 function UserMenu({ collapsed }: { collapsed: boolean }) {
-    const user = useBootstrapStore((state) => state.data?.user);
+    const bootstrap = useBootstrapStore((state) => state.data);
+    const user = bootstrap?.user;
+    const controlCenter = bootstrap?.control_center;
     const isAdmin = Boolean(user?.is_admin);
+    const canOpenControlCenter = Object.values(controlCenter ?? {}).some(Boolean);
+    const roles = user?.roles ?? [];
+    const settings = bootstrap?.settings;
+    const features = bootstrap?.features;
+    const canReviewFeedback = Boolean(features?.enable_user_feedback) && (
+        settings?.require_member_of_feedback_admin === true
+            ? roles.includes('FeedbackAdmin')
+            : roles.includes('Admin')
+    );
+    const canReviewSafety = Boolean(
+        features?.enable_content_safety || features?.enable_content_screening,
+    ) && (
+        settings?.require_member_of_safety_violation_admin === true
+            ? roles.includes('SafetyViolationAdmin')
+            : roles.includes('Admin')
+    );
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -223,6 +245,21 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                             <Settings size={15} /> Admin Settings
                         </NavLink>
                     )}
+                    {canReviewFeedback && (
+                        <NavLink to="/admin/feedback-review" onClick={() => setOpen(false)} className={itemClass}>
+                            <MessageSquareHeart size={15} /> Feedback Review
+                        </NavLink>
+                    )}
+                    {canReviewSafety && (
+                        <NavLink to="/admin/safety-violations" onClick={() => setOpen(false)} className={itemClass}>
+                            <ShieldAlert size={15} /> Safety Violations
+                        </NavLink>
+                    )}
+                    {canOpenControlCenter && (
+                        <NavLink to="/control-center" onClick={() => setOpen(false)} className={itemClass}>
+                            <ShieldCheck size={15} /> Control Center
+                        </NavLink>
+                    )}
                     {/* Carries the open conversation across, since both interfaces read the
                         same parameter. Crossing over otherwise lands on the conversation
                         list, leaving you to find your place again. */}
@@ -243,6 +280,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                 onClick={() => setOpen((isOpen) => !isOpen)}
                 aria-expanded={open}
                 aria-controls={panelId}
+                data-tour="user-menu"
                 // Collapsed, the avatar is the only content and carries no text of its own
                 // once a profile photo replaces the initials, so the button needs a name.
                 aria-label={collapsed ? 'Account' : undefined}
@@ -420,6 +458,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                             if (mobile) setMobileNavOpen(false);
                         }}
                         title="Start a new chat"
+                        data-tour="new-chat"
                         className={clsx(
                             'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
                             'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
@@ -450,7 +489,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                                 const label = item.to === '/public' ? publicLabels.plural : item.label;
                                 return (
                             <NavLink
-                                to={item.to}
+                                to={safeSameOriginUrl(item.to, window.location.origin) ?? '/'}
                                 onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                                 title={collapsed ? label : item.hint}
                                 className={({ isActive }) =>
@@ -475,6 +514,9 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 {/* Custom pages and external links an administrator configured. Renders
                     nothing when neither is enabled, which is the default. */}
                 <NavExtras collapsed={collapsed} />
+
+                {/* The Support menu's Latest Features shortcut, until the user hides it. */}
+                <LatestFeaturesLink collapsed={collapsed} />
 
                 {/* The conversation list only belongs in the rail while the chat page is open,
                     so other pages get the full rail height for their own navigation. */}
