@@ -5,6 +5,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EditorFieldset, EditorSwitch, type EditorFieldWidth } from '../workspace/EditorLayout';
 import { ActionField, ActionJsonInput, ActionLinesInput, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
 import { ActionSchemaFields } from './ActionSchemaFields';
+import { AzureFilesIndexActionConfiguration } from './AzureFilesIndexActionConfiguration';
 import { CallAgentActionConfiguration } from './CallAgentActionConfiguration';
 import { DocumentSearchActionConfiguration } from './DocumentSearchActionConfiguration';
 import {
@@ -110,7 +111,7 @@ function schemaHasVisibleProperties(definition: ActionTypeDefinition) {
 
 export function hasActionConfigurationFields(definition: ActionTypeDefinition) {
     if (definition.type === 'agent' || definition.type === 'document_search' || definition.type === 'search' ||
-        definition.type === 'openapi' || definition.type === 'mcp') return true;
+        definition.type === 'openapi' || definition.type === 'mcp' || definition.type === 'azure_files_index') return true;
     const native = nativeActionDefinition(definition.type);
     return native.fields.length > 0 || Boolean(capabilityDefinition(definition, native)) || schemaHasVisibleProperties(definition);
 }
@@ -122,6 +123,7 @@ export function ActionConfigurationFields(props: ActionConnectorProps & { defini
     const native = nativeActionDefinition(draft.type);
     if (draft.type === 'agent') return <CallAgentActionConfiguration {...props} />;
     if (draft.type === 'document_search' || draft.type === 'search') return <DocumentSearchActionConfiguration {...props} />;
+    if (draft.type === 'azure_files_index') return <AzureFilesIndexActionConfiguration {...props} />;
     const sql = ['sql_query', 'sql_schema'].includes(draft.type);
     const capabilities = capabilityDefinition(definition, native);
     const rawCapabilities = capabilities ? actionValueAt(draft, capabilities.path) : undefined;

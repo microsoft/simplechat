@@ -392,6 +392,11 @@ export function FileSourceEditorDialog({
 
                 <fieldset className="space-y-3">
                     <legend className="text-xs font-medium text-text-2">Authentication</legend>
+                    {descriptor.notice ? (
+                        <p role="note" className="rounded-lg border border-edge bg-surface-2 p-2.5 text-xs text-text-2">
+                            {descriptor.notice}
+                        </p>
+                    ) : null}
                     <div className="flex flex-wrap gap-3">
                         <label className="flex items-center gap-2 text-sm text-text-1">
                             <input

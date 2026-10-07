@@ -255,6 +255,12 @@ function describeType(type: string, category: string | undefined): Omit<Notifica
     if (type === 'key_vault_secret_expiring') {
         return { kind: 'security', label: 'Secret expiring' };
     }
+    if (type === 'file_sync_run_failed') {
+        return { kind: 'workspace', label: 'File Sync failed' };
+    }
+    if (type === 'azure_files_search_access_unverified') {
+        return { kind: 'security', label: 'Azure Files Search' };
+    }
     if (type === 'system_announcement') {
         return { kind: 'announcement', label: 'Announcement' };
     }

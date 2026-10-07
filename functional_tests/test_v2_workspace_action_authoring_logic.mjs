@@ -81,6 +81,14 @@ function action(type = 'sql_query') {
         result.auth.key = 'AccountName=fixtureaccount;AccountKey=fixture-key;EndpointSuffix=core.windows.net';
         result.endpoint = deriveBlobEndpoint(result.auth.key);
     }
+    if (type === 'azure_files_index') {
+        result.endpoint = 'https://fixture.search.windows.net';
+        result.additionalFields.index_name = 'fixture-index';
+        result.additionalFields.storage_shares = [{
+            storage_account_resource_id: '/subscriptions/00000000-0000-4000-8000-000000000000/resourceGroups/rg-fixture/providers/Microsoft.Storage/storageAccounts/filesacct',
+            share_name: 'documents',
+        }];
+    }
     if (type === 'ui_test') {
         result.additionalFields.string = 'fixture';
         result.additionalFields.string__Secret = 'fixture-secret';

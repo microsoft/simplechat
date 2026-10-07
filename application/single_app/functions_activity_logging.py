@@ -2134,6 +2134,60 @@ def log_file_sync_activity(
         debug_print(f"Warning: Failed to log File Sync activity: {str(e)}")
 
 
+def log_azure_files_search_access(user_id: str, review: Dict[str, Any]) -> None:
+    """Record an Azure Files Search that withheld denied or unverifiable files.
+
+    The review holds counts, reason codes, and a bounded list of withheld file paths. It never
+    holds file content or the user's query, and only administrators can read activity logs.
+    """
+    normalized_user_id = coerce_activity_log_user_id(user_id)
+    now = datetime.utcnow().isoformat()
+    counts = (review or {}).get('counts') or {}
+    withheld = int(counts.get('denied_files') or 0) + int(counts.get('unverified_files') or 0)
+    try:
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': normalized_user_id,
+            'activity_type': 'azure_files_search_access',
+            'timestamp': now,
+            'created_at': now,
+            'action': 'results_withheld',
+            'description': (
+                f"Azure Files Search withheld {withheld} of {int(counts.get('files_evaluated') or 0)} files "
+                f"({int(counts.get('denied_files') or 0)} denied, {int(counts.get('unverified_files') or 0)} unverified)"
+            ),
+            'action_context': {
+                'action_id': (review or {}).get('action_id'),
+                'action_name': (review or {}).get('action_name'),
+                'display_name': (review or {}).get('display_name'),
+                'search_service': (review or {}).get('search_service'),
+                'index_name': (review or {}).get('index_name'),
+            },
+            'additional_context': {
+                'status': (review or {}).get('status'),
+                'permission_mode': (review or {}).get('permission_mode'),
+                'share_access_check': (review or {}).get('share_access_check'),
+                'counts': counts,
+                'reasons': (review or {}).get('reasons') or {},
+                'withheld_files': (review or {}).get('withheld_files') or [],
+                'withheld_files_truncated': bool((review or {}).get('withheld_files_truncated')),
+                'duration_ms': (review or {}).get('duration_ms'),
+            },
+        }
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        debug_print("[AZURE_FILES_SEARCH] Access review logged.")
+    except Exception as e:
+        log_event(
+            message="[AZURE_FILES_SEARCH] Error logging access review.",
+            extra={
+                'user_id': normalized_user_id,
+                'action_id': (review or {}).get('action_id'),
+                'exception_type': type(e).__name__,
+            },
+            level=logging.ERROR
+        )
+
+
 def log_governance_change(
     admin_user_id: str,
     admin_email: str,

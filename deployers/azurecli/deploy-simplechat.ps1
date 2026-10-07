@@ -167,6 +167,12 @@ STEP 7) Azure OpenAI
 STEP 8) Test Web UI fully.
 #>
 
+param(
+    [string[]]$AzureFilesStorageAccountResourceIds = @(),
+    [string[]]$ExternalSearchServiceResourceIds = @(),
+    [bool]$ExternalSearchServiceEnableReaderRole = $false
+)
+
 $PSModuleAutoloadingPreference = "All"
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
@@ -226,6 +232,9 @@ $param_PrivateEndpointSubnetAddressPrefixes = @("10.0.2.0/24")
 $param_AllowedIpAddresses = @() # Optional admin IPs to keep for services that still support IP allow lists.
 $param_ShowPrivateNetworkingChecklist = $true
 $param_ConfirmPrivateNetworkingPlan = $false
+$param_AzureFilesStorageAccountResourceIds = $AzureFilesStorageAccountResourceIds # Optional existing Microsoft.Storage/storageAccounts IDs for File Sync or Azure Files Search.
+$param_ExternalSearchServiceResourceIds = $ExternalSearchServiceResourceIds # Optional existing Microsoft.Search/searchServices IDs for Azure Files Search actions.
+$param_ExternalSearchServiceEnableReaderRole = $ExternalSearchServiceEnableReaderRole # Optional control-plane Reader on external search services for portal/diagnostic visibility only.
 
 # Optional per-zone private DNS overrides.
 # Supported keys:
@@ -633,6 +642,57 @@ function Ensure-KeyVaultSecretPermissions {
         }
     }
     Write-Host "Key Vault secret permissions confirmed for the application identities at vault '$VaultName'."
+}
+
+function Assert-ResourceIdsByType {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$ResourceIds,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedType,
+        [Parameter(Mandatory = $true)]
+        [string]$ParameterName
+    )
+
+    $typePattern = [regex]::Escape($ExpectedType)
+    $resourceIdPattern = "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/$typePattern/[^/]+$"
+    foreach ($resourceId in $ResourceIds) {
+        if ([string]::IsNullOrWhiteSpace($resourceId)) {
+            throw "$ParameterName cannot contain empty resource IDs."
+        }
+        if ($resourceId -notmatch $resourceIdPattern) {
+            throw "$ParameterName value '$resourceId' must be a $ExpectedType resource ID."
+        }
+    }
+}
+
+function Ensure-RoleAssignmentAtScope {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Scope,
+        [Parameter(Mandatory = $true)]
+        [string]$PrincipalId,
+        [Parameter(Mandatory = $true)]
+        [string]$RoleDefinitionId,
+        [Parameter(Mandatory = $true)]
+        [string]$RoleDisplayName
+    )
+
+    $assignment = az role assignment list --assignee $PrincipalId --scope "$Scope" --role $RoleDefinitionId `
+        --fill-principal-name false --fill-role-definition-name false --output json --only-show-errors | ConvertFrom-Json
+    if (-not $assignment) {
+        Write-Host "Granting '$RoleDisplayName' to App Service managed identity at '$Scope'."
+        az role assignment create --assignee-object-id $PrincipalId --assignee-principal-type ServicePrincipal `
+            --role $RoleDefinitionId --scope "$Scope" --output none --only-show-errors
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to grant '$RoleDisplayName' to App Service managed identity at '$Scope'."
+        }
+    } else {
+        Write-Host "'$RoleDisplayName' is already assigned at '$Scope'."
+    }
 }
 
 function Resolve-ContainerImageInfo {
@@ -2417,6 +2477,41 @@ Write-Host "Reconciling Key Vault runtime secret permissions"
 #-------------------------------------------------------------
 Ensure-KeyVaultSecretPermissions -VaultName $keyVaultName -ResourceGroupName $resourceGroupName `
     -PrincipalIds @($appService_SystemManagedIdentity_ObjectId, $managedIdentity_PrincipalId)
+
+#-------------------------------------------------------------
+Write-Host "Reconciling external Azure Files and Azure AI Search permissions"
+#-------------------------------------------------------------
+# The script attaches both a user-assigned and a system-assigned identity, but does not set AZURE_CLIENT_ID
+# in app settings. DefaultAzureCredential therefore selects the App Service system-assigned identity for
+# application data-plane calls unless an administrator deliberately changes runtime configuration later.
+Assert-ResourceIdsByType -ResourceIds $param_AzureFilesStorageAccountResourceIds `
+    -ExpectedType "Microsoft.Storage/storageAccounts" -ParameterName "param_AzureFilesStorageAccountResourceIds"
+Assert-ResourceIdsByType -ResourceIds $param_ExternalSearchServiceResourceIds `
+    -ExpectedType "Microsoft.Search/searchServices" -ParameterName "param_ExternalSearchServiceResourceIds"
+
+foreach ($externalStorageAccountId in $param_AzureFilesStorageAccountResourceIds) {
+    Ensure-RoleAssignmentAtScope -Scope $externalStorageAccountId `
+        -PrincipalId $appService_SystemManagedIdentity_ObjectId `
+        -RoleDefinitionId "b8eda974-7b85-4f76-af95-65846b26df6d" `
+        -RoleDisplayName "Storage File Data Privileged Reader"
+    Ensure-RoleAssignmentAtScope -Scope $externalStorageAccountId `
+        -PrincipalId $appService_SystemManagedIdentity_ObjectId `
+        -RoleDefinitionId "acdd72a7-3385-48ef-bd42-f606fba81ae7" `
+        -RoleDisplayName "Reader"
+}
+
+foreach ($externalSearchServiceId in $param_ExternalSearchServiceResourceIds) {
+    Ensure-RoleAssignmentAtScope -Scope $externalSearchServiceId `
+        -PrincipalId $appService_SystemManagedIdentity_ObjectId `
+        -RoleDefinitionId "1407120a-92aa-4202-b7e9-c0e197c71c8f" `
+        -RoleDisplayName "Search Index Data Reader"
+    if ($param_ExternalSearchServiceEnableReaderRole) {
+        Ensure-RoleAssignmentAtScope -Scope $externalSearchServiceId `
+            -PrincipalId $appService_SystemManagedIdentity_ObjectId `
+            -RoleDefinitionId "acdd72a7-3385-48ef-bd42-f606fba81ae7" `
+            -RoleDisplayName "Reader"
+    }
+}
 
 #-------------------------------------------------------------
 Write-Host "Getting Storage Account: Resource ID"

@@ -121,6 +121,32 @@ After a reviewed deployment and RBAC propagation, test the chosen identity under
 
 Offline coverage in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py) checks both runtime assignments, vault scopes, and the non-destructive legacy state migration.
 
+## External Azure Files and Azure AI Search permissions
+
+Implemented in application version **0.261.293** and deployer version **1.0.34** (`deployers/version.txt`).
+
+Leave these optional variables empty to keep existing behavior:
+
+```hcl
+azure_files_storage_account_resource_ids = [
+  "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/files-rg/providers/Microsoft.Storage/storageAccounts/filesacct"
+]
+
+external_search_service_resource_ids = [
+  "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/search-rg/providers/Microsoft.Search/searchServices/searchsvc"
+]
+
+external_search_service_enable_reader_role = false
+```
+
+For each Azure Files storage account, Terraform grants the App Service **system-assigned** identity **Storage File Data Privileged Reader** (`b8eda974-7b85-4f76-af95-65846b26df6d`) and **Reader** (`acdd72a7-3385-48ef-bd42-f606fba81ae7`). This matches the existing Terraform data-plane pattern that assigns Storage Blob Data Contributor to the App Service system-assigned identity used by the application runtime.
+
+For each external Azure AI Search service, Terraform grants **Search Index Data Reader** (`1407120a-92aa-4202-b7e9-c0e197c71c8f`). Set `external_search_service_enable_reader_role = true` only when you also want **Reader** for portal and diagnostic visibility. Reader is control-plane only and gives SimpleChat no access to index data; **Search Index Data Reader** is what lets the action query an index.
+
+The Terraform execution principal must be able to create role assignments at every target resource scope: **Owner**, **User Access Administrator**, or **Role Based Access Control Administrator** on each external storage account/search service or an inherited scope. Cross-resource-group and cross-subscription IDs are supported when the configured provider credentials can assign roles there.
+
+**Storage File Data Privileged Reader bypasses NTFS file and folder permissions.** SimpleChat enforces per-file permissions itself only inside the Azure Files Search action. File Sync imports synced files into a workspace, where they become visible to that workspace's members.
+
 ## Video Indexer region and permissions
 
 Implemented in application version **0.261.264** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).

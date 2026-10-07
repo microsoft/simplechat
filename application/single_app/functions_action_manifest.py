@@ -14,6 +14,42 @@ MCP_STDIO_REMOVED_MESSAGE = (
 MCP_TYPE_ALIASES = frozenset({
     "mcp", "mcpplugin", "modelcontextprotocol", "modelcontextprotocolplugin",
 })
+# Action types that run with the application identity against customer data and are
+# therefore created only by administrators as global actions; users reach them through agents.
+GLOBAL_ONLY_ACTION_TYPES = frozenset({"azure_files_index"})
+# Plugin class names behind GLOBAL_ONLY_ACTION_TYPES, keyed the way the Semantic Kernel loaders
+# match an action type to a plugin class (see _loader_type_key).
+_GLOBAL_ONLY_PLUGIN_CLASS_KEYS = frozenset({"azurefilesindexplugin"})
+
+
+class GlobalOnlyActionTypeError(PermissionError):
+    """An action type that only administrators may create, as a global action."""
+
+    code = "global_only_action_type"
+    public_message = "This action type is available only as an administrator-managed global action."
+
+    def __init__(self):
+        super().__init__(self.public_message)
+
+
+def _loader_type_key(action_type):
+    """Normalize a type exactly as the plugin loaders do before matching plugin class names."""
+    text = re.sub(r"\s", "", str(action_type or ""))
+    return text.replace("_", "").replace("-", "").replace("plugin", "").lower()
+
+
+def is_global_only_action_type(action_type):
+    """Return whether an action type may be created only as a global action.
+
+    The plugin loaders run an action with the first plugin class whose normalized name contains
+    the normalized type, so aliases such as ``AzureFilesIndex`` or ``files_index`` reach a
+    global-only plugin class as well. A non-empty type that normalizes to nothing matches every
+    class and is treated the same way.
+    """
+    if not str(action_type or "").strip():
+        return False
+    key = _loader_type_key(action_type)
+    return not key or any(key in class_key for class_key in _GLOBAL_ONLY_PLUGIN_CLASS_KEYS)
 
 
 class McpConfigurationError(ValueError):

@@ -41,6 +41,12 @@ AZURE_MONITOR_QUERY_HOSTS = (
     "api.loganalytics.us",
     "api.loganalytics.azure.cn",
 )
+# Azure AI Search service suffixes for the public, US Government, and China clouds.
+AZURE_SEARCH_ENDPOINT_SUFFIXES = (
+    "search.windows.net",
+    "search.azure.us",
+    "search.azure.cn",
+)
 # Mirrors azure.identity.AzureAuthorityHosts so a caller cannot select a token authority.
 AZURE_ENTRA_AUTHORITY_HOSTS = (
     "login.microsoftonline.com",
@@ -105,6 +111,14 @@ AZURE_AUTHORITY_HOST_ERROR = (
 AZURE_AI_ENDPOINT_ERROR = (
     "The application identity can be used only with an HTTPS Azure AI endpoint in this "
     "cloud, such as https://resource.openai.azure.com"
+)
+AZURE_SEARCH_ENDPOINT_ERROR = (
+    "Azure AI Search actions require an HTTPS Azure AI Search service endpoint such as "
+    "https://service.search.windows.net"
+)
+AZURE_FILE_ENDPOINT_ERROR = (
+    "Azure Files requires an HTTPS Azure Files service endpoint such as "
+    "https://account.file.core.windows.net"
 )
 
 
@@ -241,6 +255,29 @@ def validate_configured_chat_blob_endpoint(value: Any, custom_suffix: str = "") 
 def validate_azure_queue_endpoint(value: Any) -> str:
     """Return a canonical Azure Queue service origin, or raise ValueError."""
     return _validate_storage_endpoint(value, AZURE_QUEUE_SERVICE_LABEL, AZURE_QUEUE_ENDPOINT_ERROR)
+
+
+def validate_azure_file_endpoint(value: Any) -> str:
+    """Return a canonical Azure Files service origin, or raise ValueError."""
+    return _validate_storage_endpoint(value, AZURE_FILE_SERVICE_LABEL, AZURE_FILE_ENDPOINT_ERROR)
+
+
+def validate_azure_search_endpoint(value: Any) -> str:
+    """Return a canonical Azure AI Search service origin, or raise ValueError."""
+    _, hostname = parse_azure_https_endpoint(
+        value,
+        AZURE_SEARCH_ENDPOINT_ERROR,
+        allow_default_port=True,
+    )
+    service_name, endpoint_suffix = _match_endpoint_suffix(
+        hostname,
+        "",
+        AZURE_SEARCH_ENDPOINT_SUFFIXES,
+        AZURE_SEARCH_ENDPOINT_ERROR,
+    )
+    if not DNS_LABEL_PATTERN.match(service_name) or not 2 <= len(service_name) <= 60:
+        raise ValueError(AZURE_SEARCH_ENDPOINT_ERROR)
+    return f"https://{service_name}.{endpoint_suffix}"
 
 
 def validate_azure_cosmos_endpoint(value: Any) -> str:

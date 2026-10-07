@@ -36,8 +36,34 @@ param videoIndexerStorageAccountName string = ''
 @description('Role definition ID granted to the web app identity on the Video Indexer account.')
 param videoIndexerAppRoleDefinitionId string = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 param videoIndexerSupportsOpenAiIntegration bool = true
+@description('Existing Microsoft.Storage/storageAccounts resource IDs used by File Sync or Azure Files Search.')
+param azureFilesStorageAccountResourceIds array = []
+@description('Existing Microsoft.Search/searchServices resource IDs used by Azure Files Search actions.')
+param externalSearchServiceResourceIds array = []
+@description('Optionally grant control-plane Reader on external Azure AI Search services for portal and diagnostic visibility.')
+param externalSearchServiceEnableReaderRole bool = false
 
 var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
+var azureFilesStorageAccounts = [
+  for resourceId in azureFilesStorageAccountResourceIds: {
+    id: resourceId
+    subscriptionId: split(resourceId, '/')[2]
+    resourceGroupName: split(resourceId, '/')[4]
+    providerNamespace: toLower(split(resourceId, '/')[6])
+    resourceType: toLower(split(resourceId, '/')[7])
+    name: split(resourceId, '/')[8]
+  }
+]
+var externalSearchServices = [
+  for resourceId in externalSearchServiceResourceIds: {
+    id: resourceId
+    subscriptionId: split(resourceId, '/')[2]
+    resourceGroupName: split(resourceId, '/')[4]
+    providerNamespace: toLower(split(resourceId, '/')[6])
+    resourceType: toLower(split(resourceId, '/')[7])
+    name: split(resourceId, '/')[8]
+  }
+]
 
 resource webApp 'Microsoft.Web/sites@2022-03-01' existing = {
   name: webAppName
@@ -250,6 +276,27 @@ module openAIExternalPermissions 'setPermissions-openAIExternal.bicep' = if (use
     videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
 }
+
+// Explicitly listed external resources are granted regardless of the internal service auth type:
+// File Sync and Azure Files Search always reach them with the app's managed identity.
+module externalAzureFilesStoragePermissions 'setPermissions-externalAzureFilesStorage.bicep' = [for (storage, index) in azureFilesStorageAccounts: if (storage.providerNamespace == 'microsoft.storage' && storage.resourceType == 'storageaccounts') {
+  name: 'externalAzureFilesStoragePermissions-${index}'
+  scope: resourceGroup(storage.subscriptionId, storage.resourceGroupName)
+  params: {
+    storageAccountName: storage.name
+    webAppPrincipalId: webApp.identity.principalId
+  }
+}]
+
+module externalSearchServicePermissions 'setPermissions-externalSearchService.bicep' = [for (search, index) in externalSearchServices: if (search.providerNamespace == 'microsoft.search' && search.resourceType == 'searchservices') {
+  name: 'externalSearchServicePermissions-${index}'
+  scope: resourceGroup(search.subscriptionId, search.resourceGroupName)
+  params: {
+    searchServiceName: search.name
+    webAppPrincipalId: webApp.identity.principalId
+    grantReaderRole: externalSearchServiceEnableReaderRole
+  }
+}]
 
 // grant the managed identity access to document intelligence as a Cognitive Services User
 resource docIntelUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {

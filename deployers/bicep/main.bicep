@@ -235,6 +235,20 @@ param existingOpenAIResourceGroup string = ''
 - Used when reusing a standard Azure OpenAI resource across subscriptions''')
 param existingOpenAISubscriptionId string = ''
 
+@description('''Optional existing Azure Storage account resource IDs used by File Sync or Azure Files Search.
+- Each ID must be a Microsoft.Storage/storageAccounts resource ID.
+- When configureApplicationPermissions is true, the app managed identity gets Storage File Data Privileged Reader and Reader at each storage account scope.''')
+param azureFilesStorageAccountResourceIds array = []
+
+@description('''Optional existing Azure AI Search service resource IDs used by Azure Files Search actions.
+- Each ID must be a Microsoft.Search/searchServices resource ID.
+- When configureApplicationPermissions is true, the app managed identity gets Search Index Data Reader at each service scope.''')
+param externalSearchServiceResourceIds array = []
+
+@description('''Optionally grant Reader on external Azure AI Search services for portal and diagnostic visibility.
+- This does not grant data-plane access to read index definitions; Search Index Data Reader supplies query/read data-plane access.''')
+param externalSearchServiceEnableReaderRole bool = false
+
 @description('''Azure OpenAI deployment type used for the default GPT and embedding model deployments.
 - Azure Commercial options: Standard, DatazoneStandard, GlobalStandard
 - Azure Government default model deployments use Standard regardless of this selection
@@ -886,6 +900,9 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     videoIndexerStorageAccountName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerStorageAccountName : ''
     videoIndexerAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
     videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
+    azureFilesStorageAccountResourceIds: azureFilesStorageAccountResourceIds
+    externalSearchServiceResourceIds: externalSearchServiceResourceIds
+    externalSearchServiceEnableReaderRole: externalSearchServiceEnableReaderRole
   }
 }
 
@@ -915,6 +932,9 @@ module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = i
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
     videoIndexerAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
+    azureFilesStorageAccountResourceIds: azureFilesStorageAccountResourceIds
+    externalSearchServiceResourceIds: externalSearchServiceResourceIds
+    externalSearchServiceEnableReaderRole: externalSearchServiceEnableReaderRole
   }
   dependsOn: [
     setPermissions

@@ -24,6 +24,7 @@ If an action type does not appear, check Agents settings, workspace action permi
 
 | Action | What it does | Typical use | Depth |
 | --- | --- | --- | --- |
+| [Azure Files Search](./azure-files-index/) | Searches an Azure AI Search index built by the Azure Files indexer and returns only files the signed-in user can open on the share. | Use it when file shares are already indexed in Azure AI Search and agents should search them without re-ingesting into SimpleChat. Admins create it as a global action. | full guide |
 | [Cosmos Query](./cosmos-query/) | Runs read-only Azure Cosmos DB for NoSQL queries and validates Cosmos SQL-style queries. | Use it for governed lookup over one Cosmos container. Use SQL Query for relational databases. | overview |
 | [Databricks Table](./databricks-table/) | Compatibility wrapper for legacy `databricks_table` manifests. | Use only to keep older manifests working. For new work, use Databricks. | overview |
 | [Document Search](./document-search/) | Searches accessible SimpleChat documents, retrieves chunks, and summarizes documents using current user access. | Use it when an agent should reason over workspace documents as a tool. Use the normal grounded-search panel for one-off user searches. | overview |

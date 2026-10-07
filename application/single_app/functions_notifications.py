@@ -261,6 +261,14 @@ NOTIFICATION_TYPES = {
     KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE: {
         'icon': 'bi-safe',
         'color': 'warning'
+    },
+    'file_sync_run_failed': {
+        'icon': 'bi-cloud-slash',
+        'color': 'danger'
+    },
+    'azure_files_search_access_unverified': {
+        'icon': 'bi-shield-exclamation',
+        'color': 'warning'
     }
 }
 

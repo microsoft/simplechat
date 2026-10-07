@@ -1,6 +1,7 @@
 // workspaceActionRegistry.ts
 
 import { EDITOR_SECRET_MASK, type ActionConfiguration } from './workspaceAuthoring';
+import { AZURE_FILES_INDEX_DEFAULT_ADDITIONAL_FIELDS } from './azureFilesIndexAction';
 import type { ActionCapability, ActionFieldDescriptor, ActionNativeDefinition } from './workspaceActionTypes';
 
 const options = (values: (string | [string, string])[]) => values.map((value) =>
@@ -306,6 +307,17 @@ export const NATIVE_ACTION_TYPES: Record<string, ActionNativeDefinition> = {
         identityTypes: ['connection_string', 'api_key', 'managed_identity'],
         testPath: '/api/plugins/test-blob-storage-connection',
         help: 'Scope file access to one container and optional prefix. Choose listing, reading, and upload permissions separately.',
+    },
+    azure_files_index: {
+        fields: [],
+        defaults: {
+            endpoint: '',
+            auth: { type: 'identity', identity: 'managed_identity' },
+            additionalFields: AZURE_FILES_INDEX_DEFAULT_ADDITIONAL_FIELDS,
+        },
+        identityTypes: ['managed_identity'],
+        testPath: '/api/plugins/test-azure-files-index-connection',
+        help: 'Search an existing Azure AI Search index built by the Azure Files indexer, then return only files the signed-in user can open.',
     },
     queue_storage: {
         fields: [endpoint('Queue service endpoint'), field('queue_name', 'Queue name', { required: true })],

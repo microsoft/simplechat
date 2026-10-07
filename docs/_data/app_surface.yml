@@ -5,7 +5,7 @@ counts:
   admin_groups: 15
   admin_tabs: 49
   admin_sections: 107
-  actions: 32
+  actions: 33
   chat_controls: 47
   sub_elements: 3
   app_pages: 29
@@ -943,6 +943,10 @@ actions:
 - slug: agent
   module: agent_plugin.py
   class_name: AgentPlugin
+- slug: azure-files-index
+  module: azure_files_index_plugin.py
+  class_name: AzureFilesIndexPlugin
+  summary: Search an Azure Files indexer index and keep only files the user can open.
 - slug: azure-maps-openlayers
   module: azure_maps_openlayers_plugin.py
   class_name: AzureMapsOpenLayersPlugin

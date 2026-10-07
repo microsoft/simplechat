@@ -42,6 +42,8 @@ CURRENT_TYPES = sorted({
     for path in (APP_ROOT / "semantic_kernel_plugins").glob("*_plugin.py")
     if path.stem != "base_plugin"
 })
+# Admin-managed global action types run with the application identity and are never personal actions.
+GLOBAL_ONLY_TYPES = frozenset({"azure_files_index"})
 
 
 def _load_module(stack, name, relative_path=None):
@@ -313,6 +315,7 @@ def environment(monkeypatch):
             "WORKSPACE_IDENTITY_SCOPE_PERSONAL": "personal",
             "McpDestinationPolicyError": type("McpDestinationPolicyError", (ValueError,), {}),
             "_enforce_mcp_destination_policy": Mock(),
+            "validate_mcp_tool_pinning_for_save": Mock(),
             "_redact_plugin_for_logging": keyvault.redact_plugin_secret_values,
             "ensure_migration_complete": Mock(),
             "DOCUMENT_SEARCH_INTERNAL_ENDPOINT": "internal://document-search",
@@ -459,6 +462,18 @@ def configured_action_payload(environment, kind):
         fields.update({"transport": "streamable_http", "auth_method": "none"})
     elif kind == "embedding_model":
         record.update({"api_version": "2024-06-01", "deployment": "test-embedding"})
+    elif kind == "azure_files_index":
+        record["endpoint"] = "https://fixture.search.windows.net"
+        fields.update({
+            "index_name": "fixture-index",
+            "storage_shares": [{
+                "storage_account_resource_id": (
+                    "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-fixture"
+                    "/providers/Microsoft.Storage/storageAccounts/filesacct"
+                ),
+                "share_name": "documents",
+            }],
+        })
     elif kind in {"chart", "simplechat", "msgraph"}:
         record["endpoint"] = ""
     return record
@@ -512,7 +527,7 @@ def test_agent_types_create_edit_and_redact(environment, kind, vault_enabled):
     assert fetched.headers["Cache-Control"] == "no-store"
 
 
-@pytest.mark.parametrize("kind", [kind for kind in CURRENT_TYPES if kind != "msgraph"])
+@pytest.mark.parametrize("kind", [kind for kind in CURRENT_TYPES if kind != "msgraph" and kind not in GLOBAL_ONLY_TYPES])
 def test_every_action_type_create_edit_reload_delete(environment, kind):
     env = environment
     env.services.add_agent()
@@ -530,6 +545,22 @@ def test_every_action_type_create_edit_reload_delete(environment, kind):
     assert latest["record"]["metadata"]["custom_configuration"] == {"enabled": False, "maximum": 0, "items": []}
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").get_json() == latest
     assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 200
+
+
+def test_global_only_action_types_match_application_policy(environment):
+    assert GLOBAL_ONLY_TYPES == environment.namespace["GLOBAL_ONLY_ACTION_TYPES"]
+    assert GLOBAL_ONLY_TYPES <= set(CURRENT_TYPES)
+
+
+@pytest.mark.parametrize("action_type", sorted(GLOBAL_ONLY_TYPES) + ["AzureFilesIndex", "files_index"])
+def test_personal_editor_refuses_global_only_action_types(environment, action_type):
+    env = environment
+    draft = configured_action_payload(env, "azure_files_index")
+    draft["type"] = action_type
+    response = env.client.post("/api/user/plugins?view=editor", json=write_payload(draft))
+    assert response.status_code == 403, response.get_json()
+    assert not env.services.records["actions", "personal"]
+    assert "test-credential" not in json.dumps(response.get_json())
 
 
 @pytest.mark.parametrize("action_type", ["msgraph", "Microsoft Graph", "MSGraphPlugin"])
@@ -857,7 +888,7 @@ def test_all_discovered_types_get_canonical_schemas_and_allowed_auth(environment
     response = env.client.get("/api/user/plugins/types?view=editor")
     assert response.status_code == 200
     definitions = {item["type"]: item for item in response.get_json()}
-    assert set(definitions) == set(CURRENT_TYPES)
+    assert set(definitions) == set(CURRENT_TYPES) - GLOBAL_ONLY_TYPES
     for kind, definition in definitions.items():
         assert set(definition["allowed_auth_types"]) == env.schema.get_allowed_auth_types_for_plugin_type(kind)
         assert "additional_fields_schema" in definition and "metadata_schema" in definition

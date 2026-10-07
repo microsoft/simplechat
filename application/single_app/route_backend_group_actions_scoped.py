@@ -21,6 +21,7 @@ from functools import wraps
 
 from flask import jsonify, request
 
+from functions_action_manifest import is_global_only_action_type
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import enabled_required
 from functions_group_action_access import (
@@ -139,7 +140,8 @@ def register_route_backend_group_actions_scoped(bp):
         # the editor catalogue the V2 editor renders (auth types and field schemas),
         # never the raw discovery Response, and keep it out of shared caches.
         discovered = get_plugin_types(
-            allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+            allowed_type_filter=lambda action_type: not is_global_only_action_type(action_type)
+            and is_action_type_access_allowed(
                 'governance_group_actions', user_id, action_type, 'group',
             ),
         )

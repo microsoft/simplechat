@@ -28,7 +28,7 @@ SMB sources continue to support username/password and anonymous authentication f
 
 Admins can enable Azure Files in Admin Settings under File Sync source type visibility. Workspace managers then choose Azure Files in the Add Source workflow, enter the file service or share URL, share name, and directory path, and select a compatible reusable identity or source-local Azure Files credential.
 
-The managed identity used by the app needs Azure Files data-plane permissions on the target storage account or file share. For SDK-based sync, grant a Storage File Data role that matches the desired read access. For SMB-mounted Azure Files scenarios, use Azure Files SMB managed identity or Kerberos configuration outside SimpleChat and keep using the SMB connector against the mounted/UNC path.
+The managed identity used by the app needs Azure Files data-plane permissions on the target storage account or file share. SDK-based sync with a managed identity or service principal uses Azure Files OAuth over REST with backup intent, which requires the **Storage File Data Privileged Reader** role; that role reads every file regardless of NTFS permissions. Before 0.261.293 the connector omitted the backup token intent, so managed identity and service principal sources failed; see [Azure Files File Sync managed identity fix](../../fixes/AZURE_FILES_FILE_SYNC_MANAGED_IDENTITY_FIX.md). For SMB-mounted Azure Files scenarios, use Azure Files SMB managed identity or Kerberos configuration outside SimpleChat and keep using the SMB connector against the mounted/UNC path.
 
 ## Testing and Validation
 

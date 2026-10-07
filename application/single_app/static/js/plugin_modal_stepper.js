@@ -87,9 +87,49 @@ const ROCKSDB_DEFAULT_TIMEOUT = 30;
 const LOG_ANALYTICS_PLUGIN_TYPE = 'log_analytics';
 const LOG_ANALYTICS_DEFAULT_ENDPOINT = 'https://api.loganalytics.io';
 const LOG_ANALYTICS_DEFAULT_CLOUD = 'public';
+const AZURE_FILES_INDEX_PLUGIN_TYPE = 'azure_files_index';
+const AZURE_FILES_INDEX_FIELD_DEFAULTS = {
+  document_per_file: {
+    content_field: 'content',
+    title_field: 'metadata_storage_name',
+    path_field: 'metadata_storage_path',
+    name_field: 'metadata_storage_name',
+    last_modified_field: 'metadata_storage_last_modified',
+    vector_field: '',
+    select_content: false
+  },
+  chunked: {
+    content_field: 'chunk',
+    title_field: 'title',
+    path_field: 'metadata_storage_path',
+    name_field: 'metadata_storage_name',
+    last_modified_field: '',
+    vector_field: 'text_vector',
+    select_content: true
+  },
+  custom: {
+    content_field: 'content',
+    title_field: 'metadata_storage_name',
+    path_field: 'metadata_storage_path',
+    name_field: 'metadata_storage_name',
+    last_modified_field: 'metadata_storage_last_modified',
+    vector_field: '',
+    select_content: false
+  }
+};
+const AZURE_FILES_INDEX_LAYOUT_HELP = {
+  document_per_file: 'One search document represents each file. Uses metadata_storage_* fields from the Azure Files indexer.',
+  chunked: 'The index stores chunks with integrated vectorization and selects chunk content for snippets.',
+  custom: 'Use custom field names when the index was transformed or projected differently.'
+};
+const AZURE_FILES_INDEX_RESOURCE_ID_PATTERN = /^\/subscriptions\/[0-9a-fA-F-]{36}\/resourceGroups\/[^/]+\/providers\/Microsoft\.Storage\/storageAccounts\/[A-Za-z0-9]{3,24}$/;
+const AZURE_FILES_INDEX_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,127}$/;
+const AZURE_FILES_INDEX_SHARE_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,62}$/;
+const AZURE_FILES_INDEX_SEARCH_ENDPOINT_PATTERN = /^https:\/\/[A-Za-z0-9-]+\.search\.(windows\.net|azure\.us|azure\.cn)\/?$/;
 const ACTION_CONNECTION_TEST_CONFIG = {
   openapi: { idPrefix: 'openapi', url: '/api/plugins/test-openapi-connection', label: 'OpenAPI' },
   azureMaps: { idPrefix: 'azure-maps', url: '/api/plugins/test-azure-maps-connection', label: 'Azure Maps' },
+  azureFilesIndex: { idPrefix: 'azure-files-index', url: '/api/plugins/test-azure-files-index-connection', label: 'Azure Files Search' },
   blobStorage: { idPrefix: 'blob-storage', url: '/api/plugins/test-blob-storage-connection', label: 'Blob Storage' },
   databricks: { idPrefix: 'databricks', url: '/api/plugins/test-databricks-connection', label: 'Databricks' },
   logAnalytics: { idPrefix: 'log-analytics', url: '/api/plugins/test-log-analytics-connection', label: 'Log Analytics' },
@@ -807,6 +847,32 @@ export class PluginModalStepper {
     document.getElementById('sql-identity-select').addEventListener('change', () => this.handleActionIdentityChange('sql'));
     document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
 
+    const azureFilesLayoutSelect = document.getElementById('azure-files-index-layout');
+    if (azureFilesLayoutSelect) {
+      azureFilesLayoutSelect.addEventListener('change', () => this.handleAzureFilesIndexLayoutChange());
+    }
+    const azureFilesAuthTypeSelect = document.getElementById('azure-files-index-auth-type');
+    if (azureFilesAuthTypeSelect) {
+      azureFilesAuthTypeSelect.addEventListener('change', () => this.handleAzureFilesIndexAuthTypeChange());
+    }
+    const azureFilesPermissionModeSelect = document.getElementById('azure-files-index-permission-mode');
+    if (azureFilesPermissionModeSelect) {
+      azureFilesPermissionModeSelect.addEventListener('change', () => this.handleAzureFilesIndexPermissionModeChange());
+    }
+    const azureFilesAddShareButton = document.getElementById('azure-files-index-add-share-btn');
+    if (azureFilesAddShareButton) {
+      azureFilesAddShareButton.addEventListener('click', () => this.addAzureFilesIndexShareRow());
+    }
+    const azureFilesSharesList = document.getElementById('azure-files-index-shares-list');
+    if (azureFilesSharesList) {
+      azureFilesSharesList.addEventListener('click', (event) => {
+        const removeButton = event.target.closest('.azure-files-index-remove-share-btn');
+        if (removeButton) {
+          this.removeAzureFilesIndexShareRow(removeButton);
+        }
+      });
+    }
+
     const blobStorageAuthTypeSelect = document.getElementById('blob-storage-auth-type');
     if (blobStorageAuthTypeSelect) {
       blobStorageAuthTypeSelect.addEventListener('change', () => this.handleBlobStorageAuthTypeChange());
@@ -1404,6 +1470,10 @@ export class PluginModalStepper {
 
   isCosmosType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === 'cosmos_query');
+  }
+
+  isAzureFilesIndexType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === AZURE_FILES_INDEX_PLUGIN_TYPE);
   }
 
   isRocksDbType(type = this.selectedType) {
@@ -3268,6 +3338,435 @@ export class PluginModalStepper {
     return Number.isNaN(value) ? defaultValue : value;
   }
 
+  setAzureFilesIndexFieldValue(fieldId, value = '') {
+    const field = document.getElementById(fieldId);
+    if (field) {
+      field.value = value === null || value === undefined ? '' : String(value);
+    }
+  }
+
+  setAzureFilesIndexSummaryText(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.textContent = value;
+    }
+  }
+
+  getAzureFilesIndexLayoutDefaults(layout) {
+    return AZURE_FILES_INDEX_FIELD_DEFAULTS[layout] || AZURE_FILES_INDEX_FIELD_DEFAULTS.document_per_file;
+  }
+
+  initializeAzureFilesIndexConfiguration() {
+    if (!document.getElementById('azure-files-index-config-section')) {
+      return;
+    }
+
+    const defaults = [
+      ['azure-files-index-layout', 'document_per_file'],
+      ['azure-files-index-query-mode', 'keyword'],
+      ['azure-files-index-auth-type', 'identity'],
+      ['azure-files-index-permission-mode', 'live_acl'],
+      ['azure-files-index-share-access-check', 'rbac'],
+      ['azure-files-index-default-top-n', '5'],
+      ['azure-files-index-max-candidates', '50'],
+      ['azure-files-index-max-snippet-chars', '1200'],
+      ['azure-files-index-time-budget', '25']
+    ];
+
+    defaults.forEach(([fieldId, defaultValue]) => {
+      const field = document.getElementById(fieldId);
+      if (field && !String(field.value || '').trim()) {
+        field.value = defaultValue;
+      }
+    });
+
+    this.applyAzureFilesIndexLayoutDefaults(false);
+    this.ensureAzureFilesIndexShareRow();
+    this.handleAzureFilesIndexAuthTypeChange();
+    this.handleAzureFilesIndexPermissionModeChange();
+    this.clearActionConnectionTestResult('azureFilesIndex');
+  }
+
+  handleAzureFilesIndexLayoutChange() {
+    this.applyAzureFilesIndexLayoutDefaults(true);
+  }
+
+  applyAzureFilesIndexLayoutDefaults(force = false) {
+    const layout = document.getElementById('azure-files-index-layout')?.value || 'document_per_file';
+    const defaults = this.getAzureFilesIndexLayoutDefaults(layout);
+    const fieldMap = {
+      content_field: 'azure-files-index-content-field',
+      title_field: 'azure-files-index-title-field',
+      path_field: 'azure-files-index-path-field',
+      name_field: 'azure-files-index-name-field',
+      last_modified_field: 'azure-files-index-last-modified-field',
+      vector_field: 'azure-files-index-vector-field'
+    };
+
+    Object.entries(fieldMap).forEach(([key, fieldId]) => {
+      const field = document.getElementById(fieldId);
+      if (field && (force || !String(field.value || '').trim())) {
+        field.value = defaults[key] || '';
+      }
+    });
+
+    const selectContent = document.getElementById('azure-files-index-select-content');
+    if (selectContent && (force || !selectContent.dataset.userTouched)) {
+      selectContent.checked = defaults.select_content === true;
+    }
+    if (selectContent && !selectContent.dataset.touchHandlerAttached) {
+      selectContent.addEventListener('change', () => {
+        selectContent.dataset.userTouched = 'true';
+      });
+      selectContent.dataset.touchHandlerAttached = 'true';
+    }
+
+    const help = document.getElementById('azure-files-index-layout-help');
+    if (help) {
+      help.textContent = AZURE_FILES_INDEX_LAYOUT_HELP[layout] || AZURE_FILES_INDEX_LAYOUT_HELP.document_per_file;
+    }
+  }
+
+  handleAzureFilesIndexAuthTypeChange() {
+    const authType = document.getElementById('azure-files-index-auth-type')?.value || 'identity';
+    const keyGroup = document.getElementById('azure-files-index-auth-key-group');
+    const keyInput = document.getElementById('azure-files-index-auth-key');
+    keyGroup?.classList.toggle('d-none', authType !== 'key');
+    if (keyInput) {
+      keyInput.required = authType === 'key';
+    }
+  }
+
+  handleAzureFilesIndexPermissionModeChange() {
+    const permissionMode = document.getElementById('azure-files-index-permission-mode')?.value || 'live_acl';
+    const warning = document.getElementById('azure-files-index-permission-none-warning');
+    warning?.classList.toggle('d-none', permissionMode !== 'none');
+  }
+
+  ensureAzureFilesIndexShareRow() {
+    const list = document.getElementById('azure-files-index-shares-list');
+    if (list && list.children.length === 0) {
+      this.addAzureFilesIndexShareRow();
+    }
+  }
+
+  addAzureFilesIndexShareRow(storageAccountResourceId = '', shareName = '') {
+    const list = document.getElementById('azure-files-index-shares-list');
+    if (!list) {
+      return;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'azure-files-index-share-row';
+
+    const grid = document.createElement('div');
+    grid.className = 'row g-2 align-items-end';
+
+    const resourceColumn = document.createElement('div');
+    resourceColumn.className = 'col-md-7';
+    const resourceLabel = document.createElement('label');
+    resourceLabel.className = 'form-label';
+    resourceLabel.textContent = 'Storage Account Resource ID';
+    const resourceInput = document.createElement('input');
+    resourceInput.type = 'text';
+    resourceInput.className = 'form-control azure-files-index-share-resource-id';
+    resourceInput.placeholder = '/subscriptions/.../resourceGroups/.../providers/Microsoft.Storage/storageAccounts/account';
+    resourceInput.value = storageAccountResourceId || '';
+    resourceColumn.append(resourceLabel, resourceInput);
+
+    const shareColumn = document.createElement('div');
+    shareColumn.className = 'col-md-3';
+    const shareLabel = document.createElement('label');
+    shareLabel.className = 'form-label';
+    shareLabel.textContent = 'Share Name';
+    const shareInput = document.createElement('input');
+    shareInput.type = 'text';
+    shareInput.className = 'form-control azure-files-index-share-name';
+    shareInput.placeholder = 'department-files';
+    shareInput.value = shareName || '';
+    shareColumn.append(shareLabel, shareInput);
+
+    const actionColumn = document.createElement('div');
+    actionColumn.className = 'col-md-2 d-grid';
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'btn btn-outline-danger azure-files-index-remove-share-btn';
+    removeButton.append(document.createTextNode('Remove'));
+    actionColumn.appendChild(removeButton);
+
+    grid.append(resourceColumn, shareColumn, actionColumn);
+    row.appendChild(grid);
+    list.appendChild(row);
+  }
+
+  removeAzureFilesIndexShareRow(removeButton) {
+    removeButton.closest('.azure-files-index-share-row')?.remove();
+  }
+
+  getAzureFilesIndexStorageShares() {
+    return Array.from(document.querySelectorAll('#azure-files-index-shares-list .azure-files-index-share-row'))
+      .map(row => ({
+        storage_account_resource_id: row.querySelector('.azure-files-index-share-resource-id')?.value.trim() || '',
+        share_name: row.querySelector('.azure-files-index-share-name')?.value.trim().toLowerCase() || ''
+      }))
+      .filter(share => share.storage_account_resource_id || share.share_name);
+  }
+
+  getAzureFilesIndexConfiguration() {
+    const endpoint = (document.getElementById('azure-files-index-endpoint')?.value || '').trim().replace(/\/+$/, '');
+    const authType = document.getElementById('azure-files-index-auth-type')?.value || 'identity';
+    const auth = { type: authType };
+    const additionalFields = {
+      index_name: (document.getElementById('azure-files-index-name')?.value || '').trim().toLowerCase(),
+      index_layout: document.getElementById('azure-files-index-layout')?.value || 'document_per_file',
+      content_field: (document.getElementById('azure-files-index-content-field')?.value || '').trim(),
+      title_field: (document.getElementById('azure-files-index-title-field')?.value || '').trim(),
+      path_field: (document.getElementById('azure-files-index-path-field')?.value || '').trim(),
+      name_field: (document.getElementById('azure-files-index-name-field')?.value || '').trim(),
+      last_modified_field: (document.getElementById('azure-files-index-last-modified-field')?.value || '').trim(),
+      vector_field: (document.getElementById('azure-files-index-vector-field')?.value || '').trim(),
+      select_content: document.getElementById('azure-files-index-select-content')?.checked === true,
+      query_mode: document.getElementById('azure-files-index-query-mode')?.value || 'keyword',
+      semantic_configuration: (document.getElementById('azure-files-index-semantic-configuration')?.value || '').trim(),
+      default_top_n: this.getIntegerFieldValue('azure-files-index-default-top-n', 5),
+      max_candidates: this.getIntegerFieldValue('azure-files-index-max-candidates', 50),
+      max_snippet_chars: this.getIntegerFieldValue('azure-files-index-max-snippet-chars', 1200),
+      time_budget_seconds: this.getIntegerFieldValue('azure-files-index-time-budget', 25),
+      permission_mode: document.getElementById('azure-files-index-permission-mode')?.value || 'live_acl',
+      permission_mode_none_acknowledged: document.getElementById('azure-files-index-permission-none-ack')?.checked === true,
+      share_access_check: document.getElementById('azure-files-index-share-access-check')?.value || 'rbac',
+      treat_builtin_users_as_member: document.getElementById('azure-files-index-builtin-users')?.checked === true,
+      storage_shares: this.getAzureFilesIndexStorageShares()
+    };
+
+    if (authType === 'key') {
+      const key = (document.getElementById('azure-files-index-auth-key')?.value || '').trim();
+      if (key) {
+        auth.key = key;
+      } else if (this.isEditMode && this.originalPlugin?.auth?.key) {
+        auth.key = this.originalPlugin.auth.key;
+      }
+    } else {
+      auth.identity = 'managed_identity';
+    }
+
+    return { endpoint, auth, additionalFields };
+  }
+
+  getAzureFilesIndexValidationError() {
+    const config = this.getAzureFilesIndexConfiguration();
+    const fields = config.additionalFields;
+
+    if (!AZURE_FILES_INDEX_SEARCH_ENDPOINT_PATTERN.test(config.endpoint)) {
+      return 'Search service endpoint must be an Azure AI Search URL, for example https://service.search.windows.net.';
+    }
+    if (!AZURE_FILES_INDEX_NAME_PATTERN.test(fields.index_name)) {
+      return 'Index name must be 2-128 lowercase letters, numbers, or single dashes.';
+    }
+    if (config.auth.type === 'key' && !config.auth.key && !this.isEditMode) {
+      return 'Query key is required when using key authentication.';
+    }
+    if (!fields.content_field) {
+      return 'Content field is required.';
+    }
+    if (!fields.path_field) {
+      return 'Path field is required.';
+    }
+    if (!fields.name_field) {
+      return 'Name field is required.';
+    }
+    if (fields.query_mode === 'hybrid' && !fields.vector_field) {
+      return 'Hybrid search requires a vector field.';
+    }
+    if (fields.default_top_n < 1 || fields.default_top_n > 20) {
+      return 'Default results must be between 1 and 20.';
+    }
+    if (fields.max_candidates < 5 || fields.max_candidates > 200) {
+      return 'Max candidates must be between 5 and 200.';
+    }
+    if (fields.max_snippet_chars < 200 || fields.max_snippet_chars > 4000) {
+      return 'Snippet characters must be between 200 and 4000.';
+    }
+    if (fields.time_budget_seconds < 5 || fields.time_budget_seconds > 60) {
+      return 'Permission budget must be between 5 and 60 seconds.';
+    }
+    if (fields.permission_mode === 'none' && !fields.permission_mode_none_acknowledged) {
+      return 'Acknowledge that every action user can search every file before disabling permission checks.';
+    }
+    if (fields.permission_mode === 'live_acl' && fields.storage_shares.length === 0) {
+      return 'Add at least one Azure file share for live ACL permission checks.';
+    }
+
+    const invalidShare = fields.storage_shares.find(share => (
+      !AZURE_FILES_INDEX_RESOURCE_ID_PATTERN.test(share.storage_account_resource_id)
+      || !AZURE_FILES_INDEX_SHARE_NAME_PATTERN.test(share.share_name)
+    ));
+    if (invalidShare) {
+      return 'Each storage share needs a valid storage account resource ID and a 3-63 character lowercase share name.';
+    }
+
+    return null;
+  }
+
+  populateAzureFilesIndexForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+
+    this.setAzureFilesIndexFieldValue('azure-files-index-endpoint', plugin.endpoint || '');
+    this.setAzureFilesIndexFieldValue('azure-files-index-name', additionalFields.index_name || '');
+    this.setAzureFilesIndexFieldValue('azure-files-index-layout', additionalFields.index_layout || 'document_per_file');
+    this.applyAzureFilesIndexLayoutDefaults(true);
+
+    // Blank field names fall back to the layout defaults on the server, so keep the defaults visible.
+    [
+      ['azure-files-index-content-field', additionalFields.content_field],
+      ['azure-files-index-title-field', additionalFields.title_field],
+      ['azure-files-index-path-field', additionalFields.path_field],
+      ['azure-files-index-name-field', additionalFields.name_field],
+      ['azure-files-index-last-modified-field', additionalFields.last_modified_field],
+      ['azure-files-index-vector-field', additionalFields.vector_field]
+    ].forEach(([fieldId, value]) => {
+      if (value !== undefined && value !== null && String(value).trim()) {
+        this.setAzureFilesIndexFieldValue(fieldId, value);
+      }
+    });
+
+    [
+      ['azure-files-index-query-mode', additionalFields.query_mode || 'keyword'],
+      ['azure-files-index-semantic-configuration', additionalFields.semantic_configuration || ''],
+      ['azure-files-index-permission-mode', additionalFields.permission_mode || 'live_acl'],
+      ['azure-files-index-share-access-check', additionalFields.share_access_check || 'rbac'],
+      ['azure-files-index-default-top-n', additionalFields.default_top_n || 5],
+      ['azure-files-index-max-candidates', additionalFields.max_candidates || 50],
+      ['azure-files-index-max-snippet-chars', additionalFields.max_snippet_chars || 1200],
+      ['azure-files-index-time-budget', additionalFields.time_budget_seconds || 25]
+    ].forEach(([fieldId, value]) => this.setAzureFilesIndexFieldValue(fieldId, value));
+
+    const selectContent = document.getElementById('azure-files-index-select-content');
+    if (selectContent && Object.prototype.hasOwnProperty.call(additionalFields, 'select_content')) {
+      selectContent.checked = additionalFields.select_content === true;
+      selectContent.dataset.userTouched = 'true';
+    }
+    const noneAck = document.getElementById('azure-files-index-permission-none-ack');
+    if (noneAck) {
+      noneAck.checked = additionalFields.permission_mode_none_acknowledged === true;
+    }
+    const builtinUsers = document.getElementById('azure-files-index-builtin-users');
+    if (builtinUsers) {
+      builtinUsers.checked = additionalFields.treat_builtin_users_as_member === true;
+    }
+
+    this.setAzureFilesIndexFieldValue('azure-files-index-auth-type', auth.type === 'key' ? 'key' : 'identity');
+    this.setAzureFilesIndexFieldValue('azure-files-index-auth-key', auth.type === 'key' ? (auth.key || '') : '');
+
+    const sharesList = document.getElementById('azure-files-index-shares-list');
+    if (sharesList) {
+      sharesList.replaceChildren();
+      const shares = Array.isArray(additionalFields.storage_shares) ? additionalFields.storage_shares : [];
+      shares.forEach(share => this.addAzureFilesIndexShareRow(
+        share.storage_account_resource_id || '',
+        share.share_name || ''
+      ));
+    }
+    this.ensureAzureFilesIndexShareRow();
+    this.handleAzureFilesIndexAuthTypeChange();
+    this.handleAzureFilesIndexPermissionModeChange();
+  }
+
+  formatAzureFilesIndexLayout(layout) {
+    const labels = {
+      document_per_file: 'Document per file',
+      chunked: 'Chunked with vectors',
+      custom: 'Custom field mapping'
+    };
+    return labels[layout] || layout || '-';
+  }
+
+  formatAzureFilesIndexQueryMode(mode) {
+    const labels = {
+      keyword: 'Keyword',
+      semantic: 'Semantic',
+      hybrid: 'Hybrid'
+    };
+    return labels[mode] || mode || '-';
+  }
+
+  formatAzureFilesIndexPermissionMode(mode) {
+    return mode === 'none' ? 'No permission filtering' : 'Live NTFS ACL checks';
+  }
+
+  populateAzureFilesIndexSummary() {
+    const section = document.getElementById('summary-azure-files-index-section');
+    if (!section) {
+      return;
+    }
+
+    if (!this.isAzureFilesIndexType()) {
+      section.classList.add('d-none');
+      return;
+    }
+
+    const config = this.getAzureFilesIndexConfiguration();
+    const fields = config.additionalFields;
+    this.setAzureFilesIndexSummaryText('summary-azure-files-index-name', fields.index_name || '-');
+    this.setAzureFilesIndexSummaryText('summary-azure-files-index-layout', this.formatAzureFilesIndexLayout(fields.index_layout));
+    this.setAzureFilesIndexSummaryText('summary-azure-files-index-query-mode', this.formatAzureFilesIndexQueryMode(fields.query_mode));
+    this.setAzureFilesIndexSummaryText('summary-azure-files-index-permission-mode', this.formatAzureFilesIndexPermissionMode(fields.permission_mode));
+    this.setAzureFilesIndexSummaryText(
+      'summary-azure-files-index-shares',
+      fields.storage_shares.length ? `${fields.storage_shares.length} configured` : 'None configured'
+    );
+    this.setAzureFilesIndexSummaryText(
+      'summary-azure-files-index-limits',
+      `${fields.default_top_n} results, ${fields.max_candidates} candidates, ${fields.time_budget_seconds}s ACL budget`
+    );
+    this.setAzureFilesIndexSummaryText(
+      'summary-azure-files-index-fields',
+      `content=${fields.content_field || '-'}, path=${fields.path_field || '-'}, name=${fields.name_field || '-'}, vector=${fields.vector_field || 'none'}`
+    );
+    section.classList.remove('d-none');
+  }
+
+  renderAzureFilesConnectionTestDetails(payload = {}) {
+    const elements = this.getActionConnectionTestElements('azureFilesIndex');
+    if (!elements?.alert) {
+      return;
+    }
+
+    const checks = Array.isArray(payload.details?.checks) ? payload.details.checks : [];
+    if (checks.length) {
+      const list = document.createElement('ul');
+      list.className = 'list-unstyled mt-2 mb-0';
+      checks.forEach(check => {
+        const item = document.createElement('li');
+        item.className = 'd-flex align-items-start gap-2 mb-1';
+        const badge = document.createElement('span');
+        const status = String(check.status || '').toLowerCase();
+        badge.className = status === 'pass'
+          ? 'badge text-bg-success'
+          : (status === 'warn' ? 'badge text-bg-warning' : 'badge text-bg-danger');
+        badge.textContent = check.status || 'check';
+        const text = document.createElement('span');
+        text.textContent = `${check.name || 'Check'}: ${check.message || ''}`;
+        item.append(badge, text);
+        list.appendChild(item);
+      });
+      elements.alert.appendChild(list);
+    }
+
+    const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+    if (warnings.length) {
+      const warningList = document.createElement('ul');
+      warningList.className = 'mt-2 mb-0';
+      warnings.forEach(warning => {
+        const item = document.createElement('li');
+        item.textContent = warning;
+        warningList.appendChild(item);
+      });
+      elements.alert.appendChild(warningList);
+    }
+  }
+
   formatMcpTransport(transport) {
     const labels = {
       streamable_http: 'Streamable HTTP',
@@ -4034,7 +4533,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type) || this.isAgentType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isAzureFilesIndexType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type) || this.isAgentType(type);
   }
 
   showConfigSectionForType() {
@@ -4043,6 +4542,7 @@ export class PluginModalStepper {
       generic: document.getElementById('generic-config-section'),
       sql: document.getElementById('sql-config-section'),
       cosmos: document.getElementById('cosmos-config-section'),
+      azureFilesIndex: document.getElementById('azure-files-index-config-section'),
       rocksdb: document.getElementById('rocksdb-config-section'),
       documentSearch: document.getElementById('document-search-config-section'),
       blobStorage: document.getElementById('blob-storage-config-section'),
@@ -4076,6 +4576,9 @@ export class PluginModalStepper {
     } else if (this.isCosmosType()) {
       showOnly('cosmos');
       this.initializeCosmosConfiguration();
+    } else if (this.isAzureFilesIndexType()) {
+      showOnly('azureFilesIndex');
+      this.initializeAzureFilesIndexConfiguration();
     } else if (this.isRocksDbType()) {
       showOnly('rocksdb');
       this.initializeRocksDbConfiguration();
@@ -4147,6 +4650,7 @@ export class PluginModalStepper {
         const isOpenApiType = this.isOpenApiType();
         const isSqlType = this.isSqlType();
         const isCosmosType = this.isCosmosType();
+        const isAzureFilesIndexType = this.isAzureFilesIndexType();
         const isDocumentSearchType = this.isDocumentSearchType();
         const isBlobStorageType = this.isBlobStorageType();
         const isDatabricksType = this.isDatabricksType();
@@ -4162,6 +4666,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Database Configuration';
         } else if (isCosmosType) {
           titleEl.textContent = 'Cosmos Configuration';
+        } else if (this.isAzureFilesIndexType()) {
+          titleEl.textContent = 'Azure Files Search Configuration';
         } else if (this.isRocksDbType()) {
           titleEl.textContent = 'RocksDB Configuration';
         } else if (isDocumentSearchType) {
@@ -4369,6 +4875,7 @@ export class PluginModalStepper {
         const openApiSection = document.getElementById('openapi-config-section');
         const sqlSection = document.getElementById('sql-config-section');
         const cosmosSection = document.getElementById('cosmos-config-section');
+        const azureFilesIndexSection = document.getElementById('azure-files-index-config-section');
         const rocksDbSection = document.getElementById('rocksdb-config-section');
         const documentSearchSection = document.getElementById('document-search-config-section');
         const blobStorageSection = document.getElementById('blob-storage-config-section');
@@ -4386,6 +4893,7 @@ export class PluginModalStepper {
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+        const isAzureFilesIndexVisible = !!azureFilesIndexSection && !azureFilesIndexSection.classList.contains('d-none');
         const isRocksDbVisible = !!rocksDbSection && !rocksDbSection.classList.contains('d-none');
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
@@ -4547,6 +5055,12 @@ export class PluginModalStepper {
           }
           if (Number.isNaN(timeout) || timeout < 1 || timeout > 120) {
             this.showError('Timeout must be between 1 and 120 seconds.');
+            return false;
+          }
+        } else if (isAzureFilesIndexVisible) {
+          const azureFilesIndexError = this.getAzureFilesIndexValidationError();
+          if (azureFilesIndexError) {
+            this.showError(azureFilesIndexError);
             return false;
           }
         } else if (isRocksDbVisible) {
@@ -6159,6 +6673,14 @@ export class PluginModalStepper {
       return azureMapsConfig;
     }
 
+    if (testKey === 'azureFilesIndex') {
+      const azureFilesIndexError = this.getAzureFilesIndexValidationError();
+      if (azureFilesIndexError) {
+        throw new Error(azureFilesIndexError);
+      }
+      return this.getAzureFilesIndexConfiguration();
+    }
+
     if (testKey === 'blobStorage') {
       const blobStorageConfig = this.getBlobStorageConfiguration();
       if (!blobStorageConfig.additionalFields.container_name) {
@@ -6291,6 +6813,9 @@ export class PluginModalStepper {
           data.message || 'Connection successful.',
           'bi bi-check-circle'
         );
+        if (testKey === 'azureFilesIndex') {
+          this.renderAzureFilesConnectionTestDetails(data);
+        }
       } else {
         this.showActionConnectionTestMessage(
           testKey,
@@ -6298,6 +6823,9 @@ export class PluginModalStepper {
           data.error || `The ${elements.config.label} connection test failed.`,
           'bi bi-x-circle'
         );
+        if (testKey === 'azureFilesIndex') {
+          this.renderAzureFilesConnectionTestDetails(data);
+        }
       }
     } catch (error) {
       this.showActionConnectionTestMessage(
@@ -6871,6 +7399,8 @@ export class PluginModalStepper {
       document.getElementById('cosmos-auth-type').value = auth.type || 'identity';
       document.getElementById('cosmos-auth-key').value = auth.key || '';
       this.initializeCosmosConfiguration();
+    } else if (this.isAzureFilesIndexType(plugin.type)) {
+      this.populateAzureFilesIndexForm(plugin);
     } else if (this.isRocksDbType(plugin.type)) {
       this.populateRocksDbForm(plugin);
     } else if (this.isDocumentSearchType(plugin.type)) {
@@ -6981,6 +7511,7 @@ export class PluginModalStepper {
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
     const cosmosSection = document.getElementById('cosmos-config-section');
+    const azureFilesIndexSection = document.getElementById('azure-files-index-config-section');
     const rocksDbSection = document.getElementById('rocksdb-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
     const blobStorageSection = document.getElementById('blob-storage-config-section');
@@ -6994,6 +7525,7 @@ export class PluginModalStepper {
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+    const isAzureFilesIndexVisible = !!azureFilesIndexSection && !azureFilesIndexSection.classList.contains('d-none');
     const isRocksDbVisible = !!rocksDbSection && !rocksDbSection.classList.contains('d-none');
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
     const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
@@ -7192,6 +7724,16 @@ export class PluginModalStepper {
       additionalFields.field_hints = this.getCosmosFieldHints();
       additionalFields.max_items = parseInt(document.getElementById('cosmos-max-items').value, 10) || 100;
       additionalFields.timeout = parseInt(document.getElementById('cosmos-timeout').value, 10) || 30;
+    } else if (isAzureFilesIndexVisible) {
+      const azureFilesIndexError = this.getAzureFilesIndexValidationError();
+      if (azureFilesIndexError) {
+        throw new Error(azureFilesIndexError);
+      }
+
+      const azureFilesIndexConfig = this.getAzureFilesIndexConfiguration();
+      endpoint = azureFilesIndexConfig.endpoint;
+      auth = azureFilesIndexConfig.auth;
+      additionalFields = azureFilesIndexConfig.additionalFields;
     } else if (isRocksDbVisible) {
       const rocksDbError = this.getRocksDbValidationError();
       if (rocksDbError) {
@@ -7393,6 +7935,12 @@ export class PluginModalStepper {
       endpointRow.style.display = '';
       document.getElementById('summary-plugin-database-type').textContent = 'Cosmos DB for NoSQL';
       databaseTypeRow.style.display = '';
+    } else if (isAzureFilesIndexType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure AI Search index over Azure Files';
+      databaseTypeRow.style.display = '';
     } else if (isRocksDbType) {
       const endpoint = this.getEndpointValue();
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
@@ -7481,10 +8029,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isAzureFilesIndexType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType) {
+    } else if (!isSqlType && !isCosmosType && !isAzureFilesIndexType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -7492,6 +8040,7 @@ export class PluginModalStepper {
     this.populateOpenApiSummary();
     this.populateSqlSummary();
     this.populateCosmosSummary();
+    this.populateAzureFilesIndexSummary();
     this.populateRocksDbSummary();
     this.populateDocumentSearchSummary();
     this.populateBlobStorageSummary();
@@ -7513,6 +8062,7 @@ export class PluginModalStepper {
     const isOpenApiType = this.isOpenApiType();
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
+    const isAzureFilesIndexType = this.isAzureFilesIndexType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
@@ -7531,6 +8081,8 @@ export class PluginModalStepper {
       return document.getElementById('sql-connection-string').value.trim();
     } else if (isCosmosType) {
       return document.getElementById('cosmos-endpoint').value.trim();
+    } else if (isAzureFilesIndexType) {
+      return (document.getElementById('azure-files-index-endpoint')?.value || '').trim().replace(/\/+$/, '');
     } else if (this.isRocksDbType()) {
       return this.getRocksDbEndpointValue();
     } else if (isDocumentSearchType) {
@@ -7571,6 +8123,7 @@ export class PluginModalStepper {
     const isOpenApiType = this.isOpenApiType();
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
+    const isAzureFilesIndexType = this.isAzureFilesIndexType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
@@ -7592,6 +8145,9 @@ export class PluginModalStepper {
     } else if (isCosmosType) {
       const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
       return authType === 'key' ? 'Account Key' : 'Managed Identity';
+    } else if (isAzureFilesIndexType) {
+      const authType = document.getElementById('azure-files-index-auth-type')?.value || 'identity';
+      return authType === 'key' ? 'Query Key' : 'Managed Identity';
     } else if (this.isRocksDbType()) {
       return this.getRocksDbAuthLabel();
     } else if (isDocumentSearchType) {
@@ -8237,6 +8793,7 @@ export class PluginModalStepper {
       const isOpenApiType = this.isOpenApiType();
       const isSqlType = this.isSqlType();
       const isCosmosType = this.isCosmosType();
+      const isAzureFilesIndexType = this.isAzureFilesIndexType();
       const isDocumentSearchType = this.isDocumentSearchType();
       const isDatabricksType = this.isDatabricksType();
       const isTableauType = this.isTableauType();
@@ -8254,6 +8811,8 @@ export class PluginModalStepper {
         currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
       } else if (isCosmosType) {
         currentEndpoint = document.getElementById('cosmos-endpoint')?.value || '';
+      } else if (isAzureFilesIndexType) {
+        currentEndpoint = this.getEndpointValue();
       } else if (this.isRocksDbType()) {
         currentEndpoint = this.getRocksDbEndpointValue();
       } else if (isDocumentSearchType) {
@@ -8301,6 +8860,11 @@ export class PluginModalStepper {
         currentAuthType = document.getElementById('cosmos-auth-type')?.value || 'identity';
         if (currentAuthType === 'key') {
           currentAuthKey = document.getElementById('cosmos-auth-key')?.value || '';
+        }
+      } else if (isAzureFilesIndexType) {
+        currentAuthType = document.getElementById('azure-files-index-auth-type')?.value || 'identity';
+        if (currentAuthType === 'key') {
+          currentAuthKey = document.getElementById('azure-files-index-auth-key')?.value || '';
         }
       } else if (this.isRocksDbType()) {
         const rocksDbAuthScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
@@ -8372,6 +8936,8 @@ export class PluginModalStepper {
           max_items: parseInt(document.getElementById('cosmos-max-items')?.value, 10) || 100,
           timeout: parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 30
         }, null, 2);
+      } else if (isAzureFilesIndexType) {
+        currentAdditionalFields = JSON.stringify(this.getAzureFilesIndexConfiguration().additionalFields, null, 2);
       } else if (this.isRocksDbType()) {
         currentAdditionalFields = JSON.stringify(this.getRocksDbConfiguration().additionalFields, null, 2);
       } else if (isDocumentSearchType) {
@@ -8788,6 +9354,44 @@ export class PluginModalStepper {
     safeSetValue('cosmos-auth-type', 'identity');
     safeSetValue('cosmos-auth-key');
 
+    // Step 3 fields - Azure Files Search Plugin
+    safeSetValue('azure-files-index-endpoint');
+    safeSetValue('azure-files-index-name');
+    safeSetValue('azure-files-index-auth-type', 'identity');
+    safeSetValue('azure-files-index-auth-key');
+    safeSetValue('azure-files-index-layout', 'document_per_file');
+    safeSetValue('azure-files-index-query-mode', 'keyword');
+    safeSetValue('azure-files-index-semantic-configuration');
+    safeSetValue('azure-files-index-content-field', 'content');
+    safeSetValue('azure-files-index-title-field', 'metadata_storage_name');
+    safeSetValue('azure-files-index-path-field', 'metadata_storage_path');
+    safeSetValue('azure-files-index-name-field', 'metadata_storage_name');
+    safeSetValue('azure-files-index-last-modified-field', 'metadata_storage_last_modified');
+    safeSetValue('azure-files-index-vector-field');
+    safeSetValue('azure-files-index-permission-mode', 'live_acl');
+    safeSetValue('azure-files-index-share-access-check', 'rbac');
+    safeSetValue('azure-files-index-default-top-n', '5');
+    safeSetValue('azure-files-index-max-candidates', '50');
+    safeSetValue('azure-files-index-max-snippet-chars', '1200');
+    safeSetValue('azure-files-index-time-budget', '25');
+    const azureFilesSelectContent = document.getElementById('azure-files-index-select-content');
+    if (azureFilesSelectContent) {
+      azureFilesSelectContent.checked = false;
+      delete azureFilesSelectContent.dataset.userTouched;
+    }
+    const azureFilesNoneAck = document.getElementById('azure-files-index-permission-none-ack');
+    if (azureFilesNoneAck) {
+      azureFilesNoneAck.checked = false;
+    }
+    const azureFilesBuiltinUsers = document.getElementById('azure-files-index-builtin-users');
+    if (azureFilesBuiltinUsers) {
+      azureFilesBuiltinUsers.checked = false;
+    }
+    const azureFilesSharesList = document.getElementById('azure-files-index-shares-list');
+    if (azureFilesSharesList) {
+      azureFilesSharesList.replaceChildren();
+    }
+
     // Step 3 fields - Document Search Plugin
     safeSetValue('document-search-scope', 'all');
     safeSetValue('document-search-top-n', '12');
@@ -8834,6 +9438,8 @@ export class PluginModalStepper {
       this.toggleGenericAuthFields();
       this.handleSqlAuthTypeChange();
       this.handleCosmosAuthTypeChange();
+      this.handleAzureFilesIndexAuthTypeChange();
+      this.handleAzureFilesIndexPermissionModeChange();
     } catch (e) {
       console.log('Some auth field toggles not available:', e.message);
     }

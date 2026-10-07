@@ -855,10 +855,15 @@ def test_file_sync_run_and_item_errors_are_client_safe():
     """Validate persisted and serialized failure messages do not expose SDK details."""
     public_run_error = "File Sync run failed. Contact an administrator if the problem continues."
     public_item_error = "File Sync could not process this item. Contact an administrator if the problem continues."
+    reviewed_category = "azure_files_permission_denied"
+    reviewed_message = "Give the identity the Storage File Data Privileged Reader role on the storage account."
     functions = load_functions(
         "functions_file_sync.py",
         {"sanitize_file_sync_run"},
-        {"FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE": public_run_error},
+        {
+            "FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE": public_run_error,
+            "FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES": {reviewed_category: reviewed_message},
+        },
     )
     sanitized_run = functions["sanitize_file_sync_run"]({
         "id": "run-1",
@@ -869,6 +874,25 @@ def test_file_sync_run_and_item_errors_are_client_safe():
     assert sanitized_run["error_message"] == public_run_error
     assert "internal.example" not in sanitized_run["error_message"]
     assert "secret" not in sanitized_run["error_message"]
+
+    # A reviewed failure category replaces the stored text with its own reviewed message;
+    # an unknown category is dropped and falls back to the generic message.
+    categorized_run = functions["sanitize_file_sync_run"]({
+        "id": "run-2",
+        "status": "failed",
+        "error_message": "AuthorizationPermissionMismatch for https://internal.example?sig=secret",
+        "error_category": reviewed_category,
+    })
+    assert categorized_run["error_message"] == reviewed_message
+    assert categorized_run["error_category"] == reviewed_category
+    unknown_category_run = functions["sanitize_file_sync_run"]({
+        "id": "run-3",
+        "status": "failed",
+        "error_message": "raw failure text",
+        "error_category": "not_a_reviewed_category",
+    })
+    assert unknown_category_run["error_message"] == public_run_error
+    assert "error_category" not in unknown_category_run
 
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
     assert f'FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE = "{public_run_error}"' in file_sync_text

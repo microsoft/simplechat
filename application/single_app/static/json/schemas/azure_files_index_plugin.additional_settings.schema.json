@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Azure Files Search Additional Settings",
+  "type": "object",
+  "properties": {
+    "index_name": {
+      "type": "string",
+      "description": "Name of the Azure AI Search index built by the Azure Files indexer."
+    },
+    "index_layout": {
+      "type": "string",
+      "enum": ["document_per_file", "chunked", "custom"],
+      "default": "document_per_file",
+      "description": "document_per_file for the indexer's default one-document-per-file index, chunked for integrated vectorization with index projections, or custom to map every field."
+    },
+    "content_field": {
+      "type": "string",
+      "description": "Searchable text field. Defaults to content (document per file) or chunk (chunked)."
+    },
+    "title_field": {
+      "type": "string",
+      "description": "Optional title field shown with results."
+    },
+    "path_field": {
+      "type": "string",
+      "description": "Field holding the file's Azure Files URL. Defaults to metadata_storage_path."
+    },
+    "name_field": {
+      "type": "string",
+      "description": "Field holding the file name. Defaults to metadata_storage_name."
+    },
+    "last_modified_field": {
+      "type": "string",
+      "description": "Optional last-modified field."
+    },
+    "vector_field": {
+      "type": "string",
+      "description": "Vector field used by hybrid search through the index's vectorizer."
+    },
+    "select_content": {
+      "type": "boolean",
+      "description": "Return the content field for snippets. Chunked indexes do; whole-file indexes use captions or highlights instead."
+    },
+    "query_mode": {
+      "type": "string",
+      "enum": ["keyword", "semantic", "hybrid"],
+      "default": "keyword",
+      "description": "keyword, semantic (needs a semantic configuration), or hybrid (needs a vector field with a vectorizer)."
+    },
+    "semantic_configuration": {
+      "type": "string",
+      "description": "Semantic configuration name. Leave blank to use the index default."
+    },
+    "default_top_n": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Results returned when the agent does not ask for a number."
+    },
+    "max_candidates": {
+      "type": "integer",
+      "default": 50,
+      "minimum": 5,
+      "maximum": 200,
+      "description": "Search hits examined per query before permission checks."
+    },
+    "max_snippet_chars": {
+      "type": "integer",
+      "default": 1200,
+      "minimum": 200,
+      "maximum": 4000,
+      "description": "Maximum characters of text returned per result."
+    },
+    "time_budget_seconds": {
+      "type": "integer",
+      "default": 25,
+      "minimum": 5,
+      "maximum": 60,
+      "description": "Time allowed for permission checks; files not checked in time are withheld."
+    },
+    "permission_mode": {
+      "type": "string",
+      "enum": ["live_acl", "none"],
+      "default": "live_acl",
+      "description": "live_acl checks each file's permissions for the signed-in user; none returns every matching file."
+    },
+    "permission_mode_none_acknowledged": {
+      "type": "boolean",
+      "default": false,
+      "description": "Required when permission_mode is none."
+    },
+    "share_access_check": {
+      "type": "string",
+      "enum": ["rbac", "skip"],
+      "default": "rbac",
+      "description": "rbac checks share-level permissions (default share permission and Azure role assignments); skip relies on file permissions only."
+    },
+    "treat_builtin_users_as_member": {
+      "type": "boolean",
+      "default": false,
+      "description": "Treat entries for BUILTIN\\Users as applying to every signed-in user."
+    },
+    "storage_shares": {
+      "type": "array",
+      "default": [],
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "storage_account_resource_id": {
+            "type": "string",
+            "description": "Azure resource ID of the storage account."
+          },
+          "share_name": {
+            "type": "string",
+            "description": "File share name."
+          }
+        },
+        "required": ["storage_account_resource_id", "share_name"],
+        "additionalProperties": false
+      },
+      "description": "File shares this index was built from. Results from other shares are withheld."
+    }
+  },
+  "required": ["index_name"],
+  "additionalProperties": false
+}

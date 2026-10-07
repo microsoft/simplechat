@@ -143,6 +143,39 @@ After propagation, use **Admin Settings > Secrets** to verify the selected ident
 
 The offline [Key Vault deployer regression test](../../functional_tests/test_deployer_key_vault_secret_permissions.py) covers new/existing identity paths, both authorization modes, duplicate/manual grants, preservation of existing permissions, and command failures with mocked Azure CLI calls.
 
+## External Azure Files and Azure AI Search permissions
+
+Implemented in application version **0.261.293** and deployer version **1.0.34** (`deployers/version.txt`).
+
+Leave these optional parameters empty to keep existing behavior. You can pass them when invoking the script:
+
+```powershell
+.\deploy-simplechat.ps1 `
+    -AzureFilesStorageAccountResourceIds @("/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/files-rg/providers/Microsoft.Storage/storageAccounts/filesacct") `
+    -ExternalSearchServiceResourceIds @("/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/search-rg/providers/Microsoft.Search/searchServices/searchsvc") `
+    -ExternalSearchServiceEnableReaderRole $false
+```
+
+Or set the internal configuration variables near the top of the script:
+
+```powershell
+$param_AzureFilesStorageAccountResourceIds = @(
+    "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/files-rg/providers/Microsoft.Storage/storageAccounts/filesacct"
+)
+$param_ExternalSearchServiceResourceIds = @(
+    "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/search-rg/providers/Microsoft.Search/searchServices/searchsvc"
+)
+$param_ExternalSearchServiceEnableReaderRole = $false
+```
+
+For each Azure Files storage account, the script grants the App Service **system-assigned** identity **Storage File Data Privileged Reader** (`b8eda974-7b85-4f76-af95-65846b26df6d`) and **Reader** (`acdd72a7-3385-48ef-bd42-f606fba81ae7`). The script attaches a user-assigned identity too, but it does not set `AZURE_CLIENT_ID`; `DefaultAzureCredential` therefore uses the system-assigned identity for application data-plane calls.
+
+For each external Azure AI Search service, the script grants **Search Index Data Reader** (`1407120a-92aa-4202-b7e9-c0e197c71c8f`). Set `$param_ExternalSearchServiceEnableReaderRole = $true` only when you also want **Reader** for portal and diagnostic visibility. Reader is control-plane only and gives SimpleChat no access to index data; **Search Index Data Reader** is what lets the action query an index.
+
+The deployment identity must be able to create role assignments at every target resource scope: **Owner**, **User Access Administrator**, or **Role Based Access Control Administrator** on each external storage account/search service or an inherited scope. Cross-resource-group and cross-subscription IDs are accepted when the signed-in identity has rights there.
+
+**Storage File Data Privileged Reader bypasses NTFS file and folder permissions.** SimpleChat enforces per-file permissions itself only inside the Azure Files Search action. File Sync imports synced files into a workspace, where they become visible to that workspace's members.
+
 ## Code-only upgrade flow
 
 For an existing Azure CLI deployment where infrastructure is unchanged, use `upgrade-simplechat.ps1` instead of rerunning the full deployer.

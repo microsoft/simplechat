@@ -744,6 +744,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
     chart: 'Chart',
     azure_maps: 'Azure Maps',
     blob_storage: 'Blob Storage',
+    azure_files_index: 'Azure Files Search',
     document_search: 'Document Search',
 };
 

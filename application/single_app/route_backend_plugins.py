@@ -29,12 +29,14 @@ from functions_settings import get_settings, is_tabular_processing_enabled, upda
 from functions_authentication import *
 from functions_appinsights import log_event
 from functions_action_manifest import (
+    GlobalOnlyActionTypeError,
     McpActionOrigin,
     McpConfigurationError,
     McpStdioRemovedError,
     ScopedActionManifest,
     bind_action_origin,
     get_action_origin,
+    is_global_only_action_type,
     is_retired_mcp_stdio,
     resolve_action_type,
 )
@@ -89,6 +91,12 @@ from functions_keyvault import (
 
 from functions_debug import debug_print
 from functions_azure_endpoint_validation import validate_azure_cosmos_endpoint
+from functions_azure_files_search import (
+    AZURE_FILES_INDEX_ACTION_TYPE,
+    AzureFilesSearchConfigError,
+    validate_azure_files_index_action,
+)
+from functions_azure_files_search_runtime import check_azure_files_search_connection
 from json_schema_validation import (
     PLUGIN_STORAGE_MANAGED_FIELDS,
     apply_plugin_validation_defaults,
@@ -1443,6 +1451,8 @@ def _prepare_personal_action_payload(user_id, plugin, *, editor=False, existing=
     plugin_to_save.setdefault('endpoint', '')
     _apply_plugin_runtime_defaults(plugin_to_save)
     plugin_type = plugin_to_save['type']
+    if is_global_only_action_type(plugin_type):
+        return None, (jsonify({'error': GlobalOnlyActionTypeError.public_message}), 403)
     try:
         _validate_action_identity_for_scope(
             plugin_to_save,
@@ -1520,6 +1530,8 @@ def _prepare_group_action_payload(user_id, group_id, plugin, settings, existing)
     plugin_to_save.setdefault('endpoint', '')
     _apply_plugin_runtime_defaults(plugin_to_save)
     plugin_type = plugin_to_save['type']
+    if is_global_only_action_type(plugin_type):
+        return None, (jsonify({'error': GlobalOnlyActionTypeError.public_message}), 403)
     try:
         _validate_action_identity_for_scope(
             plugin_to_save,
@@ -1623,6 +1635,12 @@ def _prepare_global_action_payload(user_id, plugin, settings, existing):
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
     if not is_valid:
         return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    if plugin_type == AZURE_FILES_INDEX_ACTION_TYPE:
+        # Same save-time checks as the classic admin route, including refusing SimpleChat's own indexes.
+        try:
+            validate_azure_files_index_action(plugin_to_save, settings)
+        except AzureFilesSearchConfigError as exc:
+            return None, (jsonify({'error': f'Plugin validation failed: {exc.public_message}'}), 400)
     try:
         validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
     except ValueError:
@@ -2321,7 +2339,8 @@ def get_user_plugin_types():
         try:
             ensure_editor_access('actions', user_id, get_settings(), operation='read')
             discovered = get_plugin_types(
-                allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+                allowed_type_filter=lambda action_type: not is_global_only_action_type(action_type)
+                and is_action_type_access_allowed(
                     'governance_user_actions', user_id, action_type, 'personal',
                 ),
             )
@@ -2331,7 +2350,8 @@ def get_user_plugin_types():
         except Exception as exc:
             return editor_error_response(exc)
     return get_plugin_types(
-        allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+        allowed_type_filter=lambda action_type: not is_global_only_action_type(action_type)
+        and is_action_type_access_allowed(
             'governance_user_actions',
             user_id,
             action_type,
@@ -2360,7 +2380,8 @@ def get_group_plugin_types():
         return jsonify({'error': 'You are not authorized to list group action types.'}), 403
 
     return get_plugin_types(
-        allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+        allowed_type_filter=lambda action_type: not is_global_only_action_type(action_type)
+        and is_action_type_access_allowed(
             'governance_group_actions',
             user_id,
             action_type,
@@ -4281,3 +4302,38 @@ def test_snowflake_action_connection():
 def test_tableau_action_connection():
     """Test a Tableau action by signing in to the configured server and site."""
     return _run_action_connection_test(TABLEAU_PLUGIN_TYPE, 'Tableau', test_tableau_connection)
+
+
+def _require_global_azure_files_index_test(manifest, scope_type, scope_id):
+    """Azure Files Search runs with the application identity, so only global actions are tested."""
+    if scope_type != 'global':
+        raise PermissionError('Azure Files Search actions are global actions.')
+
+
+def _check_azure_files_index_action(manifest):
+    result = check_azure_files_search_connection(dict(manifest), get_current_user_id(), get_settings())
+    checks = result.get('checks') or []
+    # Warn-level checks stay in the ordered checks list; both editors render that list with status badges.
+    response = {'details': {'checks': checks}}
+    failures = [check for check in checks if check.get('status') == 'fail']
+    if failures:
+        return {**response, 'success': False, 'error': failures[0]['message'], 'status': 400}
+    return {
+        **response,
+        'success': True,
+        'message': 'Azure Files Search can query the index and check file permissions.',
+    }
+
+
+@bpap.route('/api/plugins/test-azure-files-index-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@admin_required
+def test_azure_files_index_action_connection():
+    """Test an Azure Files Search action: index access, file paths, file permissions, share access, and identity."""
+    return _run_action_connection_test(
+        AZURE_FILES_INDEX_ACTION_TYPE,
+        'Azure Files Search',
+        _check_azure_files_index_action,
+        before_test=_require_global_azure_files_index_test,
+    )
