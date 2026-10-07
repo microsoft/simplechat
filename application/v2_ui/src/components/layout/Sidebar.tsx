@@ -26,9 +26,11 @@ import {
     Globe2,
     LogOut,
     MessageSquarePlus,
+    MessageSquareHeart,
     MessagesSquare,
     Moon,
     Settings,
+    ShieldAlert,
     ShieldCheck,
     SlidersHorizontal,
     Sparkles,
@@ -36,6 +38,7 @@ import {
     Users,
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
+import { safeSameOriginUrl } from '../../lib/adminOperations';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
@@ -144,10 +147,26 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
 }
 
 function UserMenu({ collapsed }: { collapsed: boolean }) {
-    const user = useBootstrapStore((state) => state.data?.user);
-    const controlCenter = useBootstrapStore((state) => state.data?.control_center);
+    const bootstrap = useBootstrapStore((state) => state.data);
+    const user = bootstrap?.user;
+    const controlCenter = bootstrap?.control_center;
     const isAdmin = Boolean(user?.is_admin);
     const canOpenControlCenter = Object.values(controlCenter ?? {}).some(Boolean);
+    const roles = user?.roles ?? [];
+    const settings = bootstrap?.settings;
+    const features = bootstrap?.features;
+    const canReviewFeedback = Boolean(features?.enable_user_feedback) && (
+        settings?.require_member_of_feedback_admin === true
+            ? roles.includes('FeedbackAdmin')
+            : roles.includes('Admin')
+    );
+    const canReviewSafety = Boolean(
+        features?.enable_content_safety || features?.enable_content_screening,
+    ) && (
+        settings?.require_member_of_safety_violation_admin === true
+            ? roles.includes('SafetyViolationAdmin')
+            : roles.includes('Admin')
+    );
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -223,6 +242,16 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     {isAdmin && (
                         <NavLink to="/admin" onClick={() => setOpen(false)} className={itemClass}>
                             <Settings size={15} /> Admin Settings
+                        </NavLink>
+                    )}
+                    {canReviewFeedback && (
+                        <NavLink to="/admin/feedback-review" onClick={() => setOpen(false)} className={itemClass}>
+                            <MessageSquareHeart size={15} /> Feedback Review
+                        </NavLink>
+                    )}
+                    {canReviewSafety && (
+                        <NavLink to="/admin/safety-violations" onClick={() => setOpen(false)} className={itemClass}>
+                            <ShieldAlert size={15} /> Safety Violations
                         </NavLink>
                     )}
                     {canOpenControlCenter && (
@@ -457,7 +486,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                                 const label = item.to === '/public' ? publicLabels.plural : item.label;
                                 return (
                             <NavLink
-                                to={item.to}
+                                to={safeSameOriginUrl(item.to, window.location.origin) ?? '/'}
                                 onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                                 title={collapsed ? label : item.hint}
                                 className={({ isActive }) =>
