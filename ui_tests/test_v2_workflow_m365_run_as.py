@@ -1,7 +1,8 @@
 # test_v2_workflow_m365_run_as.py
 """
 Closed-browser tests for native V2 Microsoft 365 Run as authoring.
-Version: 0.261.149
+Version: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 Implemented in: 0.261.122
 
 Use the actual built SPA and existing scoped workflow fixtures. Cover explicit
@@ -40,6 +41,15 @@ from ui_tests.fixtures.workflow_repeat_until import (
     workflow_repeat_ui,  # noqa: F401
 )
 
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    workflow_editor,
+    workflow_editor_path,
+    leave_prompt,
+)
+
 
 pytestmark = pytest.mark.ui
 RUN_AS_PATH = "/api/workflows/m365-run-as-users"
@@ -56,15 +66,12 @@ def open_workflows(ui, *, group=False):
 
 
 def edit_personal(ui):
-    ui.page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+    edit_workflow(ui.page, "Quarterly review workflow")
 
 
 def save_workflow(ui, *, creating=False):
     ui.page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(ui.page.get_by_role(
-        "dialog", name="Create workflow" if creating else "Edit workflow", exact=True
-    )).to_have_count(0)
+    expect(workflow_editor(ui.page, CREATE_WORKFLOW if creating else "Edit workflow")).to_have_count(0)
     assert ui.workflow_writes, "Expected a successful workflow save."
     return ui.workflow_writes[-1]
 
@@ -73,7 +80,7 @@ def save_workflow(ui, *, creating=False):
 def test_account_loading_does_not_infer_consent_or_make_a_new_draft_dirty(workflow_ui, group):
     ui, page = workflow_ui, workflow_ui.page
     open_workflows(ui, group=group)
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     select = account_select(page)
     expect(select).to_be_enabled()
     expect(select).to_have_value("")
@@ -82,7 +89,7 @@ def test_account_loading_does_not_infer_consent_or_make_a_new_draft_dirty(workfl
     assert requests
     expected = {"scope": ["group"], "group_id": [GROUP_ID]} if group else {"scope": ["personal"]}
     assert all(request.query == expected for request in requests)
-    page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role(
+    workflow_editor(page, CREATE_WORKFLOW).get_by_role(
         "button", name="Cancel", exact=True
     ).click()
     expect(page.get_by_role("dialog")).to_have_count(0)
@@ -117,7 +124,7 @@ def test_personal_selection_and_explicit_clear_round_trip_without_losing_setting
 def test_group_selection_uses_its_scope_and_participates_in_the_dirty_guard(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     open_workflows(ui, group=True)
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     select = account_select(page)
     expect(select).to_be_enabled()
     select.select_option("group-reviewer")
@@ -135,7 +142,7 @@ def test_group_selection_uses_its_scope_and_participates_in_the_dirty_guard(work
     assert requests and all(
         request.query == {"scope": ["group"], "group_id": [GROUP_ID]} for request in requests
     )
-    page.get_by_role("button", name="Edit Group Run as review", exact=True).click()
+    edit_workflow(page, "Group Run as review")
     expect(select).to_be_enabled()
     expect(select).to_have_value("group-reviewer")
     select.select_option("")
@@ -159,7 +166,7 @@ def test_saved_selection_survives_loading_without_dirtying_the_editor(workflow_u
     expect(select).to_be_enabled()
     expect(select).to_have_value(OWNER_ID)
     expect(select.locator("option:checked")).to_have_text("Workspace editor")
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
+    workflow_editor(page).get_by_role(
         "button", name="Cancel", exact=True
     ).click()
     expect(page.get_by_role("dialog")).to_have_count(0)
@@ -199,7 +206,7 @@ def test_lookup_errors_preserve_the_choice_and_do_not_echo_server_details(workfl
     expect(page.get_by_text("internal-settings-diagnostic", exact=False)).to_have_count(0)
     expect(page.locator("img[data-run-as-error]")).to_have_count(0)
     expect(page.get_by_role("button", name="Retry Microsoft 365 account list", exact=True)).to_be_enabled()
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
+    workflow_editor(page).get_by_role(
         "button", name="Cancel", exact=True
     ).click()
     expect(page.get_by_role("dialog")).to_have_count(0)
@@ -245,10 +252,10 @@ def test_selection_only_edits_survive_stale_save_and_require_explicit_discard(wo
     )
     assert request.body["definition_revision"] == original_revision
     assert request.body["m365_run_as_user_id"] == OWNER_ID
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
+    workflow_editor(page).get_by_role(
         "button", name="Cancel", exact=True
     ).click()
-    expect(page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)).to_be_visible()
+    expect(leave_prompt(page)).to_be_visible()
     page.get_by_role("button", name="Keep editing", exact=True).click()
     expect(account_select(page)).to_have_value(OWNER_ID)
     assert not ui.workflow_writes
@@ -260,7 +267,7 @@ def test_directory_labels_are_inert_and_read_only_definitions_cannot_change_acco
     ui.m365_run_as_users["personal"] = [{"id": OWNER_ID, "display_name": label}]
     ui.personal_workflows[UNSUPPORTED_WORKFLOW_ID]["m365_run_as_user_id"] = OWNER_ID
     open_workflows(ui)
-    page.get_by_role("button", name="Edit Future workflow", exact=True).click()
+    edit_workflow(page, "Future workflow")
     select = account_select(page)
     expect(select.locator("option:checked")).to_have_text(label)
     expect(select).to_have_value(OWNER_ID)
@@ -275,7 +282,7 @@ def test_directory_labels_are_inert_and_read_only_definitions_cannot_change_acco
 def test_account_edit_preserves_structured_flow_bindings_limits_and_revision(workflow_repeat_ui, workflow_id):
     ui, page = workflow_repeat_ui, workflow_repeat_ui.page
     original = copy.deepcopy(ui.personal_workflows[workflow_id])
-    ui.open(f"/workspace/workflows?workflow_id={workflow_id}")
+    ui.open(workflow_editor_path(workflow_id))
     expect(account_select(page)).to_be_enabled()
     account_select(page).select_option(OWNER_ID)
     body = save_workflow(ui).body
@@ -301,7 +308,7 @@ def test_a_members_read_only_editor_never_requests_accounts_and_shows_the_stored
     ui.group_workflows[GROUP_ID]["group-workflow"]["m365_run_as_user_id"] = stored
     open_workflows(ui, group=True)
     page.get_by_role("button", name="View Group review workflow", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    dialog = workflow_editor(page)
     expect(dialog.get_by_text("You have read-only access to workflows in this scope.", exact=True)).to_be_visible()
     select = account_select(page)
     expect(select).to_be_disabled()

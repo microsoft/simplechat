@@ -1,7 +1,8 @@
 # test_v2_workflow_authoring_history.py
 """
 Offline real-bundle cross-surface workflow Undo/Redo regressions.
-Version: 0.261.124
+Version: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 Implemented in: 0.261.123
 
 Reuses the closed M5B authoring harness, local production assets, and actual
@@ -24,8 +25,35 @@ from ui_tests import test_v2_workflow_flow_authoring as authoring
 from ui_tests.fixtures.workflow_editor import OWNER_ID
 from ui_tests.test_v2_workflow_flow_authoring import authoring_ui, connect_options  # noqa: F401
 
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    create_workflow,
+    edit_workflow,
+    workflow_editor,
+    workflow_editor_path,
+    leave_prompt,
+)
+
 
 pytestmark = pytest.mark.ui
+
+
+def open_authoring_editor(ui, workflow_id=authoring.FLOW_WORKFLOW_ID, *, group_id=None, **options):
+    if group_id:
+        ui.open(f"/groups/{group_id}/workflows", **options)
+        name = ui.group_workflows[group_id][workflow_id]["name"]
+        editor = edit_workflow(ui.page, name)
+    else:
+        ui.open(workflow_editor_path(workflow_id), **options)
+        editor = workflow_editor(ui.page)
+        expect(editor).to_be_visible()
+    switch = editor.get_by_role("group", name="Workflow authoring surface", exact=True)
+    expect(switch.get_by_role("button", name="List authoring", exact=True)).to_have_attribute("aria-pressed", "true")
+    expect(editor.get_by_role("group", name="Main region", exact=True)).to_be_visible()
+    assert not ui.preview_requests, "Opening the default List must not request a compiler preview."
+    return editor
+
+
+authoring.open_editor = open_authoring_editor
 
 
 def undo_button(editor):
@@ -132,8 +160,7 @@ def test_undo_to_opening_baseline_is_clean_and_reopening_starts_empty(authoring_
     expect(editor.get_by_label("Workflow name", exact=True)).to_have_value(original["name"])
     editor.get_by_role("button", name="Cancel", exact=True).click()
     expect(ui.page.get_by_role("dialog")).to_have_count(0)
-    ui.page.get_by_role("button", name=f"Edit {original['name']}", exact=True).click()
-    editor = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
+    editor = edit_workflow(ui.page, original["name"])
     expect(undo_button(editor)).to_be_disabled()
     expect(redo_button(editor)).to_be_disabled()
     assert not ui.workflow_writes
@@ -481,15 +508,14 @@ def test_pending_save_disables_history_and_save_success_resets_the_session(autho
         expect(undo_button(editor)).to_be_disabled()
         expect(redo_button(editor)).to_be_disabled()
         expect(undo_button(editor)).to_have_attribute("title", "Workflow history is unavailable while saving.")
-        editor.get_by_role("button", name="Close", exact=True).focus()
+        editor.get_by_role("button", name="Cancel", exact=True).focus()
         ui.page.keyboard.press("Control+z")
         expect(editor.get_by_label("Description", exact=True)).to_have_value("Saved description")
         assert len([entry for entry in ui.writes if entry.path in authoring.SAVE_PATHS]) == 1
     finally:
         ui.release_save_responses()
     expect(editor).to_have_count(0)
-    ui.page.get_by_role("button", name="Edit Authoring seed", exact=True).click()
-    editor = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
+    editor = edit_workflow(ui.page, "Authoring seed")
     expect(undo_button(editor)).to_be_disabled()
     expect(redo_button(editor)).to_be_disabled()
 
@@ -497,8 +523,7 @@ def test_pending_save_disables_history_and_save_success_resets_the_session(autho
 def test_explicit_conversion_starts_empty_history_but_keeps_unsaved_change_protection(authoring_ui):
     ui = authoring_ui
     ui.open("/workspace/workflows")
-    ui.page.get_by_role("button", name="Create workflow", exact=True).click()
-    editor = ui.page.get_by_role("dialog", name="Create workflow", exact=True)
+    editor = create_workflow(ui.page)
     editor.get_by_label("Workflow name", exact=True).fill("Before conversion")
     expect(undo_button(editor)).to_have_count(0)
     editor.get_by_role("button", name="Enable structured control flow", exact=True).click()
@@ -512,7 +537,7 @@ def test_explicit_conversion_starts_empty_history_but_keeps_unsaved_change_prote
     expect(undo_button(editor)).to_be_disabled()
     expect(editor.get_by_role("button", name="Enable structured control flow", exact=True)).to_have_count(0)
     editor.get_by_role("button", name="Cancel", exact=True).click()
-    confirmation = ui.page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)
+    confirmation = leave_prompt(ui.page)
     expect(confirmation).to_be_visible()
     confirmation.get_by_role("button", name="Discard changes", exact=True).click()
     assert not ui.workflow_writes

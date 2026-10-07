@@ -1,8 +1,9 @@
 # test_v2_workflow_m365_runtime.py
 """
 Closed-browser compatibility tests for Microsoft 365 workflow authorization waits.
-Version: 0.261.127
+Version: 0.261.266
 Implemented in: 0.261.122
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 The production SPA must retain nonterminal states, keep polling, lock active
 authoring, and permit cancellation without exposing generic approval or resume.
@@ -34,6 +35,7 @@ from ui_tests.fixtures.workflow_flow import (
     FLOW_WORKFLOW_ID,
     workflow_flow_ui,  # noqa: F401
 )
+from ui_tests.fixtures.workflow_workbench import open_workflow_runs, workflow_detail  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -63,13 +65,13 @@ def open_runtime(ui, name, *, group=False, structured=False):
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
         ui.select_group(GROUP_ID)
-    row = ui.page.get_by_role("listitem").filter(has_text=name).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
+    runs = open_workflow_runs(ui.page, name)
+    detail = workflow_detail(ui.page, name)
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
     memory_label = "Runtime memory summary" if structured else "Run memory"
-    expect(row.get_by_text(memory_label, exact=True)).to_be_visible()
-    expect(row.get_by_text(AUTHORIZATION_REASON, exact=True)).to_be_visible()
-    return row
+    expect(runs.get_by_text(memory_label, exact=True)).to_be_visible()
+    expect(runs.get_by_text(AUTHORIZATION_REASON, exact=True)).to_be_visible()
+    return detail
 
 
 def assert_no_generic_continuation(page):
@@ -146,9 +148,10 @@ def test_flow_describes_m365_authorization_instead_of_a_repeat_limit(workflow_fl
         gate={**authorization_gate(), "unit_id": "evaluate", "node_id": "evaluate"},
     )
     ui.workflow_runs[FLOW_WORKFLOW_ID][0]["status"] = "awaiting_sign_in"
-    open_runtime(ui, FLOW_NAME, structured=True)
-    page.get_by_role("button", name="Show Flow for this run", exact=True).click()
-    view = page.get_by_role("region", name="Workflow Flow", exact=True)
+    runs = open_runtime(ui, FLOW_NAME, structured=True).get_by_role("tabpanel", name="Runs", exact=True)
+    # The run's own frozen Flow lives in its history; the Flow tab shows the saved definition.
+    runs.get_by_role("button", name="Show Flow for this run", exact=True).click()
+    view = runs.get_by_role("region", name="Workflow Flow", exact=True)
     expect(view.get_by_text("Run's frozen definition", exact=True)).to_be_visible()
     notice = view.get_by_text("Current run gate:", exact=False)
     expect(notice).to_contain_text("m365_authorization")

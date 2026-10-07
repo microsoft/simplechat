@@ -2,9 +2,10 @@
 # test_v2_orchestration_workflow_run_links_xss_guardrail.py
 """
 Functional test for the V2 workflow run links passing the XSS sink guardrail.
-Version: 0.261.251
+Version: 0.261.266
 Implemented in: 0.261.212
 A group run's link built through the checked group path builder: 0.261.251
+The Workflows list and editor page builders, held to the same fixed paths: 0.261.266
 
 This test ensures that the Started workflows links under a chat answer pass
 scripts/check_xss_sinks.py the way CI runs it. The link component calls the
@@ -120,7 +121,27 @@ def test_builder_returns_only_the_fixed_workflows_path() -> None:
     # A group run opens that group's Workflows section, through the checked group path builder.
     assert "import { groupWorkspacePath } from './groupWorkspaceNavigation';" in builder_source
     assert "return `${groupWorkspacePath(scope.groupId, 'workflows')}?${params}`;" in builder_source
-    assert builder_source.count('return `') == 2
+    # The list and editor addresses share one fixed base: the personal or group Workflows section.
+    assert (
+        "return scope.type === 'group' ? groupWorkspacePath(scope.groupId, 'workflows') : '/workspace/workflows';"
+    ) in builder_source
+    # A selected workflow travels only as an encoded query value...
+    assert (
+        'return workflowId ? `${base}?${new URLSearchParams({ [WORKFLOW_LINK_PARAM]: workflowId })}` : base;'
+    ) in builder_source
+    # ...and a workflow's editor page only as one encoded path segment under that base.
+    assert (
+        'return `${workflowsBasePath(scope)}/${encodeURIComponent(workflowId ?? NEW_WORKFLOW_RESOURCE)}`;'
+    ) in builder_source
+    assert "export const NEW_WORKFLOW_RESOURCE = 'new';" in builder_source
+    assert builder_source.count('return `') == 3
+
+
+def test_list_and_editor_builders_are_reviewed_same_origin_builders() -> None:
+    """The Workflows list and editor page addresses are approved like the run link."""
+    module = load_xss_checker_module()
+    for builder in ('workflowListHref', 'workflowEditorHref'):
+        assert builder in module.TS_SAME_ORIGIN_URL_BUILDERS, builder
 
 
 if __name__ == '__main__':

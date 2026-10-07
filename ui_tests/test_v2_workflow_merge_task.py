@@ -1,8 +1,9 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.244
+Version: 0.261.266
 Implemented in: 0.261.241; PDF merge authoring added in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 This test ensures the workflow editor can author a merge task, keep the user's selected file
 order after reordering, and save the backend document_action shape, and that it doesn't offer
@@ -24,6 +25,7 @@ sys.path.insert(0, str(ROOT / "ui_tests" / "fixtures"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from ui_tests.fixtures.workflow_editor import workflow_ui  # noqa: F401, E402
+from ui_tests.fixtures.workflow_workbench import CREATE_WORKFLOW, create_workflow, workflow_editor  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -51,8 +53,7 @@ def test_v2_workflow_merge_task_selected_files_reorder(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     labelled(page, "Workflow name").fill("Merge files workflow")
     labelled(page, "Description").first.fill("Combines selected files in order.")
     labelled(page, "Runner type").select_option("agent")
@@ -73,7 +74,7 @@ def test_v2_workflow_merge_task_selected_files_reorder(workflow_ui):
     labelled(page, "Merge output file name").fill("monthly_combined")
 
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
 
     action = workflow_post(ui).body["tasks"][0]["document_action"]
     assert action == {
@@ -95,8 +96,7 @@ def test_v2_workflow_merge_task_is_not_offered_while_merge_is_off(workflow_ui):
     ui.editor_option_overrides = {"document_actions": {"merge": {"enabled": False, "workflow_max_documents": 100}}}
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     labelled(page, "Task name").fill("Merge monthly files")
     open_task_details(page, 0)
     action = labelled(page, "Document action")
@@ -110,8 +110,7 @@ def test_v2_workflow_merge_task_assembles_pdfs_without_bookmarks(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     labelled(page, "Workflow name").fill("Board pack")
     labelled(page, "Description").first.fill("Joins the briefs into one PDF.")
     labelled(page, "Runner type").select_option("agent")
@@ -131,7 +130,7 @@ def test_v2_workflow_merge_task_assembles_pdfs_without_bookmarks(workflow_ui):
     page.get_by_role("checkbox", name=re.compile("^Add bookmarks")).uncheck(force=True)
 
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     action = workflow_post(ui).body["tasks"][0]["document_action"]
     assert (action["type"], action["merge_kind"], action["output_format"]) == ("merge", "pdf", "pdf")
     assert action["document_ids"] == ["personal-brief", "personal-second"]
@@ -143,8 +142,7 @@ def test_v2_workflow_merge_task_appends_word_documents_with_their_options(workfl
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     labelled(page, "Workflow name").fill("Minutes book")
     labelled(page, "Description").first.fill("Appends the meeting minutes into one Word document.")
     labelled(page, "Runner type").select_option("agent")
@@ -169,7 +167,7 @@ def test_v2_workflow_merge_task_appends_word_documents_with_their_options(workfl
     page.get_by_role("checkbox", name=re.compile("^Add source headings")).check(force=True)
 
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     action = workflow_post(ui).body["tasks"][0]["document_action"]
     assert (action["type"], action["merge_kind"], action["output_format"]) == ("merge", "docx", "docx")
     assert action["document_ids"] == ["personal-second", "personal-brief"]
@@ -181,8 +179,7 @@ def test_v2_workflow_merge_task_appends_powerpoint_decks_with_their_options(work
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     labelled(page, "Workflow name").fill("Quarterly reviews")
     labelled(page, "Description").first.fill("Appends the review decks into one deck.")
     labelled(page, "Runner type").select_option("agent")
@@ -203,7 +200,7 @@ def test_v2_workflow_merge_task_appends_powerpoint_decks_with_their_options(work
     page.get_by_role("checkbox", name=re.compile("^Create one section per deck")).uncheck(force=True)
 
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     action = workflow_post(ui).body["tasks"][0]["document_action"]
     assert (action["type"], action["merge_kind"], action["output_format"]) == ("merge", "pptx", "pptx")
     assert action["document_ids"] == ["personal-brief", "personal-second"]

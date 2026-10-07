@@ -340,6 +340,11 @@ html[data-font-size='xl'] {
 }
 
 @layer utilities {
+    /*
+     * The Admin Settings card and field rules below are shared with the V2 workflow editor
+     * (SectionCard.tsx and WorkflowField.tsx), so a workflow card reads as the same object as an
+     * Admin section. Change them here once rather than forking a copy for workflows.
+     */
     .admin-settings-distinct {
         container-type: inline-size;
         overflow-wrap: anywhere;
@@ -502,6 +507,61 @@ html[data-font-size='xl'] {
             grid-column: 2;
             margin-inline-start: 0;
         }
+    }
+
+    /*
+     * A native <details> drawn like an Admin field group: a bordered block with a chevron row
+     * that turns when it opens. It stays a real disclosure, so the browser keeps its keyboard
+     * behaviour and an invalid control inside still opens it. The chevron is scoped to its own
+     * summary, so a disclosure nested inside another turns only when it opens itself.
+     */
+    .workflow-disclosure {
+        border: 1px solid var(--edge-strong);
+        border-radius: 0.75rem;
+        background-color: var(--surface-solid);
+    }
+
+    .workflow-disclosure > summary {
+        display: flex;
+        min-height: 2.75rem;
+        cursor: pointer;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--text-1);
+        list-style: none;
+    }
+
+    .workflow-disclosure > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .workflow-disclosure > summary:hover {
+        background-color: var(--surface-sunken);
+    }
+
+    .workflow-disclosure[open] > summary {
+        border-bottom: 1px solid var(--edge-strong);
+        border-end-start-radius: 0;
+        border-end-end-radius: 0;
+        background-color: var(--surface-sunken);
+    }
+
+    .workflow-disclosure > summary > .workflow-disclosure-chevron {
+        flex-shrink: 0;
+        color: var(--text-2);
+        transition: transform 150ms ease-out;
+    }
+
+    .workflow-disclosure[open] > summary > .workflow-disclosure-chevron {
+        transform: rotate(90deg);
+    }
+
+    .workflow-disclosure > .workflow-disclosure-body {
+        padding: 0.75rem;
     }
 
     /*

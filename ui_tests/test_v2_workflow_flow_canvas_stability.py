@@ -1,8 +1,9 @@
 # test_v2_workflow_flow_canvas_stability.py
 """
 Offline real-bundle browser regressions for a stable workflow Flow canvas (#1573).
-Version: 0.261.205
+Version: 0.261.266
 Implemented in: 0.261.205
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 A re-render that doesn't change the diagram must not rebuild the React Flow nodes. New node
 objects reset React Flow's measured handle bounds, so every edge is removed from the page
@@ -39,6 +40,7 @@ sys.path.insert(0, str(ROOT / "ui_tests" / "fixtures"))
 # The shared fixtures import pure application helpers after setting their paths.
 from ui_tests import test_v2_workflow_flow_authoring as authoring
 from ui_tests.fixtures.workflow_flow import FLOW_NAME, FLOW_RUN_ID, FLOW_WORKFLOW_ID, workflow_flow_ui  # noqa: F401
+from ui_tests.fixtures.workflow_workbench import open_workflow_runs  # noqa: E402
 from ui_tests.test_v2_workflow_flow_authoring import authoring_ui, connect_options  # noqa: F401
 
 
@@ -308,12 +310,9 @@ def test_runtime_polls_keep_read_only_flow_nodes_and_edges_mounted(workflow_flow
     ui.workflow_runs[FLOW_WORKFLOW_ID][0]["status"] = "running"
     ui.workflow_runtimes[key]["state"] = "running"
     ui.open("/workspace/workflows")
-    row = page.get_by_role("listitem").filter(has=page.get_by_role(
-        "button", name=f"View Flow for {FLOW_NAME}", exact=True,
-    )).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    row.get_by_role("button", name="Show Flow for this run", exact=True).click()
+    runs = open_workflow_runs(page, FLOW_NAME)
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    runs.get_by_role("button", name="Show Flow for this run", exact=True).click()
     view = page.get_by_role("region", name="Workflow Flow", exact=True)
     expect(view.get_by_text("Run's frozen definition", exact=True)).to_be_visible()
     expect(view.get_by_text("Loading bounded execution overlay...", exact=True)).to_have_count(0)

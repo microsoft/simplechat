@@ -1,7 +1,8 @@
 # test_v2_workflow_ask_ai.py
 """
 Offline real-bundle browser regressions for the workflow editor's Ask AI tab (Phase 3c).
-Version: 0.261.213
+Version: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 Implemented in: 0.261.213
 Refs: microsoft/simplechat#1548
 
@@ -67,6 +68,14 @@ from ui_tests.test_v2_workflow_change_tracking import (
 from ui_tests.test_v2_workflow_flow_authoring import connect_options  # noqa: F401
 from functions_workflow_definitions import workflow_definition_revision  # noqa: E402
 from functions_workflow_flow import compile_workflow_flow  # noqa: E402
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    create_workflow,
+    edit_workflow,
+    workflow_editor,
+    workflow_editor_path,
+    leave_prompt,
+    discard_and_leave,
+)
 
 
 TIME_ZONE = "America/Chicago"
@@ -645,9 +654,7 @@ def test_a_new_draft_sends_no_base_and_no_id_and_saves_after_review(ask_ui):
         {"op": "set_task_instructions", "task": "task_1", "instructions": instructions},
     ))
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    editor = page.get_by_role("dialog", name="Create workflow", exact=True)
-    expect(editor).to_be_visible()
+    editor = create_workflow(page)
     editor.get_by_label("Model", exact=True).select_option(label="Workspace GPT · aoai")
     panel = open_ask_ai(editor)
 
@@ -981,7 +988,7 @@ def test_a_conflict_keeps_the_draft_and_offers_a_reload(ask_ui):
     group.get_by_role("button", name="Discard and reload", exact=True).click()
 
     # The editor opens again on the saved workflow as it is now.
-    editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    editor = workflow_editor(page)
     expect(editor.get_by_label("Workflow name", exact=True)).to_have_value("Quarterly review workflow")
     expect(side_panel(editor)).to_have_count(0)
     expect(editor.locator("[data-workflow-change-key]")).to_have_count(0)
@@ -1060,8 +1067,8 @@ def release_reload(ui):
 
 
 def discard_and_close(page, editor):
-    page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True).get_by_role(
-        "button", name="Discard changes", exact=True).click()
+    """Answer the workspace leave prompt with Discard changes; the editor page is gone after."""
+    discard_and_leave(page)
     expect(editor).to_have_count(0)
 
 
@@ -1077,7 +1084,8 @@ def test_a_closed_editor_stays_closed_when_its_reload_finishes(ask_ui):
     expect(editor.get_by_role("button", name="Save workflow", exact=True)).to_be_disabled()
     expect(panel.get_by_role("group", name="Quick actions", exact=True).get_by_role("button").first).to_be_disabled()
     expect(editor.get_by_role("button", name="Cancel", exact=True)).to_be_enabled()
-    page.keyboard.press("Escape")
+    # The editor is a page since 0.261.266, so it is left with Cancel rather than Escape.
+    editor.get_by_role("button", name="Cancel", exact=True).click()
     discard_and_close(page, editor)
 
     release_reload(ui)
@@ -1095,7 +1103,7 @@ def test_a_reload_never_replaces_another_workflows_editor(ask_ui):
     discard_and_close(page, editor)
 
     # Another workflow is opened and edited while the first one's reload is still loading.
-    page.get_by_role("button", name=f"Edit {other}", exact=True).click()
+    editor = edit_workflow(page, other)
     name = editor.get_by_label("Workflow name", exact=True)
     expect(name).to_have_value(other)
     typed = f"{other}, my draft"
@@ -1105,7 +1113,7 @@ def test_a_reload_never_replaces_another_workflows_editor(ask_ui):
     expect(editor).to_have_count(1)
     expect(name).to_have_value(typed)
     expect(name).to_be_enabled()
-    expect(page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)).to_have_count(0)
+    expect(leave_prompt(page)).to_have_count(0)
     assert not ui.workflow_writes
 
 
@@ -1324,15 +1332,15 @@ def test_ask_ai_is_offered_only_for_personal_workflows_the_editor_can_change(ask
         ui.open("/groups")
         ui.select_group(GROUP_ID)
         page.get_by_role("button", name="View Alpha read-only Flow", exact=True).click()
-        editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
+        editor = workflow_editor(page)
     elif restriction == "unsupported":
         ui.personal_workflows[FLOW_WORKFLOW_ID]["flow"]["nodes"][0]["future_executor"] = {"unchanged": True}
-        ui.open(f"/workspace/workflows?workflow_id={FLOW_WORKFLOW_ID}")
-        editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
+        ui.open(workflow_editor_path(FLOW_WORKFLOW_ID))
+        editor = workflow_editor(page)
     else:
         ui.personal_workflows[WORKFLOW_ID].update(trigger_type="interval", schedule=copy.deepcopy(UNSUPPORTED_SCHEDULE))
-        ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
-        editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
+        ui.open(workflow_editor_path(WORKFLOW_ID))
+        editor = workflow_editor(page)
     expect(editor).to_be_visible()
 
     if restriction in ("setting_off", "group"):
@@ -1345,7 +1353,7 @@ def test_ask_ai_is_offered_only_for_personal_workflows_the_editor_can_change(ask
         expect(panel.get_by_role("tab")).to_have_count(1)
         expect(panel.locator("[data-workflow-ask-ai]")).to_have_count(0)
     else:
-        expect(editor).to_contain_text("This workflow is read-only.")
+        expect(editor.get_by_text("Read only", exact=True).first).to_be_visible()
         expect(editor.locator("aside")).to_have_count(0)
     expect(ask_toggle(editor)).to_have_count(0)
     expect(editor.locator("[data-workflow-ask-ai-task]")).to_have_count(0)
@@ -1481,9 +1489,7 @@ def test_draft_with_ai_fills_an_empty_task_as_an_undoable_ai_change(ask_ui):
     ui, page = ask_ui, ask_ui.page
     drafted = "Collect the quarter's signed evidence and list anything that is missing."
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    editor = page.get_by_role("dialog", name="Create workflow", exact=True)
-    expect(editor).to_be_visible()
+    editor = create_workflow(page)
     editor.get_by_label("Model", exact=True).select_option(label="Workspace GPT · aoai")
     button = editor.get_by_role("button", name="Draft with AI: instructions for Task 1", exact=True)
     task_id = button.get_attribute("data-workflow-draft-ai")
@@ -1583,8 +1589,7 @@ def test_quick_actions_send_visible_turns_and_cards_outlive_a_save(ask_ui):
     assert payload["description"] == described
 
     # The thread outlives the editor; its card now belongs to an earlier editing session.
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
-    editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    editor = edit_workflow(page, "Quarterly review workflow")
     expect(basics_description(editor)).to_have_value(described)
     panel = open_ask_ai(editor)
     found = card(panel, second["submission_id"])

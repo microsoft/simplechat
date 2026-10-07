@@ -1,8 +1,9 @@
 # test_v2_workflow_loops.py
 """
 Closed browser regressions for serial For each, exact Collect and explicit saved-record reporting.
-Version: 0.261.213
+Version: 0.261.266
 Implemented in: 0.261.117
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 Loads the real built local SPA and validates authoring payloads with production
 normalization. Source previews and immutable paged history are fake network
@@ -42,6 +43,14 @@ from ui_tests.fixtures.workflow_loops import (
     workflow_loops_ui,  # noqa: F401
 )
 from ui_tests.fixtures.workflow_control_definitions import flow_binding, structured_workflow_record
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    open_workflow_runs,
+    workflow_editor,
+    workflow_editor_path,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -56,7 +65,7 @@ def details(block):
 
 
 def open_loop(ui, **kwargs):
-    ui.open(f"/workspace/workflows?workflow_id={LOOP_WORKFLOW_ID}", **kwargs)
+    ui.open(workflow_editor_path(LOOP_WORKFLOW_ID), **kwargs)
     return ui.page.get_by_role("region", name="For each block", exact=True).first
 
 
@@ -65,16 +74,15 @@ def expand_history(ui, *, group=False):
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
         ui.select_group(GROUP_ID)
-    row = page.get_by_role("listitem").filter(has_text="Group source loop" if group else "Source loop review").first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    return row
+    runs = open_workflow_runs(page, "Group source loop" if group else "Source loop review")
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    return runs
 
 
 def test_author_selected_documents_current_analyze_exports_and_collect(workflow_loops_ui):
     ui, page = workflow_loops_ui, workflow_loops_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     page.get_by_label("Workflow name", exact=True).fill("Authored source review")
     page.get_by_label("Model", exact=True).select_option(label="Workspace GPT \u00b7 aoai")
     page.get_by_label("Task name", exact=True).fill("Analyze one source")
@@ -123,7 +131,7 @@ def test_author_selected_documents_current_analyze_exports_and_collect(workflow_
     final.get_by_label("Final outputs input 1 producer", exact=True).select_option(label="Collect findings")
     final.get_by_label("Final outputs input 1 output", exact=True).select_option("records")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     payload = ui.workflow_writes[-1].body
     loop_node, collect_node = payload["flow"]["nodes"]
     assert loop_node["kind"] == "for_each"
@@ -144,11 +152,11 @@ def test_author_selected_documents_current_analyze_exports_and_collect(workflow_
     assert collect_node["output_contract"]["kind"] == "records"
     assert collect_node["output_contract"]["schema"] == payload["tasks"][0]["output_contract"]["schema"]
     assert not any(request.path.endswith("/run") for request in ui.writes)
-    page.get_by_role("button", name="Edit Authored source review", exact=True).click()
+    edit_workflow(page, "Authored source review")
     expect(page.get_by_role("alert").filter(has_text="cannot safely save")).to_have_count(0)
     expect(page.get_by_label("For each maximum items", exact=True)).to_have_value("2")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["flow"] == payload["flow"]
     assert ui.workflow_writes[-1].body["tasks"][0]["document_action"] == payload["tasks"][0]["document_action"]
 
@@ -167,7 +175,7 @@ def test_saved_collection_source_is_typed_complete_and_run_count_unknown(workflo
     details(task)
     expect(task.get_by_label("Document action", exact=True).locator('option[value="current_item"]')).to_have_count(0)
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     node = ui.workflow_writes[-1].body["flow"]["nodes"][1]
     assert node["iterable"] == {"kind": "input", "name": "saved_findings"}
     assert node["inputs"][0] == {
@@ -200,7 +208,7 @@ def test_query_all_matches_best_n_and_excess_lower_bound(workflow_loops_ui):
     loop.get_by_role("button", name="Preview loop selection", exact=True).click()
     expect(loop.get_by_text("Selected count: 2. Effective ceiling: 500. Within the limit.", exact=True)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     iterable = ui.workflow_writes[-1].body["flow"]["nodes"][0]["iterable"]
     assert iterable["selection"] == {"mode": "best_n", "count": 2}
     assert iterable["content"] == {"mode": "hybrid", "query": "retention policy"}
@@ -231,7 +239,7 @@ def test_http_422_preview_preserves_count_precision_and_clears_previous_items(wo
     if group:
         ui.open("/groups")
         ui.select_group(GROUP_ID)
-        page.get_by_role("button", name="Edit Group source loop", exact=True).click()
+        edit_workflow(page, "Group source loop")
         loop = page.get_by_role("region", name="For each block", exact=True)
     else:
         loop = open_loop(ui)
@@ -281,7 +289,7 @@ def test_hybrid_preview_discloses_candidate_reranking_and_backfill_limits(workfl
     if group:
         ui.open("/groups")
         ui.select_group(GROUP_ID)
-        page.get_by_role("button", name="Edit Group source loop", exact=True).click()
+        edit_workflow(page, "Group source loop")
         loop = page.get_by_role("region", name="For each block", exact=True)
     else:
         loop = open_loop(ui)
@@ -391,7 +399,7 @@ def test_nested_current_items_branch_controls_and_body_exports_round_trip(workfl
     expect(then.get_by_role("button", name="Add If/else to Then", exact=True)).to_be_disabled()
     page.get_by_label("Workflow name", exact=True).fill("Nested exact review")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["flow"] == record["flow"]
     assert ui.workflow_writes[-1].body["tasks"][1]["inputs"] == record["tasks"][1]["inputs"]
 
@@ -461,7 +469,7 @@ def test_all_matches_query_save_preserves_metadata_keyword_semantics(workflow_lo
     loop.get_by_label("Query search", exact=True).fill("")
     loop.get_by_label("Query classification", exact=True).fill("Internal")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     iterable = ui.workflow_writes[-1].body["flow"]["nodes"][0]["iterable"]
     assert iterable["selection"] == {"mode": "all_matches"}
     assert iterable["content"] == {"mode": "keyword", "query": "retention policy"}
@@ -484,7 +492,7 @@ def test_saved_document_results_preserve_kind_through_export_and_collect(workflo
     page.get_by_label("Collect body output", exact=True).select_option("findings")
     expect(page.get_by_text("Preserved output kind: document results", exact=True)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     saved = ui.workflow_writes[-1].body["flow"]
     assert saved == record["flow"]
 
@@ -500,7 +508,7 @@ def test_collection_kind_is_not_coerced_by_a_wider_binding(workflow_loops_ui, ex
     open_loop(ui)
     expect(page.get_by_label("Collect body output", exact=True)).to_contain_text("findings (records)")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["flow"] == record["flow"]
 
 
@@ -516,7 +524,7 @@ def test_current_item_any_binding_round_trips_as_json_data(workflow_loops_ui):
     expect(task.get_by_label("Analyze current source inputs input 1 kind", exact=True)).to_have_value("any")
     expect(page.get_by_role("alert").filter(has_text="cannot safely save")).to_have_count(0)
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["tasks"][0]["inputs"] == record["tasks"][0]["inputs"]
 
 
@@ -531,7 +539,7 @@ def test_optional_body_exports_require_explicit_partial_collect_policy(workflow_
     page.get_by_label("Collect require complete coverage", exact=True).uncheck()
     page.get_by_label("Final outputs input 1 allow partial", exact=True).check()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     nodes = ui.workflow_writes[-1].body["flow"]["nodes"]
     assert not nodes[0]["body"]["outputs"][0]["required"]
     assert nodes[1]["output_contract"]["allow_partial"]
@@ -567,19 +575,19 @@ def test_author_explicit_saved_record_report_without_json(workflow_loops_ui, col
     expect(report.get_by_text("reads all records", exact=False)).to_be_visible()
     expect(report.get_by_text("arbitrary transforms or quantitative tasks", exact=False)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     saved = ui.workflow_writes[-1].body
     assert saved["tasks"][1]["input_processing"] == "saved_record_report"
     assert "input_processing" not in saved["tasks"][0]
     assert saved["tasks"][1]["inputs"] == record["tasks"][1]["inputs"]
     assert saved["flow"] == record["flow"]
-    page.get_by_role("button", name="Edit Source loop review", exact=True).click()
+    edit_workflow(page, "Source loop review")
     report = task_block(page, "Explain saved findings")
     details(report)
     expect(report.get_by_label("Large saved inputs", exact=True)).to_have_value("saved_record_report")
     report.get_by_label("Large saved inputs", exact=True).select_option("full")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["tasks"][1]["input_processing"] == "full"
 
 
@@ -601,7 +609,7 @@ def test_add_saved_record_report_task_from_list_controls(workflow_loops_ui):
     final.get_by_label("Final outputs input 1 producer", exact=True).select_option(label="Report all saved findings")
     final.get_by_label("Final outputs input 1 output", exact=True).select_option("text")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     task = ui.workflow_writes[-1].body["tasks"][-1]
     assert task["input_processing"] == "saved_record_report"
     assert task["document_action"] == {"type": "none"}
@@ -627,7 +635,7 @@ def test_saved_record_report_accepts_a_join_of_collection_kinds(workflow_loops_u
     details(finish)
     expect(finish.get_by_label("Large saved inputs", exact=True)).to_have_value("saved_record_report")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["tasks"][-1]["input_processing"] == "saved_record_report"
 
 
@@ -642,7 +650,7 @@ def test_report_wording_never_opts_an_existing_task_into_batches(workflow_loops_
     report.get_by_label("Large saved inputs", exact=True).select_option("full")
     report.get_by_label("Instructions", exact=True).fill("Explain all saved findings with source-linked qualitative details.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     task = ui.workflow_writes[-1].body["tasks"][1]
     if original_mode is None:
         assert "input_processing" not in task
@@ -706,7 +714,7 @@ def test_saved_record_report_rejects_incompatible_task_without_rewriting_it(work
     if incompatible == "missing_action":
         report.get_by_role("button", name="Use no document action", exact=True).click()
         page.get_by_role("button", name="Save workflow", exact=True).click()
-        expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+        expect(workflow_editor(page)).to_have_count(0)
         assert ui.workflow_writes[-1].body["tasks"][1]["document_action"] == {"type": "none"}
 
 
@@ -751,7 +759,7 @@ def test_report_mode_requires_explicit_v3_conversion(workflow_loops_ui):
     page.get_by_role("button", name="Enable structured control flow", exact=True).click()
     page.get_by_role("button", name="Convert draft", exact=True).click()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["definition_version"] == 3
     assert ui.workflow_writes[-1].body["tasks"][1]["input_processing"] == "saved_record_report"
 
@@ -773,7 +781,7 @@ def test_group_query_preview_and_save_keep_explicit_group_scope(workflow_loops_u
     ui, page = workflow_loops_ui, workflow_loops_ui.page
     ui.open("/groups")
     ui.select_group(GROUP_ID)
-    page.get_by_role("button", name="Edit Group source loop", exact=True).click()
+    edit_workflow(page, "Group source loop")
     loop = page.get_by_role("region", name="For each block", exact=True)
     loop.get_by_label("For each source", exact=True).select_option("workspace_query")
     expect(loop.get_by_role("group", name="Query workspaces", exact=True).get_by_role("checkbox")).to_have_count(1)
@@ -781,7 +789,7 @@ def test_group_query_preview_and_save_keep_explicit_group_scope(workflow_loops_u
     loop.get_by_role("button", name="Preview loop selection", exact=True).click()
     expect(loop.get_by_text("Selected count: 2. Effective ceiling: 500. Within the limit.", exact=True)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     write = ui.workflow_writes[-1]
     assert write.query["group_id"] == [GROUP_ID]
     assert write.body["group_id"] == GROUP_ID
@@ -802,7 +810,7 @@ def test_selected_shared_group_document_keeps_recipient_scope(workflow_loops_ui,
     if group_workflow:
         ui.open("/groups")
         ui.select_group(GROUP_ID)
-        page.get_by_role("button", name="Edit Group source loop", exact=True).click()
+        edit_workflow(page, "Group source loop")
         loop = page.get_by_role("region", name="For each block", exact=True)
     else:
         loop = open_loop(ui)
@@ -814,7 +822,7 @@ def test_selected_shared_group_document_keeps_recipient_scope(workflow_loops_ui,
     expected_count = 2 if group_workflow else 3
     expect(loop.get_by_text(f"Selected count: {expected_count}. Effective ceiling: 500. Within the limit.", exact=True)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     documents = ui.workflow_writes[-1].body["flow"]["nodes"][0]["iterable"]["documents"]
     selected = next(document for document in documents if document["document_id"] == "shared-brief")
     assert selected == {"document_id": "shared-brief", "scope_type": "group", "scope_id": GROUP_ID}

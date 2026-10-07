@@ -1,7 +1,8 @@
 # test_v2_workflow_alerts.py
 """
 UI tests for native V2 workflow alert editing, in personal and group workflows.
-Version: 0.261.144
+Version: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 Implemented in: 0.261.144
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. Both save routes run
@@ -43,6 +44,10 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
     workflow_ui,  # noqa: F401
 )
 
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    edit_workflow,
+)
+
 
 pytestmark = pytest.mark.ui
 SCOPES = ("personal", "group")
@@ -72,10 +77,7 @@ def seed(ui, scope, identifier, **fields):
 
 
 def edit(ui, name):
-    ui.page.get_by_role("button", name=f"Edit {name}", exact=True).click()
-    dialog = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
-    expect(dialog).to_be_visible()
-    return dialog
+    return edit_workflow(ui.page, name)
 
 
 def alerts_region(page):
@@ -373,9 +375,9 @@ def test_readers_keep_the_summary(workflow_ui):
     ui.personal_workflows[UNSUPPORTED_WORKFLOW_ID]["alert_mode"] = "every_run"
     ui.personal_workflows[UNSUPPORTED_WORKFLOW_ID]["alert_priority"] = "low"
     open_workflows(ui, "personal")
-    page.get_by_role("button", name="Edit Future workflow", exact=True).click()
+    edit_workflow(page, "Future workflow")
     expect(page.get_by_role("alert").filter(has_text="definition version 4")).to_be_visible()
-    expect(region.get_by_text("On every run", exact=True)).to_be_visible()
+    expect(region.get_by_text("On every run", exact=True).first).to_be_visible()
     expect(region.get_by_text("Low priority", exact=True)).to_be_visible()
     expect(region.get_by_role("combobox")).to_have_count(0)
     assert not ui.workflow_writes
@@ -592,7 +594,7 @@ def test_the_alert_editor_fits_desktop_and_mobile(workflow_ui, theme, width, hei
     expect(rule_rows(page)).to_have_count(2)
     expect(field(region, "If a model evaluated condition cannot be judged")).to_be_visible()
     # Text controls scroll their own value by design; every other element must fit the dialog.
-    clipped = page.evaluate("""() => [...document.querySelectorAll('[role="dialog"] *')]
+    clipped = page.evaluate("""() => [...document.querySelectorAll('[role="region"][aria-label="Edit workflow"] *')]
         .filter((element) => !['INPUT', 'TEXTAREA'].includes(element.tagName))
         .filter((element) => element.scrollWidth > element.clientWidth + 1 && getComputedStyle(element).overflowX !== 'visible')
         .map((element) => element.tagName)""")

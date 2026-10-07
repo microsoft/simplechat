@@ -1,13 +1,14 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.166
+Version: 0.261.266
 Implemented in: 0.261.153
+A workflow's resource segment is its editor page, no longer a redirect to the workflow query: 0.261.266
 
 Every group workspace section is native now, so the V2 group pages must stop sending people to
 classic where classic offers nothing more. This suite pins that the "Classic" availability labels
 and the overview's Classic promise are gone, that a stray resource segment redirects to its own
-section (or the workflow query) instead of a classic panel, that the actions-off surface keeps only
+section (a workflow's segment opens its editor page) instead of a classic panel, that the actions-off surface keeps only
 the Call agent view, that Tags drops its classic button, and that Documents keeps a relabelled
 classic-tools link (classic still owns the legacy-document upgrade).
 """
@@ -105,10 +106,11 @@ def test_stray_resource_segments_never_reach_a_classic_panel(group_ui):
     expect(ui.page.get_by_role("heading", name="Tags", exact=True)).to_be_visible()
     expect(ui.page.get_by_text(REMOVED_PANEL_COPY, exact=True)).to_have_count(0)
 
-    # A resource segment on Workflows becomes the ?workflow_id= query the section already understands.
+    # A resource segment on Workflows is that workflow's editor page, so it stays where it is.
     ui.open("/groups/group-a/workflows/workflow-1")
-    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-a/workflows?workflow_id=workflow-1")
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-a/workflows/workflow-1")
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
     expect(ui.page.get_by_text(REMOVED_PANEL_COPY, exact=True)).to_have_count(0)
 
     # An unknown section keeps its own not-found state, and still never a classic panel.

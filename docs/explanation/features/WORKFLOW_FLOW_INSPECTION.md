@@ -120,7 +120,10 @@ or empty success.
 ## Use saved and draft Flow
 
 1. In personal or group Workflows, choose **View Flow for ...** on a saved
-   version-3 workflow. This does not require opening Edit and remains available
+   version-3 workflow. From 0.261.266, select the workflow and choose its
+   **Flow** tab instead; see
+   [V2 Workflows Workbench and Editor](V2_WORKFLOWS_WORKBENCH_AND_EDITOR.md).
+   This does not require opening Edit and remains available
    while a run is active, subject to current reader access.
 2. Select a node and choose its inspection section. Instructions, contracts,
    conditions, references, and source selections load only when requested.

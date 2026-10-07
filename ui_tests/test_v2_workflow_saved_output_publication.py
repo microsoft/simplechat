@@ -1,8 +1,9 @@
 # test_v2_workflow_saved_output_publication.py
 """
 Closed V2 List coverage for exact saved-record file publication.
-Version: 0.261.127
+Version: 0.261.266
 Implemented in: 0.261.119
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 The real production SPA saves through production definition validation. Fictional
 HTTP fixtures exercise scoped authoring, capability fallback, safe readback,
@@ -38,6 +39,12 @@ from ui_tests.fixtures.workflow_saved_output_publication import (
     saved_output_ui,  # noqa: F401
     use_saved_output,
 )
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    edit_workflow,
+    open_workflow_runs,
+    workflow_editor,
+    workflow_editor_path,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -63,10 +70,10 @@ def open_editor(ui, scope="user", **viewport):
     if scope == "group":
         ui.open("/groups", **viewport)
         ui.select_group(GROUP_ID)
-        ui.page.get_by_role("button", name=f"Edit {record['name']}", exact=True).click()
+        edit_workflow(ui.page, record["name"])
     else:
-        ui.open(f"/workspace/workflows?workflow_id={record['id']}", **viewport)
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+        ui.open(workflow_editor_path(record["id"]), **viewport)
+    expect(workflow_editor(ui.page)).to_be_visible()
     return publication_fields(ui.page)
 
 
@@ -88,12 +95,12 @@ def policy_field(block):
 
 def save_editor(ui):
     ui.page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(ui.page)).to_have_count(0)
     return ui.workflow_writes[-1]
 
 
 def reopen_editor(ui, scope="user"):
-    ui.page.get_by_role("button", name=f"Edit {saved_workflow(ui, scope)['name']}", exact=True).click()
+    edit_workflow(ui.page, saved_workflow(ui, scope)["name"])
     return publication_fields(ui.page)
 
 
@@ -325,7 +332,7 @@ def test_saved_output_requires_v3_durable_without_down_conversion(saved_output_u
     publication_task(record)["publication"].pop("completion_policy")
     record.update(definition_version=version, durable_execution=durable)
     original = copy.deepcopy(record)
-    open_editor(ui) if version == 3 else ui.open(f"/workspace/workflows?workflow_id={record['id']}")
+    open_editor(ui) if version == 3 else ui.open(workflow_editor_path(record["id"]))
     expect(page.get_by_role("alert").filter(has_text="durable definition-v3")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     assert record["tasks"] == original["tasks"]
@@ -464,8 +471,8 @@ def test_list_keyboard_source_join_and_completion_controls_fit_viewport(saved_ou
     policy.press("ArrowUp")
     expect(policy).to_have_value("approved")
     ui.assert_no_overflow()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
-    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+    editor = workflow_editor(page)
+    assert editor.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
     for control in (source, producer, format_field(block), policy):
         control.scroll_into_view_if_needed()
         box = control.bounding_box()
@@ -473,7 +480,7 @@ def test_list_keyboard_source_join_and_completion_controls_fit_viewport(saved_ou
     save = page.get_by_role("button", name="Save workflow", exact=True)
     save.focus()
     save.press("Enter")
-    expect(dialog).to_have_count(0)
+    expect(editor).to_have_count(0)
     payload = ui.workflow_writes[-1].body
     assert payload["flow"] == original["flow"]
     assert [task["id"] for task in payload["tasks"]] == [task["id"] for task in original["tasks"]]
@@ -491,9 +498,9 @@ def test_list_keyboard_source_join_and_completion_controls_fit_viewport(saved_ou
 def test_malformed_publication_capabilities_fail_closed(saved_output_ui, capabilities):
     ui, page = saved_output_ui, saved_output_ui.page
     ui.option_overrides["publication_source_capabilities"] = capabilities
-    ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Edit Publication workflow", exact=True).click()
-    expect(page.get_by_role("alert").filter(has_text="invalid publication source capabilities")).to_be_visible()
+    ui.open(workflow_editor_path(saved_workflow(ui)["id"]))
+    expect(page.get_by_text("The workflow editor could not load", exact=True)).to_be_visible()
+    expect(page.get_by_text("invalid publication source capabilities", exact=False)).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     assert not ui.workflow_writes
 
@@ -522,9 +529,8 @@ def test_saved_export_keeps_exact_attempt_completion_and_unavailable_readback(sa
     ui.open("/groups" if scope == "group" else "/workspace/workflows", width=390, height=844)
     if scope == "group":
         ui.select_group(GROUP_ID)
-    row = page.get_by_role("listitem").filter(has_text=saved_workflow(ui, scope)["name"]).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
+    runs = open_workflow_runs(page, saved_workflow(ui, scope)["name"])
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
     page.get_by_role("button", name=f"Show execution attempts for {eid}", exact=True).click()
     details = page.get_by_role("region", name=f"Publication for execution {eid} attempt 2", exact=True)
     expect(details).to_contain_text(status["id"])

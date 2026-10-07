@@ -1,8 +1,9 @@
 # test_v2_workflow_control_runtime.py
 """
 UI tests for V2 workflow control-runtime run inspection.
-Version: 0.261.127
+Version: 0.261.266
 Implemented in: 0.261.116
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 definition v3 execution inspection, scoped runtime decisions, authoritative
@@ -34,16 +35,16 @@ from ui_tests.fixtures.workflow_control_runtime import (  # noqa: E402
     workflow_control_ui,  # noqa: F401
 )
 from ui_tests.fixtures.workflow_editor import WORKFLOW_ID  # noqa: E402
+from ui_tests.fixtures.workflow_workbench import open_workflow_runs  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
 
 
 def expand_run_history(page, workflow_name):
-    row = page.get_by_role("listitem").filter(has_text=workflow_name).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    return row
+    runs = open_workflow_runs(page, workflow_name)
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    return runs
 
 
 def result_requests(ui):

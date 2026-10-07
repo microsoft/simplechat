@@ -1,7 +1,8 @@
 # test_v2_personal_workflow_file_sync.py
 """
 UI tests for personal workflow File Sync authoring in native V2.
-Version: 0.261.207
+Version: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 Implemented in: 0.261.207
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
@@ -61,6 +62,14 @@ from ui_tests.fixtures.workflow_flow import FLOW_WORKFLOW_ID  # noqa: E402
 from ui_tests.test_v2_workflow_flow_authoring import authoring_ui  # noqa: E402,F401
 from test_v2_workflow_change_tracking import change_row, open_panel, unsaved_heading  # noqa: E402
 
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    workflow_editor,
+    workflow_editor_path,
+)
+
 
 pytestmark = pytest.mark.ui
 PERSONAL_SOURCE = {"scope_type": "personal", "scope_id": OWNER_ID, "source_id": "home-share"}
@@ -70,16 +79,16 @@ UNSUPPORTED_SCHEDULE = "This workflow uses a schedule this editor does not suppo
 
 
 def create_dialog(page):
-    return page.get_by_role("dialog", name="Create workflow", exact=True)
+    return workflow_editor(page, CREATE_WORKFLOW)
 
 
 def edit_dialog(page):
-    return page.get_by_role("dialog", name="Edit workflow", exact=True)
+    return workflow_editor(page)
 
 
 def open_personal_create(ui, **open_options):
     ui.open("/workspace/workflows", **open_options)
-    ui.page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(ui.page)
     expect(create_dialog(ui.page)).to_be_visible()
 
 
@@ -135,7 +144,7 @@ def test_owner_authors_a_personal_monitor_trigger_and_posts_the_server_shape(wor
     # The real personal rules authorized the source the editor sent.
     assert ("personal", OWNER_ID, "home-share") in ui.file_sync_source_reads
 
-    page.get_by_role("button", name="Edit Review new documents", exact=True).click()
+    edit_workflow(page, "Review new documents")
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
     expect(source_checkbox(page, "Home share (Personal)")).to_be_checked()
     expect(labelled(page, "Interval value")).to_have_value("2")
@@ -171,7 +180,7 @@ def test_the_active_group_sources_are_offered_only_to_a_manager(workflow_ui):
     # A member of the active group gets only their own sources.
     ui.group_can_manage = False
     page.reload()
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     expect(source_checkbox(page, "Home share (Personal)")).to_be_visible()
     expect(source_checkbox(page, "Finance share (Group)")).to_have_count(0)
     personal_list_requests(ui)
@@ -187,7 +196,7 @@ def test_personal_file_sync_off_keeps_a_stored_source_without_calling_it_unavail
     assert trigger_options(page) == ["Manual", "Schedule"]
     create_dialog(page).get_by_role("button", name="Cancel", exact=True).click()
 
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+    edit_workflow(page, "Quarterly review workflow")
     expect(page.get_by_role("status").filter(has_text=PERSONAL_OFF)).to_be_visible()
     # The list can't check a personal source while File Sync is off, so the selection is kept as is.
     expect(source_checkbox(page, "Home share (Personal)")).to_be_checked()
@@ -240,7 +249,7 @@ def test_personal_sources_are_chosen_by_keyboard_in_both_themes(workflow_ui, the
     expect(finance).to_be_checked()
     expect(page.get_by_role("status").filter(has_text=SELECT_A_SOURCE)).to_have_count(0)
     page.get_by_role("region", name="File Sync").scroll_into_view_if_needed()
-    clipped = page.evaluate("""() => [...document.querySelectorAll('[role="dialog"] *')]
+    clipped = page.evaluate("""() => [...document.querySelectorAll('[role="region"][aria-label="Create workflow"] *')]
         .filter((element) => element.scrollWidth > element.clientWidth + 1 && getComputedStyle(element).overflowX !== 'visible')
         .map((element) => element.tagName)""")
     assert clipped == [], clipped
@@ -292,7 +301,7 @@ def test_editing_personal_sources_is_one_change_and_jump_lands_in_file_sync(work
         schedule={"unit": "hours", "value": 2},
         file_sync=copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC),
     )
-    ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
+    ui.open(workflow_editor_path(WORKFLOW_ID))
     editor = edit_dialog(page)
     expect(editor).to_be_visible()
     home = source_checkbox(editor, "Home share (Personal)")

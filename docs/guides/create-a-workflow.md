@@ -33,6 +33,36 @@ or select a group under `/v2/groups`. Choose **Create workflow** or edit an
 existing workflow in the native V2 editor. Ordered drafts still use List;
 explicitly structured drafts also offer Flow authoring as described below.
 
+From **0.261.266**, Workflows lists each workflow on one line: its name, how it
+stands (for example **Running**, **Awaiting approval**, **Completed** or
+**Failed**), and its trigger. Select a workflow to see its **Overview**, which
+starts with when it last ran and how that run ended, its recent **Runs**, and,
+for a structured workflow, its saved **Flow**. **Run**, **Edit** and **Delete**
+sit beside its name. To find one in a long list, search, or narrow the list by
+**Status**, such as **Needs attention** for workflows waiting on you or whose
+last run failed, was cancelled or completed with task errors, or by **Trigger**.
+
+{% include media.html src="guides/create-a-workflow-workbench.png"
+                      alt="The V2 Workflows section with a list of workflows on the left, each showing its status and trigger, one selected, and its detail on the right showing Run, Edit and Delete beside its name and the Overview tab listing when it last ran, its runner, trigger, File Sync, execution, references, tasks and alerts."
+                      title="Choosing a workflow"
+                      capture="Open V2 My workspace > Workflows at a wide window size with four or five sample workflows, one of them failed, and select a manual workflow so its Overview shows. Use sample data." %}
+
+**Create workflow** and **Edit** open the editor as a page of its own. The
+workflow is laid out in sections: **Basics**, **Trigger and schedule**, **File
+Sync**, **Execution**, **Shared references**, **Tasks** and **Alerts**, with
+**Limits** for a structured workflow. Each section's header says what it is set
+to, and a chip points out a section that isn't ready, such as **Needs
+configuration** on Basics until the workflow has a name, or on File Sync until
+it has a source. On a wide screen, **On this page** jumps to a section and shows
+the same chips. The chips are a guide only; saving still checks the whole
+workflow.
+
+**Save workflow** returns to the list with the workflow selected. If you choose
+**Cancel** or **Back**, or follow another link, with unsaved changes, you're
+asked whether to keep editing or discard them. The editor page has the
+workflow's own address, such as `/v2/workspace/workflows/<workflow id>`, so you
+can bookmark it.
+
 Choose a runner and manual or interval trigger, then add tasks in execution
 order. Task details separate document-action evidence from shared reference
 documents and prior-task outputs. For a synthesis task, select a specific
@@ -559,8 +589,9 @@ are framed in blue and labeled **AI assist** instead. From **0.261.213**,
 
 ### Use the Changes panel
 
-Choose **Changes** in the editor footer. The button shows how many changes are
-unsaved, and the panel lists them in two parts:
+Choose **Changes** at the top of the editor page (in the footer when the editor
+opens from a chat proposal). The button shows how many changes are unsaved, and
+the panel lists them in two parts:
 
 - **Unsaved changes**: each change with its before and after values and who
   made it. **Jump** moves to the field, switching from Flow to List when the
@@ -606,7 +637,8 @@ workflow is personal, and you can edit it. Group workflows don't offer it.
 
 1. Open a personal workflow in the V2 editor, or choose **Edit** on a workflow
    proposal in chat.
-2. Choose **Ask AI** in the editor footer. To ask about one task, choose
+2. Choose **Ask AI** at the top of the editor page, or in the footer when the
+   editor opens from a chat proposal. To ask about one task, choose
    **Ask AI** on that task instead. The tab shows **About:** with the task's
    name until you clear it.
 3. Type what you want and send it, or choose a quick action such as **Explain
@@ -676,7 +708,8 @@ name first, so it has something to go on.
 ## Preview the structure without changing execution
 
 In **0.261.121**, choose **View Flow for ...** beside a saved structured
-workflow to see its branches, joins, routes, and single loop templates.
+workflow to see its branches, joins, routes, and single loop templates. From
+**0.261.266**, select the workflow and choose its **Flow** tab instead.
 This is independent of Edit, so an authorized reader can inspect a saved
 definition while it has an active run. This viewer remains read-only in
 **0.261.122**. The List/Flow authoring switch replaces only the old preview-only
@@ -832,7 +865,7 @@ for the controls introduced in **0.261.029**.
 
 ## Verify it worked
 
-The workflow appears in the Workflows table with **Name**, **Runner**, **Trigger**, **Last Run**, and **Actions** columns.
+The workflow appears in the Workflows table with **Name**, **Runner**, **Trigger**, **Last Run**, and **Actions** columns. In V2, it appears in the Workflows list, selected, and its **Overview** shows the runner, trigger and tasks you saved.
 
 ## How task results are passed
 

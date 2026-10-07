@@ -1,7 +1,8 @@
 # test_v2_workflow_settings_errors.py
 """
 UI tests for reviewed workflow settings errors, deleted File Sync sources and deleted workflows.
-Version: 0.261.207
+Version: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 Implemented in: 0.261.149
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture validates both
@@ -52,6 +53,11 @@ from test_v2_group_workflow_file_sync import (  # noqa: E402  (shared record and
     workflow_post,
 )
 
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    edit_workflow,
+    workflow_editor,
+)
+
 
 pytestmark = pytest.mark.ui
 SOURCE_UNAVAILABLE = "A selected File Sync source is no longer available. Remove it and save again."
@@ -67,14 +73,14 @@ def save(page):
 
 
 def edit_dialog(page):
-    return page.get_by_role("dialog", name="Edit workflow", exact=True)
+    return workflow_editor(page)
 
 
 def test_a_group_source_deleted_after_opening_keeps_the_draft_and_marks_the_source(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.group_workflows[GROUP_ID][MONITOR_ID] = monitored_workflow()
     open_group_workflows(ui)
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     expect(source_checkbox(page, "Finance share (Group)")).to_be_checked()
     labelled(page, "Description").first.fill("Edited while the share was removed.")
     lists_before = len(source_requests(ui))
@@ -114,7 +120,7 @@ def test_a_personal_source_deleted_after_opening_keeps_the_draft_and_marks_the_s
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["file_sync"] = copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC)
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+    edit_workflow(page, "Quarterly review workflow")
     home = source_checkbox(page, "Home share (Personal)")
     expect(home).to_be_checked()
     labelled(page, "Description").first.fill("Edited after the personal share was removed.")
@@ -159,7 +165,7 @@ def test_saving_a_workflow_deleted_after_opening_keeps_the_draft_and_explains_wh
     else:
         workflows, name, workflow_id = ui.personal_workflows, "Quarterly review workflow", WORKFLOW_ID
         ui.open("/workspace/workflows")
-    page.get_by_role("button", name=f"Edit {name}", exact=True).click()
+    edit_workflow(page, name)
     labelled(page, "Description").first.fill("Edited after someone deleted the workflow.")
     del workflows[workflow_id]
 
@@ -181,7 +187,7 @@ def test_saving_a_workflow_deleted_after_opening_keeps_the_draft_and_explains_wh
 def test_personal_schedules_are_checked_before_saving_with_the_server_message(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+    edit_workflow(page, "Quarterly review workflow")
     labelled(page, "Trigger").select_option("interval")
     labelled(page, "Interval unit").select_option("minutes")
     labelled(page, "Interval value").fill("90")
@@ -209,7 +215,7 @@ def test_group_file_sync_turned_off_applies_the_servers_gate_without_marking_sou
     ui.group_workflows[GROUP_ID][MONITOR_ID] = record
     ui.group_file_sync_enabled[GROUP_ID] = False
     open_group_workflows(ui)
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     expect(page.get_by_text(
         "Group File Sync is not enabled, so this group's sources cannot be listed. "
         "Your selection is kept, but it cannot be checked.", exact=True,

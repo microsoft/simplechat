@@ -1,8 +1,9 @@
 # test_v2_workflow_durable_runtime.py
 """
 UI tests for native V2 durable workflow runtime controls.
-Version: 0.261.111
+Version: 0.261.266
 Implemented in: 0.261.111
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 durable authoring defaults, pre-task approval payloads, queued run responses,
@@ -27,6 +28,14 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
     WORKFLOW_ID,
     connect_options,  # noqa: F401
     workflow_ui,  # noqa: F401
+)
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    create_workflow,
+    edit_workflow,
+    leave_workflow_runs,
+    open_workflow_runs,
+    select_workflow,
+    workflow_editor,
 )
 
 
@@ -66,20 +75,20 @@ def runtime_decisions(ui):
 
 
 def expand_durable_history(page):
-    row = page.get_by_role("listitem").filter(has_text="Durable approval workflow").first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    expect(page.get_by_text("Run memory", exact=True)).to_be_visible()
-    page.get_by_text("Run memory", exact=True).click()
-    expect(page.get_by_text("Checkpoint units and attempts", exact=True)).to_be_visible()
+    runs = open_workflow_runs(page, "Durable approval workflow")
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    expect(runs.get_by_text("Run memory", exact=True)).to_be_visible()
+    runs.get_by_text("Run memory", exact=True).click()
+    expect(runs.get_by_text("Checkpoint units and attempts", exact=True)).to_be_visible()
+    return runs
 
 
 def test_durable_default_existing_preservation_and_task_approval_payload(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
+    expect(workflow_editor(page, "Create workflow")).to_be_visible()
     expect(durable_toggle(page)).to_be_checked()
     labelled(page, "Workflow name").fill("Durable default workflow")
     labelled(page, "Model").select_option(label="Workspace GPT · aoai")
@@ -90,7 +99,7 @@ def test_durable_default_existing_preservation_and_task_approval_payload(workflo
     assert body["durable_execution"] is True
     assert "approval" not in body["tasks"][0]
 
-    page.get_by_role("button", name=re.compile(r"Edit Quarterly review workflow")).click()
+    edit_workflow(page, "Quarterly review workflow")
     expect(durable_toggle(page)).not_to_be_checked()
     labelled(page, "Description").first.fill("Legacy workflow stays non-durable unless opted in.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
@@ -98,7 +107,7 @@ def test_durable_default_existing_preservation_and_task_approval_payload(workflo
     assert legacy_body["id"] == WORKFLOW_ID
     assert "durable_execution" not in legacy_body
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     durable_toggle(page).uncheck(force=True)
     open_task_details(page)
     approval_toggle(page).check(force=True)
@@ -121,7 +130,8 @@ def test_queued_run_response_expands_live_runtime_without_blocking(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name=re.compile(r"Run Durable approval workflow")).click()
+    detail = select_workflow(page, "Durable approval workflow")
+    detail.get_by_role("button", name="Run Durable approval workflow", exact=True).click()
     expect(page.get_by_text("queued", exact=True).first).to_be_visible()
     page.get_by_role("button", name="Show run task results", exact=True).first.click()
     expect(page.get_by_text("Version 1", exact=True)).to_be_visible()
@@ -342,7 +352,7 @@ def test_cancel_resume_controls_and_polling_cleanup(workflow_ui):
     key = ("user", DURABLE_WORKFLOW_ID, "polling-run")
     expect(page.get_by_text("Heartbeat polling reached a new approval gate.", exact=True)).to_be_visible(timeout=7000)
     assert 3 <= ui.runtime_get_count[key] <= 5
-    page.get_by_role("button", name="Hide run history", exact=True).click()
+    leave_workflow_runs(page, "Durable approval workflow")
     stopped_at = ui.runtime_get_count[key]
     page.wait_for_timeout(2600)
     assert ui.runtime_get_count[key] == stopped_at
