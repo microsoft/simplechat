@@ -24,9 +24,14 @@ Use it for mission-control visibility. Do not use it for commanding; the plugin 
 - If the server sits behind a reverse proxy that challenges callers, the username and password that proxy expects.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Set Server URL, Instance, Processor, Authentication Method, credentials, Max Rows, Timeout, Verify TLS, and optional read-only archive SQL.
+Set Server URL, Instance, Processor, primary Yamcs Authentication Method, credentials, Max Rows, Timeout, Verify TLS, and optional read-only archive SQL.
+
+Reverse proxy credentials now live in **Authentication** under **Reverse proxy authentication**, not in Configuration. Turn that switch on only when a proxy in front of Yamcs challenges SimpleChat before the request reaches Yamcs. The proxy username, password, or reusable identity fields appear there when needed.
+
+Connection testing appears in **Authentication**, after both Yamcs and optional proxy credentials. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
@@ -57,7 +62,7 @@ unsupported:
 | Access Token | No | The bearer token also needs `Authorization`. |
 
 Choosing a blocked combination is reported when you save the action and when you use
-**Test Yamcs Connection**, so the conflict surfaces before an agent depends on it.
+the Authentication connection check, so the conflict surfaces before an agent depends on it.
 
 ### Supplying the proxy credential
 

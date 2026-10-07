@@ -23,9 +23,26 @@ Use it when an agent should reason over workspace documents as a tool. Use the n
 - Accessible personal, group, or public workspace content; no external credentials.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Configure default scope, result limit, preferred windowing, and summary defaults.
+Document Search can be narrowed without granting the agent any access the user does not already have. Choose the allowed scopes:
+
+- **My workspace** for the signed-in user's personal documents.
+- **Group workspaces** for groups the signed-in user can access. Choose all accessible groups or restrict the action to selected group IDs.
+- **Public workspaces** for public workspaces the signed-in user can access. Choose all accessible public workspaces or restrict the action to selected public workspace IDs.
+
+At runtime, SimpleChat intersects those action settings with the current user's group and public workspace access. A disabled scope is rejected even if the user asks for it explicitly.
+
+Set the default result limit with the slider or number input. The UI slider covers 5–100 results for normal setup, and the number input accepts values up to the existing backend maximum of 500 for specialized actions.
+
+## Summary and windowing controls
+
+The window unit controls how much source material goes into each summarization pass. Use **Automatic** when SimpleChat should choose the amount, **Fixed size** when a predictable number of pages or chunks is needed, or **Percent of document** when long documents should be sampled proportionally. Only the selected sizing value is stored; unused values are cleared to avoid conflicting instructions.
+
+Focus instructions tell the summarizer what to prioritize, such as contract dates, safety incidents, or implementation steps. Window summary and final summary target lengths are stored as page targets from the V2 sliders. Legacy free-text values, such as word counts, are preserved as custom values and can be reset to page-based targets.
+
+The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** only to review preserved legacy values.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

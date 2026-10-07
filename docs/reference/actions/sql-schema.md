@@ -25,15 +25,22 @@ Use SQL Schema when an agent must understand table names, column names, types, a
 - A decision about **Include System Tables**; the recommended default is **No**.
 - Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
+
 ## Configure the action
 
-1. Choose the SQL action flow and select **Plugin Type** > **Schema Plugin**.
+`sql_schema` is hidden from new-action creation because the SQL Database action now includes schema discovery for agents that need table context. Existing SQL Schema actions continue to load and can be edited for compatibility, but new actions should use [SQL Database]({{ '/reference/actions/sql-query/' | relative_url }}).
+
+For existing actions:
+
+1. Open the existing SQL Schema action.
 2. Choose **Database Type** and **Connection Method**.
 3. Fill **Connection String** or individual **Server**, **Database**, **Port**, and **ODBC Driver** fields.
 4. Choose **Authentication Type** and provide credentials or a **Reusable Identity**.
-5. Under **Schema Plugin Settings**, keep **Include System Tables** set to **No (Recommended)** unless system metadata is required.
+5. Keep **Include System Tables** set to **No (Recommended)** unless system metadata is required.
 6. Use **Table Filter** to narrow discovery, for example `user_*` or `*_log`.
-7. Use **Test Connection** before saving.
+7. Use the connection check in **Authentication** before saving.
+
+The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 ## Example prompts
 
@@ -47,7 +54,7 @@ Use SQL Schema when an agent must understand table names, column names, types, a
 | --- | --- | --- |
 | Schema output includes too much noise | System tables or broad schemas are included. | Turn off **Include System Tables** and add a **Table Filter**. |
 | The agent cannot see relationships | Metadata permissions are missing or relationships are not defined as foreign keys. | Grant metadata visibility or document the relationship in agent instructions. |
-| The action type is not visible as a separate card | `sql_schema` is hidden from the create-action UI. | Use the combined SQL configuration panel and choose **Schema Plugin**. |
+| The action type is not visible as a separate card | `sql_schema` is hidden from the create-action UI. | Use SQL Database for new actions; existing records still open for compatibility. |
 
 ## Related
 

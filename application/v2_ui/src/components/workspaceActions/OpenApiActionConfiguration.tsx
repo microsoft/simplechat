@@ -3,19 +3,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GlassButton } from '../ui/primitives';
 import { EditorGroup, EditorPanel, EditorRow } from '../workspace/EditorLayout';
+import { ActionConnectionCheck, useConnectorRequest } from './ActionConnectionCheck';
 import { ActionField, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
-import { connectorTestScope, type ActionConnectorProps } from '../../lib/workspaceActionTypes';
+import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
 import { EDITOR_SECRET_MASK, type ActionConfiguration } from '../../lib/workspaceAuthoring';
 import {
     applyOpenApiSpecification, changeConnectorAuthMethod, changeOpenApiBasicCredential,
-    connectorAuthMethod, connectorFeedback, connectorIdentityOptions, connectorObject,
-    connectorSecretField, connectorText, connectorUrlError, OPENAPI_AUTH_OPTIONS,
-    OPENAPI_SOURCE_OPTIONS, openApiBasicCredentials, openApiInformation, openApiSourceDraft, processOpenApiText,
-    selectConnectorIdentity, testApiConnector, updateConnectorFields, updateOpenApiSourceDraft,
-    uploadOpenApiSpecification, validateApiConnector, validateConnectorAuthentication,
+    connectorAuthMethod, connectorIdentityOptions, connectorObject,
+    connectorSecretField, connectorStrings, connectorText, connectorUrlError, OPENAPI_AUTH_OPTIONS,
+    OPENAPI_SOURCE_OPTIONS, openApiBaseUrlOverrideEnabled, openApiBasicCredentials, openApiInformation, openApiOperationKey,
+    openApiSourceDraft, openApiSpecificationBaseUrl, processOpenApiText,
+    selectConnectorIdentity, updateConnectorFields, updateOpenApiSourceDraft,
+    uploadOpenApiSpecification, validateConnectorAuthentication,
     validateConnectorConfiguration,
     type ApiConnector, type ConnectorFeedback, type OpenApiUploadResult,
 } from '../../lib/workspaceActionConnectors';
+
+export { ConnectorFeedbackPanel, useConnectorRequest } from './ActionConnectionCheck';
+export { testWorkspaceAction } from '../../lib/workspaceActionServices';
 
 export function useConnectorValidity(props: ActionConnectorProps, key: string, message: string | null) {
     const callback = useRef(props.onValidityChange);
@@ -25,98 +30,6 @@ export function useConnectorValidity(props: ActionConnectorProps, key: string, m
         callback.current(key, readOnly ? null : message);
         return () => callback.current(key, null);
     }, [key, message, readOnly]);
-}
-
-export function useConnectorRequest(props: ActionConnectorProps) {
-    const latest = useRef(props);
-    latest.current = props;
-    const activeRequest = useRef<{
-        controller: AbortController;
-        draft: ActionConfiguration;
-        original: ActionConnectorProps['original'];
-    } | null>(null);
-    const [busy, setBusy] = useState<string | null>(null);
-    const [feedback, setFeedback] = useState<{ value: ConnectorFeedback; draft: ActionConfiguration } | null>(null);
-
-    useEffect(() => {
-        const active = activeRequest.current;
-        if (active && (active.draft !== props.draft || active.original !== props.original || props.readOnly || props.original?.read_only)) {
-            active.controller.abort();
-            activeRequest.current = null;
-            setBusy(null);
-        }
-    }, [props.draft, props.original, props.readOnly]);
-    useEffect(() => () => {
-        activeRequest.current?.controller.abort();
-        activeRequest.current = null;
-    }, []);
-
-    async function run<T>(
-        label: string,
-        operation: (signal: AbortSignal) => Promise<T>,
-        apply?: (draft: ActionConfiguration, result: T) => ActionConfiguration,
-        describe?: (result: T) => ConnectorFeedback,
-    ): Promise<T | undefined> {
-        const snapshot = latest.current;
-        if (snapshot.readOnly || snapshot.original?.read_only) return;
-        activeRequest.current?.controller.abort();
-        const request = new AbortController();
-        activeRequest.current = { controller: request, draft: snapshot.draft, original: snapshot.original };
-        setBusy(label);
-        try {
-            const response = await operation(request.signal);
-            if (request.signal.aborted || latest.current.draft !== snapshot.draft ||
-                latest.current.original !== snapshot.original || latest.current.readOnly) return;
-            const value = describe ? describe(response) : connectorFeedback(response);
-            let resultDraft = snapshot.draft;
-            if (value.success && apply) {
-                resultDraft = apply(snapshot.draft, response);
-                snapshot.onChange((current) => current === snapshot.draft ? resultDraft : current);
-            }
-            setFeedback({ value, draft: resultDraft });
-            return value.success ? response : undefined;
-        } catch (error) {
-            if (!request.signal.aborted && latest.current.draft === snapshot.draft &&
-                latest.current.original === snapshot.original) {
-                setFeedback({ value: connectorFeedback(error), draft: snapshot.draft });
-            }
-            return undefined;
-        } finally {
-            if (activeRequest.current?.controller === request) {
-                activeRequest.current = null;
-                setBusy(null);
-            }
-        }
-    }
-    return { busy, feedback: feedback?.value ?? null, stale: Boolean(feedback && feedback.draft !== props.draft), run };
-}
-
-export function ConnectorFeedbackPanel({ feedback, stale }: { feedback: ConnectorFeedback | null; stale?: boolean }) {
-    if (!feedback) return null;
-    const details = Object.entries(feedback.details).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value));
-    return (
-        <div role={feedback.success ? 'status' : 'alert'} aria-live="polite"
-            className={`alert rounded-xl border p-3 text-sm ${feedback.success
-                ? 'alert-success border-edge bg-surface-2 text-text-1'
-                : 'alert-danger border-danger/30 bg-danger-soft text-danger'}`}>
-            <p className="break-words">{feedback.message}</p>
-            {stale ? <p className="mt-1 text-xs text-text-3">This result describes an earlier draft. Run the command again to check your current configuration.</p> : null}
-            {feedback.errors.length ? <ul className="mt-2 list-disc space-y-1 pl-5">
-                {feedback.errors.map((message, index) => <li key={index} className="break-words">{message}</li>)}
-            </ul> : null}
-            {feedback.warnings.length ? <div className="alert alert-warning mt-2 rounded-lg bg-warn-soft p-2 text-warn">
-                <p className="font-medium">Warnings</p>
-                <ul className="list-disc space-y-1 pl-5">
-                    {feedback.warnings.map((message, index) => <li key={index} className="break-words">{message}</li>)}
-                </ul>
-            </div> : null}
-            {details.length ? <dl className="mt-2 grid gap-1 text-xs text-text-2">
-                {details.map(([name, value]) => <div key={name} className="flex flex-wrap gap-x-2">
-                    <dt className="font-medium">{name.replaceAll('_', ' ')}:</dt><dd className="break-all">{String(value)}</dd>
-                </div>)}
-            </dl> : null}
-        </div>
-    );
 }
 
 export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps & { kind: ApiConnector }) {
@@ -163,6 +76,40 @@ export function ConnectorIdentitySelect({ kind, ...props }: ActionConnectorProps
     );
 }
 
+function updateOpenApiAllowedOperations(draft: ActionConfiguration, selectedKeys: string[], allKeys: string[]): ActionConfiguration {
+    const additionalFields = { ...draft.additionalFields };
+    const uniqueKeys = [...new Set(selectedKeys)].filter((key) => allKeys.includes(key));
+    if (uniqueKeys.length === allKeys.length) {
+        delete additionalFields.allowed_operations;
+        delete additionalFields.openapi_operations_disabled_all;
+    } else if (!uniqueKeys.length) {
+        additionalFields.allowed_operations = [];
+        additionalFields.openapi_operations_disabled_all = true;
+    } else {
+        additionalFields.allowed_operations = uniqueKeys;
+        delete additionalFields.openapi_operations_disabled_all;
+    }
+    return { ...draft, additionalFields };
+}
+
+function clearOpenApiSpecification(draft: ActionConfiguration): ActionConfiguration {
+    const additionalFields = { ...draft.additionalFields };
+    const keepOverride = openApiBaseUrlOverrideEnabled(draft);
+    delete additionalFields.openapi_spec_content;
+    delete additionalFields.openapi_source_type;
+    delete additionalFields.allowed_operations;
+    delete additionalFields.openapi_operations_disabled_all;
+    if (!keepOverride) {
+        additionalFields.base_url = '';
+        additionalFields.base_url_override = false;
+    }
+    return updateOpenApiSourceDraft({
+        ...draft,
+        endpoint: keepOverride ? draft.endpoint : '',
+        additionalFields,
+    }, { filename: '', text: '{}', pending: false });
+}
+
 export function OpenApiActionConfiguration(props: ActionConnectorProps) {
     const { draft, original, onChange, errors } = props;
     const readOnly = props.readOnly || Boolean(original?.read_only);
@@ -170,11 +117,31 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
     const source = useMemo(() => openApiSourceDraft(draft), [draft._openApiSourceDraft, specContent]);
     const information = useMemo(() => openApiInformation(specContent), [specContent]);
     const specJson = useMemo(() => JSON.stringify(specContent, null, 2), [specContent]);
+    const specBaseUrl = useMemo(() => openApiSpecificationBaseUrl(specContent), [specContent]);
+    const baseUrlOverride = openApiBaseUrlOverrideEnabled(draft, specContent);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
     const localErrors = validateConnectorConfiguration(draft, 'openapi');
-    const { busy, feedback, stale, run } = useConnectorRequest(props);
+    const { busy, run } = useConnectorRequest(props);
     const [operationSearch, setOperationSearch] = useState('');
     const [operationLimit, setOperationLimit] = useState(30);
     useConnectorValidity(props, 'openapi-configuration', Object.values(localErrors).join(' ') || null);
+    const operationKeys = useMemo(() => information.operations.map(openApiOperationKey), [information.operations]);
+    const storedAllowedOperations = connectorStrings(draft.additionalFields.allowed_operations);
+    const operationsDisabledAll = draft.additionalFields.openapi_operations_disabled_all === true;
+    const enabledOperationKeys = useMemo(() => {
+        if (operationsDisabledAll) return new Set<string>();
+        if (storedAllowedOperations.length) return new Set(storedAllowedOperations);
+        return new Set(operationKeys);
+    }, [operationKeys, operationsDisabledAll, storedAllowedOperations]);
+    const enabledOperationCount = operationKeys.filter((key) => enabledOperationKeys.has(key)).length;
+    const baseUrlValue = connectorText(draft.endpoint || draft.additionalFields.base_url) || specBaseUrl;
+
+    useEffect(() => {
+        if (readOnly || typeof draft.additionalFields.base_url_override === 'boolean' || !baseUrlOverride) return;
+        onChange((current) => current === draft
+            ? { ...current, additionalFields: { ...current.additionalFields, base_url_override: true } }
+            : current);
+    }, [baseUrlOverride, draft, onChange, readOnly]);
 
     const filteredOperations = information.operations.filter((operation) =>
         `${operation.method} ${operation.path} ${operation.id} ${operation.summary} ${operation.tags.join(' ')}`
@@ -205,14 +172,26 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                 <ActionField id="openapi-file" label="OpenAPI specification file"
                     help="JSON, YAML, or YML, up to 5 MB. Validation uses the same server-side scanner as the classic editor. A failed import leaves the current specification unchanged."
                     error={errors['additionalFields.openapi_spec_content'] || (!draft.additionalFields.openapi_spec_content ? localErrors['additionalFields.openapi_spec_content'] : undefined)}>
-                    <input id="openapi-file" type="file" accept=".json,.yaml,.yml" className={ACTION_INPUT_CLASS}
+                    <input ref={fileInputRef} id="openapi-file" type="file" accept=".json,.yaml,.yml" className="visually-hidden"
                         disabled={readOnly || Boolean(busy)} aria-describedby="openapi-file-help"
                         onChange={(event) => {
                             const file = event.target.files?.[0];
                             event.target.value = '';
                             if (file) void run('Validating specification…', (signal) => uploadOpenApiSpecification(file, file.name, signal), applyUpload, uploadFeedback);
                         }} />
-                    {source.filename ? <p className="mt-2 break-words text-xs text-text-3">Last imported: {source.filename}</p> : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy)}
+                            onClick={() => fileInputRef.current?.click()}>
+                            {source.filename ? 'Replace file' : 'Choose OpenAPI file'}
+                        </GlassButton>
+                        {source.filename ? <GlassButton type="button" variant="ghost" disabled={readOnly || Boolean(busy)}
+                            onClick={() => onChange((current) => clearOpenApiSpecification(current))}>
+                            Remove file
+                        </GlassButton> : null}
+                    </div>
+                    {source.filename ? <p className="mt-2 break-words text-sm text-text-2">
+                        Selected specification: <span className="font-medium text-text-1">{source.filename}</span>
+                    </p> : <p className="mt-2 text-sm text-text-3">No OpenAPI file selected.</p>}
                     <p className="mt-2 text-xs text-text-3">
                         For a specification hosted at a URL, download the JSON or YAML file, then upload it here.
                         SimpleChat does not fetch remote specifications.
@@ -253,15 +232,40 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                 </div>
             )}
             <ActionField id="openapi-base-url" label="API base URL" required
-                help="The URL against which the imported operations run. Changing it does not fetch or replace the specification."
+                help="By default this comes from the imported specification's servers entry. Turn on Override base URL only when the deployed API is hosted somewhere else."
                 error={errors.endpoint || localErrors.endpoint}>
-                <input id="openapi-base-url" type="url" value={draft.endpoint || connectorText(draft.additionalFields.base_url)}
-                    disabled={readOnly} className={ACTION_INPUT_CLASS} placeholder="https://api.example.com"
+                <div className="space-y-3">
+                    <label className="flex items-center gap-2 text-sm text-text-2">
+                        <input type="checkbox" className="form-check-input" checked={baseUrlOverride} disabled={readOnly}
+                            onChange={(event) => {
+                                const enabled = event.target.checked;
+                                onChange((current) => {
+                                    const currentSpecBaseUrl = openApiSpecificationBaseUrl(current.additionalFields.openapi_spec_content);
+                                    const currentBaseUrl = connectorText(current.endpoint || current.additionalFields.base_url);
+                                    const baseUrl = enabled ? currentBaseUrl : currentSpecBaseUrl;
+                                    return {
+                                        ...current,
+                                        endpoint: baseUrl,
+                                        additionalFields: { ...current.additionalFields, base_url: baseUrl, base_url_override: enabled },
+                                    };
+                                });
+                            }} />
+                        <span>Override base URL</span>
+                    </label>
+                    <input id="openapi-base-url" type="url" value={baseUrlValue}
+                    readOnly={!baseUrlOverride} disabled={readOnly} className={ACTION_INPUT_CLASS} placeholder="https://api.example.com"
                     aria-invalid={Boolean(errors.endpoint || localErrors.endpoint)} aria-describedby="openapi-base-url-help openapi-base-url-error"
                     onChange={(event) => {
                         const endpoint = event.target.value;
-                        onChange((current) => ({ ...current, endpoint, additionalFields: { ...current.additionalFields, base_url: endpoint } }));
+                        onChange((current) => ({
+                            ...current,
+                            endpoint,
+                            additionalFields: { ...current.additionalFields, base_url: endpoint, base_url_override: true },
+                        }));
                     }} />
+                    {!baseUrlOverride && specBaseUrl ? <p className="text-xs text-text-3">Using the specification server: <span className="break-all font-mono">{specBaseUrl}</span></p> : null}
+                    {!baseUrlOverride && !specBaseUrl ? <p className="text-xs text-warn">The specification does not declare a usable server URL. Turn on Override base URL to enter one before saving.</p> : null}
+                </div>
             </ActionField>
             {information.servers.length ? <EditorRow heading="Servers declared in the specification">
                 <ul className="space-y-2">
@@ -272,7 +276,7 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                         </div>
                         {!readOnly ? <GlassButton type="button" size="sm" variant="subtle" disabled={Boolean(connectorUrlError(server.url))}
                             onClick={() => onChange((current) => ({
-                                ...current, endpoint: server.url, additionalFields: { ...current.additionalFields, base_url: server.url },
+                                ...current, endpoint: server.url, additionalFields: { ...current.additionalFields, base_url: server.url, base_url_override: false },
                             }))}>Use this base URL</GlassButton> : null}
                     </li>)}
                 </ul>
@@ -286,17 +290,43 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                             setOperationSearch(event.target.value); setOperationLimit(30);
                         }} />
                 </ActionField>
-                <p className="text-xs text-text-3">{filteredOperations.length} matching operations. This is a read-only description, not an operation runner.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                    <GlassButton type="button" size="sm" variant="subtle" disabled={readOnly || !operationKeys.length}
+                        onClick={() => onChange((current) => updateOpenApiAllowedOperations(current, operationKeys, operationKeys))}>
+                        Enable all
+                    </GlassButton>
+                    <GlassButton type="button" size="sm" variant="ghost" disabled={readOnly || !operationKeys.length}
+                        onClick={() => onChange((current) => updateOpenApiAllowedOperations(current, [], operationKeys))}>
+                        Disable all
+                    </GlassButton>
+                    <p className="text-xs text-text-3">
+                        {enabledOperationCount} of {operationKeys.length} operations enabled. Empty saved allow-lists mean all operations for backward compatibility, so saving is blocked if you disable every operation.
+                    </p>
+                </div>
+                {localErrors['additionalFields.allowed_operations'] ? <p role="alert" className="text-sm text-danger">{localErrors['additionalFields.allowed_operations']}</p> : null}
+                <p className="text-xs text-text-3">{filteredOperations.length} matching operations. Enable switches control which functions agents can see and call.</p>
                 <div className="space-y-2">
-                    {filteredOperations.slice(0, operationLimit).map((operation) => <details key={`${operation.method}:${operation.path}`} className="rounded-lg border border-edge bg-surface-1 p-3">
+                    {filteredOperations.slice(0, operationLimit).map((operation) => <details key={operation.key} className="rounded-lg border border-edge bg-surface-1 p-3">
                         <summary className="cursor-pointer break-words text-sm text-text-1">
-                            <span className="mr-2 font-mono font-semibold">{operation.method}</span>
-                            <span className="break-all font-mono text-xs">{operation.path}</span>
-                            {operation.summary ? <span className="ml-2">{operation.summary}</span> : null}
-                            {operation.deprecated ? <span className="ml-2 text-xs text-warn">Deprecated</span> : null}
+                            <span className="inline-flex min-w-0 flex-wrap items-center gap-2">
+                                <span className="font-mono font-semibold">{operation.method}</span>
+                                <span className="break-all font-mono text-xs">{operation.path}</span>
+                                {operation.summary ? <span>{operation.summary}</span> : null}
+                                {operation.deprecated ? <span className="text-xs text-warn">Deprecated</span> : null}
+                            </span>
                         </summary>
                         <div className="mt-3 space-y-3 text-xs text-text-2">
-                            <p>Operation ID: <span className="break-all font-mono">{operation.id || 'Generated by the connector'}</span></p>
+                            <label className="flex items-center gap-2 text-sm text-text-1">
+                                <input type="checkbox" className="form-check-input" checked={enabledOperationKeys.has(operation.key)} disabled={readOnly}
+                                    onChange={(event) => {
+                                        const selected = new Set(operationKeys.filter((key) => enabledOperationKeys.has(key)));
+                                        if (event.target.checked) selected.add(operation.key);
+                                        else selected.delete(operation.key);
+                                        onChange((current) => updateOpenApiAllowedOperations(current, [...selected], operationKeys));
+                                    }} />
+                                <span>{enabledOperationKeys.has(operation.key) ? 'Enabled' : 'Disabled'}</span>
+                            </label>
+                            <p>Operation key: <span className="break-all font-mono">{operation.key}</span>{operation.id ? null : ' (generated by the connector)'}</p>
                             {operation.description ? <p className="whitespace-pre-wrap break-words">{operation.description}</p> : null}
                             {operation.tags.length ? <p>Tags: {operation.tags.join(', ')}</p> : null}
                             {operation.parameters.length ? <ul className="space-y-2">
@@ -317,22 +347,6 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                     <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-surface-1 p-3 text-xs text-text-3">{specJson}</pre>
                 </EditorGroup>
             </EditorPanel> : null}
-            <EditorPanel title="Validate and test"
-                description="Validation checks the manifest without running it. Connection testing parses the specification and probes the authenticated base URL; it does not invoke an individual API operation.">
-                <div className="flex flex-wrap items-center gap-2">
-                    <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal, connectorTestScope(props)))}>
-                        Validate OpenAPI configuration
-                    </GlassButton>
-                    <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal, connectorTestScope(props)))}>
-                        Test OpenAPI connection
-                    </GlassButton>
-                    {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}
-                </div>
-                {readOnly ? <p className="text-xs text-text-3">Provided actions are read-only. Import, validation, and connection testing are disabled.</p> : null}
-                <ConnectorFeedbackPanel feedback={feedback} stale={stale} />
-            </EditorPanel>
         </div>
     );
 }
@@ -346,7 +360,9 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
     const basic = openApiBasicCredentials(draft);
     const specContent = draft.additionalFields.openapi_spec_content;
     const information = useMemo(() => openApiInformation(specContent), [specContent]);
+    const source = useMemo(() => openApiSourceDraft(draft), [draft._openApiSourceDraft, specContent]);
     const localErrors = validateConnectorAuthentication(draft, 'openapi', original);
+    const configurationErrors = validateConnectorConfiguration(draft, 'openapi');
     useConnectorValidity(props, 'openapi-authentication', Object.values(localErrors).join(' ') || null);
     const location = connectorText(draft.additionalFields.api_key_location ?? draft.auth.location ?? 'header');
     const usernameMasked = draft.auth.username === EDITOR_SECRET_MASK || draft.auth.identity === EDITOR_SECRET_MASK;
@@ -431,6 +447,9 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
                 </div>)}
             </EditorPanel> : null}
             {Object.keys(connectorObject(draft.additionalFields.openapi_authentication)).length ? <p className="text-xs text-text-3">Legacy authentication analysis is retained in additional fields.</p> : null}
+            {Object.values(configurationErrors).length ? <p className="text-xs text-warn">{Object.values(configurationErrors).join(' ')}</p> : null}
+            <ActionConnectionCheck props={props} kind="openapi" disabled={source.pending}
+                configurationError={Object.values(configurationErrors).length > 0} />
         </div>
     );
 }

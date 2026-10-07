@@ -35,7 +35,7 @@ Use Databricks when governed analytics data lives in Databricks and users should
 5. Choose **Authentication Method**: **Personal Access Token**, bearer token, **Service Principal**, or **Managed Identity**.
 6. Fill **Token** or **Client ID**, **Client Secret**, and **Tenant ID** when those auth modes are selected, or choose **Reusable Identity**.
 7. Set **Max Rows**, **Timeout (seconds)**, and **Wait Timeout (seconds)**.
-8. Use **Test Connection**.
+8. Use the connection check in **Authentication**.
 
 ## Example prompts
 
@@ -51,9 +51,15 @@ Use Databricks when governed analytics data lives in Databricks and users should
 | Authentication fails | Token, service principal, or managed identity lacks workspace/warehouse access. | Grant Databricks SQL permissions and retest. |
 | Long queries fail | Timeout or wait timeout is too low. | Tune the SQL or raise **Timeout** and **Wait Timeout** within limits. |
 
+
+## V2 catalogue behavior
+
+The action catalogue now de-duplicates Databricks entries by action type, so new actions show one Databricks SQL Warehouse connector. The legacy `databricks_table` type is hidden from new-action creation but existing actions of that type remain editable for review and migration.
+
+Connection testing appears in **Authentication**, after the selected Databricks credential. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
+
 ## Related
 
 - [SQL Query](../sql-query/)
 - [Snowflake](../snowflake/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-

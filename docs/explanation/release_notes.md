@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.276)**
+
+#### New Features
+
+*   **Action Configuration Pane Cleanup**
+    *   The V2 action editor now hides empty configuration sections, removes ad hoc custom fields, keeps unknown legacy values in Advanced JSON, and moves connection checks into Authentication where credentials are visible.
+    *   Action-specific configuration now reflects the actual supported settings: Document Search scopes and summary targets, Microsoft 365 capability switches and read-only Graph endpoint, OpenAPI spec-derived base URL and operation switches, MCP server templates and tool fingerprint approval, and Yamcs reverse proxy authentication.
+    *   (Ref: `ActionEditorPage.tsx`, `ActionConfigurationFields.tsx`, `ActionAuthentication.tsx`, `DocumentSearchActionConfiguration.tsx`, `McpActionConfiguration.tsx`, `OpenApiActionConfiguration.tsx`, [Action Configuration Pane Cleanup](features/ACTION_CONFIGURATION_PANE_CLEANUP.md))
+
+#### Bug Fixes
+
+*   **Action Catalogue Deduplication and Legacy Type Hiding**
+    *   Databricks no longer appears multiple times in the new-action picker, SQL actions display as SQL Database with schema discovery included, and legacy/internal-only types are hidden from new-action creation while existing actions remain editable.
+    *   (Ref: `route_backend_plugins.py`, `functions_workspace_authoring.py`, action reference docs)
+
+#### User Interface Enhancements
+
+*   **Safer Action Validation and Review Badges**
+    *   MCP actions now require discovery approval before saving new or changed server manifests, runtime calls block changed tools, and Actions/Agents lists flag drift with a "Tools changed — review" badge.
+    *   OpenAPI actions show the chosen spec file name, offer explicit operation enablement, and reject disabled operations before an HTTP request is sent.
+    *   (Ref: `functions_mcp_tool_pinning.py`, `mcp_plugin_factory.py`, `openapi_plugin.py`, `ActionsSection.tsx`, `AgentsSection.tsx`)
+
 ### **(v0.261.275)**
 
 #### New Features
