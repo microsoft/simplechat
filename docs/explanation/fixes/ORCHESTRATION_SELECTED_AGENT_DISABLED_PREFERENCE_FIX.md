@@ -1,8 +1,8 @@
 # Orchestration Selected Agent With Agents Turned Off Fix
 
-**Version: 0.261.288**
+**Version: 0.261.289**
 
-Fixed in version: **0.261.288**, recorded in
+Fixed in version: **0.261.289**, recorded in
 `application/single_app/config.py`.
 
 ## Issue
@@ -80,7 +80,7 @@ What doesn't change:
 | File | Change |
 | --- | --- |
 | `application/single_app/functions_orchestration_external_sources.py` | Narrow the agent catalog to the run's picked agent and honour the pick in the capability check. |
-| `application/single_app/config.py` | Version `0.261.288`. |
+| `application/single_app/config.py` | Version `0.261.289`. |
 | `functional_tests/test_orchestration_seeded_agent_preference_fix.py` | New regression test. |
 | `docs/admin/orchestration.md` | Picked agents run while the agents setting is off; troubleshooting row. |
 | `docs/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md` | Picked-agent catalog narrowing in the provider contract. |
