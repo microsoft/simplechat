@@ -41,6 +41,7 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
+import { ClassificationCategoriesEditor } from '../components/admin/ClassificationCategoriesEditor';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { ControlCenterAccessMatrix } from '../components/admin/ControlCenterAccessMatrix';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
@@ -72,6 +73,8 @@ import { GlobalAgentsManager } from '../components/admin/GlobalAgentsManager';
 import { RefreshScheduleStatus } from '../components/admin/RefreshScheduleStatus';
 import { RelatedSectionLink } from '../components/admin/RelatedSectionLink';
 import { RestartStatus } from '../components/admin/RestartStatus';
+import { RetentionResetDefaults, RetentionRunNow } from '../components/admin/RetentionOperations';
+import { RetentionSchedule } from '../components/admin/RetentionSchedule';
 import { SectionGuide, hasSectionGuide } from '../components/admin/guides/sectionGuides';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
@@ -781,6 +784,18 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
     /**
+     * Fold values the server changed outside a save into the page's copy of the settings.
+     *
+     * A retention run writes its own last and next run. Without this the schedule beside
+     * it would keep showing the times from when the page was opened.
+     */
+    const mergeStoredSettings = useCallback((partial: Json) => {
+        setData((current) =>
+            current ? { ...current, settings: { ...current.settings, ...partial } } : current,
+        );
+    }, []);
+
+    /**
      * Show a category from its first section.
      *
      * Every category shares one scroll pane, so changing the filter alone kept the offset
@@ -1247,6 +1262,53 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             origin={readSibling('front_door_url')}
                             label={field.label}
                             help={field.help}
+                        />
+                    );
+                case 'retention-schedule':
+                    return (
+                        <RetentionSchedule
+                            key={key}
+                            field={field}
+                            value={value}
+                            settings={settings}
+                            draft={draft}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                            onStoredSettingsChange={mergeStoredSettings}
+                        />
+                    );
+                case 'retention-reset-defaults':
+                    return (
+                        <RetentionResetDefaults
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                        />
+                    );
+                case 'retention-run-now':
+                    return (
+                        <RetentionRunNow
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                            onStoredSettingsChange={mergeStoredSettings}
+                            onOpenSection={goToSection}
+                        />
+                    );
+                case 'document-classification-categories':
+                    return (
+                        <ClassificationCategoriesEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
                         />
                     );
                 case 'control-center-refresh-schedule':

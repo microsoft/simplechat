@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.269
+Version: 0.261.272
 Implemented in: 0.261.047
 Operations described in full: 0.261.269
+Data Lifecycle added to the fully described groups in: 0.261.272
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -106,6 +107,7 @@ FULLY_DESCRIBED_GROUP_IDS = (
     "security",
     "agents-actions",
     "workspaces",
+    "data-lifecycle",
     "operations",
 )
 

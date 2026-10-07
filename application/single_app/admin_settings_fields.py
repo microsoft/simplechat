@@ -83,8 +83,8 @@ Beyond a field's type, five optional descriptors shape how a section reads:
     the switch on without naming the companion, so an API client gets the same
     result. A value named in the same save always wins.
 
-The Appearance, Agents & Actions, Chat, Knowledge, Operations, Workflow, Workspaces
-and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Operations, Workflow,
+Workspaces and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -113,6 +113,7 @@ letting it through to overwrite a stored credential.
 import copy
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from admin_settings_secret_utils import (
@@ -408,6 +409,68 @@ KEY_VAULT_REMINDER_MAX_SCAN_SECONDS = 86400
 KEY_VAULT_REMINDER_DEFAULT_ADMIN_ROLES = ["Admin"]
 
 ACCESS_DENIED_MESSAGE_MAX_LENGTH = 2000
+
+# The periods the server-rendered Retention pane offers for each organization
+# default, in its order and with its wording. Stored as strings because that is what
+# the classic form posts and what resolve_retention_value reads. The Data Lifecycle
+# parity test compares these with the pane option for option.
+RETENTION_PERIOD_OPTIONS = [
+    {"value": "none", "label": "No automatic deletion"},
+    {"value": "1", "label": "1 day"},
+    {"value": "2", "label": "2 days"},
+    {"value": "3", "label": "3 days"},
+    {"value": "4", "label": "4 days"},
+    {"value": "5", "label": "5 days"},
+    {"value": "6", "label": "6 days"},
+    {"value": "7", "label": "7 days (1 week)"},
+    {"value": "10", "label": "10 days"},
+    {"value": "14", "label": "14 days (2 weeks)"},
+    {"value": "21", "label": "21 days (3 weeks)"},
+    {"value": "30", "label": "30 days"},
+    {"value": "60", "label": "60 days"},
+    {"value": "90", "label": "90 days (3 months)"},
+    {"value": "180", "label": "180 days (6 months)"},
+    {"value": "365", "label": "365 days (1 year)"},
+    {"value": "730", "label": "730 days (2 years)"},
+]
+
+# Workspace types retention can be switched on for, in display order.
+RETENTION_SCOPES = ("personal", "group", "public")
+
+# Mirrors 'retention_policy_execution_hour' in functions_settings.py. The hour is UTC
+# and must be stored as an int: execute_retention_policy hands it straight to
+# datetime.replace(hour=...), which raises on a string and stops every run.
+RETENTION_EXECUTION_HOUR_DEFAULT = 2
+RETENTION_EXECUTION_HOUR_MIN = 0
+RETENTION_EXECUTION_HOUR_MAX = 23
+
+# Saving any of these reschedules the next retention run, as the classic form does.
+RETENTION_SCHEDULE_KEYS = (
+    "enable_retention_policy_personal",
+    "enable_retention_policy_group",
+    "enable_retention_policy_public",
+    "retention_policy_execution_hour",
+)
+
+# The schedule and the run and reset actions only mean something while at least one
+# workspace type has retention on.
+RETENTION_ANY_SCOPE_ENABLED = {
+    "any_of": [
+        {"key": f"enable_retention_policy_{scope}", "equals": True}
+        for scope in RETENTION_SCOPES
+    ]
+}
+
+# A category is shown as a badge on documents and conversations, so its label is kept
+# to badge length. The classic form sets no bound; this matches an external link label.
+DOCUMENT_CLASSIFICATION_LABEL_MAX_LENGTH = 80
+
+# Mirrors the 'document_classification_categories' default in functions_settings.py.
+DOCUMENT_CLASSIFICATION_DEFAULT_CATEGORIES = [
+    {"label": "None", "color": "#808080"},
+    {"label": "N/A", "color": "#808080"},
+    {"label": "Pending", "color": "#0000FF"},
+]
 
 
 ADMIN_SETTINGS_FIELDS = {
@@ -6056,6 +6119,206 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_custom_rate_limit_message", "equals": True},
         },
     ],
+    # ------------------------------------------------------------------
+    # Data Lifecycle
+    #
+    # What happens to user data over time: retention deletes it, classification
+    # labels it, and archiving decides whether a deletion can still be reviewed.
+    #
+    # Retention has no single switch. Each workspace type is switched on by itself
+    # and carries its own pair of organization defaults, which the server-rendered
+    # pane only reveals once that type is on; declaring the defaults as dependents
+    # of their type's switch gives V2 the same reveal and nests them beneath it.
+    #
+    # The run hour and the two actions are components. The hour is stored as an int,
+    # which a generic select cannot produce, and the actions call
+    # /api/admin/retention-policy/* rather than saving a value.
+    # ------------------------------------------------------------------
+    "retention-policy-section": [
+        {
+            "key": "enable_retention_policy_personal",
+            "type": "switch",
+            "label": "Personal workspaces",
+            "help": (
+                "Each user chooses how long their own conversations and documents "
+                "are kept. Conversations idle and documents unchanged for longer "
+                "than that are deleted. Until a user chooses, the defaults below "
+                "apply."
+            ),
+            "default": False,
+        },
+        {
+            "key": "default_retention_conversation_personal",
+            "type": "select",
+            "label": "Default conversation retention",
+            "help": "Applies to every user who has not chosen their own period.",
+            "default": "none",
+            "options": RETENTION_PERIOD_OPTIONS,
+            "depends_on": {"key": "enable_retention_policy_personal", "equals": True},
+        },
+        {
+            "key": "default_retention_document_personal",
+            "type": "select",
+            "label": "Default document retention",
+            "help": "Applies to every user who has not chosen their own period.",
+            "default": "none",
+            "options": RETENTION_PERIOD_OPTIONS,
+            "depends_on": {"key": "enable_retention_policy_personal", "equals": True},
+        },
+        {
+            "key": "enable_retention_policy_group",
+            "type": "switch",
+            "label": "Group workspaces",
+            "help": (
+                "Group owners and admins choose how long the group's conversations "
+                "and documents are kept, including members' own chats grounded in "
+                "the group. Until they choose, the defaults below apply."
+            ),
+            "default": False,
+        },
+        {
+            "key": "default_retention_conversation_group",
+            "type": "select",
+            "label": "Default conversation retention",
+            "help": "Applies to every group that has not chosen its own period.",
+            "default": "none",
+            "options": RETENTION_PERIOD_OPTIONS,
+            "depends_on": {"key": "enable_retention_policy_group", "equals": True},
+        },
+        {
+            "key": "default_retention_document_group",
+            "type": "select",
+            "label": "Default document retention",
+            "help": "Applies to every group that has not chosen its own period.",
+            "default": "none",
+            "options": RETENTION_PERIOD_OPTIONS,
+            "depends_on": {"key": "enable_retention_policy_group", "equals": True},
+        },
+        {
+            "key": "enable_retention_policy_public",
+            "type": "switch",
+            "label": "Public workspaces",
+            "help": (
+                "Workspace owners and admins choose how long the workspace's "
+                "documents are kept, and the conversations grounded in it. Until "
+                "they choose, the defaults below apply."
+            ),
+            "default": False,
+        },
+        {
+            "key": "default_retention_conversation_public",
+            "type": "select",
+            "label": "Default conversation retention",
+            "help": (
+                "Applies to every public workspace that has not chosen its own "
+                "period. A workspace's conversation period covers every chat "
+                "grounded in it, including other users' chats with its documents, "
+                "in place of their owner's personal period."
+            ),
+            "default": "none",
+            "options": RETENTION_PERIOD_OPTIONS,
+            "depends_on": {"key": "enable_retention_policy_public", "equals": True},
+        },
+        {
+            "key": "default_retention_document_public",
+            "type": "select",
+            "label": "Default document retention",
+            "help": "Applies to every public workspace that has not chosen its own period.",
+            "default": "none",
+            "options": RETENTION_PERIOD_OPTIONS,
+            "depends_on": {"key": "enable_retention_policy_public", "equals": True},
+        },
+        {
+            # Shows the stored last and next run beside the hour, and writes the hour
+            # into the draft as an int. Validated on save by
+            # _COMPONENT_VALUE_VALIDATORS.
+            "key": "retention_policy_execution_hour",
+            "type": "component",
+            "component": "retention-schedule",
+            "label": "Daily run time",
+            "help": (
+                "Retention runs once a day at this hour, in UTC. Saving a new hour, "
+                "or switching a workspace type on, reschedules the next run."
+            ),
+            "default": RETENTION_EXECUTION_HOUR_DEFAULT,
+            "depends_on": RETENTION_ANY_SCOPE_ENABLED,
+        },
+        {
+            "type": "component",
+            "component": "retention-reset-defaults",
+            "label": "Reset to the defaults",
+            "help": (
+                "Clears the period every user, group or public workspace of the "
+                "chosen types has set, so each follows the organization defaults "
+                "above. It cannot be undone; they would have to choose again."
+            ),
+            "depends_on": RETENTION_ANY_SCOPE_ENABLED,
+        },
+        {
+            "type": "component",
+            "component": "retention-run-now",
+            "label": "Run retention now",
+            "help": (
+                "Deletes everything already past its period straight away instead "
+                "of waiting for the daily run. Owners are told what was removed, "
+                "as they are after a scheduled run."
+            ),
+            "depends_on": RETENTION_ANY_SCOPE_ENABLED,
+        },
+    ],
+    "document-classification-section": [
+        {
+            "key": "enable_document_classification",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable document classification",
+            "help": (
+                "Users label each document with one of the categories below. The "
+                "label shows as a coloured badge on the document and on the "
+                "conversations that cite it, and documents can be filtered by it."
+            ),
+            "default": False,
+        },
+        {
+            # Writes document_classification_categories into the draft. Validated on
+            # save by _COMPONENT_VALUE_VALIDATORS. Required, so a section switched on
+            # with no categories reads as needing configuration: users would have
+            # nothing to choose from.
+            "key": "document_classification_categories",
+            "type": "component",
+            "component": "document-classification-categories",
+            "label": "Categories",
+            "help": (
+                "Offered in this order wherever a user picks one. Renaming or "
+                "removing a category does not change documents already labelled "
+                "with it."
+            ),
+            "default": DOCUMENT_CLASSIFICATION_DEFAULT_CATEGORIES,
+            "required": True,
+            "depends_on": {"key": "enable_document_classification", "equals": True},
+        },
+    ],
+    "conversation-archiving-section": [
+        {
+            "key": "enable_conversation_archiving",
+            "type": "switch",
+            "role": "capability",
+            "label": "Archive deleted conversations",
+            "help": (
+                "A deleted conversation and its messages are copied to the archive "
+                "before they are removed, and a single deleted message is hidden "
+                "rather than erased. Archived copies are not shown to users; they "
+                "are kept for compliance and audit review."
+            ),
+            "default": False,
+            "notice": (
+                "Retention follows this setting too: conversations past their period "
+                "are archived before they are removed. Documents are always deleted "
+                "permanently."
+            ),
+            "notice_level": "info",
+        },
+    ],
     "cosmos-maintenance-section": [
         {
             "key": "enable_app_maintenance",
@@ -6932,6 +7195,9 @@ LEGACY_FIELD_NAMES = {
     "inbound_mcp_allowed_client_app_entries": ["inbound_mcp_allowed_client_app_entries_json"],
     "inbound_mcp_allowed_tenant_entries": ["inbound_mcp_allowed_tenant_entries_json"],
     "inbound_mcp_allowed_source_entries": ["inbound_mcp_allowed_source_entries_json"],
+    # Same again for the classification categories, whose table script writes the
+    # list into a hidden JSON field; V2 edits the stored list directly.
+    "document_classification_categories": ["document_classification_categories_json"],
     # V1 names the auto-turnoff switches after the control rather than after the
     # stored key, which reads the other way round.
     "debug_logging_timer_enabled": ["enable_debug_logging_timer"],
@@ -7831,6 +8097,139 @@ def _apply_inbound_mcp_derivations(normalized, current_settings):
         )
 
 
+def _validate_retention_execution_hour(value):
+    """Return ``(hour, error)`` for the daily retention run hour.
+
+    The hour is stored as an int, because execute_retention_policy hands it to
+    ``datetime.replace(hour=...)``, which raises on a string. The classic form quietly
+    falls back to 2 AM for an out-of-range hour; refusing the value says so instead.
+    """
+    message = (
+        f"Choose an hour between {RETENTION_EXECUTION_HOUR_MIN} and "
+        f"{RETENTION_EXECUTION_HOUR_MAX}."
+    )
+    if isinstance(value, bool):
+        return None, message
+    if isinstance(value, int):
+        hour = value
+    elif isinstance(value, float) and value.is_integer():
+        hour = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"\s*\d{1,2}\s*", value):
+        hour = int(value)
+    else:
+        return None, message
+    if not RETENTION_EXECUTION_HOUR_MIN <= hour <= RETENTION_EXECUTION_HOUR_MAX:
+        return None, message
+    return hour, None
+
+
+def _normalize_document_classification_categories(value):
+    """Return ``(categories, error)`` for the document classification list.
+
+    Applies the checks the classic save handler does -- a list of objects, each with
+    a non-empty label and a colour -- and tightens two of them. The colour must be a
+    six-digit hex, because it is drawn as the badge background. Two categories may
+    not share a label, because a document stores the label rather than an id, so
+    once applied the two could never be told apart.
+    """
+    if not isinstance(value, list):
+        return None, "Expected a list of categories."
+
+    categories = []
+    first_use = {}
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            return None, f"Category {index} is not an object."
+
+        raw_label = item.get("label")
+        label = raw_label.strip() if isinstance(raw_label, str) else ""
+        if not label:
+            return None, f"Category {index} needs a label."
+        if len(label) > DOCUMENT_CLASSIFICATION_LABEL_MAX_LENGTH:
+            return None, (
+                f"Category {index}'s label is longer than "
+                f"{DOCUMENT_CLASSIFICATION_LABEL_MAX_LENGTH} characters."
+            )
+
+        raw_color = item.get("color")
+        color = raw_color.strip() if isinstance(raw_color, str) else ""
+        if not HEX_COLOR_PATTERN.match(color):
+            return None, f"Category {index} needs a hex colour such as #808080."
+
+        folded = label.casefold()
+        if folded in first_use:
+            return None, (
+                f'Categories {first_use[folded]} and {index} are both labelled '
+                f'"{label}". Each label must be unique.'
+            )
+        first_use[folded] = index
+        categories.append({"label": label, "color": color.lower()})
+
+    return categories, None
+
+
+# Component-backed keys that are saved through the settings PATCH. A component
+# normally owns its own persistence, so the type-driven path refuses a write to one;
+# these are the exceptions. Each validator returns ``(value, error)``, which is what
+# lets it refuse a value with a message -- the delegated normalizers below return a
+# value only and have no way to say no.
+_COMPONENT_VALUE_VALIDATORS = {
+    "retention_policy_execution_hour": _validate_retention_execution_hour,
+    "document_classification_categories": _normalize_document_classification_categories,
+}
+
+
+def compute_retention_next_run(hour, now=None):
+    """Return the next retention run at ``hour`` UTC, as an ISO timestamp.
+
+    The rule the classic save handler and execute_retention_policy both apply: today
+    at that hour, or tomorrow once the hour has passed.
+    """
+    current = now or datetime.now(timezone.utc)
+    next_run = current.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if next_run <= current:
+        next_run += timedelta(days=1)
+    return next_run.isoformat()
+
+
+def _apply_retention_schedule(normalized, current_settings, now=None):
+    """Reschedule the next retention run when a save changes what it depends on.
+
+    The classic form recomputes ``retention_policy_next_run`` on every save. Without the
+    same step, a workspace type switched on here leaves no next run at all, and the
+    scheduler treats retention as due and runs it within minutes rather than at the
+    chosen hour. Only a save that changes a scope switch or the hour reschedules, so an
+    unrelated save never moves a pending run; a missing next run is filled in whenever
+    one of those keys is saved.
+    """
+    submitted = [key for key in RETENTION_SCHEDULE_KEYS if key in normalized]
+    if not submitted:
+        return
+
+    changed = any(normalized[key] != current_settings.get(key) for key in submitted)
+    if not changed and current_settings.get("retention_policy_next_run"):
+        return
+
+    def merged(key, fallback):
+        if key in normalized:
+            return normalized[key]
+        stored = current_settings.get(key)
+        return fallback if stored is None else stored
+
+    enabled = any(
+        _coerce_bool(merged(f"enable_retention_policy_{scope}", False))
+        for scope in RETENTION_SCOPES
+    )
+    if not enabled:
+        normalized["retention_policy_next_run"] = None
+        return
+
+    hour, hour_error = _validate_retention_execution_hour(
+        merged("retention_policy_execution_hour", RETENTION_EXECUTION_HOUR_DEFAULT)
+    )
+    if hour_error:
+        hour = RETENTION_EXECUTION_HOUR_DEFAULT
+    normalized["retention_policy_next_run"] = compute_retention_next_run(hour, now)
 
 
 # Keys whose normalization already exists elsewhere. Reusing those functions is
@@ -8299,6 +8698,16 @@ def normalize_admin_settings_updates(updates, current_settings=None):
             normalized[key] = _DELEGATED_NORMALIZERS[key](value, field)
             continue
 
+        # Component-backed keys that are saved here, validated by a function that
+        # can refuse a value rather than coerce it.
+        if key in _COMPONENT_VALUE_VALIDATORS:
+            validated, validation_error = _COMPONENT_VALUE_VALIDATORS[key](value)
+            if validation_error:
+                errors[key] = validation_error
+            else:
+                normalized[key] = validated
+            continue
+
         if field is None:
             normalized[key] = value
             continue
@@ -8393,6 +8802,9 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         _apply_nested_paths(normalized, current)
         _apply_inbound_mcp_derivations(normalized, current)
         _apply_operations_derivations(normalized, current)
+        # Derived from the merged scope switches and hour, so it is written only once
+        # the whole save is known to be valid.
+        _apply_retention_schedule(normalized, current)
 
     return normalized, errors, warnings
 
