@@ -2,8 +2,8 @@
 # test_orchestration_seeded_agent_preference_fix.py
 """
 Functional test for an agent the user picked running while their agent preference is off.
-Version: 0.261.282
-Implemented in: 0.261.282
+Version: 0.261.288
+Implemented in: 0.261.288
 
 Picking an agent in the composer is itself the permission to use that agent, so planning
 and execution run it even while the user's general "Enable Agents" preference is off. The
@@ -80,7 +80,7 @@ def read(world, reader, output):
 
 
 def test_version_includes_seeded_agent_preference_fix():
-    assert_app_version_at_least("0.261.282")
+    assert_app_version_at_least("0.261.288")
 
 
 def test_fix_and_troubleshooting_docs_describe_the_fix():
@@ -88,9 +88,9 @@ def test_fix_and_troubleshooting_docs_describe_the_fix():
         fix_doc = handle.read()
     with open(ADMIN_DOC, encoding="utf-8") as handle:
         admin_doc = handle.read()
-    assert "Fixed in version: **0.261.282**" in fix_doc
+    assert "Fixed in version: **0.261.288**" in fix_doc
     assert "result_external_capability_unavailable" in fix_doc
-    assert "| Before 0.261.282, an Ask an agent step" in admin_doc
+    assert "| Before 0.261.288, an Ask an agent step" in admin_doc
     assert "ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX" in admin_doc
 
 

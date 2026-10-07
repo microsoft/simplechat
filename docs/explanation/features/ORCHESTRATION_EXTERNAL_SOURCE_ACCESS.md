@@ -9,7 +9,7 @@ roles of the signed-in session, as classic chat does, instead of reading
 Microsoft Graph on every call. Deep research can use its query and link planners
 again. See the [session identity fix](../fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md).
 
-**Updated in version: 0.261.282.** An agent the user picked for a run is checked
+**Updated in version: 0.261.288.** An agent the user picked for a run is checked
 against a catalog narrowed to that agent, and the user's `enable_agents`
 preference no longer blocks it. Before this, an Ask an agent step for a picked
 agent failed while the preference was off, even though planning and execution
