@@ -47,7 +47,7 @@ SOURCE = "route_backend_control_center.py"
 MODULE_LEVEL = {"enhance_group_with_activity", "_GroupChangeAnswer",
                 "GROUP_OWNERSHIP_CHANGED_MESSAGE", "GROUP_NO_LONGER_EXISTS_MESSAGE",
                 "GROUP_APPROVAL_CONFLICT_MESSAGE"}
-NESTED = {"api_update_group_status", "api_admin_add_group_member", "_execute_approved_action",
+NESTED = {"api_update_group_status", "_update_group_status", "api_admin_add_group_member", "_execute_approved_action",
           "_execute_take_ownership", "_execute_transfer_ownership"}
 CC_ADMIN = {"oid": "cc-admin", "roles": ["Admin"], "name": "Casey Control", "preferred_username": "cc.admin@example.test"}
 
@@ -135,7 +135,9 @@ def control_center_group_environment():
             "wraps": wraps, "session": session, "request": request, "jsonify": jsonify,
             "get_settings": env.get_settings, "debug_print": lambda *args, **kwargs: None,
         }
-        execute_functions("functions_authentication.py", {"login_required", "control_center_required"}, auth_namespace)
+        execute_functions("functions_authentication.py", {
+            "login_required", "control_center_required", "get_control_center_capabilities",
+        }, auth_namespace)
 
         blueprint = Blueprint("backend_control_center_groups", __name__)
         namespace = {
@@ -166,6 +168,7 @@ def control_center_group_environment():
             "TYPE_SUSPEND_USER": approvals_namespace["TYPE_SUSPEND_USER"],
             "TYPE_BLOCK_USER": approvals_namespace["TYPE_BLOCK_USER"],
             "CLIENTS": {},
+            "_control_center_group_snapshot_cache": {},
             "storage_account_group_documents_container_name": "group-documents",
         }
         tree = ast.parse((APP_ROOT / SOURCE).read_text(encoding="utf-8"))
