@@ -62,7 +62,7 @@ def test_cards_are_gated_by_their_capabilities():
         assert guard in preferences, f"{card} is not gated by {flag}"
         assert preferences.index(guard) < preferences.index(card), f"{card} appears outside its guard"
     assert 'id="voice-audio"' in preferences
-    assert 'id="data-privacy"' in preferences
+    assert 'id="memory-data"' in preferences
     # The old hard-coded voice list was replaced by the live voice catalogue.
     assert "TTS_VOICES" not in preferences
     return True

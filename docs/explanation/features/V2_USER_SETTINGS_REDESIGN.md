@@ -1,6 +1,7 @@
 # V2 User Settings Redesign
 
-**Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention)
+**Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention);
+**0.261.279** (fact memory and Microsoft 365)
 
 ## Overview
 
@@ -12,7 +13,8 @@ Profile page in stages:
 1. Layout (0.261.277).
 2. Completion sounds, spoken replies (voice, speed and auto-play), microphone permission,
    and personal retention (0.261.278).
-3. Later: fact memory, Microsoft 365 sharing, tutorials, and Latest Features.
+3. Fact memory workbench and Microsoft 365 sharing and workflows (0.261.279).
+4. Later: tutorials and Latest Features.
 
 Dependencies: the V2 React interface (`application/v2_ui`) and the user settings API
 (`/api/user/settings`).
@@ -42,7 +44,7 @@ Dependencies: the V2 React interface (`application/v2_ui`) and the user settings
 
 | Tab | Cards |
 | --- | --- |
-| Preferences | Grouped: Appearance (Text size, Conversation list), Chat (Conversation navigation), Voice and audio (Completion sounds, Spoken replies, Microphone), Notifications and alerts (Desktop notifications, Workflow alerts on this device), Data and privacy (Retention), Diagrams and charts (Diagrams, Charts) |
+| Preferences | Grouped: Appearance (Text size, Conversation list), Chat (Conversation navigation), Voice and audio (Completion sounds, Spoken replies, Microphone), Notifications and alerts (Desktop notifications, Workflow alerts on this device), Memory and data (Fact memory, Retention), Connected accounts (Microsoft 365 sharing, Chat connection, Workflow connection, Workflow authorizations), Diagrams and charts (Diagrams, Charts) |
 | Stats | Lifetime totals, four activity charts, Storage used, Account |
 | Groups / Public workspaces | Your groups / Your public workspaces |
 | Feedback | Summary, Your feedback (with Export CSV) |
@@ -67,6 +69,43 @@ Differences from the classic page:
   polls `/api/notifications/chat-completions` for replies finished in other tabs.
 - Auto-play reads a reply once it has finished. The classic page turns streaming off while
   auto-play is on; V2 keeps streaming.
+
+### Fact memory
+
+`components/settings/FactMemoryBench.tsx` replaces the classic Fact Memory card and its
+manager dialog with one workbench, using the same routes:
+
+| Action | Route |
+| --- | --- |
+| List, with the admin state and counts | `GET /api/profile/fact-memory` |
+| Add | `POST /api/profile/fact-memory` with `value` and `memory_type` |
+| Edit wording or type | `PUT /api/profile/fact-memory/<id>` |
+| Delete, after a confirmation dialog | `DELETE /api/profile/fact-memory/<id>` |
+
+- A memory is an **instruction** (applied to every reply) or a **fact** (recalled when
+  relevant).
+- The list is searchable, filterable by type, and ordered by last change.
+- The card is always shown, as on the classic page. The header badge reflects
+  `enable_fact_memory_plugin`; while it is off, memories can be managed but are not used.
+
+### Microsoft 365
+
+`components/settings/M365Cards.tsx` mirrors the classic "Microsoft 365 sharing and
+workflows" section (`static/js/profile/profile-m365.js`). Like the classic page it is not
+gated by a capability flag.
+
+| Card | Routes | Behaviour |
+| --- | --- | --- |
+| Microsoft 365 sharing | `GET`/`PATCH /api/m365/preferences`, `POST /api/m365/sources/<source>/revoke` | A sharing duration for Calendar, Email, OneDrive and SPO, and an extended-analysis choice for OneDrive and SPO. An unknown value from the server is refused rather than guessed. Saved with **Save**. Shows the browser timezone, which is not stored. |
+| Chat connection | `GET /api/m365/chat/connection`, `POST /api/m365/chat/connection/connect` | Status and saved sources. Reconnect uses the existing `connectMicrosoft365` popup flow, then re-reads the status. |
+| Workflow connection | `GET /api/m365/connections`, `POST /api/m365/connections/connect`, `POST /api/m365/connections/disconnect` | Account, tenant, cloud, sources and delegated permissions. Connect navigates to the sign-in URL only after `authorizationUrl()` validates it as HTTPS with no credentials. |
+| Workflow authorizations | `GET /api/m365/bindings`, `POST /api/m365/bindings/<id>/revoke` | Paged list using the classic Approvals wording. Pending and approved entries can be revoked. Links to Approvals. |
+
+- Every write sends `X-M365-CSRF-Token`. The token comes from the GET responses and is
+  refreshed and retried once when the server returns `m365_csrf_invalid`, as the classic
+  page does.
+- Revocations and disconnect go through one confirmation dialog. It states that history
+  already published to conversations is not removed. After a change, all four cards refresh.
 
 ### Violations visibility
 
@@ -97,6 +136,10 @@ collapse or expand it, and the **On this page** index to move between cards.
 - `functional_tests/test_v2_user_settings_audio_voice_retention.py`: card gating, writable
   keys, the cue catalogue, speed reaching the speech call, the reply listeners, no
   microphone prompt on load, and the retention route accepting `'default'`.
+- `functional_tests/test_v2_user_settings_memory_m365.py`: preference grouping, the fact
+  memory routes and confirmed delete, CSRF validation on every M365 write the cards make,
+  the CSRF retry, the classic choice labels, confirmed revocations, and validated sign-in
+  redirects.
 - Related fixes: [Feedback My Routes Filter Unpack Fix](../fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md)
   and [Personal Retention Default Value Fix](../fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md).
 
@@ -104,3 +147,6 @@ collapse or expand it, and the **On this page** index to move between cards.
 
 The index appears only when a tab has more than one card, so the Groups and Public
 workspaces tabs do not show it.
+
+The Microsoft 365 workflow sign-in returns to the classic Profile page
+(`/profile?m365_connection=connected`), because the callback route redirects there.

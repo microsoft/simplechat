@@ -45,7 +45,8 @@ export function m365Sources(values: unknown): M365Source[] {
     )))).sort();
 }
 
-function authorizationUrl(value: unknown): string {
+/** A Microsoft sign-in URL the browser may navigate to: HTTPS, with a host and no credentials. */
+export function authorizationUrl(value: unknown): string {
     if (typeof value !== 'string' || !value.trim()) throw new Error(INVALID_URL_MESSAGE);
     let target: URL;
     try {

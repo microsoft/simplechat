@@ -8,7 +8,7 @@
 // behaviour behind them.
 //
 // Cards are arranged in groups (Appearance, Chat, Voice and audio, Notifications and alerts,
-// Data and privacy, Diagrams and charts) so the page index on the right can list them the way
+// Memory and data, Connected accounts, Diagrams and charts) so the page index on the right can list them the way
 // Admin Settings does.
 
 import { useEffect, useSyncExternalStore } from 'react';
@@ -41,6 +41,8 @@ import { Toggle, Skeleton } from '../ui/primitives';
 import { SettingsCard, SettingsGroup } from './SettingsCard';
 import { CompletionAudioCard, MicrophoneCard, SpokenRepliesCard } from './VoiceAudioCards';
 import { RetentionCard } from './RetentionCard';
+import { FactMemoryBench } from './FactMemoryBench';
+import { M365Cards } from './M365Cards';
 import { VISUAL_STYLE_SETTING_KEYS } from '../../lib/blockVisualStyle';
 import {
     DEFAULT_VISUAL_STYLE,
@@ -408,15 +410,22 @@ export function PreferencesTab() {
                 </SettingsCard>
             </SettingsGroup>
 
-            {enabled('enable_retention_policy_personal') && (
-                <SettingsGroup
-                    id="data-privacy"
-                    label="Data and privacy"
-                    description="What happens to your own conversations and documents over time."
-                >
-                    <RetentionCard settings={settings} />
-                </SettingsGroup>
-            )}
+            <SettingsGroup
+                id="memory-data"
+                label="Memory and data"
+                description="What the assistant remembers about you, and how long your own conversations and documents are kept."
+            >
+                <FactMemoryBench />
+                {enabled('enable_retention_policy_personal') && <RetentionCard settings={settings} />}
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="connected-accounts"
+                label="Connected accounts"
+                description="Microsoft 365 sign-ins, sharing preferences and workflow authorizations for your own Calendar, Email, OneDrive and SharePoint data."
+            >
+                <M365Cards />
+            </SettingsGroup>
 
             <SettingsGroup
                 id="visuals"

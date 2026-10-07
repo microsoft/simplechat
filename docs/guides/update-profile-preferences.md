@@ -56,8 +56,8 @@ at its top. The rail stays collapsed until you expand it again, on any device.
 
 Each tab is laid out as cards. On wide screens an **On this page** index on the right
 lists them, so you can jump straight to a card. Preferences are grouped under
-**Appearance**, **Chat**, **Voice and audio**, **Notifications and alerts**, **Data and
-privacy**, and **Diagrams and charts**. Most changes save as soon as you make them.
+**Appearance**, **Chat**, **Voice and audio**, **Notifications and alerts**, **Memory and
+data**, **Connected accounts**, and **Diagrams and charts**. Most changes save as soon as you make them.
 
 Under **Voice and audio**, which cards appear depends on what your administrator has
 turned on:
@@ -72,11 +72,24 @@ turned on:
 - **Microphone** shows whether this browser lets the site use your microphone for voice
   input, and lets you allow it.
 
-Under **Data and privacy**, **Retention** sets how long your own conversations and
+Under **Memory and data**, **Fact memory** holds what the assistant should know about you.
+Add a memory as an **Instruction**, which shapes every reply, or a **Fact**, which is
+recalled only when it is relevant to what you ask. The list beside the editor lets you
+search and filter your memories; select one to change its wording or type, or to delete
+it. If your administrator has turned fact memory off, the card says so: you can still tidy
+your memories, but they are not used until it is turned back on.
+
+**Retention** sets how long your own conversations and
 documents are kept. You can follow your organization's default, keep them indefinitely, or
 pick a period. Select **Save** to apply it: items older than the period are deleted at the
 next retention run, and deleted conversations are archived first if your organization has
 archiving turned on.
+
+Under **Connected accounts**, the Microsoft 365 cards cover the same ground as the classic
+page, described in the next section: **Microsoft 365 sharing**, **Chat connection**,
+**Workflow connection**, and **Workflow authorizations**. Every revocation and disconnect asks
+you to confirm first. Chat reconnect opens Microsoft sign-in in a pop-up and keeps you on the
+page; connecting for workflows signs in through the classic Profile page and returns there.
 
 **Violations** is always listed. If content safety is off for your application, the tab
 says so instead of showing an empty list.
