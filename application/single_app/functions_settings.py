@@ -1813,7 +1813,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_redis_cache': False,
         'redis_url': '',
         'redis_key': '',
-        'redis_auth_type': '',
+        # Every reader treats an empty value as key authentication, so seeding 'key'
+        # changes nothing at runtime and lets the admin select show what is in effect.
+        'redis_auth_type': 'key',
         'redis_service_type': 'auto',
         'redis_port': '',
 

@@ -57,6 +57,14 @@ COSMOS_THROUGHPUT_SETTING_KEYS = (
     'cosmos_throughput_container_policies',
 )
 
+# Fields in a container policy that the automation writes, never the administrator.
+# They record when a container last scaled or converted, which the cooldowns read.
+COSMOS_THROUGHPUT_POLICY_RUNTIME_FIELDS = (
+    'last_scale_up_at',
+    'last_scale_down_at',
+    'last_mode_conversion_at',
+)
+
 
 class CosmosThroughputError(Exception):
     """Raised when Cosmos throughput management cannot complete."""
@@ -320,28 +328,64 @@ def normalize_cosmos_throughput_settings(settings, repair_policy_relationships=T
     return normalized
 
 
-def _append_policy_validation_errors(errors, policy_label, policy, metrics_window_minutes):
-    scale_up_threshold = policy.get('scale_up_threshold_percent')
-    scale_down_threshold = policy.get('scale_down_threshold_percent')
-    scale_up_interval = policy.get('scale_up_cooldown_minutes')
-    scale_down_interval = policy.get('scale_down_cooldown_minutes')
-
-    if scale_up_threshold <= scale_down_threshold:
-        errors.append(f'{policy_label}: Scale Up At must be higher than Scale Down At.')
-    if scale_up_interval < metrics_window_minutes:
-        errors.append(
-            f'{policy_label}: Scale Up Interval must be greater than or equal to the Metrics Window '
-            f'({metrics_window_minutes} minutes).'
-        )
-    if scale_down_interval < metrics_window_minutes:
-        errors.append(
-            f'{policy_label}: Scale Down Interval must be greater than or equal to the Metrics Window '
-            f'({metrics_window_minutes} minutes).'
-        )
+# The global policy is stored as top-level settings, while a container policy uses
+# the bare field names. A rule reports the policy fields it judged, and this maps
+# them to the settings keys an admin edits, so each error can sit beside its control.
+COSMOS_THROUGHPUT_GLOBAL_POLICY_FIELD_KEYS = {
+    'scale_up_threshold_percent': 'cosmos_throughput_scale_up_threshold_percent',
+    'scale_down_threshold_percent': 'cosmos_throughput_scale_down_threshold_percent',
+    'scale_up_cooldown_minutes': 'cosmos_throughput_scale_up_cooldown_minutes',
+    'scale_down_cooldown_minutes': 'cosmos_throughput_scale_down_cooldown_minutes',
+}
 
 
-def validate_cosmos_throughput_policy_settings(settings, include_container_policies=True):
-    """Return save-blocking validation errors for Cosmos throughput policy settings."""
+def _collect_policy_problems(policy, metrics_window_minutes):
+    """Return ``(rule, policy_fields, message)`` for each rule a policy breaks.
+
+    ``policy_fields`` names the policy values involved. An interval rule also
+    involves the metrics window, which callers add because it is a global value
+    rather than part of the policy.
+    """
+    problems = []
+    if policy.get('scale_up_threshold_percent') <= policy.get('scale_down_threshold_percent'):
+        problems.append((
+            'threshold_order',
+            ('scale_up_threshold_percent', 'scale_down_threshold_percent'),
+            'Scale Up At must be higher than Scale Down At.',
+        ))
+    if policy.get('scale_up_cooldown_minutes') < metrics_window_minutes:
+        problems.append((
+            'scale_up_interval',
+            ('scale_up_cooldown_minutes',),
+            'Scale Up Interval must be greater than or equal to the Metrics Window '
+            f'({metrics_window_minutes} minutes).',
+        ))
+    if policy.get('scale_down_cooldown_minutes') < metrics_window_minutes:
+        problems.append((
+            'scale_down_interval',
+            ('scale_down_cooldown_minutes',),
+            'Scale Down Interval must be greater than or equal to the Metrics Window '
+            f'({metrics_window_minutes} minutes).',
+        ))
+    return problems
+
+
+def collect_cosmos_throughput_policy_errors(settings, include_container_policies=True):
+    """Return each save-blocking throughput policy error with what it applies to.
+
+    Each entry is a dict with:
+
+    ``scope``           ``'global'`` or ``'container'``
+    ``container_name``  the container for a container policy, otherwise ``''``
+    ``rule``            ``threshold_order``, ``scale_up_interval`` or ``scale_down_interval``
+    ``fields``          the policy field names the rule judged
+    ``setting_keys``    the admin settings keys to report the error against
+    ``message``         the same text ``validate_cosmos_throughput_policy_settings`` returns
+
+    Both admin interfaces read these rules from here. The server-rendered form shows
+    the messages; the V2 surface uses ``setting_keys`` to place each one beside the
+    control that caused it.
+    """
     normalized = normalize_cosmos_throughput_settings(
         settings,
         repair_policy_relationships=False,
@@ -352,30 +396,49 @@ def validate_cosmos_throughput_policy_settings(settings, include_container_polic
 
     errors = []
     metrics_window_minutes = normalized['cosmos_throughput_metrics_window_minutes']
-    _append_policy_validation_errors(
-        errors,
-        'Cosmos throughput policy',
-        {
-            'scale_up_threshold_percent': normalized['cosmos_throughput_scale_up_threshold_percent'],
-            'scale_down_threshold_percent': normalized['cosmos_throughput_scale_down_threshold_percent'],
-            'scale_up_cooldown_minutes': normalized['cosmos_throughput_scale_up_cooldown_minutes'],
-            'scale_down_cooldown_minutes': normalized['cosmos_throughput_scale_down_cooldown_minutes'],
-        },
-        metrics_window_minutes,
-    )
+    global_policy = {
+        field_name: normalized[setting_key]
+        for field_name, setting_key in COSMOS_THROUGHPUT_GLOBAL_POLICY_FIELD_KEYS.items()
+    }
+    for rule, fields, message in _collect_policy_problems(global_policy, metrics_window_minutes):
+        setting_keys = [COSMOS_THROUGHPUT_GLOBAL_POLICY_FIELD_KEYS[field] for field in fields]
+        if rule != 'threshold_order':
+            setting_keys.append('cosmos_throughput_metrics_window_minutes')
+        errors.append({
+            'scope': 'global',
+            'container_name': '',
+            'rule': rule,
+            'fields': list(fields),
+            'setting_keys': setting_keys,
+            'message': f'Cosmos throughput policy: {message}',
+        })
 
     if include_container_policies and not normalized.get('cosmos_throughput_enforce_container_defaults'):
         for container_name, policy in normalized.get('cosmos_throughput_container_policies', {}).items():
             if policy.get('enabled') is False:
                 continue
-            _append_policy_validation_errors(
-                errors,
-                f"Container '{container_name}' policy",
-                policy,
-                metrics_window_minutes,
-            )
+            for rule, fields, message in _collect_policy_problems(policy, metrics_window_minutes):
+                errors.append({
+                    'scope': 'container',
+                    'container_name': container_name,
+                    'rule': rule,
+                    'fields': list(fields),
+                    'setting_keys': ['cosmos_throughput_container_policies'],
+                    'message': f"Container '{container_name}' policy: {message}",
+                })
 
     return errors
+
+
+def validate_cosmos_throughput_policy_settings(settings, include_container_policies=True):
+    """Return save-blocking validation errors for Cosmos throughput policy settings."""
+    return [
+        error['message']
+        for error in collect_cosmos_throughput_policy_errors(
+            settings,
+            include_container_policies=include_container_policies,
+        )
+    ]
 
 
 def build_cosmos_throughput_access_validation(status):

@@ -80,26 +80,74 @@ export function findCapabilityField(fields: AdminField[]): AdminField | undefine
  * Each distinct cross-section prerequisite the section depends on.
  *
  * Deduplicated by key, because a prerequisite usually applies to several fields and
- * stating it once at the top reads better than repeating it on each.
+ * stating it once at the top reads better than repeating it on each. A requirement with a
+ * `when` applies only while that condition holds, and a field gated on a runtime flag is
+ * judged with the flags the server sent, the same way the page decided to show it.
  */
 export function collectRequirements(
     fields: AdminField[],
     settings?: Json,
     draft: Json = {},
     fieldsByKey?: Map<string, AdminField>,
+    runtimeFlags?: Record<string, boolean>,
 ): AdminFieldRequirement[] {
     const seen = new Map<string, AdminFieldRequirement>();
     for (const field of fields) {
-        if (settings && field.role !== 'capability') {
-            const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
-            if (!evaluateDependency(field.depends_on, read)) continue;
-            if (field.type === 'switch' && field.key && !asBoolean(read(field.key) ?? field.default)) continue;
+        if (!field.requires) {
+            continue;
         }
-        if (field.requires && !seen.has(field.requires.key)) {
+        if (settings) {
+            const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
+            if (field.role !== 'capability') {
+                if (!evaluateDependency(field.depends_on, read, runtimeFlags)) continue;
+                if (field.type === 'switch' && field.key && !asBoolean(read(field.key) ?? field.default)) continue;
+            }
+            if (field.requires.when && !evaluateDependency(field.requires.when, read, runtimeFlags)) continue;
+        }
+        if (!seen.has(field.requires.key)) {
             seen.set(field.requires.key, field.requires);
         }
     }
     return [...seen.values()];
+}
+
+/** A section whose settings rely on another, for the target's "Used by" line. */
+export interface SectionDependent {
+    sectionId: string;
+    label: string;
+}
+
+/**
+ * For each section another one points at through `requires.target_section`, the sections
+ * that rely on it.
+ *
+ * Read through `collectRequirements`, so "Used by" on Redis Cache lists exactly the
+ * sections showing a Redis prerequisite notice -- a field hidden behind a runtime flag or
+ * a switched-off sub-feature adds no entry, just as it adds no notice.
+ */
+export function buildSectionDependents(
+    sections: { sectionId: string; label: string; fields: AdminField[] }[],
+    settings: Json,
+    draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
+    runtimeFlags?: Record<string, boolean>,
+): Map<string, SectionDependent[]> {
+    const dependents = new Map<string, SectionDependent[]>();
+    for (const section of sections) {
+        const targets = new Set<string>();
+        for (const requirement of collectRequirements(section.fields, settings, draft, fieldsByKey, runtimeFlags)) {
+            const target = requirement.target_section;
+            if (target && target !== section.sectionId) {
+                targets.add(target);
+            }
+        }
+        for (const target of targets) {
+            const list = dependents.get(target) ?? [];
+            list.push({ sectionId: section.sectionId, label: section.label });
+            dependents.set(target, list);
+        }
+    }
+    return dependents;
 }
 
 /**
@@ -115,11 +163,12 @@ export function deriveSectionStatus(
     settings: Json,
     draft: Json,
     fieldsByKey?: Map<string, AdminField>,
+    runtimeFlags?: Record<string, boolean>,
 ): SectionStatus {
     const read = (key: string) => readSectionValue(settings, draft, key, fieldsByKey);
     const capability = findCapabilityField(fields);
 
-    const unmet = collectRequirements(fields, settings, draft, fieldsByKey).some(
+    const unmet = collectRequirements(fields, settings, draft, fieldsByKey, runtimeFlags).some(
         (requirement) => !asBoolean(read(requirement.key)),
     );
     if (unmet) {
@@ -134,7 +183,7 @@ export function deriveSectionStatus(
     // field belongs to a branch that is not in use -- the APIM endpoint while direct
     // access is selected -- and demanding a value for it would be permanently unmeetable.
     const required = fields.filter(
-        (field) => field.required && field.key && evaluateDependency(field.depends_on, read),
+        (field) => field.required && field.key && evaluateDependency(field.depends_on, read, runtimeFlags),
     );
 
     if (!required.length) {
@@ -166,12 +215,13 @@ export function computeSectionStatus(
     draft: Json,
     statusRule?: AdminSectionStatusRule,
     fieldsByKey?: Map<string, AdminField>,
+    runtimeFlags?: Record<string, boolean>,
 ): SectionStatus {
     const declared = evaluateSectionStatus(statusRule, settings, draft);
     if (declared) {
         return DECLARED_STATUS_MAP[declared];
     }
-    return deriveSectionStatus(fields, settings, draft, fieldsByKey);
+    return deriveSectionStatus(fields, settings, draft, fieldsByKey, runtimeFlags);
 }
 
 /** How a field sits relative to the switch that governs it. */

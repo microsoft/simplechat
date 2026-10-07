@@ -2,8 +2,8 @@
 # test_v2_admin_backup_recovery.py
 """
 Functional test for the V2 Admin Settings Backup & Recovery surface.
-Version: 0.261.274
-Implemented in: 0.261.274
+Version: 0.261.275
+Implemented in: 0.261.275
 
 The V2 admin page used to show Backup & Recovery as an empty category. It now renders
 one card per navigation section, backed by the classic data-management API, and its
@@ -67,7 +67,7 @@ def test_every_backup_component_is_declared_and_routed():
     """A declared card with no renderer branch would leave the category empty again."""
     print("Testing Backup & Recovery component declarations and routing...")
 
-    assert_app_version_at_least("0.261.274")
+    assert_app_version_at_least("0.261.275")
 
     declared = {
         field.get("component"): section_id

@@ -196,6 +196,7 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_documents import get_audio_runtime_capabilities
+from functions_cosmos_throughput import get_cosmos_resource_config
 from config import VERSION
 from swagger_wrapper import are_swagger_routes_registered, get_auth_security, swagger_route
 
@@ -1462,8 +1463,54 @@ def register_route_backend_v2_admin(bp):
             "video_indexer_endpoint": {
                 "ok": bool(endpoint),
                 "message": endpoint or "No endpoint resolved yet.",
-            }
+            },
+            "cosmos_throughput_resource": _build_cosmos_throughput_readout(settings),
         }
+
+    def _build_cosmos_throughput_readout(settings):
+        """Describe the Cosmos account and database throughput actions will manage.
+
+        Blank resource fields fall back to App Service settings, so the stored values
+        alone do not say what is targeted. The server-rendered page answers that by
+        pre-filling its inputs with the resolved values, which then get saved as if an
+        administrator had typed them. Stating the resolution beside empty inputs keeps
+        the environment the source of truth for anything left blank.
+        """
+        try:
+            resource = get_cosmos_resource_config(settings)
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Cosmos throughput target could not be resolved.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            return {"ok": False, "message": "The Cosmos throughput target could not be resolved."}
+
+        parts = (
+            ("subscription_id", "Subscription", "cosmos_throughput_subscription_id"),
+            ("resource_group", "Resource group", "cosmos_throughput_resource_group"),
+            ("account_name", "Account", "cosmos_throughput_account_name"),
+            ("database_name", "Database", "cosmos_throughput_database_name"),
+        )
+        described = []
+        missing = []
+        for resource_key, label, setting_key in parts:
+            value = str(resource.get(resource_key) or "").strip()
+            if not value:
+                missing.append(label.lower())
+                continue
+            source = "saved" if str(settings.get(setting_key) or "").strip() else "App Service setting or default"
+            described.append(f"{label} {value} ({source})")
+
+        if missing:
+            return {
+                "ok": False,
+                "message": (
+                    f"Missing {', '.join(missing)}. Enter each one here or set the matching "
+                    "App Service setting."
+                ),
+            }
+        return {"ok": True, "message": "; ".join(described) + "."}
 
     def _redact_admin_settings_for_v2(settings):
         """Replace stored credentials with the redaction placeholder.

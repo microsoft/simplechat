@@ -84,6 +84,18 @@ export interface AdminFieldRequirement {
     description?: string;
     /** Section id to link to, so the prerequisite can be configured in full. */
     target_section?: string;
+    /**
+     * Limits the prerequisite to one configuration. Redis needs Key Vault only while its
+     * access key is read from a vault, so the requirement carries that condition.
+     */
+    when?: AdminFieldDependency;
+}
+
+/** A label and help that replace the declared ones while a condition holds. */
+export interface AdminFieldLabelVariant {
+    when: AdminFieldDependency;
+    label?: string;
+    help?: string;
 }
 
 /**
@@ -256,6 +268,8 @@ export interface AdminField {
     depends_on?: AdminFieldDependency;
     /** A prerequisite owned by another section. */
     requires?: AdminFieldRequirement;
+    /** Label and help that follow another setting. See `resolveFieldPresentation`. */
+    label_variants?: AdminFieldLabelVariant[];
     /** `status` fields only: which server-computed readout to show. */
     status_source?: string;
     /**
@@ -1067,11 +1081,39 @@ export function fieldSearchText(field: AdminField): string {
         field.notice ?? '',
         field.component ?? '',
         ...(field.keywords ?? []),
+        // A label that changes with the configuration is still the same setting, and an
+        // administrator may search for either name.
+        ...(field.label_variants ?? []).flatMap((variant) => [variant.label ?? '', variant.help ?? '']),
         // An endpoint list is found by the addresses it lists, not only by its label.
         ...(field.endpoints ?? []).map((endpoint) => `${endpoint.path} ${endpoint.label}`),
     ]
         .join(' ')
         .toLowerCase();
+}
+
+/**
+ * The field as it should read right now, with any `label_variants` applied.
+ *
+ * `redis_key` holds the Redis access key, or the name of the Key Vault secret holding it,
+ * depending on the authentication type. The first variant whose condition holds replaces
+ * the label and help; with none matching, the field is returned as declared.
+ */
+export function resolveFieldPresentation(
+    field: AdminField,
+    read: (key: string) => unknown,
+    runtimeFlags?: Record<string, boolean>,
+): AdminField {
+    const variant = (field.label_variants ?? []).find((candidate) =>
+        evaluateDependency(candidate.when, read, runtimeFlags),
+    );
+    if (!variant) {
+        return field;
+    }
+    return {
+        ...field,
+        label: variant.label ?? field.label,
+        help: variant.help ?? field.help,
+    };
 }
 
 /** A run of fields sharing a `group`, or a single ungrouped field. */

@@ -2,9 +2,9 @@
 # test_v2_admin_field_renderer_coverage.py
 """
 Functional test that the V2 admin UI renders every field the schema can declare.
-Version: 0.261.274
+Version: 0.261.275
 Implemented in: 0.261.039
-Remote-asset scan extended to component subfolders in: 0.261.274
+Remote-asset scan extended to component subfolders in: 0.261.275
 
 The V2 admin surface is driven by ``admin_settings_fields.py``. That indirection has one
 silent failure mode: the schema can declare a field type, or name a bespoke component,
