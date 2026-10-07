@@ -384,6 +384,11 @@ setting is the agents button on the classic chat page (`/chats`). V2 has no cont
 it, and it's saved as off for a user whose settings were saved before they turned agents
 on, so many V2 users have it off. It still applies to agents the user didn't choose.
 
+Before **0.261.291**, every Ask an agent step was refused just before the agent ran, with
+"This step's agent or action isn't available to you right now". The step's access check
+accepted only a plain dictionary, and Cosmos DB returns a stored agent as an SDK subclass
+of one. Chat without Orchestrate was unaffected.
+
 The opt-in adds no second action allowlist or approval system. Existing scope,
 ownership, group membership, enablement and governance rules still determine which actions
 are available, and access is checked again when work runs. An action removed or revoked
@@ -701,6 +706,11 @@ run ID to correlate its hashed identifier in
 The HTTP status alone is insufficient: a planning stream can return HTTP 200 and
 then report a rejected proposal.
 
+Since **0.261.291**, when a web search, linked-page, deep research, agent, action or
+memory step is refused, `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.`
+names the check that failed in `sc_reason`. It shares `sc_run_id_hash` and
+`sc_step_id_hash` with the step's failure event.
+
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No orchestration control appears in chat | The setting is off, or the user is in the classic interface. | Confirm Enable Chat Orchestration is on, and that the user is on a V2 chat page. |
@@ -724,7 +734,8 @@ then report a rejected proposal.
 | A Microsoft 365 step says plans can only read Microsoft 365 data | The action enables only send, invitation or mark-as-read functions, which plans never run. | Enable a read function on the action, or use it from chat without a plan. |
 | Before 0.261.270, a Microsoft 365 step said plans can't use Microsoft 365 in a shared conversation | Earlier versions refused Microsoft 365 steps in shared conversations. | Upgrade to 0.261.270 or later. The user's own request now counts as consent to share what the step reads. See [Microsoft 365 actions in plans](#microsoft-365-actions-in-plans). |
 | Before 0.261.270, every action or agent step failed with "A required retained result is unavailable or changed", while the same request worked with Orchestrate off | The step's configuration check refused it. For Microsoft 365 actions, the check couldn't see the action's Microsoft 365 selection. Local agents were refused outright. Failure events log `sc_authority_reason=external_configuration_unavailable` for `action_invoke` or `agent_invoke`. | Upgrade to 0.261.270 or later. Agent and action steps now trust the signed-in session, as manual chat does. See [Retained external-source authorization](#retained-external-source-authorization). |
-| Before 0.261.289, an Ask an agent step for an agent the user picked, or tagged with @, failed with "This step's agent or action isn't available to you right now, so it didn't run" | The user's own agents setting was off. Planning offered the picked agent, but the step's access check didn't count the pick as permission. Failure events log `sc_authority_reason=result_external_capability_unavailable` for `agent_invoke`. It isn't specific to shared conversations: a request without a picked agent can still work because its plan uses an action instead. | Upgrade to 0.261.289 or later. Before upgrading, the user can turn agents on with the agents button on the classic chat page (`/chats`). See the [selected agent with agents turned off fix]({{ '/explanation/fixes/ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX/' | relative_url }}). |
+| Before 0.261.289, an Ask an agent step for an agent the user picked, or tagged with @, failed with "This step's agent or action isn't available to you right now, so it didn't run" | The user's own agents setting was off. Planning offered the picked agent, but the step's access check didn't count the pick as permission. Failure events log `sc_authority_reason=result_external_capability_unavailable` for `agent_invoke`. It isn't specific to shared conversations: a request without a picked agent can still work because its plan uses an action instead. | Upgrade to 0.261.291 or later. 0.261.289 fixed this check, but the step still failed at a later one until 0.261.291, so turning agents on doesn't help before then; see the next row. See the [selected agent with agents turned off fix]({{ '/explanation/fixes/ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX/' | relative_url }}). |
+| Before 0.261.291, every Ask an agent step failed with "This step's agent or action isn't available to you right now", while the same agent answered with Orchestrate off | Cosmos DB returns a stored agent as an SDK subclass of a dictionary, and the step's access check accepted only a plain dictionary, so it refused every agent. Failure events log `sc_authority_reason=result_external_source_unavailable` for `agent_invoke`. | Upgrade to 0.261.291 or later. No setting or data change is needed. Before upgrading, turn Orchestrate off to use the agent. See the [agent document type fix]({{ '/explanation/fixes/ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX/' | relative_url }}). |
 | Before 0.261.292, a request such as "Plot BatteryVoltage1 over the last 15 minutes" replied only "The requested content is prepared. No downloadable files were created.", showed no chart, and the plan panel listed the chart as delivered | The plan had a single Gather step that used an action and no Reason step to write the answer. The planner was told an action could deliver a chart on its own, so validation accepted the plan, and the chart the action drew was never shown. The step summary still says it created a chart. | Upgrade to 0.261.292 or later, then ask again. Planning now requires a Reason step that reads what was gathered, and a chart an action draws is always shown. See the [action chart not delivered fix]({{ '/explanation/fixes/ORCHESTRATION_ACTION_CHART_NOT_DELIVERED_FIX/' | relative_url }}). |
 | A chart the user asked for is listed as not delivered: "The chart could not be created from the retrieved data." | The action retrieved the data, but its chart step couldn't draw a chart from the rows it returned. | The answer still uses the retrieved data. Select **Retry from failed step** and confirm to run the action again, or ask for a different chart. |
 | Before 0.261.270, an @mention of a person in a shared conversation was sent to the model when Orchestrate was on | Orchestrate planned every message without applying the shared conversation's send rule. | Upgrade to 0.261.270 or later. See [Shared conversations](#shared-conversations). |

@@ -1,11 +1,14 @@
 # agent_delegation.py
 """Isolated external-service seams for the real agent delegation contract.
 
-Version: 0.261.093
+Version: 0.261.291
 Implemented in: 0.261.093
+Point reads return the SDK's dictionary subclass in: 0.261.291 (#1699)
 
 The application helper is executed unchanged. Only Cosmos, settings, governance,
-group membership, cache invalidation, and audit services are replaced.
+group membership, cache invalidation, and audit services are replaced. Point reads
+return ``CosmosDictLike``, as azure-cosmos returns ``CosmosDict``, so code that
+requires exactly ``dict`` fails here as it does in production.
 """
 
 import ast
@@ -41,6 +44,15 @@ class CosmosResourceNotFoundError(CosmosHttpResponseError):
 
 class MatchConditions:
     IfNotModified = object()
+
+
+class CosmosDictLike(dict):
+    """Stands in for azure-cosmos ``CosmosDict``, the type of a document point read.
+
+    The pinned azure-cosmos 4.9.0 returns ``CosmosDict`` from ``read_item``. It is a
+    ``dict`` subclass and ``copy.deepcopy`` keeps the subclass, so a check that requires
+    exactly ``dict`` refuses it. Query results are plain dictionaries.
+    """
 
 
 def reference(agent_id="target-id", scope_type="personal", scope_id="actor"):
@@ -141,7 +153,7 @@ class DelegationServices:
             record = self.records[kind, scope].get((partition_key, item))
             if record is None:
                 raise CosmosResourceNotFoundError()
-            return deepcopy(record)
+            return CosmosDictLike(deepcopy(record))
         return read_item
 
     def query(self, kind, scope):

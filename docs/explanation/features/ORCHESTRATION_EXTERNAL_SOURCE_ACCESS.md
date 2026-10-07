@@ -16,6 +16,13 @@ agent failed while the preference was off, even though planning and execution
 accepted it. See the
 [selected agent with agents turned off fix](../fixes/ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX.md).
 
+**Updated in version: 0.261.291.** The provider accepts the stored agent as any
+dictionary, because a Cosmos DB point read returns a dictionary subclass, and still
+requires its exact scoped reference to match. Before this, every Ask an agent step was
+refused just before it ran. Each refusal is now logged with the check that failed.
+See the [agent document type fix](../fixes/ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX.md)
+([#1699](https://github.com/microsoft/simplechat/issues/1699)).
+
 ## Purpose and scope
 
 An external Gather result is the content an authorized adapter actually returned,
@@ -65,6 +72,10 @@ Membership in a catalog alone is insufficient: the provider also calls
 `resolve_delegation_agent` or `resolve_action_manifest` for the exact stored
 integration. These existing APIs recheck scope membership, governance, enablement,
 and identity without invoking a model or plugin.
+`resolve_delegation_agent` returns the stored agent as a plain dictionary. The
+provider accepts any dictionary from an agent resolver, copies it into a plain one,
+and requires its scoped reference (ID, scope type and scope ID) to equal the catalog
+selection's. The mapping's own type is never treated as proof of identity.
 An injected action resolver must retain the real `ScopedActionManifest` origin;
 matching fields in a plain dictionary are not proof of a scoped authorized read.
 
@@ -347,6 +358,18 @@ isn't available to you right now", because those steps take no retained inputs.
 Every other refusal stays `result_unavailable`. Exception text is never
 read, and the reason code is never shown to the user. Step, saved-wait,
 finalization and composition failure events log it as `sc_authority_reason`.
+
+Since 0.261.291, the provider also logs each refusal once, as
+`[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.`, before the
+invocation capture normalizes it. The event carries `sc_stage`
+(`external_source_preflight`, `external_source_admission` or
+`external_source_read`), `sc_authority_reason`, `sc_capability_id`, the hashed
+conversation, run and step identifiers, and `sc_reason`, the check that failed,
+such as `integration_not_found` or `capability_not_available`. Reads log at
+Information level, because saved results are rechecked whenever they're opened.
+Only the refusal code crosses the invocation capture; the check stays in this
+event. See the [orchestration failure diagnostics](../../reference/logging-tags.md#orchestration-failure-diagnostics)
+for the full list of checks.
 
 ### Invocation failure classification
 

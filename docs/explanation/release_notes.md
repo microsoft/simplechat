@@ -2,6 +2,36 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.291)**
+
+#### Bug Fixes
+
+*   **Orchestrated Ask an Agent Steps Run Again**
+    *   With Orchestrate on, every Ask an agent step failed with "This step's agent or action isn't available to you right now", in personal and shared conversations, while the same agent answered with Orchestrate off.
+    *   Cosmos DB returns stored agents as a subclass of a dictionary, and the step's access check accepted only a plain dictionary. Stored agents are now read back as plain dictionaries, and the check accepts either while still requiring the exact agent the user can reach. No setting or data change is needed.
+    *   When a step's web, linked-page, deep research, agent, action or memory source is refused, `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.` now names the check that failed in `sc_reason`.
+    *   (Ref: `functions_orchestration_external_sources.py`, `functions_agent_delegation.py` `_canonical_agent`, [#1699](https://github.com/microsoft/simplechat/issues/1699), [Orchestration Agent Document Type Fix](fixes/ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX.md))
+
+### **(v0.261.290)**
+
+#### Bug Fixes
+
+*   **V2 Sidebar Links Opened the Classic Interface**
+    *   Every primary link in the V2 left rail opened the classic page at the same path instead of the V2 page. This covered Chats, Agents, My Workspace, Group Workspaces, Public Workspaces, Approval requests and Content review. The rail also never highlighted the open page.
+    *   Rail links now stay relative to `/v2`, so each one opens its V2 page without a reload and is highlighted.
+    *   A functional test now flags any router link built from the page origin in the V2 source, and a UI test clicks each rail link.
+    *   (Ref: `Sidebar.tsx` `safeNavHref`, [#1698](https://github.com/microsoft/simplechat/issues/1698), [V2 Sidebar Navigation Links Fix](fixes/V2_SIDEBAR_NAV_LINKS_FIX.md))
+
+### **(v0.261.289)**
+
+#### Bug Fixes
+
+*   **Picked Agents Pass the Agents Setting in Orchestrate**
+    *   An Ask an agent step for an agent the user picked, or tagged with @, was refused when the user's own agents setting was off, the agents button on the classic chat page. V2 has no control for it, so many V2 users have it off.
+    *   Picking an agent now counts as permission to use that agent, as it does in chat. Its scope, membership, governance and enabled state are still checked, and the setting still applies to agents the user didn't pick.
+    *   These steps still failed at a later check until 0.261.291.
+    *   (Ref: `functions_orchestration_external_sources.py` `_seeded_agent`, `test_orchestration_seeded_agent_preference_fix.py`, [Orchestration Selected Agent With Agents Turned Off Fix](fixes/ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX.md))
+
 ### **(v0.261.288)**
 
 #### New Features
