@@ -1,7 +1,7 @@
 # test_control_center_safe_exception_responses.py
 """
 Functional test for safe Control Center exception responses.
-Version: 0.261.283
+Version: 0.261.286
 Implemented in: 0.261.283
 
 This test ensures validation exceptions in the V2 Control Center routes do not
@@ -77,6 +77,16 @@ def _load_route(name, failing_helper, error_type):
          "PUT", None, ("group-1",), "Invalid group status request."),
         ("api_v2_control_center_groups_export", "parse_group_filters", GroupRequestError,
          "GET", None, (), "Invalid group export filters."),
+        ("api_v2_control_center_public_workspaces", "parse_workspace_filters", GroupRequestError,
+         "GET", None, (), "Invalid public workspace filters."),
+        ("api_v2_control_center_public_workspace_detail", "validate_group_id", GroupRequestError,
+         "GET", None, ("workspace-1",), "Invalid public workspace ID."),
+        ("api_v2_control_center_public_workspaces_bulk_status", "validate_group_status_payload", GroupRequestError,
+         "POST", {}, (), "Invalid bulk public workspace status request."),
+        ("api_v2_control_center_public_workspace_status", "validate_group_id", GroupRequestError,
+         "PUT", None, ("workspace-1",), "Invalid public workspace status request."),
+        ("api_v2_control_center_public_workspaces_export", "parse_workspace_filters", GroupRequestError,
+         "GET", None, (), "Invalid public workspace export filters."),
     ],
 )
 def test_validation_exceptions_return_stable_safe_messages(

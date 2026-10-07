@@ -1,18 +1,16 @@
 # test_v2_control_center_public_workspaces.py
 """
 Functional tests for V2 Control Center public workspace management.
-Version: 0.261.284
+Version: 0.261.286
 Implemented in: 0.261.283
 
 Execute real query builders, guarded status writes, authentication, approval
 creation and dispatch against isolated Cosmos containers. No Azure calls.
 """
 
-import ast
 import copy
 import csv
 import importlib.util
-import logging
 import sys
 from functools import wraps
 from io import StringIO
