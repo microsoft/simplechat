@@ -108,7 +108,9 @@ class GovernanceSettingsFixture(AdminSettingsFixture):
             "governance_group_agents": True,
             "allow_group_agents": False,
         })
-        self.endpoints = [{
+        # The base fixture starts this list empty and its routes read it, so the
+        # connection is added to it rather than replacing it.
+        self.endpoints.append({
             "id": "conn-east",
             "name": "East US OpenAI",
             "provider": "aoai",
@@ -116,7 +118,7 @@ class GovernanceSettingsFixture(AdminSettingsFixture):
             "connection": {"endpoint": "https://east.openai.azure.com/"},
             "auth": {"type": "managed_identity"},
             "models": [],
-        }]
+        })
         self.feature_policies = {
             key: {
                 "id": f"feature:{key}", "feature_key": key, "allow_all": True,
