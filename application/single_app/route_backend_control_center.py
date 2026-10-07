@@ -18,6 +18,14 @@ from functions_control_center_schedule import (
     get_control_center_auto_refresh_schedule,
     parse_control_center_auto_refresh_datetime,
 )
+from functions_control_center_activity import (
+    ACTIVITY_PAGE_MAX,
+    activity_csv_stream,
+    activity_page,
+    activity_summary,
+    parse_activity_filters,
+    query_activity_rows,
+)
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
@@ -3294,6 +3302,69 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
 
 
 def register_route_backend_control_center(bp):
+    @bp.route('/api/v2/control-center/activity-logs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_logs():
+        try:
+            filters = parse_activity_filters(request.args)
+            payload = activity_page(
+                cosmos_activity_logs_container, filters,
+                page_size=int(request.args.get('page_size', 50)), cursor_value=request.args.get('cursor'),
+            )
+            return jsonify(payload)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters, page size, or cursor. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity feed query failed.',
+                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to load activity logs. Check the activity-log composite index in App Maintenance, then retry.'}), 500
+
+    @bp.route('/api/v2/control-center/activity-logs/summary', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_summary():
+        try:
+            filters = parse_activity_filters(request.args)
+            return jsonify(activity_summary(cosmos_activity_logs_container, filters))
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity summary query failed.',
+                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to load the activity summary. Check App Maintenance indexing status and retry.'}), 500
+
+    @bp.route('/api/v2/control-center/activity-logs/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_export():
+        try:
+            filters = parse_activity_filters(request.args)
+            rows, snapshot = query_activity_rows(cosmos_activity_logs_container, filters, ACTIVITY_PAGE_MAX)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity export filters. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity export query failed.',
+                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Unable to export activity logs. Check App Maintenance indexing status and retry.'}), 500
+
+        def generate():
+            try:
+                yield from activity_csv_stream(cosmos_activity_logs_container, filters, rows, snapshot)
+            except Exception as ex:
+                log_event('[CONTROL_CENTER] Activity export stream interrupted.',
+                          extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+                raise
+
+        response = Response(stream_with_context(generate()), mimetype='text/csv')
+        response.headers['Content-Disposition'] = 'attachment; filename="activity_logs.csv"'
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-Export-Row-Limit'] = '10000'
+        return response
+
     
     # User Management APIs
     @bp.route('/api/admin/control-center/users', methods=['GET'])

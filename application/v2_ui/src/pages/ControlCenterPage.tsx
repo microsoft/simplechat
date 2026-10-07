@@ -14,6 +14,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { GlassButton, GlassPanel } from '../components/ui/primitives';
 import { DashboardSection } from '../components/controlCenter/DashboardSection';
+import { ActivityLogsSection } from '../components/controlCenter/ActivityLogsSection';
 import type { ControlCenterCapabilities } from '../lib/types';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -229,6 +230,7 @@ export function ControlCenterPage() {
                     ) : section === 'dashboard' ? <DashboardSection />
                         : section === 'users' ? <UsersSection />
                         : section === 'groups' ? <GroupsSection />
+                        : section === 'activity-logs' ? <ActivityLogsSection />
                         : section === 'data-health' ? <MigrationDataHealth />
                             : <SectionPlaceholder label={current.label} />}
                 </main>

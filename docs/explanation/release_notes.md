@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.283)**
+
+#### New Features
+
+*   **V2 Control Center Activity Logs**
+    *   Adds URL-filtered activity investigations, deterministic keyset paging, a bounded histogram and activity-type facets, saved browser views, density controls, and escaped JSON detail drawers with related entity/approval links.
+    *   CSV export streams the same filters, escapes spreadsheet formulas and caps exports at 10,000 activity records. Summary charts disclose sampling above 5,000 matching records.
+    *   Existing deployments must apply the expected activity-log composite index through App Maintenance and wait for index transformation; legacy activity browsing remains unchanged.
+    *   (Ref: `ActivityLogsSection.tsx`, `functions_control_center_activity.py`, `functions_cosmos_indexing.py`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
 ### **(v0.261.282)**
 
 #### New Features

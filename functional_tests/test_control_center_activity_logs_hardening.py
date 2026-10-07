@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center activity logs hardening.
-Version: 0.241.021
+Version: 0.261.283
 Implemented in: 0.241.021
 
 This test ensures that the Control Center activity logs flow validates
@@ -14,6 +14,7 @@ normalizing malformed legacy user_id values.
 from pathlib import Path
 import sys
 
+from test_support.versioning import assert_app_version_at_least
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
@@ -122,12 +123,7 @@ def test_control_center_javascript_uses_dedicated_export_route() -> bool:
 def test_config_version_bumped_for_activity_log_fix() -> bool:
     """Validate the repository version bump for the activity log fix."""
     print("Testing config version bump...")
-    config_content = read_text("application/single_app/config.py")
-
-    if 'VERSION = "0.241.021"' not in config_content:
-        print("Config version was not bumped to 0.241.021")
-        return False
-
+    assert_app_version_at_least("0.241.021")
     print("Config version bump found.")
     return True
 

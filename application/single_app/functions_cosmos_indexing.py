@@ -10,6 +10,8 @@ from azure.cosmos import PartitionKey
 
 import config as app_config
 from config import (
+    cosmos_activity_logs_container,
+    cosmos_activity_logs_container_name,
     cosmos_collaboration_messages_container,
     cosmos_collaboration_messages_container_name,
     cosmos_conversations_container,
@@ -29,7 +31,7 @@ from config import (
 from functions_appinsights import log_event
 
 
-COSMOS_INDEXING_POLICY_DEFINITION_VERSION = 2
+COSMOS_INDEXING_POLICY_DEFINITION_VERSION = 3
 COSMOS_INDEXING_POLICY_APPLY_SETTING = 'app_maintenance_apply_cosmos_indexing_policies'
 COSMOS_INDEXING_POLICY_MAX_REPLACE_RETRIES = 3
 
@@ -49,6 +51,19 @@ def _composite_index(*paths):
 
 
 COSMOS_INDEXING_POLICY_DEFINITIONS = [
+    {
+        'container_name': cosmos_activity_logs_container_name,
+        'container': cosmos_activity_logs_container,
+        'partition_key_path': '/user_id',
+        'description': 'Control Center activity feed keyset ordering with partition-aware ties.',
+        'expected_policy': {
+            'compositeIndexes': [
+                _composite_index(
+                    ('/timestamp', 'descending'), ('/id', 'descending'), ('/user_id', 'descending'),
+                ),
+            ],
+        },
+    },
     {
         'container_name': cosmos_conversations_container_name,
         'container': cosmos_conversations_container,

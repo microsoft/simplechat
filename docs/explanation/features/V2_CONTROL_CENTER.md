@@ -6,6 +6,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Foundation implemented in version:** 0.261.278
 **Users implemented in version:** 0.261.280
 **Groups implemented in version:** 0.261.281
+**Activity Logs implemented in version:** 0.261.283
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 
@@ -101,6 +102,36 @@ Delete group, delete all documents, take ownership and transfer ownership reuse 
 
 `functional_tests/test_v2_control_center_groups.py` exercises filters/sorts/paging, cache reuse/expiry, detail projection, roles, bulk cap/exclusions/reasons, real status-writer audit parity, denied access, formula-safe export, and approval creation without direct mutation. `ui_tests/test_v2_control_center_groups.py` covers desktop/mobile drawers, URL filters, cross-page bulk selection, partial failures, status history, escaped text/raw JSON, member search/CSV/roles/removal, retention, ownership approvals and permission-limited controls. Route policy tests include all five new routes; prior Control Center layers and `test_v2_api_security.py` are included in regression validation.
 
+## Activity Logs
+
+Implemented in version: **0.261.283**, tracked by `VERSION` in `application/single_app/config.py`.
+
+Activity Logs is an investigation surface for administrators with `can_view_activity_logs`. It links dashboard trends, a user's recent activity, and workspace timelines to the same filtered evidence. All three APIs use the existing login-protected Control Center Blueprint, `@swagger_route(security=get_auth_security())`, and `control_center_required('activity_logs')`; dashboard-only readers cannot query or export activity.
+
+### Query and paging contract
+
+`GET /api/v2/control-center/activity-logs` accepts inclusive UTC `start_date`/`end_date`, or the dashboard's single-day `date`. The default is the latest 30 UTC dates; ranges are limited to 366 days. Filters include repeated or comma-separated `activity_type` values (OR within types, AND with other filters), `user_id`, `workspace_type`, `workspace_id`, `group_id`, `public_workspace_id`, `search`, `token_type`, `model`, and recorded `status`. Search is a case-insensitive substring across stored IDs, actor emails, names, descriptions, file names, conversation titles and model names, not a full-text index. It is parameterized, limited to 200 characters, and does not trigger profile or Graph enrichment.
+
+The query recognizes top-level and nested group/public-workspace identifiers and the historical `public_workspace` workspace-type spelling. `workspace_id` requires a workspace type; for personal workspaces it matches the user's ID. User filtering includes the stored partition user and the actor fields used by status/admin writers. `status=failed` matches recorded failure/error text; it does not infer failures from unrecorded events.
+
+Responses contain `items`, `next_cursor`, `page_size`, and `snapshot`. Page size defaults to 50 and is bounded at 200. Paging uses a descending keyset of the **stored timestamp string, ID, and user partition**, not Cosmos continuation tokens, `OFFSET`, or a total-count scan. The partition tie-breaker is required because Cosmos IDs are unique only within a partition. Cursors retain the original timestamp spelling, distinguish missing/null partition values, carry a time cutoff, and reject reuse with different filters. Refresh starts a new sequence. The cutoff excludes newer timestamped events, but is not a Cosmos transactional snapshot: deletion, edits, or late/backdated writes can change an ongoing investigation. Records without string timestamps or IDs cannot participate in this ordered feed.
+
+### Index rollout
+
+New `activity_logs` containers receive the composite index on `/timestamp`, `/id`, `/user_id`, all descending, in `config.py`. **Existing deployments must apply the expected indexing policies using the existing Admin Settings App Maintenance tooling and wait for Cosmos index transformation before using the new feed.** `functions_cosmos_indexing.py` registers the index, preserves existing indexing paths and composites, and retains the maintenance setting/explicit-apply controls; opening Activity Logs never changes a cloud policy. An unavailable index produces a visible, generic API error with an App Maintenance recovery instruction. The partition key remains `/user_id`; browsing and export are cross-partition queries.
+
+### Bounded distribution and export
+
+`GET /api/v2/control-center/activity-logs/summary` applies the same filters and projects the newest **at most 5,000** matching records, using one extra projected row to detect truncation. It returns activity-type facets, a UTC histogram with no more than 31 buckets, bucket width, sample size/limit and `truncated`. Facets describe the current filtered result, including selected activity types; they are not disjunctive counts of unselected categories. When truncated, the UI explicitly labels the data as a newest-record sample, not full-range totals. The histogram has an accessible data table and date drill-through.
+
+`GET /api/v2/control-center/activity-logs/export.csv` streams the same filtered order in page-sized reads, with an upper limit of **10,000 activity rows** and a final `export_limit_reached` status row when the cap is reached. Narrow the filters for a complete larger investigation. The CSV includes timestamp, ID, user ID, activity type, workspace type and JSON; cells beginning with `=`, `+`, `-`, `@`, tab or carriage return are apostrophe-prefixed, including whitespace-prefixed formulas. It is an uncached attachment with `X-Export-Row-Limit`. The first storage query runs before response headers; later storage failures log and interrupt the stream rather than producing a success-shaped fallback.
+
+### Browser behavior and validation
+
+`ActivityLogsSection.tsx` keeps applied filters in React Router search parameters, honors dashboard/bookmark drill-through, resets paging on filter changes, cancels stale requests, and provides loading, empty, error/retry and compact/comfortable states. Recent login/token presets start a clean seven-day investigation. Saved views store at most 20 named filter sets in per-user localStorage, on this browser only. Storage failures are visible. Detail drawers show formatted fields and escaped raw JSON, plus recorded user/group/public-workspace links and `/approvals/all/<id>` links with `group_id` for group requests. Router links omit `/v2` because the application basename supplies it. Chart runtime and built assets remain local; no raw HTML rendering is used.
+
+`functional_tests/test_v2_control_center_activity_logs_queries.py` covers ties across partitions, timestamp spelling, cursor/filter validation, parameter binding, bounded sampling, histogram buckets, streamed export and formula injection. `functional_tests/test_v2_control_center_activity_logs_routes.py` executes the actual handlers and permission decorators, including denial before storage access and generic error handling. The indexing-maintenance regression verifies safe index merging. `ui_tests/test_v2_control_center_activity_logs.py` covers desktop/mobile filters, cursor paging, escaped JSON, related links, keyboard drawer behavior, saved views, export, empty/error recovery and capability gating against built local assets. These isolated checks do not replace a live Cosmos index-transformation/query smoke test.
+
 ## Usage
 
 Open **Account → Control Center**, then select a section in its internal rail. A bookmarked section URL opens that section directly. On the Dashboard, select a date range and optional token filters; charts include accessible data tables, and chart selections link to the corresponding filtered activity view. Export downloads the trend data as CSV. “Chat with these trends” creates a conversation containing the selected trend data. The Data health page is intended for explicit diagnosis or a known recovery scenario; check first, and run the backfill only when the result and operational context justify it.
@@ -111,4 +142,4 @@ Functional checks cover dashboard status normalization, period deltas, cache exp
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, and group management in **0.261.281**.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.281**, and Activity Logs in **0.261.283**.
