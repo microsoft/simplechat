@@ -25,18 +25,20 @@ in-memory stand-ins, and pins what the global scope adds:
 - renaming the default agent keeps it selected.
 """
 
+import ast
 import importlib.util
+import logging
 import sys
 import uuid
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
+from test_support.app_source import definitions, run_definitions
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -191,7 +193,7 @@ def engine(monkeypatch):
             "functions_settings",
             get_settings=lambda: deepcopy(settings),
             update_settings=lambda updates, **kwargs: calls.settings_updates.append(updates) or True,
-            sanitize_settings_for_user=lambda values: deepcopy(values),
+            sanitize_settings_for_user=deepcopy,
         ),
         "functions_agent_templates": _module(
             "functions_agent_templates",
@@ -359,6 +361,84 @@ def test_a_refused_prepare_maps_to_stable_errors(engine):
     with pytest.raises(engine.authoring.WorkspaceAuthoringValidation):
         engine.authoring.apply_global_agent_write("admin-1", None, agent_body(name="other"), invalid, engine.settings)
     assert engine.agents.writes == []
+
+
+def test_a_refused_global_agent_keeps_the_reason_in_the_server_log():
+    """A refusal answers with a fixed message; the exception's text goes only to the log.
+
+    CodeQL py/stack-trace-exposure: no caught exception may reach a response. The real
+    ``_prepare_global_agent_payload`` runs here unchanged from its source.
+    """
+    class AgentPayloadError(ValueError):
+        pass
+
+    class AssignedKnowledgeError(ValueError):
+        pass
+
+    refusal, logged = {}, []
+
+    def sanitize_agent_payload(agent):
+        if "payload" in refusal:
+            raise AgentPayloadError(refusal["payload"])
+        return deepcopy(agent)
+
+    def apply_assigned_knowledge_to_agent_payload(agent, **kwargs):
+        if "knowledge" in refusal:
+            raise AssignedKnowledgeError(refusal["knowledge"])
+        return agent
+
+    namespace = run_definitions("route_backend_agents.py", ["_prepare_global_agent_payload"], {
+        "AgentPayloadError": AgentPayloadError,
+        "AssignedKnowledgeError": AssignedKnowledgeError,
+        "sanitize_agent_payload": sanitize_agent_payload,
+        "apply_assigned_knowledge_to_agent_payload": apply_assigned_knowledge_to_agent_payload,
+        "validate_agent": lambda agent: None,
+        "validate_agent_delegation_bindings": lambda agent, **kwargs: None,
+        "jsonify": lambda body: body,
+        "log_event": lambda message, **kwargs: logged.append((message, kwargs)),
+        "logging": logging,
+    })
+    prepare = namespace["_prepare_global_agent_payload"]
+
+    refusal["payload"] = "description exceeds maximum length of 2000."
+    cleaned, error = prepare("admin-1", {"name": "guide"}, {}, None)
+    assert cleaned is None
+    assert error == ({"error": "Invalid agent configuration."}, 400)
+    assert logged[-1] == ("Global agent save refused: invalid payload", {
+        "level": logging.WARNING,
+        "extra": {"scope": "global", "action": "create", "error": refusal["payload"]},
+    })
+
+    refusal.clear()
+    refusal["knowledge"] = "Assigned public workspace was not found."
+    edited = {"name": "guide", "other_settings": {"assigned_knowledge": {"enabled": True}}}
+    cleaned, error = prepare("admin-1", edited, {}, {"name": "guide"})
+    assert cleaned is None
+    assert error == ({"error": "Invalid assigned knowledge configuration."}, 400)
+    assert logged[-1] == ("Global agent save refused: assigned knowledge", {
+        "level": logging.WARNING,
+        "extra": {"scope": "global", "action": "edit", "error": refusal["knowledge"]},
+    })
+
+    refusal.clear()
+    cleaned, error = prepare("admin-1", {"name": "guide"}, {}, None)
+    assert error is None
+    assert cleaned["is_global"] is True and cleaned["is_group"] is False
+
+    # Every response the function builds, including any added later, is a fixed message.
+    node = definitions("route_backend_agents.py", ["_prepare_global_agent_payload"]).body[0]
+    caught = {
+        handler.name for handler in ast.walk(node)
+        if isinstance(handler, ast.ExceptHandler) and handler.name
+    }
+    responses = [
+        call for call in ast.walk(node)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "jsonify"
+    ]
+    assert caught and responses
+    for call in responses:
+        names = {child.id for child in ast.walk(call) if isinstance(child, ast.Name)}
+        assert not names & caught, ast.unparse(call)
 
 
 def test_global_agents_may_be_any_type_and_carry_their_own_connection(engine):

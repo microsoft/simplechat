@@ -76,6 +76,13 @@ Reads return `{record, revision, secret_paths, read_only}`. Writes send
 `{updates, expected_revision, clear_secret_paths, removed_paths}`, the same
 editor contract the personal and group routes use; a stale revision is a 409.
 
+A global agent the server refuses, because a value is invalid or its assigned
+knowledge cannot be resolved, is a 400 with **Invalid agent configuration.** The
+response never carries the exception's text. The reason, such as a field over its
+length limit or a workspace that no longer exists, is logged as a warning, "Global
+agent save refused: invalid payload" or "Global agent save refused: assigned
+knowledge", with its `error` in the event's properties.
+
 The lists reuse the classic routes for state changes the editor contract does not
 model: `PATCH /api/admin/agents/<name>/enabled` (which hands the default to another
 enabled agent when the default is disabled), `POST /api/admin/agents/selected_agent`,
@@ -213,7 +220,7 @@ administrator reference.
 
 | Test | Covers |
 |---|---|
-| `functional_tests/test_v2_admin_global_editor_backend.py` | Global scope in the authoring engine: secret masking and Key Vault naming, conditional writes, duplicate names, stamped fields, default-agent rename and delete rules, route access and boundaries |
+| `functional_tests/test_v2_admin_global_editor_backend.py` | Global scope in the authoring engine: secret masking and Key Vault naming, conditional writes, duplicate names, stamped fields, default-agent rename and delete rules, route access and boundaries, and refused saves that log their reason instead of returning exception text |
 | `functional_tests/test_workspace_authoring_credential_compatibility.py` | The classic global delete removes a credential the V2 editor stored, using the real Key Vault helpers |
 | `functional_tests/test_v2_admin_global_editor_logic.mjs` | The global adapters, return paths, stripped server fields, connector and template scopes, and admin routes, against the real TypeScript |
 | `functional_tests/test_v2_admin_agents_parity.py`, `test_v2_admin_actions_parity.py` | Section and component declarations |

@@ -1353,10 +1353,18 @@ def _prepare_global_agent_payload(user_id, agent, settings, existing):
     against the global scope. Returns ``(cleaned_agent, error_response)`` with exactly
     one set; the signature matches ``apply_global_agent_write``.
     """
+    action = 'create' if existing is None else 'edit'
+    # A refusal carries a fixed message and keeps the reason in the server log, so no
+    # exception text reaches a response (CodeQL py/stack-trace-exposure).
     try:
         cleaned_agent = sanitize_agent_payload(agent)
     except AgentPayloadError as exc:
-        return None, (jsonify({'error': str(exc)}), 400)
+        log_event(
+            "Global agent save refused: invalid payload",
+            level=logging.WARNING,
+            extra={"scope": "global", "action": action, "error": str(exc)},
+        )
+        return None, (jsonify({'error': 'Invalid agent configuration.'}), 400)
 
     cleaned_agent['is_global'] = True
     cleaned_agent['is_group'] = False
@@ -1373,7 +1381,12 @@ def _prepare_global_agent_payload(user_id, agent, settings, existing):
                 is_admin=True,
             )
     except AssignedKnowledgeError as exc:
-        return None, (jsonify({'error': str(exc)}), 400)
+        log_event(
+            "Global agent save refused: assigned knowledge",
+            level=logging.WARNING,
+            extra={"scope": "global", "action": action, "error": str(exc)},
+        )
+        return None, (jsonify({'error': 'Invalid assigned knowledge configuration.'}), 400)
 
     validation_error = validate_agent(cleaned_agent)
     if validation_error:
