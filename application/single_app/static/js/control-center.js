@@ -2939,13 +2939,15 @@ class ControlCenter {
 
             case 'azure_files_search_access': {
                 const reviewAction = log.action_context?.display_name || log.action_context?.action_name || 'Azure Files Search';
+                const reviewAgent = log.agent?.display_name || log.agent?.name || '';
                 const reviewCounts = log.additional_context?.counts || {};
                 const reviewReasons = Object.entries(log.additional_context?.reasons || {})
                     .map(([reason, count]) => `${this.formatActivityValue(reason)}: ${this.formatActivityLogNumber(count)}`);
                 const reviewSummary = `Withheld ${this.formatActivityLogNumber(reviewCounts.denied_files || 0)} denied and `
                     + `${this.formatActivityLogNumber(reviewCounts.unverified_files || 0)} unverified of `
                     + `${this.formatActivityLogNumber(reviewCounts.files_evaluated || 0)} files`;
-                return `Action: ${this.escapeHtml(reviewAction)}<br>${this.escapeHtml(reviewSummary)}`
+                return `Action: ${this.escapeHtml(reviewAction)}`
+                    + `${reviewAgent ? ` · Agent: ${this.escapeHtml(reviewAgent)}` : ''}<br>${this.escapeHtml(reviewSummary)}`
                     + `${reviewReasons.length ? `<br><small class="text-muted">${this.escapeHtml(reviewReasons.join(' · '))}</small>` : ''}`;
             }
 
@@ -3244,6 +3246,8 @@ class ControlCenter {
                 return [
                     `Action: ${this.escapeHtml(log.action_context?.display_name || log.action_context?.action_name || 'Azure Files Search')}`,
                     `Index: ${this.escapeHtml(log.action_context?.index_name || 'N/A')}`,
+                    `Agent: ${this.escapeHtml(log.agent?.display_name || log.agent?.name || 'N/A')}`,
+                    `Conversation: ${this.escapeHtml(log.conversation_id || 'N/A')}`,
                     `Denied: ${this.escapeHtml(String(counts.denied_files ?? 0))}`,
                     `Unverified: ${this.escapeHtml(String(counts.unverified_files ?? 0))}`,
                     `Files checked: ${this.escapeHtml(String(counts.files_evaluated ?? 0))}`,
@@ -3593,6 +3597,16 @@ class ControlCenter {
                     {
                         label: 'Index',
                         value: log.action_context?.index_name,
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Agent',
+                        value: log.agent?.display_name || log.agent?.name,
+                        columnClass: 'col-md-6'
+                    },
+                    {
+                        label: 'Conversation',
+                        value: log.conversation_id,
                         columnClass: 'col-md-6'
                     },
                     {

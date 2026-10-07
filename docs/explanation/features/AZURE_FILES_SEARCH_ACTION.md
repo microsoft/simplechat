@@ -40,7 +40,7 @@ Withheld files are never mentioned to users. They are recorded for administrator
 4. Only allowed results are returned, with file name, UNC path, folder, last modified, a clipped snippet, and score. At most three results come from one file.
 5. `record_azure_files_search_review`:
    - always emits an `[AZURE_FILES_SEARCH]` telemetry event;
-   - writes an `azure_files_search_access` activity log entry when files were withheld;
+   - writes an `azure_files_search_access` activity log entry when files were withheld. The entry carries the conversation ID and the invoking agent's ID and name, read from the execution frame or `g` (`conversation_id`, `request_agent_info`); no other agent configuration is copied;
    - notifies administrators at most once per action per day when files could not be verified.
 
 ### Permission evaluation

@@ -3643,9 +3643,13 @@ export class PluginModalStepper {
     ].forEach(([fieldId, value]) => this.setAzureFilesIndexFieldValue(fieldId, value));
 
     const selectContent = document.getElementById('azure-files-index-select-content');
-    if (selectContent && Object.prototype.hasOwnProperty.call(additionalFields, 'select_content')) {
-      selectContent.checked = additionalFields.select_content === true;
-      selectContent.dataset.userTouched = 'true';
+    if (selectContent) {
+      if (Object.prototype.hasOwnProperty.call(additionalFields, 'select_content')) {
+        selectContent.checked = additionalFields.select_content === true;
+        selectContent.dataset.userTouched = 'true';
+      } else {
+        delete selectContent.dataset.userTouched;
+      }
     }
     const noneAck = document.getElementById('azure-files-index-permission-none-ack');
     if (noneAck) {
@@ -7906,6 +7910,7 @@ export class PluginModalStepper {
     // Configuration Section - Handle endpoint vs SQL/Cosmos configuration
     const isSqlType = this.isSqlType();
     const isCosmosType = this.isCosmosType();
+    const isAzureFilesIndexType = this.isAzureFilesIndexType();
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();

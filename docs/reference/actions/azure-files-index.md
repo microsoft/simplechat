@@ -93,7 +93,7 @@ Failures name the role or setting to fix.
 
 ## What administrators see
 
-- **Activity logs:** each search that withheld files writes an `azure_files_search_access` entry. It records counts, reason codes such as `acl_no_allow`, `acl_explicit_deny`, `sid_unresolved`, `share_access_denied`, `file_not_found`, and `time_budget_exceeded`, and up to 25 withheld file paths with any unresolved SIDs. It never contains file content or the user's question. Filter for **Azure Files Search Access** in Control Center.
+- **Activity logs:** each search that withheld files writes an `azure_files_search_access` entry. It records the agent and conversation that ran the search, counts, reason codes such as `acl_no_allow`, `acl_explicit_deny`, `sid_unresolved`, `share_access_denied`, `file_not_found`, and `time_budget_exceeded`, and up to 25 withheld file paths with any unresolved SIDs. It never contains file content or the user's question. Filter for **Azure Files Search Access** in Control Center.
 - **Notifications:** when results couldn't be verified, administrators get one notification per action per day.
 - **Telemetry:** every search writes an `[AZURE_FILES_SEARCH]` event to Application Insights with the same counts, for trend queries.
 

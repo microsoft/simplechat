@@ -2156,6 +2156,8 @@ def log_azure_files_search_access(user_id: str, review: Dict[str, Any]) -> None:
                 f"Azure Files Search withheld {withheld} of {int(counts.get('files_evaluated') or 0)} files "
                 f"({int(counts.get('denied_files') or 0)} denied, {int(counts.get('unverified_files') or 0)} unverified)"
             ),
+            'conversation_id': (review or {}).get('conversation_id') or None,
+            'agent': (review or {}).get('agent') or None,
             'action_context': {
                 'action_id': (review or {}).get('action_id'),
                 'action_name': (review or {}).get('action_name'),

@@ -146,6 +146,14 @@ def test_admin_azure_files_index_action_modal():
             expect(page.locator("#azure-files-index-vector-field")).to_have_value("text_vector")
             expect(page.locator("#azure-files-index-select-content")).to_be_checked()
 
+            # Validation reports fields in form order, so fill the endpoint, index, and share first.
+            page.locator("#azure-files-index-endpoint").fill("https://contoso-search.search.windows.net")
+            page.locator("#azure-files-index-name").fill("finance-files")
+            page.locator(".azure-files-index-share-resource-id").fill(
+                "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-finance/providers/Microsoft.Storage/storageAccounts/financefiles"
+            )
+            page.locator(".azure-files-index-share-name").fill("finance-share")
+
             page.locator("#azure-files-index-permission-mode").select_option("none")
             expect(page.locator("#azure-files-index-permission-none-warning")).to_be_visible()
             modal.get_by_role("button", name="Next").click()
@@ -155,16 +163,10 @@ def test_admin_azure_files_index_action_modal():
             expect(page.locator("#azure-files-index-shares-list .azure-files-index-share-row")).to_have_count(1)
             page.locator("#azure-files-index-add-share-btn").click()
             expect(page.locator("#azure-files-index-shares-list .azure-files-index-share-row")).to_have_count(2)
-            page.locator("#azure-files-index-shares-list .azure-files-index-remove-share-btn").first.click()
+            page.locator("#azure-files-index-shares-list .azure-files-index-remove-share-btn").last.click()
             expect(page.locator("#azure-files-index-shares-list .azure-files-index-share-row")).to_have_count(1)
 
-            page.locator("#azure-files-index-endpoint").fill("https://contoso-search.search.windows.net")
-            page.locator("#azure-files-index-name").fill("finance-files")
             page.locator("#azure-files-index-query-mode").select_option("hybrid")
-            page.locator(".azure-files-index-share-resource-id").fill(
-                "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-finance/providers/Microsoft.Storage/storageAccounts/financefiles"
-            )
-            page.locator(".azure-files-index-share-name").fill("finance-share")
 
             page.locator("#azure-files-index-test-connection-btn").click()
             expect(page.locator("#azure-files-index-test-connection-alert")).to_have_class("alert alert-success mb-0 py-2 px-3 small")

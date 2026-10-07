@@ -274,6 +274,8 @@ def test_activity_log_record_has_no_content_or_query(app):
         "withheld_files": [{"file": "\\\\finfiles.file.core.windows.net\\docs\\merger.txt", "outcome": "unverified", "reason": "sid_unresolved"}],
         "withheld_files_truncated": False,
         "duration_ms": 120,
+        "conversation_id": "conversation-1",
+        "agent": {"id": "agent-1", "name": "finance_agent", "display_name": "Finance agent"},
     }
     app.activity_logging.log_azure_files_search_access(user_id="user-1", review=review)
     body = container.create_item.call_args.kwargs["body"]
@@ -281,7 +283,43 @@ def test_activity_log_record_has_no_content_or_query(app):
     assert body["description"] == "Azure Files Search withheld 3 of 4 files (1 denied, 2 unverified)"
     assert body["action_context"]["index_name"] == "finance-files"
     assert body["additional_context"]["reasons"] == {"acl_no_allow": 1, "sid_unresolved": 2}
+    assert body["conversation_id"] == "conversation-1"
+    assert body["agent"] == {"id": "agent-1", "name": "finance_agent", "display_name": "Finance agent"}
     assert "query" not in json.dumps(body)
+
+
+def test_review_records_the_invoking_agent_and_conversation(app):
+    import functions_azure_files_search as afs
+    from flask import Flask, g
+
+    runtime = app.runtime
+    config = afs.normalize_azure_files_search_config(_manifest())
+    outcome = afs.AzureFilesSearchOutcome(results=[], denied_files=1, files_evaluated=1)
+    logged = []
+    flask_app = Flask("azure_files_review_context")
+    with _injected_module("functions_activity_logging", log_azure_files_search_access=lambda **kwargs: logged.append(kwargs)), \
+            _injected_module("functions_notifications", create_notification=lambda **kwargs: None):
+        runtime.record_azure_files_search_review(config, "user-1", outcome)
+        assert logged[-1]["review"]["conversation_id"] == "" and logged[-1]["review"]["agent"] is None
+        with flask_app.test_request_context("/"):
+            g.conversation_id = "conversation-1"
+            g.request_agent_name = "finance_agent"
+            g.request_agent_info = {
+                "id": "agent-1", "name": "finance_agent", "display_name": "Finance agent",
+                "instructions": "Never copy agent configuration into the review.",
+            }
+            runtime.record_azure_files_search_review(config, "user-1", outcome)
+            review = logged[-1]["review"]
+            assert review["conversation_id"] == "conversation-1"
+            assert review["agent"] == {"id": "agent-1", "name": "finance_agent", "display_name": "Finance agent"}
+            assert "Never copy" not in json.dumps(review)
+            frame = types.SimpleNamespace(identity=types.SimpleNamespace(conversation_id="conversation-frame"))
+            with _replaced(runtime, "current_agent_execution", lambda: frame):
+                runtime.record_azure_files_search_review(config, "user-1", outcome)
+            assert logged[-1]["review"]["conversation_id"] == "conversation-frame"
+            g.request_agent_info = None
+            runtime.record_azure_files_search_review(config, "user-1", outcome)
+            assert logged[-1]["review"]["agent"] == {"id": "", "name": "finance_agent", "display_name": "finance_agent"}
 
 
 def test_execute_wires_dependencies_and_returns_only_allowed_files(app):
@@ -353,7 +391,18 @@ def test_control_center_csv_formatter():
         "action_context": {"display_name": "Finance files", "index_name": "finance-files"},
         "additional_context": {"counts": {"denied_files": 1, "unverified_files": 2, "files_evaluated": 4}, "reasons": {"sid_unresolved": 2}},
     })
-    assert text == "Action: Finance files; Index: finance-files; Denied: 1; Unverified: 2; Files checked: 4; Reasons: sid_unresolved: 2"
+    assert text == (
+        "Action: Finance files; Index: finance-files; Agent: N/A; Conversation: N/A; "
+        "Denied: 1; Unverified: 2; Files checked: 4; Reasons: sid_unresolved: 2"
+    )
+    with_context = namespace["format_activity_log_details_for_csv"]({
+        "activity_type": "azure_files_search_access",
+        "conversation_id": "conversation-1",
+        "agent": {"id": "agent-1", "name": "finance_agent", "display_name": "Finance agent"},
+        "action_context": {"display_name": "Finance files", "index_name": "finance-files"},
+        "additional_context": {"counts": {"denied_files": 1, "unverified_files": 0, "files_evaluated": 2}, "reasons": {"acl_no_allow": 1}},
+    })
+    assert "Agent: Finance agent; Conversation: conversation-1;" in with_context
 
 
 def test_v1_control_center_and_notification_wiring(app):

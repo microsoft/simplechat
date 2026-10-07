@@ -18,7 +18,9 @@ from azure.identity import DefaultAzureCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizableTextQuery
 from azure.storage.fileshare import ShareServiceClient
+from flask import g, has_app_context
 
+from agent_execution_context import current_agent_execution
 from config import AZURE_ENVIRONMENT, resource_manager, search_resource_manager
 from functions_action_manifest import get_action_origin
 from functions_appinsights import log_event
@@ -212,13 +214,44 @@ def build_user_membership(config: AzureFilesSearchConfig, user_id: str) -> Tuple
     return membership, ""
 
 
+def _context_text(value: Any) -> str:
+    return value.strip()[:200] if isinstance(value, str) else ""
+
+
+def _invocation_context() -> Dict[str, Any]:
+    """Return the conversation and agent that ran the search, for the admin review only.
+
+    Chat, workflow, and delegated agent runs set these on ``g``; a delegated or orchestrated run
+    also carries the conversation on its execution frame. Only identifiers and names are copied,
+    never the agent's instructions or any other configuration.
+    """
+    frame = current_agent_execution()
+    conversation_id = frame.identity.conversation_id if frame is not None else None
+    agent_info, agent_name = None, None
+    if has_app_context():
+        conversation_id = conversation_id or getattr(g, "conversation_id", None)
+        agent_info = getattr(g, "request_agent_info", None)
+        agent_name = getattr(g, "request_agent_name", None)
+    agent_info = agent_info if isinstance(agent_info, dict) else {}
+    name = _context_text(agent_info.get("name")) or _context_text(agent_name)
+    agent = {
+        "id": _context_text(agent_info.get("id")),
+        "name": name,
+        "display_name": _context_text(agent_info.get("display_name")) or name,
+    }
+    return {
+        "conversation_id": _context_text(conversation_id),
+        "agent": agent if agent["id"] or agent["name"] else None,
+    }
+
+
 def record_azure_files_search_review(
     config: AzureFilesSearchConfig,
     user_id: str,
     outcome: AzureFilesSearchOutcome,
 ) -> None:
     """Record a search for administrators: always in telemetry, in activity logs when files were withheld."""
-    review = build_review_record(config, outcome)
+    review = {**build_review_record(config, outcome), **_invocation_context()}
     log_event(
         "[AZURE_FILES_SEARCH] Search completed.",
         extra={"user_id": user_id, **{key: value for key, value in review.items() if key != "withheld_files"}},
