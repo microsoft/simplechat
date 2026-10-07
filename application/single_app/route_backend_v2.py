@@ -173,6 +173,14 @@ from functions_source_review import (
     is_source_review_enabled_for_user,
     is_url_access_enabled_for_user,
 )
+from functions_terms_of_use import (
+    TERMS_OF_USE_RETURN_PATH_SESSION_KEY,
+    get_terms_of_use_config,
+    has_terms_of_use_acceptance,
+    normalize_terms_of_use_return_path,
+    record_terms_of_use_acceptance,
+    record_terms_of_use_decline,
+)
 from functions_workspace_sections import build_workspace_section_availability
 from functions_support_latest_features import build_latest_features_payload
 from functions_workspace_context import (
@@ -205,6 +213,9 @@ from support_menu_config import has_visible_support_latest_features
 from swagger_wrapper import are_swagger_routes_registered, get_auth_security, swagger_route
 
 logger = logging.getLogger(__name__)
+
+# Where an accepted V2 Terms of Use returns when no safe local path was recorded.
+V2_TERMS_OF_USE_DEFAULT_RETURN_PATH = "/v2"
 
 
 # Describes each branding asset an administrator can replace: how to convert the
@@ -719,6 +730,124 @@ def register_route_backend_v2(bp):
             )
             payload, status = {"error": "Workspace details are temporarily unavailable. Please retry."}, 503
         return jsonify(payload), status, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/terms-of-use", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_terms_of_use():
+        """Return the Terms of Use the V2 interstitial page shows before the app loads.
+
+        Exempt from the Terms of Use gate in app.py, since this is what the gate sends a V2
+        user to. ``next`` is stored server-side, normalized to a local path, so the accept
+        call can return the user to where they were without trusting a client value then.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+
+        settings = get_settings() or {}
+        terms_config = get_terms_of_use_config(settings)
+        return_path = normalize_terms_of_use_return_path(
+            request.args.get("next"),
+            fallback=V2_TERMS_OF_USE_DEFAULT_RETURN_PATH,
+        )
+        session[TERMS_OF_USE_RETURN_PATH_SESSION_KEY] = return_path
+        session.modified = True
+
+        public_settings = sanitize_settings_for_user(settings)
+        branding = _build_branding(settings, public_settings)
+        payload = {
+            "enabled": terms_config["enabled"],
+            "required": bool(
+                terms_config["enabled"]
+                and not has_terms_of_use_acceptance(settings, user_id=user_id)
+            ),
+            "title": terms_config["title"],
+            "message": terms_config["message"] if terms_config["enabled"] else "",
+            "accept_button_text": terms_config["accept_button_text"],
+            "decline_button_text": terms_config["decline_button_text"],
+            "return_path": return_path,
+            "branding": {
+                "app_title": branding["app_title"],
+                "hide_app_title": branding["hide_app_title"],
+                "show_logo": branding["show_logo"],
+                "logo_url": branding["logo_url"],
+                "logo_dark_url": branding["logo_dark_url"],
+                "classification_banner": branding["classification_banner"],
+            },
+        }
+        return jsonify(payload), 200, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/terms-of-use/accept", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_accept_terms_of_use():
+        """Record acceptance and return the local path the V2 page should reopen."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+
+        settings = get_settings() or {}
+        terms_config = get_terms_of_use_config(settings)
+        return_path = normalize_terms_of_use_return_path(
+            session.pop(TERMS_OF_USE_RETURN_PATH_SESSION_KEY, None),
+            fallback=V2_TERMS_OF_USE_DEFAULT_RETURN_PATH,
+        )
+        session.modified = True
+
+        if terms_config["enabled"]:
+            try:
+                record_terms_of_use_acceptance(
+                    user_id=user_id,
+                    settings=settings,
+                    source="post_auth_v2",
+                )
+            except Exception as exc:
+                log_event(
+                    "[TERMS_OF_USE] V2 acceptance could not be recorded.",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    level=logging.ERROR,
+                )
+                return (
+                    jsonify({"error": "Your acceptance could not be saved. Please try again."}),
+                    500,
+                    {"Cache-Control": "no-store"},
+                )
+
+        return jsonify({"success": True, "redirect_url": return_path}), 200, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/terms-of-use/decline", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_decline_terms_of_use():
+        """Record a decline, end the session and return where the browser should go."""
+        user_id = get_current_user_id()
+        settings = get_settings() or {}
+        terms_config = get_terms_of_use_config(settings)
+
+        if user_id and terms_config["enabled"]:
+            try:
+                record_terms_of_use_decline(
+                    user_id=user_id,
+                    settings=settings,
+                    source="post_auth_v2",
+                )
+            except Exception as exc:
+                log_event(
+                    "[TERMS_OF_USE] V2 decline audit logging failed.",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    level=logging.ERROR,
+                )
+
+        session.clear()
+        return (
+            jsonify({"success": True, "redirect_url": terms_config["decline_redirect_url"]}),
+            200,
+            {"Cache-Control": "no-store"},
+        )
 
     @bp.route("/api/v2/bootstrap", methods=["GET"])
     @swagger_route(security=get_auth_security())
