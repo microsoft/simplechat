@@ -1,9 +1,9 @@
 # test_v2_workflow_publication_completion.py
 """
 UI coverage for publication completion authoring and exact run inspection.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.118
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 The production SPA uses a closed API fixture with serialized public publication
 status. Tests never publish a document, invoke a model, or contact a live service.

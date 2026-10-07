@@ -1,8 +1,8 @@
 # test_v2_workflow_settings_errors.py
 """
 UI tests for reviewed workflow settings errors, deleted File Sync sources and deleted workflows.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.149
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture validates both

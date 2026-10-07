@@ -1,10 +1,10 @@
 # test_v2_workflow_repeat_until.py
 """
 Local closed-browser regressions for typed Repeat until and manual continuation.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.120
 source_snapshot_changed stopped being authoritative in: 0.261.231
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 Exercises the actual built V2 SPA, strict guards, scoped API requests and production
 definition normalization. Fixtures intercept every request; no live workflow runs.

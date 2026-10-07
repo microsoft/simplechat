@@ -1,14 +1,14 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.127
 Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
 The workflow editor takes focus and hands it back to Edit on close: 0.261.188
 A failed workflow read offers a retry and never the empty state: 0.261.188
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: a
 workflow's actions belong to its selected detail, the editor is a page that returns focus to the
-edited workflow's heading, and a legacy workflow target selects the workflow: 0.261.266
+edited workflow's heading, and a legacy workflow target selects the workflow: 0.261.271
 """
 
 import copy
@@ -295,7 +295,7 @@ def test_group_workflow_search_filters_by_name_and_description(group_ui):
 def test_the_workflow_editor_takes_focus_and_returns_it_to_the_workflow(group_ui):
     """Edit opens the editor page with focus on its title, and leaving it returns focus to the edited
     workflow's heading in the workbench, where Edit is the next stop (M11, WCAG 2.4.3). Until
-    0.261.266 the editor was a dialog that handed focus back to Edit itself."""
+    0.261.271 the editor was a dialog that handed focus back to Edit itself."""
     ui = group_ui
     ui.open("/groups/group-a/workflows")
     detail = select_workflow(ui.page, "Review group files")
@@ -435,7 +435,7 @@ def test_back_navigation_can_keep_or_discard_a_group_draft(group_ui):
 
 def test_legacy_workflow_target_survives_restore_but_not_a_group_switch(group_ui):
     """A legacy `?workflow_id=` survives the restore that resolves the group and selects that
-    workflow in the workbench (until 0.261.266 it opened the editor dialog); a group switch drops it."""
+    workflow in the workbench (until 0.261.271 it opened the editor dialog); a group switch drops it."""
     ui = group_ui
     ui.active_group = "group-a"
     # Listed first, so selecting workflow-1 proves the target was honoured, not the default.

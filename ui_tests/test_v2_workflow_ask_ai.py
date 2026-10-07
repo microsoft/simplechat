@@ -1,8 +1,8 @@
 # test_v2_workflow_ask_ai.py
 """
 Offline real-bundle browser regressions for the workflow editor's Ask AI tab (Phase 3c).
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.213
 Refs: microsoft/simplechat#1548
 
@@ -1084,7 +1084,7 @@ def test_a_closed_editor_stays_closed_when_its_reload_finishes(ask_ui):
     expect(editor.get_by_role("button", name="Save workflow", exact=True)).to_be_disabled()
     expect(panel.get_by_role("group", name="Quick actions", exact=True).get_by_role("button").first).to_be_disabled()
     expect(editor.get_by_role("button", name="Cancel", exact=True)).to_be_enabled()
-    # The editor is a page since 0.261.266, so it is left with Cancel rather than Escape.
+    # The editor is a page since 0.261.271, so it is left with Cancel rather than Escape.
     editor.get_by_role("button", name="Cancel", exact=True).click()
     discard_and_close(page, editor)
 

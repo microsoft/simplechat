@@ -1,9 +1,9 @@
 # test_v2_workflow_flow_authoring.py
 """
 Offline real-bundle browser regressions for M5B workflow Flow authoring.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.122
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 Uses the existing fictional, closed API harness and real Python compiler.
 Only explicit scoped Save and data-only compiler previews may write requests.

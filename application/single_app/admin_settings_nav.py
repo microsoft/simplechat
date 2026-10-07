@@ -313,10 +313,6 @@ ADMIN_NAV = [
                 "icon": "bi-arrow-repeat",
                 "sections": [
                     {"id": "file-sync-section", "label": "File Sync", "icon": "bi-arrow-repeat"},
-                    {"id": "file-sync-source-types-section", "label": "Visible Source Types", "icon": "bi-sliders"},
-                    {"id": "file-sync-personal-section", "label": "Personal Workspace Sync", "icon": "bi-person"},
-                    {"id": "file-sync-group-section", "label": "Group Workspace Sync", "icon": "bi-people"},
-                    {"id": "file-sync-public-section", "label": "Public Workspace Sync", "icon": "bi-globe"},
                 ],
             },
         ],

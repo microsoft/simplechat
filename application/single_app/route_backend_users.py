@@ -557,6 +557,9 @@ def register_route_backend_users(bp):
                     # Whether the personal workspace's own section rail is collapsed to
                     # icons. Separate from v2RailCollapsed, which is the shell's rail.
                     'v2WorkspaceRailCollapsed',
+                    # Whether the V2 Admin Settings categories rail is collapsed to icons.
+                    # Separate from the shell and workspace rails so each keeps its own state.
+                    'v2AdminRailCollapsed',
                     # V2 document explorer: how the workspace documents list is presented
                     # (view mode, visible columns, page size, details pane) and the saved
                     # filter combinations pinned in its navigation rail.

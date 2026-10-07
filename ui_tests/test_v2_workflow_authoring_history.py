@@ -1,8 +1,8 @@
 # test_v2_workflow_authoring_history.py
 """
 Offline real-bundle cross-surface workflow Undo/Redo regressions.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.123
 
 Reuses the closed M5B authoring harness, local production assets, and actual

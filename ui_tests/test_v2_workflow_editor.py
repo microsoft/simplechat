@@ -1,11 +1,11 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.108
 Personal workflow row delete coverage: 0.261.178
 Personal File Sync is authored, so it is no longer listed as preserved-only: 0.261.207
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 create/edit, stable task input bindings, shared references, schema validation,

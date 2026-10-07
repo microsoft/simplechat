@@ -1,8 +1,8 @@
 # test_v2_workflow_calendar_schedules.py
 """
 UI tests for calendar schedules in the native V2 workflow editor, in both workflow scopes.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.193
 
 These tests use the real V2 SPA bundle with the closed workflow fixture, whose save routes validate
@@ -126,7 +126,7 @@ def preview(page, label):
 def listed(page, label):
     """The selected workflow's schedule, exactly as the workbench Overview reads it.
 
-    Until 0.261.266 the workflow list showed it as "Schedule: <label>"; the Overview's
+    Until 0.261.271 the workflow list showed it as "Schedule: <label>"; the Overview's
     Trigger and schedule fact now carries the same label.
     """
     return page.get_by_role("tabpanel", name="Overview", exact=True).get_by_text(label, exact=True)

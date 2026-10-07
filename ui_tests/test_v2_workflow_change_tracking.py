@@ -1,8 +1,8 @@
 # test_v2_workflow_change_tracking.py
 """
 Offline real-bundle browser regressions for change tracking in the V2 workflow editor.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.203
 
 Covers the highlight on each unsaved change (its author badge, Previously value and Revert),
@@ -214,7 +214,7 @@ def assert_readable(*elements):
 def assert_dialog_fits(ui, editor):
     """The editor page fits, and its action labels (Changes, Cancel, Save workflow) stay on one line.
 
-    Until 0.261.266 the actions sat in the editor dialog's footer; on the page they sit in its header.
+    Until 0.261.271 the actions sat in the editor dialog's footer; on the page they sit in its header.
     """
     ui.assert_no_overflow()
     assert editor.evaluate("element => element.scrollWidth <= element.clientWidth + 1"), "The editor overflows."

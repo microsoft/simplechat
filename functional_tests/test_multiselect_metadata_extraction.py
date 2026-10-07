@@ -2,8 +2,9 @@
 # test_multiselect_metadata_extraction.py
 """
 Functional test for multi-select metadata extraction.
-Version: 0.250.106
+Version: 0.261.268
 Implemented in: 0.250.106
+Title changes reach search chunks through the background search metadata sync: 0.261.268
 
 This test ensures personal, group, and public workspace multi-select actions
 can queue metadata extraction and that the shared extraction path updates
@@ -226,10 +227,19 @@ def test_metadata_extraction_updates_title():
     assert "update_callback(**update_fields)" in final_metadata_function, (
         "Final metadata extraction must persist extracted fields"
     )
-    assert "'title', 'authors', 'file_name', 'document_classification', 'tags'" in source, (
-        "Document updates must mark title changes for chunk sync"
+    field_map = next(
+        ast.literal_eval(node.value) for node in module_ast.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "DOCUMENT_SEARCH_METADATA_FIELD_MAP" for target in node.targets)
     )
-    assert "chunk_updates['title'] = existing_document.get('title')" in update_document_function, (
+    assert field_map.get("title") == "title", (
+        "Document updates must mark title changes for the search metadata sync"
+    )
+    assert "request_document_search_metadata_sync(" in update_document_function, (
+        "Title updates must request a search metadata sync"
+    )
+    sync_function = ast.unparse(get_function(module_ast, "run_document_search_metadata_sync"))
+    assert "build_document_search_metadata_fields(document_item, pending_fields)" in sync_function, (
         "Title updates must propagate to search chunks"
     )
 

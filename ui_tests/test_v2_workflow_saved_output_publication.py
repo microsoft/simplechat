@@ -1,9 +1,9 @@
 # test_v2_workflow_saved_output_publication.py
 """
 Closed V2 List coverage for exact saved-record file publication.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.119
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 The real production SPA saves through production definition validation. Fictional
 HTTP fixtures exercise scoped authoring, capability fallback, safe readback,

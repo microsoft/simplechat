@@ -1,8 +1,8 @@
 # test_v2_workflow_m365_run_as.py
 """
 Closed-browser tests for native V2 Microsoft 365 Run as authoring.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.122
 
 Use the actual built SPA and existing scoped workflow fixtures. Cover explicit

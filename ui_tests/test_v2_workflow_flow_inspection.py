@@ -1,11 +1,11 @@
 # test_v2_workflow_flow_inspection.py
 """
 Offline browser regressions for approved M5A read-only workflow Flow inspection.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.121
 Group saved Flow opens through the group route only: 0.261.178
 An unavailable authored source is marked on its own row: 0.261.231
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 Uses the real local SPA, compiler-derived projections and closed fictional APIs.
 Run with PLAYWRIGHT_SERVICE_URL='' in this same pytest process. No live app,

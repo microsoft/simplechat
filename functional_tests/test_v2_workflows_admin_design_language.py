@@ -2,8 +2,8 @@
 # test_v2_workflows_admin_design_language.py
 """
 Functional test for the V2 Workflows workbench and editor in the Admin Settings design language.
-Version: 0.261.266
-Implemented in: 0.261.266
+Version: 0.261.271
+Implemented in: 0.261.271
 
 This test ensures that the V2 Workflows section keeps the shape it was redesigned into:
 
@@ -70,10 +70,10 @@ def _read(path):
 
 
 def test_version_includes_the_redesign():
-    """The workbench and the routed editor arrived in 0.261.266."""
+    """The workbench and the routed editor arrived in 0.261.271."""
     print("\nTesting the application version...")
-    assert_app_version_at_least("0.261.266")
-    print("  ok  version is at least 0.261.266")
+    assert_app_version_at_least("0.261.271")
+    print("  ok  version is at least 0.261.271")
     return True
 
 

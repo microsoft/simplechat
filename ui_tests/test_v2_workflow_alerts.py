@@ -1,8 +1,8 @@
 # test_v2_workflow_alerts.py
 """
 UI tests for native V2 workflow alert editing, in personal and group workflows.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.144
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. Both save routes run

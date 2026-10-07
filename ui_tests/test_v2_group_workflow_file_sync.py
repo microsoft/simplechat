@@ -1,9 +1,9 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.141
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
 group File Sync source list with the real `_serialize_workflow_file_sync_source`, and validates

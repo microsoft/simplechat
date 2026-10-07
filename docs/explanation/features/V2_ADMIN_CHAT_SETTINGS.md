@@ -143,11 +143,17 @@ claims there is something to edit.
 | --- | --- |
 | `enable_tabular_processing_plugin` | Derived from `enable_enhanced_citations` and rewritten on every read |
 | `enable_enhanced_citations_mount` | No control in either interface; forced off unless Enhanced Citations is on |
-| `enable_mixed_source_chat_search` | Staged rollout flag with no administrator control |
-| `enable_mixed_source_conversation_continuity` | Staged rollout flag gated behind the above |
+| `enable_mixed_source_chat_search` | Derived from `enable_enhanced_citations` on every read and save (0.261.266) |
+| `enable_mixed_source_conversation_continuity` | Derived the same way (0.261.266) |
+| `enable_cross_format_compare` | Derived the same way (0.261.266) |
+| `enable_cross_format_compare_one_to_many` | Derived the same way (0.261.266) |
+| `enable_mixed_source_analyze_all` | Gates an Analyze target no chat or workflow screen can request (0.261.266) |
 | `enable_tabular_search_shared_preflight` | Always on; `get_settings()` resets it to `True` on every read, and `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` is the only off switch |
 | `enable_tabular_analyze_durable_preflight` | Always on, forced the same way |
 | `enable_tabular_hierarchical_analysis` | Always on, forced the same way |
+
+Until 0.261.266 the two mixed-source entries were described as staged rollout flags
+with no administrator control. See `MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.
 
 The list is served on the settings GET as `suppressed_capabilities` and honoured
 by `buildCapabilityIndex`. Every `enable_*` key in

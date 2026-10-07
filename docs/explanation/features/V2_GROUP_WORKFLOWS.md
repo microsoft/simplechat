@@ -18,7 +18,7 @@ Implemented in version: **0.261.141**, tracked in
 Personal workflows are unchanged. No new setting, route or container is added.
 From 0.261.207, the personal editor authors File Sync too; see
 [V2 Personal Workflow File Sync](V2_PERSONAL_WORKFLOW_FILE_SYNC.md).
-From 0.261.266, the group Workflows section is a workbench and the editor is a
+From 0.261.271, the group Workflows section is a workbench and the editor is a
 page at `/v2/groups/<group id>/workflows/<id>` rather than a dialog; File Sync
 is its own card there. See
 [V2 Workflows Workbench and Editor](V2_WORKFLOWS_WORKBENCH_AND_EDITOR.md).

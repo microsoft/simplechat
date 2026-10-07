@@ -1,8 +1,9 @@
 # test_public_workspace_tag_writer_safety.py
 """
 Functional test for the public-workspace tag definition writers on the etag guard.
-Version: 0.261.173
+Version: 0.261.268
 Implemented in: 0.261.173
+Updated in: 0.261.268 (renames update each document once; search chunks sync in the background)
 
 The classic public tag routes (create, rename or recolour, delete) and
 ``get_or_create_tag_definition`` read the public workspace, changed its
@@ -229,8 +230,6 @@ def _build_env():
         validate_tags=document_ns["validate_tags"],
         validate_tag_color=document_ns["validate_tag_color"],
         update_document=documents.update_document,
-        propagate_tags_to_chunks=lambda document_id, tags, user_id, **kwargs: events.append(
-            ("propagate_tags_to_chunks", document_id)),
         get_or_create_tag_definition=document_ns["get_or_create_tag_definition"],
     )
 
@@ -459,7 +458,7 @@ def test_a_rename_moves_the_definition_before_any_document(env):
     assert definitions(env) == {"beta": DEFINED, "gamma": DEFINED}
     assert env.documents.tags() == {"d1": ["gamma"], "d2": ["gamma", "beta"], "d3": ["beta"], "other": ["alpha"]}
     assert [event[0] for event in env.events] == [
-        "update_document", "propagate_tags_to_chunks", "update_document", "propagate_tags_to_chunks", "invalidate",
+        "update_document", "update_document", "invalidate",
     ]
     assert workspace_writes(env) == [("replace_item", WS)] and env.bumps == []
 

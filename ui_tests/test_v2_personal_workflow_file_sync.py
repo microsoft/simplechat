@@ -1,8 +1,8 @@
 # test_v2_personal_workflow_file_sync.py
 """
 UI tests for personal workflow File Sync authoring in native V2.
-Version: 0.261.266
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.207
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the

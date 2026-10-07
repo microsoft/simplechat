@@ -80,3 +80,15 @@ silently using preview rows or legacy file-producing execution.
 per-target text after restart, partial and failed targets, full-report retention,
 cancellation, failed result guards, and zero managed uploads. The ordinary
 standalone Compare entry point retains its existing default and return shape.
+
+## Settings Update (0.261.266)
+
+`enable_cross_format_compare` and `enable_cross_format_compare_one_to_many` are no
+longer default-off stored switches. Both follow `enable_enhanced_citations` on every
+settings load and save, because a mixed comparison needs the spreadsheet engine
+Enhanced Citations provides; the Comparison document limits under Document Actions
+still bound how many Targets a request may include. Without Enhanced Citations a
+mixed request is still refused rather than comparing the spreadsheet as text, and the
+message now names Enhanced Citations instead of a hidden rollout flag.
+`SIMPLECHAT_DISABLE_MIXED_SOURCE` turns both off at read time. See
+`docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.

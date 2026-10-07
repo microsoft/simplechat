@@ -1,9 +1,9 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.241; PDF merge authoring added in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 This test ensures the workflow editor can author a merge task, keep the user's selected file
 order after reordering, and save the backend document_action shape, and that it doesn't offer

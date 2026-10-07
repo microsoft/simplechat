@@ -70,7 +70,7 @@ import {
     conversationParticipants,
     extractMentionedParticipants,
     mentionsCurrentUser,
-    resolveSendTarget,
+    sharedConversationTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
 import {
@@ -974,6 +974,12 @@ function stopCollaborationEvents(): void {
     }
 }
 
+/** The message a shared-thread copy was mirrored from, or '' when it is not a copy. */
+function mirroredSourceId(message: ChatMessage | CollaborationMessage): string {
+    const metadata = message.metadata as { source_message_id?: unknown } | undefined;
+    return typeof metadata?.source_message_id === 'string' ? metadata.source_message_id.trim() : '';
+}
+
 /**
  * Merge a message that arrived from the server into the thread.
  *
@@ -986,7 +992,7 @@ function stopCollaborationEvents(): void {
  * matched on the pending id when it is known, and otherwise on the reader's own unsent
  * text, which is how a message posted from another tab still lands in one place.
  */
-function mergeCollaborationMessage(
+export function mergeCollaborationMessage(
     messages: ChatMessage[],
     incoming: CollaborationMessage,
     options: { pendingId?: string | null; currentUserId?: string } = {},
@@ -1001,6 +1007,26 @@ function mergeCollaborationMessage(
         merged[existingIndex] = isReplyRemoved(incoming.metadata)
             ? { ...incoming, thoughts: undefined }
             : { ...merged[existingIndex], ...incoming };
+        return merged;
+    }
+
+    // A shared conversation's orchestrated question and answer are mirrored into its thread
+    // from the run's own messages, so the shared copy and the run's live bubble name each other
+    // through `metadata.source_message_id`. Either can arrive first; the second updates the first.
+    const incomingSourceId = mirroredSourceId(incoming);
+    const mirroredIndex = messages.findIndex((message) =>
+        (incomingSourceId && message.id === incomingSourceId)
+        || (Boolean(incoming.id) && mirroredSourceId(message) === incoming.id),
+    );
+    if (mirroredIndex !== -1) {
+        if (
+            isReplyRemoved(messages[mirroredIndex].metadata)
+            && !isReplyRemoved(incoming.metadata)
+        ) return messages;
+        const merged = [...messages];
+        merged[mirroredIndex] = isReplyRemoved(incoming.metadata)
+            ? { ...incoming, thoughts: undefined }
+            : { ...merged[mirroredIndex], ...incoming };
         return merged;
     }
 
@@ -2889,25 +2915,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const replyTo = useCollaborationStore.getState().replyTo;
 
         // In a shared conversation most messages are people talking to each other, so the
-        // AI is only brought in when something asks for it. `resolveSendTarget` applies the
-        // classic client's rule; null means this message is for the participants alone.
+        // AI is only brought in when something asks for it. `sharedConversationTarget` applies
+        // the classic client's rule, the same one Orchestrate applies; null means this message
+        // is for the participants alone.
         const invocationTarget = collaborative
-            ? resolveSendTarget(
+            ? sharedConversationTarget(
                   trimmed,
-                  {
-                      agentSelection: options.agentSelection,
-                      promptId: options.promptId,
-                      documentSearch: !savedContext && options.documentSearch,
-                      webSearch: !savedContext && options.webSearch,
-                      imageGeneration: !savedContext && options.imageGeneration,
-                      deepResearch: !savedContext && options.deepResearch,
-                      urlAccess: !savedContext && options.urlAccess,
-                      modelDeployment: options.modelDeployment,
-                  },
+                  options,
                   {
                       agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
                       models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
                   },
+                  { savedContext: Boolean(savedContext) },
               ) ?? (savedContext ? {
                   target_type: 'model' as const,
                   display_name: 'Model',

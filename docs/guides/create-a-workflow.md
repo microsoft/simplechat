@@ -33,7 +33,7 @@ or select a group under `/v2/groups`. Choose **Create workflow** or edit an
 existing workflow in the native V2 editor. Ordered drafts still use List;
 explicitly structured drafts also offer Flow authoring as described below.
 
-From **0.261.266**, Workflows lists each workflow on one line: its name, how it
+From **0.261.271**, Workflows lists each workflow on one line: its name, how it
 stands (for example **Running**, **Awaiting approval**, **Completed** or
 **Failed**), and its trigger. Select a workflow to see its **Overview**, which
 starts with when it last ran and how that run ended, its recent **Runs**, and,
@@ -709,7 +709,7 @@ name first, so it has something to go on.
 
 In **0.261.121**, choose **View Flow for ...** beside a saved structured
 workflow to see its branches, joins, routes, and single loop templates. From
-**0.261.266**, select the workflow and choose its **Flow** tab instead.
+**0.261.271**, select the workflow and choose its **Flow** tab instead.
 This is independent of Edit, so an authorized reader can inspect a saved
 definition while it has an active run. This viewer remains read-only in
 **0.261.122**. The List/Flow authoring switch replaces only the old preview-only

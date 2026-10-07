@@ -1,9 +1,9 @@
 # test_v2_workflow_m365_runtime.py
 """
 Closed-browser compatibility tests for Microsoft 365 workflow authorization waits.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.122
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 The production SPA must retain nonterminal states, keep polling, lock active
 authoring, and permit cancellation without exposing generic approval or resume.

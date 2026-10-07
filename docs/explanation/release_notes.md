@@ -2,6 +2,78 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.270)**
+
+#### Bug Fixes
+
+*   **Orchestrate Action and Agent Steps Work Again, Including Microsoft 365**
+    *   With **Orchestrate** on, "what are my emails" failed with "A required retained result is unavailable or changed" in personal and shared chats, while the same request worked with Orchestrate off. Agent and action steps now trust the signed-in session the way manual chat does: access to the conversation, run and exact agent or action is checked, and the step runs without comparing configuration. Web search, linked-page reading and deep research keep their configuration checks.
+    *   Local agents now run as plan steps. An agent that uses Microsoft 365 actions gets a Microsoft 365 request for its own actions, with the same read-only and signed-in-user rules as an action step.
+    *   An @agent or @model tag in an Orchestrate message now chooses that agent or model, like the pickers do.
+    *   Editing an agent or action no longer invalidates results it already produced. A result stays readable until the user loses access to that agent or action.
+    *   (Ref: #1660, #1661, `functions_orchestration_external_sources.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_adapters.py`, `functions_orchestration_m365.py`, `agent_delegation_runtime.py`, `Composer.tsx`, [Session-Trusted Action and Agent Steps Fix](fixes/ORCHESTRATION_SESSION_TRUSTED_ACTION_AGENT_STEPS_FIX.md))
+
+*   **Orchestrate Respects Shared Conversations**
+    *   In a shared conversation with Orchestrate on, a message that addresses only people, such as "@person hey", is now posted to them instead of being sent to the model, as it is with Orchestrate off.
+    *   Only the person who started the shared conversation plans in it. Their question and the run's answer are posted to the shared thread, where every participant sees them arrive. Plans run in a hidden conversation with the shared conversation's ID and workspace lock instead of a private copy, and earlier private copies no longer appear in conversation lists. Other participants' requests are answered the classic way.
+    *   Reopening the shared conversation, and its images, summaries, exports, uploads and Microsoft 365 action cards, keep using the shared conversation for every participant. An answer that finishes later, for example after a waiting step, updates its shared copy. Nothing is posted once the person who started the conversation has left it, and deleting the shared conversation deletes its plans.
+    *   Asking for your own Microsoft 365 data in a shared conversation is now your consent to share what that request reads, in chat and in plans, recorded in your audit history without a prompt. Sharing earlier answers' history and workflow Run as approvals still ask.
+    *   (Ref: #1659, `functions_orchestration_collaboration.py`, `route_backend_orchestration.py`, `collaboration_models.py`, `route_backend_conversations.py`, `functions_m365_approvals.py`, `functions_m365_runtime.py`, `mentions.ts`, `chatStore.ts`, [Shared Conversations Fix](fixes/ORCHESTRATION_SHARED_CONVERSATIONS_FIX.md))
+
+### **(v0.261.269)**
+
+#### New Features
+
+*   **V2 Operations Settings Match the Classic Page**
+    *   All seven Operations sections are now described in V2 Admin Settings, so none fall back to guessed switches named after their settings keys. Automatic Data Refresh, Health Check, and API Documentation appear in V2 for the first time.
+    *   Automatic Data Refresh shows the next refresh in the schedule's timezone and in yours, when it last ran, and what a change would schedule before you save. **Use my timezone** sets the schedule to your browser's zone, and V2 refuses a time or timezone it cannot read instead of quietly falling back to the default.
+    *   Debug and file processing logs nest their automatic turnoff under the switch it belongs to, state each unit's limit, and show the turnoff time in your own timezone. Turnoff times are now stored in UTC; timers set before the upgrade still end when they were meant to.
+    *   Control Center Access shows who can open the dashboard and the management features under the switches as they stand, unsaved changes included, with role values to copy.
+    *   Health Check and API Documentation list each endpoint as a full, copyable address for the deployment, with its sign-in requirement and whether it answers now. Application Insights global logging and Swagger say when a restart is still needed, and Application Insights reports whether its connection string is set.
+    *   File Process Logging can delete stored logs by age or all at once, after a confirmation that states exactly what will be removed.
+    *   **Document Access Index diagnostics** (`enable_dai_debug`) can now be switched on from Debug Logging, with a description and a link to the DAI Metrics card it affects. The classic page has no control for it, and V2 previously showed it only as an unexplained "Dai debug" switch.
+    *   (Ref: `admin_settings_fields.py`, `functions_logging_timers.py`, `functions_control_center_schedule.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminOperations.ts`, `test_v2_admin_operations_settings.py`, [V2 Admin Operations Settings](features/V2_ADMIN_OPERATIONS_SETTINGS.md))
+
+*   **In-App Setup Guides for Operations**
+    *   The classic page's role setup, health check configuration, and "Why enable Swagger?" dialogs are available from the matching V2 section headers, with values to copy and a link to the documentation.
+    *   The V2 guides correct three statements the classic dialogs make: health checks return the server time as text or a two-field JSON status, not per-dependency results or HTTP 503; Swagger is open to any signed-in user, not only admins; and ControlCenterAdmin does not also require the Admin role.
+    *   (Ref: `components/admin/guides/`, `docs/admin/operations.md`)
+
+#### Bug Fixes
+
+*   **ControlCenterDashboardReader Described Correctly in App Role Requirements**
+    *   The app role registry said the dashboard reader role only worked alongside the ControlCenterAdmin requirement. It works on its own, and the description now says so.
+    *   (Ref: `admin_app_roles.py`, `control_center_required`)
+
+### **(v0.261.268)**
+
+#### Bug Fixes
+
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, file names, or classification no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Saves on large documents no longer time out with "invalid JSON" errors in the personal, group, or public workspaces.
+    *   The search index update sends only the changed fields instead of re-reading every chunk with its embedding and writing it back one chunk at a time. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with a similar drop in Cosmos write-fence operations, which sharply reduces Search and Cosmos load for everyone on the server.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   Group and public metadata edits through the V2 explorer no longer fail with "propagation incomplete" on documents with more than one search chunk.
+    *   What users will notice: saves and tag changes finish right away, and a brief notice says that search and chat results will reflect the change once the search index finishes updating. That usually takes seconds, and up to a minute or two on very large documents. Failed or interrupted updates retry automatically until every chunk matches the document, so chat tag filters and citation titles converge instead of staying partly stale.
+    *   When the background sync finishes, it clears cached search results for the document's workspace and for every user or group with an approved share, so a search that ran during the sync does not keep returning the old values for the search cache lifetime (5 minutes by default).
+    *   (Ref: `update_document()`, `run_document_search_metadata_sync()`, `background_tasks.py`, document metadata routes and native document APIs, `documentOperations.ts`, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657, #1658, #1673)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share through the classic workspace now updates the search index. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Revocations are enforced in the search index before they are saved. When the index cannot apply a sharing change, users get a clear, retryable error instead of a silent success.
+    *   Personal share approvals and unshares also update the search index before they are saved.
+    *   Approving a share that is already approved now repairs its search access, so a share whose search update failed can be completed by approving it again.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, `reproject_document_search_acl()`, group and personal sharing routes, `functions_group_document_collaboration.py`, #1657)
+
+### **(v0.261.267)**
+
+#### User Interface Enhancements
+
+*   **Collapsible Category List in V2 Admin Settings**
+    *   The category list on the left of V2 Admin Settings can now collapse to a strip of icons, as the workspace section rail does, giving its width to the settings cards. **Collapse** sits at the top of the list. Collapsed, each icon still switches category, shows its name as a tooltip, and is announced by name to screen readers.
+    *   The choice is remembered per administrator in a new `v2AdminRailCollapsed` user preference, kept separate from the workspace section rail and the main navigation so collapsing one leaves the others alone. Narrower windows keep the category drop-down.
+    *   (Ref: `AdminSettingsPage.tsx`, `userSettings.ts`, `route_backend_users.py`, `test_v2_admin_settings_rail_collapse.py`, `ui_tests/test_v2_admin_settings_rail_collapse.py`, [V2 Admin Settings Rail Collapse](features/V2_ADMIN_SETTINGS_RAIL_COLLAPSE.md))
+
 ### **(v0.261.265)**
 
 #### User Interface Enhancements

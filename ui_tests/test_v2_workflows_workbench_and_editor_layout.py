@@ -1,8 +1,8 @@
 # test_v2_workflows_workbench_and_editor_layout.py
 """
 UI tests for the V2 Workflows workbench and editor in the Admin Settings design language.
-Version: 0.261.266
-Implemented in: 0.261.266
+Version: 0.261.271
+Implemented in: 0.261.271
 
 These tests drive the real V2 SPA bundle against the closed workflow API fixture. They check the
 layout the redesign promises, which the behavioural workflow suites don't: one-line rows beside a

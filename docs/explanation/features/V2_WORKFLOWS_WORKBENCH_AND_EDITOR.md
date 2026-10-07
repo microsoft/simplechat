@@ -25,7 +25,7 @@ Nothing about what a workflow can do changed. The same fields are saved in the s
 inspection is unchanged inside the Runs tab, and the chat **Proposed workflow** card still opens
 the same editor in a dialog.
 
-## Implemented in version: **0.261.266**
+## Implemented in version: **0.261.271**
 
 The application version is maintained in `application/single_app/config.py`.
 

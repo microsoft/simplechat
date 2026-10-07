@@ -56,7 +56,7 @@ configuration.
 | `status` field type | A server-computed readout that is displayed but never stored. |
 | `depends_on` composition | `equals`, `not_equals`, `any_of` and `all_of`, nestable. Needed because one block can be revealed by several independent capabilities. |
 | `requires` | A prerequisite owned by a different section, mirroring the `data-requires` attributes `admin_settings_dependencies.js` reads. |
-| `group` | An ordered, labelled cluster of fields with a variant, which is what the renderer discloses progressively. |
+| `group` | An ordered, labelled cluster of fields with a variant, which is what the renderer discloses progressively. A group may name an `anchor` switch to be drawn beneath it; see [V2 Admin File Sync Single Card](V2_ADMIN_FILE_SYNC_SINGLE_CARD.md). |
 | `role: capability` | Marks the switch a section hangs off, so the renderer can lift it into the section header. |
 | `paths` | Where a value is stored when that is not a top-level key of its own name. |
 | `scale` | The multiplier between the unit a field is edited in and the unit it is stored in. |
@@ -149,19 +149,22 @@ that the two interfaces order or group them identically. The intentional differe
   why to leave it on. The classic page dropped its short-lived control, which never saved,
   in late 2025. Until the switch was declared, the fallback scan matched "search" and filed
   it under Web Search as a bare toggle. Both keys are recorded in `V2_ONLY_FIELDS`.
+- File Sync drawn as one card (since 0.261.266): the workspace types nest under Enable
+  File Sync, each with its Access rules in a panel beneath it, and Visible Source Types
+  is a "Source types" panel. The V1 pane keeps its own layout.
 
 ## Testing
 
 | Test | Covers |
 | --- | --- |
-| `test_v2_admin_schema_vocabulary.py` | Field types, dependency evaluation, list coercion, secret handling |
+| `test_v2_admin_schema_vocabulary.py` | Field types, dependency evaluation, list coercion, secret handling, anchored groups |
 | `test_v2_admin_settings_secret_handling.py` | Redaction on read and write; untouched credentials never written |
 | `test_v2_admin_section_shell.py` | Shared dispatcher, route guards, page wiring, plus the TypeScript checks |
-| `test_v2_admin_section_logic.ts` | Status derivation and group disclosure rules |
+| `test_v2_admin_section_logic.ts` | Status derivation, group disclosure rules, anchored panels, collapsed summaries |
 | `test_v2_admin_knowledge_web_research.py` | Parity, nested storage, consent gate, auth branching |
 | `test_v2_admin_knowledge_extraction.py` | Parity, connection-first ordering, chunk size storage |
 | `test_v2_admin_knowledge_audio_video.py` | Parity, audio cue relocation, shared Speech disclosure |
-| `test_v2_admin_knowledge_file_sync.py` | Parity, Redis prerequisite, GB/bytes conversion, assignments |
+| `test_v2_admin_knowledge_file_sync.py` | Parity, single card, nested workspace types, anchored Access panels, Redis prerequisite, GB/bytes conversion, assignments |
 | `test_search_result_cache_admin_setting.py` | Search result cache placement, defaults against the runtime, lifetime bounds, V2-only record |
 | `ui_tests/test_v2_admin_search_result_cache.py` | The cache group renders under Azure AI Search, hides its lifetime while off, and saves through the normalizer |
 | `test_model_vision_capability_resolution.py` | Three-tier resolution and its precedence |

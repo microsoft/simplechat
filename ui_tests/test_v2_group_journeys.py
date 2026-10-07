@@ -1,9 +1,9 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.161
-The workflow editor is a routed page whose draft freezes the group switcher, as Settings does: 0.261.266
+The workflow editor is a routed page whose draft freezes the group switcher, as Settings does: 0.261.271
 
 These ride one composite group store (`group_journeys_ui`) that answers the
 directory, membership, prompt, document-collaboration and native-authoring routes

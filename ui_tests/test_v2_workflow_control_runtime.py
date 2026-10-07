@@ -1,9 +1,9 @@
 # test_v2_workflow_control_runtime.py
 """
 UI tests for V2 workflow control-runtime run inspection.
-Version: 0.261.266
+Version: 0.261.271
 Implemented in: 0.261.116
-The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.266
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 definition v3 execution inspection, scoped runtime decisions, authoritative
