@@ -3,7 +3,7 @@
 // Runs the V2 hand-off card's real editor handling on workflow hand-off drafts from a JSON file and
 // prints what an edited accept would send, so a Python test can hand it to the real accept route.
 // Version: 0.261.253
-// Implemented in: 0.261.279
+// Implemented in: 0.261.281
 //
 // Bundled with the esbuild the V2 app already provides and executed under node by
 // test_orchestration_workflow_handoff_editor_round_trip.py. The request carries `drafts`, each a
