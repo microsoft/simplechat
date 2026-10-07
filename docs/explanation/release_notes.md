@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.282)**
+
+#### New Features
+
+*   **Ask AI in the Agent and Action Editors**
+    *   The V2 agent and action editors for personal, group and global agents and actions now have an **Ask AI** panel, matching the workflow editor. Describe what you want and the assistant fills in the unsaved draft, highlighting each changed field, with **Jump to** and **Undo this change** for every turn. It never saves and never sees or enters keys or other credentials.
+    *   In the agent editor it can set the name, description, instructions, model, assigned actions, token limit, reasoning effort and knowledge. In the action editor it can choose the action type and fill in its configuration, capabilities and sign-in method.
+    *   The agent assistant can draft up to three new actions for the agent. They are listed under **New actions from Ask AI** and created only when the agent is saved. One that still needs something, such as an endpoint, blocks the save and can be completed with **Finish in action editor**, which returns to the agent with the action assigned.
+    *   Administrators can turn each panel off with **Enable Ask AI in the Agent Editor** and **Enable Ask AI in the Action Editor** in Agents and Actions settings. Both are on by default.
+    *   (Ref: `functions_editor_assist.py`, `POST /api/agents/assist`, `POST /api/actions/assist`, `EditorAskAiPanel.tsx`, `agentEditorAssist.ts`, `actionEditorAssist.ts`, `AgentActionPicker.tsx`, `workspaceEditorDrafts.ts`, [Ask AI in the Agent and Action Editors](features/AGENT_ACTION_AI_ASSISTANT.md))
+
 ### **(v0.261.277)**
 
 #### User Interface Enhancements

@@ -34,6 +34,30 @@ without following a modal wizard. See [Build agents and actions in My Workspace]
 for the native workflow, implemented in **0.261.096** in
 `application/single_app/config.py`.
 
+### Build the agent with Ask AI
+
+Select **Ask AI** in the editor's header to open the assistant beside the form,
+then describe the agent in your own words, for example "a helpdesk agent that
+answers from our IT policy documents and can look up tickets". The assistant
+fills in the draft for you, such as the name, description, instructions, model,
+assigned actions and knowledge, and highlights every field it changed. Each turn
+lists its changes, with **Undo this change** to take the whole turn back.
+
+Nothing is saved until you choose **Save agent**, and the usual checks still
+run. The assistant only offers models, actions and knowledge you could pick
+yourself, and it never sees or enters keys or other credentials.
+
+When no existing action fits, the assistant can draft up to three new actions
+for the agent. They are listed under **New actions from Ask AI** in the Actions
+section and are created in the same workspace only when you save the agent. If
+a drafted action still needs something, such as an endpoint or credentials, it
+shows what is missing and blocks the save. Choose **Finish in action editor** to
+complete it; when you save the action you return to the agent with the new
+action assigned. **Remove** drops a drafted action you don't want.
+
+Administrators can turn the panel off with **Enable Ask AI in the Agent Editor**
+in [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
+
 ## Classic interface steps
 
 1. Open **Personal Workspace** or the target **Group Workspace**.

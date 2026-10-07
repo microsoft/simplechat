@@ -21,7 +21,9 @@ import { PERSONAL_AGENT_WORKBENCH, type AgentWorkbenchAdapter } from '../../lib/
 import {
     isRecord, type ActionConfiguration, type ActionTypeDefinition, type AgentConfiguration, type AgentEditorOptions,
 } from '../../lib/workspaceAuthoring';
-import { seedNewWorkspaceActionDraft, takeCreatedWorkspaceAction, useWorkspaceEditorDraft } from '../../lib/workspaceEditorDrafts';
+import {
+    clearWorkspaceActionHandoff, seedNewWorkspaceActionDraft, takeCreatedWorkspaceAction, takeWorkspaceActionHandoff, useWorkspaceEditorDraft,
+} from '../../lib/workspaceEditorDrafts';
 import { agentForSave, agentReasoningLevels, agentText, agentValidationErrors, applySafeAgentDraft, isAgentEditorEnvelope, newAgentDraft } from '../../lib/workspaceAgentAuthoring';
 import { newAgentActionErrors } from '../../lib/workspaceAgentActions';
 import { agentKnowledgeErrors, type AgentKnowledgeCatalog } from '../../lib/workspaceAgentKnowledge';
@@ -155,17 +157,16 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
         handoffChecked.current = true;
         const action = takeCreatedWorkspaceAction(location.pathname, adapter.draftScope);
         if (!action) return;
+        const handoff = takeWorkspaceActionHandoff(location.pathname, adapter.draftScope);
         returnedAction.current = action;
         setActions((current) => [...current.filter((item) => item.id !== action.id || item.is_global !== action.is_global), action]);
         setDraft((current) => {
             // An action Ask AI drafted and the person finished in the action editor replaces its placeholder.
-            const handoff = typeof current._pendingActionHandoff === 'string' ? current._pendingActionHandoff : '';
-            const { _pendingActionHandoff: _marker, ...rest } = current;
-            if (handoff && rest.actions_to_load.includes(handoff)) return resolvePendingAgentAction(rest as AgentConfiguration, handoff, action.id);
+            if (handoff && current.actions_to_load.includes(handoff)) return resolvePendingAgentAction(current, handoff, action.id);
             return {
-                ...rest,
-                actions_to_load: rest.actions_to_load.includes(action.id) ? rest.actions_to_load : [...rest.actions_to_load, action.id],
-            } as AgentConfiguration;
+                ...current,
+                actions_to_load: current.actions_to_load.includes(action.id) ? current.actions_to_load : [...current.actions_to_load, action.id],
+            };
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bootLoading, bootError, readOnly, location.pathname]);
@@ -229,8 +230,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const finishPendingAction = (reference: string) => {
         const pending = pendingActions.find((item) => item.reference === reference);
         if (!pending || !actionWorkbench) return;
-        seedNewWorkspaceActionDraft(location.pathname, pending.action, createActionDraft(), actionWorkbench.draftScope);
-        setDraft((current) => ({ ...current, _pendingActionHandoff: reference }));
+        seedNewWorkspaceActionDraft(location.pathname, pending.action, createActionDraft(), actionWorkbench.draftScope, reference);
         navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`,
             { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } });
     };
@@ -274,7 +274,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                 setActions((current) => [...current.filter((item) => item.id !== saved.id), saved]);
                 setDraft(working);
             }
-            const { _pendingActions: _drafts, _pendingActionHandoff: _marker, ...agent } = working;
+            const { _pendingActions: _drafts, ...agent } = working;
             const resource = await adapter.save(agentForSave(agent as AgentConfiguration), original);
             if (!resource.record?.id) throw new Error('The save response did not include an agent identifier. Reload before trying again.');
             load(resource);
@@ -351,7 +351,10 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                     pendingActions={pendingActions} pendingIssues={pendingIssues}
                     onFinishPendingAction={actionWorkbench ? finishPendingAction : undefined}
                     onRefresh={() => setActionsRevision((value) => value + 1)}
-                    onNewAction={() => navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`, { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } })} />) },
+                    onNewAction={() => {
+                        clearWorkspaceActionHandoff(location.pathname, adapter.draftScope);
+                        navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`, { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } });
+                    }} />) },
                 { id: 'knowledge', label: 'Assigned knowledge', icon: BookOpen,
                     description: 'The documents, tags and web pages the agent answers from.', content: structured(<AgentKnowledgeFields draft={draft} setDraft={setDraft}
                     catalog={knowledge} loading={knowledgeLoading} error={knowledgeError} readOnly={readOnly} knowledgeScopes={adapter.knowledgeScopes}
