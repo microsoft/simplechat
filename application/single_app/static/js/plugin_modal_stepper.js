@@ -4670,7 +4670,7 @@ export class PluginModalStepper {
           titleEl.textContent = 'Database Configuration';
         } else if (isCosmosType) {
           titleEl.textContent = 'Cosmos Configuration';
-        } else if (this.isAzureFilesIndexType()) {
+        } else if (isAzureFilesIndexType) {
           titleEl.textContent = 'Azure Files Search Configuration';
         } else if (this.isRocksDbType()) {
           titleEl.textContent = 'RocksDB Configuration';

@@ -47,6 +47,7 @@ from functions_authentication import get_graph_authority, get_graph_base_url, ge
 from functions_azure_endpoint_validation import (
     AZURE_STORAGE_ENDPOINT_SUFFIXES,
     azure_storage_endpoint_suffix_for_hostname,
+    validate_azure_file_endpoint,
 )
 from functions_debug import debug_print
 from functions_documents import (
@@ -153,6 +154,9 @@ AZURE_FILES_ERROR_PERMISSION_DENIED = "azure_files_permission_denied"
 AZURE_FILES_ERROR_AUTHENTICATION_FAILED = "azure_files_authentication_failed"
 AZURE_FILES_ERROR_NOT_FOUND = "azure_files_not_found"
 AZURE_FILES_ERROR_NETWORK_BLOCKED = "azure_files_network_blocked"
+AZURE_FILES_ENDPOINT_PUBLIC_ERROR = (
+    "Azure Files sources require an Azure Files service URL such as https://account.file.core.windows.net."
+)
 # Reviewed, static messages that are safe to return for a classified run or connection failure.
 FILE_SYNC_RUN_ERROR_CATEGORY_MESSAGES = {
     AZURE_FILES_ERROR_PERMISSION_DENIED: (
@@ -960,9 +964,15 @@ def _normalize_azure_file_url(value: Any) -> Tuple[str, List[str]]:
     parsed_url = urlparse(raw_url)
     if parsed_url.scheme != "https" or not parsed_url.netloc:
         raise ValueError("Azure Files sources require an HTTPS file service or share URL")
+    # Managed identity and service principal sources send a storage token to this host,
+    # so only Azure Files service endpoints are accepted.
+    try:
+        account_url = validate_azure_file_endpoint(f"{parsed_url.scheme}://{parsed_url.netloc}")
+    except ValueError as error:
+        raise FileSyncPublicValidationError(AZURE_FILES_ENDPOINT_PUBLIC_ERROR) from error
 
     path_parts = [unquote(path_part) for path_part in parsed_url.path.split("/") if path_part]
-    return f"{parsed_url.scheme}://{parsed_url.netloc}".rstrip("/"), path_parts
+    return account_url, path_parts
 
 
 def _normalize_azure_share_name(value: Any) -> str:
@@ -3381,6 +3391,8 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
     account_url = connection.get("account_url") or ""
     if not account_url:
         raise ValueError("Azure Files source is missing an account URL")
+    # Re-checked here so sources saved before the host check can't send a token elsewhere.
+    account_url = validate_azure_file_endpoint(account_url)
     if auth_type == "client_secret":
         client_id = auth.get("identity") or ""
         client_secret = _resolved_auth_secret(auth)

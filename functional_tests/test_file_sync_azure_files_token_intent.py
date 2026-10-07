@@ -149,6 +149,50 @@ def test_managed_identity_and_service_principal_clients_use_backup_intent(file_s
         assert file_client.file_request_intent == "backup", auth["auth_type"]
 
 
+def test_saved_azure_files_urls_must_be_azure_files_hosts(file_sync):
+    """Token credentials are sent to the account URL, so saving a source accepts only Azure Files hosts."""
+    connection = file_sync._normalize_azure_files_connection({"account_url": f"{ACCOUNT_URL}/docs/reports"})
+    assert connection["account_url"] == ACCOUNT_URL
+    assert connection["share_name"] == "docs" and connection["directory_path"] == "reports"
+    government = file_sync._normalize_azure_files_connection(
+        {"account_url": "https://govfiles.file.core.usgovcloudapi.net", "share_name": "docs"},
+    )
+    assert government["account_url"] == "https://govfiles.file.core.usgovcloudapi.net"
+    for hostile_url in (
+        "https://attacker.example.com",
+        "https://scfiletest.file.core.windows.net.attacker.example",
+        "https://scfiletest.blob.core.windows.net",
+        "https://127.0.0.1",
+        "https://localhost",
+        "https://user@scfiletest.file.core.windows.net",
+        "https://scfiletest.file.core.windows.net:8443",
+    ):
+        with pytest.raises(file_sync.FileSyncPublicValidationError) as raised:
+            file_sync._normalize_azure_files_connection({"account_url": hostile_url, "share_name": "docs"})
+        assert raised.value.public_message == file_sync.AZURE_FILES_ENDPOINT_PUBLIC_ERROR, hostile_url
+
+
+def test_stored_sources_never_send_a_token_to_another_host(file_sync):
+    """A source saved before the host check is refused before any credential is created."""
+    created = []
+
+    def record_credential(*args, **kwargs):
+        created.append(kwargs)
+        raise AssertionError("A credential must not be created for a non-Azure Files host.")
+
+    with _replaced(file_sync, "DefaultAzureCredential", record_credential), \
+            _replaced(file_sync, "ClientSecretCredential", record_credential):
+        for auth in (
+            {"auth_type": "managed_identity"},
+            {"auth_type": "client_secret", "identity": CLIENT_ID, "tenant_id": TENANT_ID, "secret": "not-a-real-secret"},
+        ):
+            source = _azure_files_source(auth)
+            source["connection"]["account_url"] = "https://attacker.example.com"
+            with pytest.raises(ValueError):
+                file_sync._get_azure_files_service_client(source)
+    assert created == []
+
+
 def test_connection_string_auth_is_unchanged(file_sync):
     """Account-key connection strings keep working without a token intent."""
     connection_string = (

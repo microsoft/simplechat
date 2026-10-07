@@ -22,6 +22,7 @@ The documentation said to "grant a Storage File Data role that matches the desir
 
 - `application/single_app/functions_file_sync.py`
   - Passes `token_intent="backup"` (`AZURE_FILES_TOKEN_INTENT`) when building token-credential clients. Share, directory, and file clients derived from them inherit the intent. The connection-string path is unchanged.
+  - Accepts only Azure Files service hosts (`<account>.file.<Azure storage suffix>`) as the file service URL. A token credential sends the app's storage token to that host, so without this check a source pointed at another host would have received it once the token path worked. `_normalize_azure_file_url` refuses other hosts when a source is saved or tested, with `AZURE_FILES_ENDPOINT_PUBLIC_ERROR`. `_get_azure_files_service_client` checks again before creating a credential, so sources saved earlier can't reach another host. The check reuses `validate_azure_file_endpoint`, which also rejects ports, embedded credentials, local hostnames, and IP literals.
   - Adds `classify_azure_files_error`, which maps storage error codes, HTTP status, and credential failures to four reviewed categories:
     - permission denied, with Storage File Data Privileged Reader guidance;
     - authentication failed;
@@ -48,6 +49,7 @@ The documentation said to "grant a Storage File Data role that matches the desir
   - Proves the pinned SDK rejects token credentials without intent.
   - Builds real managed identity and service principal clients and checks that the derived share and file clients carry backup intent.
   - Confirms connection strings are unaffected.
+  - Refuses non-Azure Files hosts when a source is saved (other domains, look-alike suffixes, Blob hosts, IP literals, localhost, embedded credentials, and explicit ports), and refuses a stored source with another host before any credential is created.
   - Covers error classification, actionable connection-test messages without raw SDK text, run sanitization, daily manager and admin notifications, recipient roles, and the V1 and V2 guidance text.
 - `functional_tests/test_file_sync_azure_files_identity.py` still passes, so the existing wiring is unchanged.
 

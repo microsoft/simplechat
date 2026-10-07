@@ -130,13 +130,13 @@ def test_azurecli_resource_id_validation_accepts_empty_defaults() -> None:
         print("PowerShell not available; skipped the behavioral helper check.")
         return
 
+    search_service_id = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Search/searchServices/x"
     script = "\n".join([
         helper,
         "Assert-ResourceIdsByType -ResourceIds @() -ExpectedType 'Microsoft.Storage/storageAccounts' -ParameterName 'p'",
         "'EMPTY_OK'",
         "try {",
-        "    Assert-ResourceIdsByType -ResourceIds @('/subscriptions/s/resourceGroups/rg/providers/Microsoft.Search/searchServices/x') "
-        "-ExpectedType 'Microsoft.Storage/storageAccounts' -ParameterName 'p'",
+        f"    Assert-ResourceIdsByType -ResourceIds @('{search_service_id}') -ExpectedType 'Microsoft.Storage/storageAccounts' -ParameterName 'p'",
         "    'WRONG_TYPE_ACCEPTED'",
         "} catch { 'WRONG_TYPE_REJECTED' }",
     ])
