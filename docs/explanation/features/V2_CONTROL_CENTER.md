@@ -1,6 +1,6 @@
 # V2 Control Center
 
-The V2 Control Center is a permission-aware administration pane for managing SimpleChat. The foundation release provides the shared navigation and capability contract, placeholders for management areas that will arrive in later phases, and a manual activity-log data-health tool.
+The V2 Control Center is a permission-aware administration pane for managing SimpleChat. It provides a usage dashboard, user/group/public-workspace management, activity investigations, and an explicitly invoked activity-log data-health tool.
 
 **Dashboard implemented in version:** 0.261.279
 **Foundation implemented in version:** 0.261.278
@@ -89,7 +89,7 @@ The response includes `groups`, `pagination`, and `metrics_freshness` with the s
 
 ### Drawer and existing actions
 
-`GET /api/v2/control-center/groups/<id>` reads current ownership, members, roles and status history, then returns the overview, retention policy, document summary, token total and the 20 most recent projected activity records. It does not expose model endpoints, credentials, logos, or the raw group document. The activity view shows the returned record as JSON and exports that recent subset as CSV. **View in Activity Logs** carries `workspace_type=group`, `workspace_id`, and `group_id` to the Activity Logs section; that section remains a placeholder until Phase 6.
+`GET /api/v2/control-center/groups/<id>` reads current ownership, members, roles and status history, then returns the overview, retention policy, document summary, token total and the 20 most recent projected activity records. It does not expose model endpoints, credentials, logos, or the raw group document. The activity view shows the returned record as JSON and exports that recent subset as CSV. **View in Activity Logs** carries `workspace_type=group`, `workspace_id`, and `group_id` to the scoped Activity Logs investigation.
 
 The drawer has Overview, Members, Ownership, Status, Retention, Activity and Documents tabs. Owner and member links open the Users drawer. `EntityDetailSections.tsx` provides reusable keyboard-operable detail tabs, timeline/JSON presentation and date formatting for later workspace management. `DetailDrawer` reuses the application's modal focus trap, focus restoration and innermost-dialog Escape handling.
 
@@ -115,7 +115,7 @@ Activity Logs is an investigation surface for administrators with `can_view_acti
 
 The query recognizes top-level and nested group/public-workspace identifiers and the historical `public_workspace` workspace-type spelling. `workspace_id` requires a workspace type; for personal workspaces it matches the user's ID. User filtering includes the stored partition user and the actor fields used by status/admin writers. `status=failed` matches recorded failure/error text; it does not infer failures from unrecorded events.
 
-Responses contain `items`, `next_cursor`, `page_size`, and `snapshot`. Page size defaults to 50 and is bounded at 200. Paging uses a descending keyset of the **stored timestamp string, ID, and user partition**, not Cosmos continuation tokens, `OFFSET`, or a total-count scan. The partition tie-breaker is required because Cosmos IDs are unique only within a partition. Cursors retain the original timestamp spelling, distinguish missing/null partition values, carry a time cutoff, and reject reuse with different filters. Refresh starts a new sequence. The cutoff excludes newer timestamped events, but is not a Cosmos transactional snapshot: deletion, edits, or late/backdated writes can change an ongoing investigation. Records without string timestamps or IDs cannot participate in this ordered feed.
+Responses contain `items`, `next_cursor`, `page_size`, and `snapshot`. Page size defaults to 50 and is bounded at 200. Paging uses a descending keyset of the **stored timestamp string, ID, and user partition**, not Cosmos continuation tokens, `OFFSET`, or a total-count scan. The partition tie-breaker is required because Cosmos IDs are unique only within a partition. Cursors retain the original timestamp spelling, distinguish missing/null partition values, carry a time cutoff, and reject reuse with different filters. Refresh starts a new sequence. The cutoff excludes newer timestamped events, but is not a Cosmos transactional snapshot: deletion, edits, or late/backdated writes can change an ongoing investigation. Records without string timestamps or IDs, or with malformed non-string/non-null user partitions, cannot participate in this ordered feed; legacy browsing remains available for those records.
 
 ### Index rollout
 

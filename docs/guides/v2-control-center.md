@@ -66,7 +66,7 @@ The detail drawer shares the Groups tabs and supports status history, recent act
 
 Individual document deletion, workspace deletion, take-ownership and transfer-to-member workflows request approval on the existing server routes. A submission notice means **requested**, not executed. Its link opens the particular approval with workspace scope. The existing document-deletion executor can report successful deletions while other documents fail; workspace deletion can then proceed after partial cleanup. Review execution logs/results rather than treating the submitted request as completed cleanup.
 
-Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links retain public workspace scope for Phase 6.
+Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links open the broader investigation with public workspace scope.
 
 ## Check activity-log data health
 
