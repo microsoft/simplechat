@@ -6,9 +6,22 @@
 // worse, only changes the classic interface — is more confusing than its absence, so the
 // remaining classic preferences are deliberately left to that page until V2 implements the
 // behaviour behind them.
+//
+// Cards are arranged in groups (Appearance, Chat, Voice and audio, Notifications and alerts,
+// Help and guidance, Memory and data, Connected accounts, Diagrams and charts) so the page
+// index on the right can list them the way Admin Settings does.
 
 import { useEffect, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
+import {
+    BarChart3,
+    Bell,
+    ListTree,
+    Siren,
+    Tags,
+    Type,
+    Workflow,
+} from 'lucide-react';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
@@ -25,7 +38,12 @@ import {
     type FontSizePreference,
 } from '../../lib/userSettings';
 import { Toggle, Skeleton } from '../ui/primitives';
-import { SettingsSection } from './TabScaffold';
+import { SettingsCard, SettingsGroup } from './SettingsCard';
+import { CompletionAudioCard, MicrophoneCard, SpokenRepliesCard } from './VoiceAudioCards';
+import { RetentionCard } from './RetentionCard';
+import { FactMemoryBench } from './FactMemoryBench';
+import { M365Cards } from './M365Cards';
+import { LatestFeaturesCard, TutorialsCard } from './GuidanceCards';
 import { VISUAL_STYLE_SETTING_KEYS } from '../../lib/blockVisualStyle';
 import {
     DEFAULT_VISUAL_STYLE,
@@ -43,17 +61,6 @@ import {
     setWorkflowAlertSoundsDeviceEnabled,
     useWorkflowAlertDevicePreference,
 } from '../../lib/workflowAlertDevicePreferences';
-
-/** Voices offered for spoken replies, matching what the speech endpoint accepts. */
-const TTS_VOICES = [
-    { id: '', label: 'Deployment default' },
-    { id: 'en-US-AriaNeural', label: 'Aria (US)' },
-    { id: 'en-US-GuyNeural', label: 'Guy (US)' },
-    { id: 'en-US-JennyNeural', label: 'Jenny (US)' },
-    { id: 'en-GB-SoniaNeural', label: 'Sonia (UK)' },
-    { id: 'en-GB-RyanNeural', label: 'Ryan (UK)' },
-    { id: 'en-AU-NatashaNeural', label: 'Natasha (AU)' },
-];
 
 function FontSizeChoice({
     value,
@@ -270,139 +277,199 @@ export function PreferencesTab() {
     }
 
     return (
-        <div className="space-y-3">
+        <div className="space-y-4">
             {saveError && (
                 <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-2 text-xs text-danger">
                     {saveError}
                 </p>
             )}
 
-            <SettingsSection
-                title="Text size"
-                description="Scales the whole interface, not only body text. Shared with the classic interface, so the two match."
+            <SettingsGroup
+                id="appearance"
+                label="Appearance"
+                description="How this interface looks for you."
             >
-                <FontSizeChoice
-                    value={fontSize}
-                    onChange={(next) => update({ fontSizePreference: next })}
-                />
-            </SettingsSection>
-
-            <SettingsSection
-                title="Conversation list"
-                description="What the list of conversations shows alongside each title."
-            >
-                <Toggle
-                    checked={settings.showConversationWorkspaceTags !== false}
-                    onChange={(next) => update({ showConversationWorkspaceTags: next })}
-                    label="Show workspace tags"
-                    description="Label conversations that belong to a group or public workspace, or that are shared with other people. Personal conversations stay unlabelled."
-                />
-            </SettingsSection>
-
-            <SettingsSection
-                title="Workflow alerts on this device"
-                description="Browser-only controls for urgent workflow alerts on this computer."
-            >
-                <div className="space-y-3">
-                    <Toggle
-                        checked={workflowAlertSoundsOn}
-                        onChange={setWorkflowAlertSoundsDeviceEnabled}
-                        label="Play alert sounds"
-                        description="Applies to this browser only. Administrators can still turn workflow alert sounds off for everyone."
+                <SettingsCard
+                    title="Text size"
+                    Icon={Type}
+                    description="Scales the whole interface, not only body text. Shared with the classic interface, so the two match."
+                >
+                    <FontSizeChoice
+                        value={fontSize}
+                        onChange={(next) => update({ fontSizePreference: next })}
                     />
+                </SettingsCard>
+
+                <SettingsCard
+                    title="Conversation list"
+                    Icon={Tags}
+                    description="What the list of conversations shows alongside each title."
+                >
                     <Toggle
-                        checked={workflowAlertMonitorOn}
-                        onChange={setWorkflowAlertMonitorEnabled}
-                        label="Alert monitor"
-                        description="For operations screens: checks for workflow alerts every 30 seconds, even in a background tab."
+                        checked={settings.showConversationWorkspaceTags !== false}
+                        onChange={(next) => update({ showConversationWorkspaceTags: next })}
+                        label="Show workspace tags"
+                        description="Label conversations that belong to a group or public workspace, or that are shared with other people. Personal conversations stay unlabelled."
                     />
-                </div>
-            </SettingsSection>
-
-            <SettingsSection
-                title="Diagrams"
-                description="Colours for diagrams drawn in replies. A diagram you recolour in a conversation keeps its own colours and is not affected by this."
-            >
-                <VisualStyleDefault
-                    label="Diagram"
-                    value={visualStyle('mermaid')}
-                    onChange={(next) =>
-                        update({ [VISUAL_STYLE_SETTING_KEYS.mermaid]: next })
-                    }
-                />
-            </SettingsSection>
-
-            <SettingsSection
-                title="Charts"
-                description="Colours for charts drawn in replies. Series you recolour on an individual chart are kept with that chart."
-            >
-                <VisualStyleDefault
-                    label="Chart"
-                    value={visualStyle('simplechart')}
-                    onChange={(next) =>
-                        update({ [VISUAL_STYLE_SETTING_KEYS.simplechart]: next })
-                    }
-                />
-            </SettingsSection>
+                </SettingsCard>
+            </SettingsGroup>
 
             {enabled('enable_conversation_contents_drawer') && (
-                <SettingsSection
-                    title="Conversation navigation"
-                    description="A contents drawer for jumping between your own prompts in a long conversation."
+                <SettingsGroup
+                    id="chat"
+                    label="Chat"
+                    description="How conversations behave while you work in them."
                 >
-                    <Toggle
-                        checked={settings.conversationContentsDrawerEnabled !== false}
-                        onChange={(next) =>
-                            update({ conversationContentsDrawerEnabled: next })
-                        }
-                        label="Show the conversation contents drawer"
-                    />
-                </SettingsSection>
-            )}
-
-            {enabled('enable_text_to_speech') && (
-                <SettingsSection
-                    title="Spoken replies"
-                    description="The voice used when you play an assistant message aloud."
-                >
-                    <label className="block">
-                        <span className="block text-sm font-medium text-text-1">Voice</span>
-                        <select
-                            value={String(settings.ttsVoice ?? '')}
-                            onChange={(event) => update({ ttsVoice: event.target.value })}
-                            className="mt-1.5 w-full max-w-xs rounded-lg border border-edge bg-surface-solid px-2.5 py-2 text-sm text-text-1"
+                    {enabled('enable_conversation_contents_drawer') && (
+                        <SettingsCard
+                            title="Conversation navigation"
+                            Icon={ListTree}
+                            description="A contents drawer for jumping between your own prompts in a long conversation."
                         >
-                            {TTS_VOICES.map((voice) => (
-                                <option key={voice.id} value={voice.id}>
-                                    {voice.label}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                </SettingsSection>
+                            <Toggle
+                                checked={settings.conversationContentsDrawerEnabled !== false}
+                                onChange={(next) =>
+                                    update({ conversationContentsDrawerEnabled: next })
+                                }
+                                label="Show the conversation contents drawer"
+                            />
+                        </SettingsCard>
+                    )}
+
+                </SettingsGroup>
             )}
 
-            {enabled('enable_desktop_notifications') && (
-                <SettingsSection
-                    title="Desktop notifications"
-                    description="A notification from your operating system when a reply finishes while this tab is hidden or unfocused. It names the conversation, never the reply. Shared with the classic interface."
+            {(enabled('enable_chat_completion_audio_cues')
+                || enabled('enable_text_to_speech')
+                || enabled('enable_speech_to_text_input')) && (
+                <SettingsGroup
+                    id="voice-audio"
+                    label="Voice and audio"
+                    description="Sounds when replies finish, spoken replies, and the microphone used for voice input."
                 >
-                    <Toggle
-                        checked={desktopNotificationsOn}
-                        onChange={(next) => {
-                            update({ [DESKTOP_NOTIFICATIONS_SETTING]: next });
-                            // In the same click: a browser only shows its prompt for one.
-                            if (next) {
-                                void requestDesktopNotificationPermission({ explicit: true });
-                            }
-                        }}
-                        label="Notify me when a reply is ready"
-                    />
-                    {desktopNotificationsOn && (
-                        <DesktopNotificationPermissionStatus permission={notificationPermission} />
+                    {enabled('enable_chat_completion_audio_cues') && (
+                        <CompletionAudioCard settings={settings} update={update} />
                     )}
-                </SettingsSection>
+                    {enabled('enable_text_to_speech') && (
+                        <SpokenRepliesCard settings={settings} update={update} />
+                    )}
+                    {enabled('enable_speech_to_text_input') && <MicrophoneCard />}
+                </SettingsGroup>
             )}
+
+            <SettingsGroup
+                id="notifications"
+                label="Notifications and alerts"
+                description="How this interface gets your attention when something finishes or needs you."
+            >
+                {enabled('enable_desktop_notifications') && (
+                    <SettingsCard
+                        title="Desktop notifications"
+                        Icon={Bell}
+                        description="A notification from your operating system when a reply finishes while this tab is hidden or unfocused. It names the conversation, never the reply. Shared with the classic interface."
+                    >
+                        <Toggle
+                            checked={desktopNotificationsOn}
+                            onChange={(next) => {
+                                update({ [DESKTOP_NOTIFICATIONS_SETTING]: next });
+                                // In the same click: a browser only shows its prompt for one.
+                                if (next) {
+                                    void requestDesktopNotificationPermission({ explicit: true });
+                                }
+                            }}
+                            label="Notify me when a reply is ready"
+                        />
+                        {desktopNotificationsOn && (
+                            <DesktopNotificationPermissionStatus permission={notificationPermission} />
+                        )}
+                    </SettingsCard>
+                )}
+
+                <SettingsCard
+                    title="Workflow alerts on this device"
+                    Icon={Siren}
+                    description="Browser-only controls for urgent workflow alerts on this computer."
+                >
+                    <div className="admin-switch-grid">
+                        <div className="py-2 first:pt-0">
+                            <Toggle
+                                checked={workflowAlertSoundsOn}
+                                onChange={setWorkflowAlertSoundsDeviceEnabled}
+                                label="Play alert sounds"
+                                description="Applies to this browser only. Administrators can still turn workflow alert sounds off for everyone."
+                            />
+                        </div>
+                        <div className="py-2">
+                            <Toggle
+                                checked={workflowAlertMonitorOn}
+                                onChange={setWorkflowAlertMonitorEnabled}
+                                label="Alert monitor"
+                                description="For operations screens: checks for workflow alerts every 30 seconds, even in a background tab."
+                            />
+                        </div>
+                    </div>
+                </SettingsCard>
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="guidance"
+                label="Help and guidance"
+                description="The Latest Features shortcut and the guided tours that point out what each page can do."
+            >
+                <LatestFeaturesCard settings={settings} update={update} />
+                <TutorialsCard settings={settings} update={update} />
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="memory-data"
+                label="Memory and data"
+                description="What the assistant remembers about you, and how long your own conversations and documents are kept."
+            >
+                <FactMemoryBench />
+                {enabled('enable_retention_policy_personal') && <RetentionCard settings={settings} />}
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="connected-accounts"
+                label="Connected accounts"
+                description="Microsoft 365 sign-ins, sharing preferences and workflow authorizations for your own Calendar, Email, OneDrive and SharePoint data."
+            >
+                <M365Cards />
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="visuals"
+                label="Diagrams and charts"
+                description="Default colours for visuals the assistant draws in replies. Anything you recolour in a conversation keeps its own colours."
+            >
+                <SettingsCard
+                    title="Diagrams"
+                    Icon={Workflow}
+                    description="Palette and background for diagrams drawn in replies."
+                >
+                    <VisualStyleDefault
+                        label="Diagram"
+                        value={visualStyle('mermaid')}
+                        onChange={(next) =>
+                            update({ [VISUAL_STYLE_SETTING_KEYS.mermaid]: next })
+                        }
+                    />
+                </SettingsCard>
+
+                <SettingsCard
+                    title="Charts"
+                    Icon={BarChart3}
+                    description="Palette and background for charts drawn in replies. Series you recolour on an individual chart are kept with that chart."
+                >
+                    <VisualStyleDefault
+                        label="Chart"
+                        value={visualStyle('simplechart')}
+                        onChange={(next) =>
+                            update({ [VISUAL_STYLE_SETTING_KEYS.simplechart]: next })
+                        }
+                    />
+                </SettingsCard>
+            </SettingsGroup>
         </div>
     );
 }

@@ -300,34 +300,31 @@ function configurationForType(definition: ActionTypeDefinition): Partial<ActionC
     if (definition.allowed_auth_types.length && !definition.allowed_auth_types.includes(auth.type)) {
         auth.type = definition.allowed_auth_types[0];
     }
+    const catalogDefaults = isRecord(definition.defaults) ? definition.defaults : {};
     const capabilities = native.capabilities
         ? Object.fromEntries(native.capabilities.options.map(({ key, defaultEnabled }) => [key, defaultEnabled !== false]))
+        : definition.capabilities?.length
+            ? Object.fromEntries(definition.capabilities.map(({ key, default: defaultEnabled }) => [key, defaultEnabled !== false]))
         : undefined;
     let initial = {
         ...structuredClone(native.defaults ?? {}),
         auth,
-        additionalFields: { ...structuredClone(native.defaults?.additionalFields ?? {}), ...(isRecord(fields) ? fields : {}) },
+        additionalFields: {
+            ...structuredClone(native.defaults?.additionalFields ?? {}),
+            ...structuredClone(catalogDefaults),
+            ...(isRecord(fields) ? fields : {}),
+        },
         metadata: { ...structuredClone(native.defaults?.metadata ?? {}), ...(isRecord(metadata) ? metadata : {}) },
     };
     if (native.capabilities && capabilities) initial = withActionValue(initial, native.capabilities.path, capabilities);
+    else if (definition.capabilities?.length && capabilities) initial = withActionValue(initial, '/additionalFields/m365_capabilities', capabilities);
     return initial;
 }
 
 export function changeActionType(draft: ActionConfiguration, definition: ActionTypeDefinition): ActionConfiguration {
     if (draft.type === definition.type) return draft;
-    const previous = isRecord(draft._actionTypeConfigurations) ? draft._actionTypeConfigurations : {};
-    const configurations = {
-        ...previous,
-        ...(draft.type ? { [draft.type]: {
-            endpoint: draft.endpoint, auth: draft.auth, identity_id: draft.identity_id ?? '',
-            additionalFields: draft.additionalFields,
-            ...(draft._openApiSourceDraft ? { _openApiSourceDraft: draft._openApiSourceDraft } : {}),
-            ...(draft._sqlConnectionMethod ? { _sqlConnectionMethod: draft._sqlConnectionMethod } : {}),
-        } } : {}),
-    };
-    const existing = Object.hasOwn(configurations, definition.type) ? configurations[definition.type] : undefined;
     const initial = configurationForType(definition);
-    const configuration = isRecord(existing) ? existing : initial;
+    const configuration = initial;
     return {
         ...draft,
         ...configuration,
@@ -339,7 +336,6 @@ export function changeActionType(draft: ActionConfiguration, definition: ActionT
         metadata: { ...(initial.metadata ?? {}), ...draft.metadata },
         _openApiSourceDraft: configuration._openApiSourceDraft,
         _sqlConnectionMethod: configuration._sqlConnectionMethod,
-        _actionTypeConfigurations: configurations,
     };
 }
 
@@ -484,7 +480,16 @@ export function deriveBlobEndpoint(connectionString: string): string {
 }
 
 export function actionForSave(draft: ActionConfiguration): ActionConfiguration {
-    let next = { ...draft, displayName: actionText(draft.displayName ?? draft.name).trim(), name: actionText(draft.name).trim() };
+    const {
+        _actionTypeConfigurations: _discardedActionTypeConfigurations,
+        _openApiSourceDraft: _discardedOpenApiSourceDraft,
+        _sqlConnectionMethod: _discardedSqlConnectionMethod,
+        ...persistable
+    } = draft as ActionConfiguration & Record<string, unknown>;
+    void _discardedActionTypeConfigurations;
+    void _discardedOpenApiSourceDraft;
+    void _discardedSqlConnectionMethod;
+    let next = { ...persistable, displayName: actionText(draft.displayName ?? draft.name).trim(), name: actionText(draft.name).trim() } as ActionConfiguration;
     if (!next.endpoint) next.endpoint = actionText(displayedActionValue(draft, '/endpoint'));
     if (draft.type === 'agent') next = { ...next, endpoint: 'internal://agent', auth: { type: 'user' } };
     if (draft.type === 'snowflake' && !draft.identity_id && !draft.auth.identity && draft.additionalFields.user) {

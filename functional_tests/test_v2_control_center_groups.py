@@ -1,7 +1,7 @@
 # test_v2_control_center_groups.py
 """
 Functional tests for V2 Control Center Groups.
-Version: 0.261.282
+Version: 0.261.283
 Implemented in: 0.261.282
 
 Run real filters and routes over isolated Cosmos services and the real guarded
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Blueprint, Flask, Response, jsonify, request, session
+from flask import Blueprint, Flask, Response
 
 from test_support.control_center_group_harness import control_center_group_environment
 from test_support.versioning import assert_app_version_at_least

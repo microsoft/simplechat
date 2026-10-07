@@ -14,7 +14,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
-import { CalendarRange, Download } from 'lucide-react';
+import {
+    CalendarRange,
+    Coins,
+    Download,
+    FileText,
+    HardDrive,
+    LogIn,
+    MessagesSquare,
+    Sigma,
+    UserRound,
+    type LucideIcon,
+} from 'lucide-react';
 import { api } from '../../lib/apiClient';
 import { GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
@@ -45,6 +56,7 @@ import {
     lineDataset,
 } from './StatsChart';
 import { StatsExportDialog } from './StatsExportDialog';
+import { SettingsCard } from './SettingsCard';
 
 function StatCard({ label, value, caption }: { label: string; value: string; caption?: string }) {
     return (
@@ -59,20 +71,22 @@ function StatCard({ label, value, caption }: { label: string; value: string; cap
 function ChartCard({
     title,
     value,
+    Icon,
     children,
 }: {
     title: string;
     value: string;
+    Icon: LucideIcon;
     children: React.ReactNode;
 }) {
     return (
-        <GlassPanel className="p-4">
-            <div className="flex items-baseline justify-between gap-3">
-                <h3 className="text-sm font-semibold text-text-1">{title}</h3>
-                <span className="text-sm font-medium text-text-2">{value}</span>
-            </div>
-            <div className="mt-3">{children}</div>
-        </GlassPanel>
+        <SettingsCard
+            title={title}
+            Icon={Icon}
+            actions={<span className="text-sm font-medium text-text-2">{value}</span>}
+        >
+            {children}
+        </SettingsCard>
     );
 }
 
@@ -181,7 +195,7 @@ export function StatsTab() {
     const documentMetrics = metrics?.document_metrics ?? {};
 
     return (
-        <div className="space-y-3">
+        <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap gap-1.5">
                     {STATS_WINDOWS.map((preset) => {
@@ -280,242 +294,256 @@ export function StatsTab() {
                 </div>
             ) : (
                 <>
-                    <p className="text-xs text-text-3">
-                        The four totals are cached figures,{' '}
-                        {metrics?.calculated_at
-                            ? `last worked out ${formatRelativeTime(metrics.calculated_at)}`
-                            : 'not yet calculated for your account'}
-                        . Everything below them covers {windowLabel.toLowerCase()}.
-                    </p>
-
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <StatCard
-                            label="Total conversations"
-                            value={formatCompactNumber(chatMetrics.total_conversations ?? 0)}
-                        />
-                        <StatCard
-                            label="Total messages"
-                            value={formatCompactNumber(chatMetrics.total_messages ?? 0)}
-                        />
-                        <StatCard
-                            label="Total documents"
-                            value={formatCompactNumber(documentMetrics.total_documents ?? 0)}
-                        />
-                        <StatCard
-                            label="Total sign-ins"
-                            value={formatCompactNumber(loginMetrics.total_logins ?? 0)}
-                            caption={
-                                loginMetrics.last_login
-                                    ? `Last sign-in ${formatRelativeTime(loginMetrics.last_login)}`
-                                    : 'No sign-in recorded'
-                            }
-                        />
-                    </div>
-
-                    <ChartCard title="Sign-in activity" value={sumSeries(data?.logins).toLocaleString()}>
-                        <StatsChart
-                            signature={`logins:${signature}`}
-                            ariaLabel={`Sign-ins per day over ${windowLabel}`}
-                            buildConfig={(theme) => ({
-                                type: 'line',
-                                data: {
-                                    labels,
-                                    datasets: [
-                                        lineDataset(
-                                            'Sign-ins',
-                                            logins,
-                                            SERIES_COLORS.logins.line,
-                                            SERIES_COLORS.logins.fill,
-                                        ),
-                                    ],
-                                },
-                                options: cartesianOptions(theme, false),
-                            })}
-                        />
-                    </ChartCard>
-
-                    <ChartCard
-                        title="Conversation activity"
-                        value={`${sumSeries(data?.conversations?.creates).toLocaleString()} created`}
+                    <SettingsCard
+                        title="Lifetime totals"
+                        Icon={Sigma}
+                        description={
+                            <>
+                                The four totals are cached figures,{' '}
+                                {metrics?.calculated_at
+                                    ? `last worked out ${formatRelativeTime(metrics.calculated_at)}`
+                                    : 'not yet calculated for your account'}
+                                . Everything below them covers {windowLabel.toLowerCase()}.
+                            </>
+                        }
                     >
-                        <StatsChart
-                            signature={`conversations:${signature}`}
-                            ariaLabel={`Conversations created and deleted per day over ${windowLabel}`}
-                            buildConfig={(theme) => ({
-                                type: 'bar',
-                                data: {
-                                    labels,
-                                    datasets: [
-                                        barDataset(
-                                            'Created',
-                                            conversationCreates,
-                                            SERIES_COLORS.created.line,
-                                            SERIES_COLORS.created.fill,
-                                        ),
-                                        barDataset(
-                                            'Deleted',
-                                            conversationDeletes,
-                                            SERIES_COLORS.deleted.line,
-                                            SERIES_COLORS.deleted.fill,
-                                        ),
-                                    ],
-                                },
-                                options: cartesianOptions(theme, true),
-                            })}
-                        />
-                    </ChartCard>
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <StatCard
+                                label="Total conversations"
+                                value={formatCompactNumber(chatMetrics.total_conversations ?? 0)}
+                            />
+                            <StatCard
+                                label="Total messages"
+                                value={formatCompactNumber(chatMetrics.total_messages ?? 0)}
+                            />
+                            <StatCard
+                                label="Total documents"
+                                value={formatCompactNumber(documentMetrics.total_documents ?? 0)}
+                            />
+                            <StatCard
+                                label="Total sign-ins"
+                                value={formatCompactNumber(loginMetrics.total_logins ?? 0)}
+                                caption={
+                                    loginMetrics.last_login
+                                        ? `Last sign-in ${formatRelativeTime(loginMetrics.last_login)}`
+                                        : 'No sign-in recorded'
+                                }
+                            />
+                        </div>
+                    </SettingsCard>
 
-                    <ChartCard
-                        title="Document activity"
-                        value={`${sumSeries(data?.documents?.uploads).toLocaleString()} uploaded`}
-                    >
-                        <StatsChart
-                            signature={`documents:${signature}`}
-                            ariaLabel={`Documents uploaded and deleted per day over ${windowLabel}`}
-                            buildConfig={(theme) => ({
-                                type: 'bar',
-                                data: {
-                                    labels,
-                                    datasets: [
-                                        barDataset(
-                                            'Uploaded',
-                                            documentUploads,
-                                            SERIES_COLORS.uploaded.line,
-                                            SERIES_COLORS.uploaded.fill,
-                                        ),
-                                        barDataset(
-                                            'Deleted',
-                                            documentDeletes,
-                                            SERIES_COLORS.deleted.line,
-                                            SERIES_COLORS.deleted.fill,
-                                        ),
-                                    ],
-                                },
-                                options: cartesianOptions(theme, true),
-                            })}
-                        />
-                    </ChartCard>
-
-                    <ChartCard title="Token usage" value={sumSeries(data?.tokens, 'tokens').toLocaleString()}>
-                        <StatsChart
-                            signature={`tokens:${signature}`}
-                            ariaLabel={`Tokens used per day over ${windowLabel}, in millions`}
-                            buildConfig={(theme) => {
-                                const options = cartesianOptions(theme, false);
-                                return {
+                    <div className="grid gap-4 @min-[72rem]:grid-cols-2">
+                        <ChartCard title="Sign-in activity" Icon={LogIn} value={sumSeries(data?.logins).toLocaleString()}>
+                            <StatsChart
+                                signature={`logins:${signature}`}
+                                ariaLabel={`Sign-ins per day over ${windowLabel}`}
+                                buildConfig={(theme) => ({
                                     type: 'line',
                                     data: {
                                         labels,
                                         datasets: [
                                             lineDataset(
-                                                'Tokens (millions)',
-                                                tokenMillions,
-                                                SERIES_COLORS.tokens.line,
-                                                SERIES_COLORS.tokens.fill,
+                                                'Sign-ins',
+                                                logins,
+                                                SERIES_COLORS.logins.line,
+                                                SERIES_COLORS.logins.fill,
                                             ),
                                         ],
                                     },
-                                    options: {
-                                        ...options,
-                                        scales: {
-                                            ...options.scales,
-                                            // Fractions of a million are the normal case, so
-                                            // the shared integer ticks are dropped here, and
-                                            // the axis has to name its unit or "0.5" means
-                                            // nothing beside a total in the millions.
-                                            y: {
-                                                ...options.scales.y,
-                                                ticks: { color: theme.text },
-                                                title: {
-                                                    display: true,
-                                                    text: 'Millions of tokens',
-                                                    color: theme.text,
-                                                },
-                                            },
-                                        },
-                                    },
-                                };
-                            }}
-                        />
-                    </ChartCard>
+                                    options: cartesianOptions(theme, false),
+                                })}
+                            />
+                        </ChartCard>
 
-                    <GlassPanel className="p-4">
-                        <div className="flex items-baseline justify-between gap-3">
-                            <h3 className="text-sm font-semibold text-text-1">Storage used</h3>
-                            <span className="text-sm font-medium text-text-2">
-                                {formatBytes(aiSearchSize + blobStorageSize)}
-                            </span>
-                        </div>
-                        {hasStorage ? (
-                            <div className="mt-3">
-                                <StatsChart
-                                    signature={`storage:${aiSearchSize}:${blobStorageSize}`}
-                                    ariaLabel={`Storage used: ${formatBytes(aiSearchSize)} in AI Search and ${formatBytes(blobStorageSize)} in blob storage`}
-                                    buildConfig={(theme) => ({
-                                        type: 'doughnut',
+                        <ChartCard
+                            title="Conversation activity"
+                            Icon={MessagesSquare}
+                            value={`${sumSeries(data?.conversations?.creates).toLocaleString()} created`}
+                        >
+                            <StatsChart
+                                signature={`conversations:${signature}`}
+                                ariaLabel={`Conversations created and deleted per day over ${windowLabel}`}
+                                buildConfig={(theme) => ({
+                                    type: 'bar',
+                                    data: {
+                                        labels,
+                                        datasets: [
+                                            barDataset(
+                                                'Created',
+                                                conversationCreates,
+                                                SERIES_COLORS.created.line,
+                                                SERIES_COLORS.created.fill,
+                                            ),
+                                            barDataset(
+                                                'Deleted',
+                                                conversationDeletes,
+                                                SERIES_COLORS.deleted.line,
+                                                SERIES_COLORS.deleted.fill,
+                                            ),
+                                        ],
+                                    },
+                                    options: cartesianOptions(theme, true),
+                                })}
+                            />
+                        </ChartCard>
+
+                        <ChartCard
+                            title="Document activity"
+                            Icon={FileText}
+                            value={`${sumSeries(data?.documents?.uploads).toLocaleString()} uploaded`}
+                        >
+                            <StatsChart
+                                signature={`documents:${signature}`}
+                                ariaLabel={`Documents uploaded and deleted per day over ${windowLabel}`}
+                                buildConfig={(theme) => ({
+                                    type: 'bar',
+                                    data: {
+                                        labels,
+                                        datasets: [
+                                            barDataset(
+                                                'Uploaded',
+                                                documentUploads,
+                                                SERIES_COLORS.uploaded.line,
+                                                SERIES_COLORS.uploaded.fill,
+                                            ),
+                                            barDataset(
+                                                'Deleted',
+                                                documentDeletes,
+                                                SERIES_COLORS.deleted.line,
+                                                SERIES_COLORS.deleted.fill,
+                                            ),
+                                        ],
+                                    },
+                                    options: cartesianOptions(theme, true),
+                                })}
+                            />
+                        </ChartCard>
+
+                        <ChartCard title="Token usage" Icon={Coins} value={sumSeries(data?.tokens, 'tokens').toLocaleString()}>
+                            <StatsChart
+                                signature={`tokens:${signature}`}
+                                ariaLabel={`Tokens used per day over ${windowLabel}, in millions`}
+                                buildConfig={(theme) => {
+                                    const options = cartesianOptions(theme, false);
+                                    return {
+                                        type: 'line',
                                         data: {
-                                            labels: ['AI Search', 'Blob storage'],
+                                            labels,
                                             datasets: [
-                                                {
-                                                    data: [aiSearchSize, blobStorageSize],
-                                                    backgroundColor: [
-                                                        SERIES_COLORS.aiSearch,
-                                                        SERIES_COLORS.blobStorage,
-                                                    ],
-                                                    borderColor: theme.surface,
-                                                    borderWidth: 2,
-                                                },
+                                                lineDataset(
+                                                    'Tokens (millions)',
+                                                    tokenMillions,
+                                                    SERIES_COLORS.tokens.line,
+                                                    SERIES_COLORS.tokens.fill,
+                                                ),
                                             ],
                                         },
                                         options: {
-                                            responsive: true,
-                                            maintainAspectRatio: false,
-                                            plugins: {
-                                                legend: {
-                                                    position: 'bottom',
-                                                    labels: {
+                                            ...options,
+                                            scales: {
+                                                ...options.scales,
+                                                // Fractions of a million are the normal case, so
+                                                // the shared integer ticks are dropped here, and
+                                                // the axis has to name its unit or "0.5" means
+                                                // nothing beside a total in the millions.
+                                                y: {
+                                                    ...options.scales.y,
+                                                    ticks: { color: theme.text },
+                                                    title: {
+                                                        display: true,
+                                                        text: 'Millions of tokens',
                                                         color: theme.text,
-                                                        boxWidth: 10,
-                                                        boxHeight: 10,
-                                                        usePointStyle: true,
                                                     },
                                                 },
                                             },
                                         },
-                                    })}
-                                />
-                            </div>
-                        ) : (
-                            <p className="mt-2 text-xs text-text-3">
-                                Nothing stored yet. Documents you upload to your workspace are counted
-                                here.
-                            </p>
-                        )}
-                    </GlassPanel>
+                                    };
+                                }}
+                            />
+                        </ChartCard>
 
-                    <GlassPanel className="p-4">
-                        <h3 className="text-sm font-semibold text-text-1">Account</h3>
-                        <dl className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <div>
-                                <dt className="text-xs text-text-3">Name</dt>
-                                <dd className="text-sm font-medium text-text-1">
-                                    {user?.display_name || 'Not available'}
-                                </dd>
-                            </div>
-                            <div>
-                                <dt className="text-xs text-text-3">Email</dt>
-                                <dd className="text-sm font-medium text-text-1">
-                                    {user?.email || 'Not available'}
-                                </dd>
-                            </div>
-                            <div className="sm:col-span-2">
-                                <dt className="text-xs text-text-3">User ID</dt>
-                                <dd className="font-mono text-xs break-all text-text-2">
-                                    {user?.id || 'Not available'}
-                                </dd>
-                            </div>
-                        </dl>
-                    </GlassPanel>
+                    </div>
+
+                    <div className="grid gap-4 @min-[72rem]:grid-cols-2">
+                        <SettingsCard
+                            title="Storage used"
+                            Icon={HardDrive}
+                            actions={
+                                <span className="text-sm font-medium text-text-2">
+                                    {formatBytes(aiSearchSize + blobStorageSize)}
+                                </span>
+                            }
+                        >
+                            {hasStorage ? (
+                                <div>
+                                    <StatsChart
+                                        signature={`storage:${aiSearchSize}:${blobStorageSize}`}
+                                        ariaLabel={`Storage used: ${formatBytes(aiSearchSize)} in AI Search and ${formatBytes(blobStorageSize)} in blob storage`}
+                                        buildConfig={(theme) => ({
+                                            type: 'doughnut',
+                                            data: {
+                                                labels: ['AI Search', 'Blob storage'],
+                                                datasets: [
+                                                    {
+                                                        data: [aiSearchSize, blobStorageSize],
+                                                        backgroundColor: [
+                                                            SERIES_COLORS.aiSearch,
+                                                            SERIES_COLORS.blobStorage,
+                                                        ],
+                                                        borderColor: theme.surface,
+                                                        borderWidth: 2,
+                                                    },
+                                                ],
+                                            },
+                                            options: {
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: {
+                                                    legend: {
+                                                        position: 'bottom',
+                                                        labels: {
+                                                            color: theme.text,
+                                                            boxWidth: 10,
+                                                            boxHeight: 10,
+                                                            usePointStyle: true,
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                        })}
+                                    />
+                                </div>
+                            ) : (
+                                <p className="text-xs text-text-3">
+                                    Nothing stored yet. Documents you upload to your workspace are counted
+                                    here.
+                                </p>
+                            )}
+                        </SettingsCard>
+
+                        <SettingsCard title="Account" Icon={UserRound}>
+                            <dl className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                    <dt className="text-xs text-text-3">Name</dt>
+                                    <dd className="text-sm font-medium text-text-1">
+                                        {user?.display_name || 'Not available'}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-xs text-text-3">Email</dt>
+                                    <dd className="text-sm font-medium text-text-1">
+                                        {user?.email || 'Not available'}
+                                    </dd>
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <dt className="text-xs text-text-3">User ID</dt>
+                                    <dd className="font-mono text-xs break-all text-text-2">
+                                        {user?.id || 'Not available'}
+                                    </dd>
+                                </div>
+                            </dl>
+                        </SettingsCard>
+                    </div>
                 </>
             )}
 

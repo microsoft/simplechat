@@ -1607,6 +1607,7 @@ def _control_center_effective_restriction(settings, setting_key, now=None):
             if expiry <= (now or datetime.now(timezone.utc)):
                 status = "allow"
         except (TypeError, ValueError):
+            # A malformed stored expiry must not lift an active deny.
             pass
     return {"status": status, "expires_at": expires_at}
 
@@ -3732,8 +3733,8 @@ def register_route_backend_control_center(bp):
                     "source": "user metrics refresh cache",
                 },
             }), 200
-        except ValueError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except ValueError:
+            return jsonify({"error": "Invalid user filters or pagination value."}), 400
         except Exception as ex:
             log_event(
                 "[CONTROL_CENTER] V2 user list query failed.",
@@ -3885,8 +3886,8 @@ def register_route_backend_control_center(bp):
                     "public_workspaces": public_memberships,
                 },
             }), 200
-        except ValueError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except ValueError:
+            return jsonify({"error": "Invalid user ID."}), 400
         except Exception as ex:
             log_event(
                 "[CONTROL_CENTER] V2 user detail query failed.",
@@ -4011,8 +4012,8 @@ def register_route_backend_control_center(bp):
                 "failed_count": len(failed_ids),
                 "failed_user_ids": failed_ids,
             }), 200
-        except ValueError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except ValueError:
+            return jsonify({"error": "Invalid bulk user action request."}), 400
         except Exception as ex:
             log_event(
                 "[CONTROL_CENTER] V2 bulk user action failed.",
@@ -4074,8 +4075,8 @@ def register_route_backend_control_center(bp):
             )
             response.headers["Cache-Control"] = "private, no-store"
             return response
-        except ValueError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except ValueError:
+            return jsonify({"error": "Invalid user export filters."}), 400
         except Exception as ex:
             log_event(
                 "[CONTROL_CENTER] V2 user export query failed.",
@@ -4110,8 +4111,8 @@ def register_route_backend_control_center(bp):
                     "source": "batched group inventory, document metadata and activity logs",
                 },
             }), 200
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group filters."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] V2 group list failed.",
                       extra={"error_type": type(ex).__name__}, level=logging.ERROR)
@@ -4171,8 +4172,8 @@ def register_route_backend_control_center(bp):
                 "activity_limit": 20,
                 "metrics_calculated_at": inventory["calculated_at"],
             }), 200
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group ID."}), 400
         except CosmosResourceNotFoundError:
             return jsonify({"error": "Group not found."}), 404
         except Exception as ex:
@@ -4190,8 +4191,8 @@ def register_route_backend_control_center(bp):
             data = request.get_json(silent=True)
             status, reason = validate_group_status_payload(data)
             ids = select_group_bulk_ids(data, lambda: _control_center_group_inventory(force_refresh=True))
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid bulk group status request."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] V2 group selection failed.",
                       extra={"error_type": type(ex).__name__}, level=logging.ERROR)
@@ -4213,8 +4214,8 @@ def register_route_backend_control_center(bp):
         try:
             validate_group_id(group_id)
             status, reason = validate_group_status_payload(request.get_json(silent=True))
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group status request."}), 400
         return _update_group_status(group_id, {"status": status, "reason": reason})
 
     @bp.route('/api/v2/control-center/groups/export.csv', methods=['GET'])
@@ -4235,8 +4236,8 @@ def register_route_backend_control_center(bp):
                 ))
             return Response(buffer.getvalue(), mimetype="text/csv",
                             headers={"Content-Disposition": 'attachment; filename="control-center-groups.csv"'}), 200
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group export filters."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] V2 group export failed.",
                       extra={"error_type": type(ex).__name__}, level=logging.ERROR)

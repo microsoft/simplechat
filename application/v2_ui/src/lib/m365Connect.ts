@@ -45,7 +45,8 @@ export function m365Sources(values: unknown): M365Source[] {
     )))).sort();
 }
 
-function authorizationUrl(value: unknown): string {
+/** A Microsoft sign-in URL the browser may navigate to: HTTPS, with a host and no credentials. */
+export function normalizeAuthorizationUrl(value: unknown): string {
     if (typeof value !== 'string' || !value.trim()) throw new Error(INVALID_URL_MESSAGE);
     let target: URL;
     try {
@@ -139,7 +140,7 @@ export function connectMicrosoft365(sources: M365Source[]): Promise<void> {
                     headers: { 'X-M365-CSRF-Token': csrfToken },
                 });
                 if (!finished) {
-                    popup.location.replace(authorizationUrl(started.authorization_url));
+                    popup.location.replace(normalizeAuthorizationUrl(started.authorization_url));
                     popup.focus();
                 }
             } catch (error) {
