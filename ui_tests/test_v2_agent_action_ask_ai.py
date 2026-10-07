@@ -1,8 +1,8 @@
 # test_v2_agent_action_ask_ai.py
 """
 Offline real-bundle browser regressions for Ask AI in the agent and action editors.
-Version: 0.261.287
-Implemented in: 0.261.287
+Version: 0.261.288
+Implemented in: 0.261.288
 
 Covers the agent editor applying a proposal to the unsaved draft with Undo, an agent turn that
 drafts a new action that blocks saving until the person finishes it in the action editor and is

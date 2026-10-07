@@ -49,6 +49,22 @@ Approvals create a checkpoint before sensitive actions execute. Use this page wh
 
 8. For templates, use **Agent Template Approvals** and its status filters.
 
+## In the V2 interface
+
+From **0.261.287**, **Approval requests** in the V2 sidebar opens a full-page view laid out like V2 Admin Settings. A left rail groups the queues so you review one kind of request at a time, the center lists the requests in that queue, and the right pane shows the selected request with its decision controls.
+
+| Category | What it holds |
+| --- | --- |
+| **All requests** | Every approval request you can see. |
+| **Group requests** | Ownership changes, document and group deletion, and user actions on groups. |
+| **Microsoft 365** | Source-sharing, extended file analysis, and workflow Run as approvals. |
+| **Content screening** | Screened documents waiting for review. Shown only while content screening is turned on. |
+| **Outgoing actions** | Emails and other Microsoft 365 actions waiting for you to send or cancel. |
+| **Waiting requests** | Saved chat requests paused for an approval or a sign-in, with **Resume** or connect-and-resume. |
+| **Agent templates** | Templates submitted for the shared gallery. Shown to admins only. |
+
+The badge on the active category counts its pending items, and **Refresh** reloads the current queue. Each selected request has its own address, such as `/v2/approvals/group/<id>`, so it can be bookmarked or shared with another reviewer. Links in notifications and older bookmarks (`?approval_id=`, `?m365_approval=`, `#agent-template-approvals`) open the matching request. On a narrow screen the rail becomes a category picker, and the rail can be collapsed on wider screens; that choice is remembered.
+
 ## Microsoft 365 outgoing actions
 
 From **0.261.038**, the Microsoft 365 outgoing-actions section references the
