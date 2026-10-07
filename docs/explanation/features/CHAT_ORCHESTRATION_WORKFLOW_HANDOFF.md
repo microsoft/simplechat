@@ -1,6 +1,7 @@
 # Chat orchestration workflow hand-off
 
-Implemented in version: **0.261.250**.
+Implemented in version: **0.261.250**. The V2 hand-off card was added in
+version **0.261.256**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -14,8 +15,10 @@ Related issue: #1549, part of #1543. Builds on
 [Chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 describes all the phases.
 
-This is the server half of Phase 7. The V2 hand-off card, where the user
-accepts, edits or declines a hand-off, is a separate change.
+Phase 7 shipped in two halves. The server half, described below, is in
+**0.261.250** (#1640, with the lineage follow-up #1647). The V2 hand-off card,
+where the user accepts, edits or declines a hand-off and follows its run, is in
+**0.261.256**; see [The V2 hand-off card](#the-v2-hand-off-card).
 
 ## Overview and dependencies
 
@@ -601,6 +604,180 @@ task's model, the report fails with `indivisible_record`, and so does the run.
 - The draft leaves out the model selection and the handle map.
 - Refusals use fixed messages, and logs carry hashed ids.
 
+### The V2 hand-off card
+
+Since **0.261.256**, V2 shows each hand-off on a card under the answer that
+prepared it, and the user decides there. The card mounts only under an answer
+whose plan completed a hand-off step (`workflow_handoff` in the plan summary's
+`capabilities_used`), in a conversation that's private to the user, for the
+conversation that's open, and only when none of the answer is masked. It reads
+the list route when it mounts, so a reload or a second tab shows the same state.
+If the list route doesn't find the run, the card shows nothing.
+
+An answer whose plan handed work off shows the hand-off card in place of the
+proposal card and the started-workflows card. The server refuses a plan that
+mixes those capabilities, so this hides nothing real, and it keeps the hand-off's
+run from showing twice.
+
+The card doesn't check `enable_chat_orchestration_workflow_handoff` itself. An
+answer from before the setting was turned off still shows its card, and the list
+route reports each hand-off as unavailable, which the card explains. When
+personal workflows are off, the route's access check refuses the read, and the
+card says "Personal workflows are turned off in SimpleChat right now." with
+**Try again**.
+
+#### What the card shows
+
+Everything comes from the list route's `summary` and `disclosure`:
+
+- The workflow's name and description. Once the workflow exists, the card uses
+  its current name, because the editor or Workflows may have renamed it.
+- What it covers, as the disclosure's text, for example "200 documents" or "up
+  to 500 best-matching documents", and the workspaces a query searches.
+- That it runs once and isn't scheduled, that it sends an Info alert after the
+  run, and that the run is durable.
+- Each task's title and what it runs on: the default model, or the agent by
+  name.
+- While the hand-off waits for a decision, when it expires.
+
+Workflow names, descriptions, task titles, agent names and workspace names
+render as plain text. Instructions, handles and ids are never shown.
+
+The state label reads **Awaiting your decision**, **Creating**, **Workflow
+created**, **Run queued**, **Declined**, **Expired**, **Unavailable** or
+**Can't be used**, or **Workflow deleted** when the workflow a hand-off created
+was deleted. Below it, a sentence says what that state means. For an unavailable
+or unusable hand-off, the sentence explains the `reason`: the server's own text
+for each hand-off reason, and V2's text for a closed gate, content review and a
+deleted workflow, which the server doesn't word. An unknown reason reads "This
+hand-off is not available."
+
+#### Actions
+
+The card offers only the actions the list route lists for the hand-off.
+
+| Action | What it sends | Confirmation |
+| --- | --- | --- |
+| **Accept** | `{conversation_id, mode: 'as_proposed'}` to the accept route. | "Accept this workflow hand-off?", repeating what the workflow covers and the workspaces it searches. |
+| **Start its run** | The same accept, for a hand-off whose workflow exists but whose run didn't start. The server starts the existing workflow's run. | "Start the run of this workflow?" |
+| **Edit** | Reads the draft route and opens the draft in the workflow editor. See [Editing before accepting](#editing-before-accepting). | Asked on Save. |
+| **Decline** | `{conversation_id}` to the deny route. Nothing is created. | "Decline this workflow hand-off?" |
+| **Open workflow** | Opens the workflow in Workflows. | None. Shown when the workflow exists and the card isn't showing its run. |
+
+After Accept or Decline, if the button that was pressed is gone, focus moves to
+the card itself. Accept checks the response: the client requires the hand-off's
+id, `state: 'queued'`, and `created` agreeing with the 201 or 200 status.
+
+While a hand-off is being created, for example in another tab, the card checks
+again every 3 seconds, up to 40 times and for at most two minutes, the length
+of the server's claim. It skips its checks while the browser tab is hidden. If
+the hand-off is still being created after that, the card offers **Check
+again**.
+
+#### Editing before accepting
+
+**Edit** opens the draft in the workflow editor as a new personal workflow.
+While Edit is offered, the card notes what an edit must keep: "Edits keep the
+trigger manual and keep the For each over documents or a workspace search.
+Tasks can use only your own local agents, and URL Access and Run as aren't
+available." The editor doesn't lock these fields; the server checks them and
+returns its `errors[]`.
+
+Save never saves a workflow directly:
+
+1. If the draft turns URL Access on, nothing is sent. The editor says "URL
+   Access is not available for workflows created from chat." followed by the
+   draft's note, "Create the workflow first, then turn on URL Access in the
+   workflow editor."
+2. Otherwise, "Save and start this workflow?" asks the user to confirm that
+   saving creates the workflow and starts its one run now. Cancelling says "Not
+   saved. Your draft has been retained." and keeps the editor open.
+3. The card sends `{conversation_id, mode: 'edited', workflow}`, where
+   `workflow` is the editor's save payload without `id`, which the server
+   derives from the hand-off. For a version 3 workflow it also leaves out
+   `task_prompt`, which the server sets from the workflow's name, so saving an
+   untouched draft isn't recorded as an edit.
+4. If the server refuses, the editor stays open with the draft. The message is
+   the hand-off's error sentence, up to three of the refusal's `errors[]`
+   messages, and "Your draft has been retained." The card reports the refusal to
+   the editor as a 400, because the editor discards the draft on a 403 or 404
+   and treats a 409 as a stale saved workflow. Only an expired sign-in (401) is
+   left to the editor's own handling.
+
+After an edited accept, the editor closes, the card shows the queued run, and
+focus returns to the card.
+
+#### The run
+
+Once the run is queued, the card follows it.
+
+- **When the tab's workflow run tracker is on** (`allow_user_workflows` and
+  `enable_chat_orchestration_workflow_runs`) **and has read the run,** the run
+  shows as a **Handed-off workflow** row, the same row the started-workflows
+  card uses: its status, the step it's on and the time elapsed, with **Cancel
+  run**, **Retry**, **Review and approve**, **Reconnect Microsoft 365**, **Open
+  run** and **Results posted below** as they apply. Accepting asks the tracker
+  to read this chat's runs straight away. **Check now** reads them again, and
+  the card shows when they were last checked.
+- **Until the tracker reads the run, or when it's off,** the card shows the
+  run's status from the list read, **Queued**, **Running**, **Needs you**,
+  **Completed**, **Partly completed**, **Failed** or **Cancelled**, with **Open
+  run** and the note "Status when this message loaded. Open the run for its
+  progress and results." A status V2 doesn't recognize reads **Status
+  unavailable**.
+
+The card finds the run's tracker row by the run's own id, then checks that the
+row's conversation, step and workflow match the hand-off. It doesn't compare
+the row's `orchestration_run_id` with the run the answer shows, because a
+hand-off's run names the attempt that prepared the hand-off, which can be an
+earlier attempt.
+
+When `chat_delivery` is true, the card adds "The run's outcome is posted in this
+chat when it ends." The posted result, the chat list's running tag and the bell
+notice work as they do for any run started from chat.
+
+A run that pauses because its workspace query matched more documents than the
+hand-off may review shows **Needs you** and "Paused before reviewing any
+documents because more matched than one hand-off can review. Cancel it, then
+ask again with a narrower request." The row offers **Cancel run** and **Open
+run**. The workflow can't be resumed, so cancelling is the only way on.
+
+#### Errors
+
+A refusal with a `code` reads as V2's copy of the server's fixed sentence for
+that code, never the response's own `error`, followed by up to three of its
+`errors[]` messages. `handoff_run_conflict` adds the run-conflict reason's
+sentence, or the `workflow_run_not_started` sentence when there's no reason. An
+unknown code reads "The hand-off could not be updated. Try again."
+
+A refusal without a code comes from the routes' access checks, which run before
+any hand-off logic. A 400 reads "Personal workflows are turned off in SimpleChat
+right now.", a 403 reads "You need workflow access to use this hand-off. Ask
+your administrator.", and a 401 reads "Sign in again to continue." The checks'
+own words, such as "Forbidden", are never shown. A network failure reads
+"SimpleChat could not be reached. Check your connection and try again."
+
+**Try again** retries the same accept only when that can succeed: for
+`handoff_busy`, and for `handoff_queue_failed` or `handoff_run_conflict` with
+`state: 'created'`, whose retry queues the same run. `handoff_unavailable` and
+`handoff_access_lost` never offer it.
+
+#### The plan card and the Run view
+
+- **The approval floor.** V2's own floor list includes `workflow_handoff`, so
+  the plan card never counts down or runs a plan with an enabled hand-off step
+  by itself, even if the server's `approval.floor` marker is missing.
+- **The notice.** The plan card says "This plan hands work off to a one-time
+  workflow, so it always waits for your approval." and "Approving this plan
+  prepares a one-time workflow. Nothing runs until you accept it on the
+  hand-off card that appears under the answer."
+- **The step's arguments.** The Run view puts the blueprint in words: the
+  workflow's name, what it reviews, for example "3 named documents" or "a search
+  of 2 workspaces, the 50 best matches", and its task titles. It never shows
+  the tasks' instructions, the document and workspace handles, the content
+  filter or the tags.
+- **The step's chip** reads **Hand off large work**.
+
 ### Limits
 
 - One hand-off step per plan, with exactly two tasks.
@@ -682,6 +859,19 @@ All paths are under `application/single_app/`.
 | `route_backend_orchestration.py` | The four routes and the planning context. |
 | `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html` | The setting, the limit and their admin controls. |
 
+The V2 card's files are under `application/v2_ui/src/`.
+
+| File | Purpose |
+| --- | --- |
+| `lib/workflowHandoffs.ts` | The list, accept, deny and draft clients and their response checks; the error, reason and run-status text; the edited-accept payload; the tracker join; the pause text; and the blueprint in words. |
+| `components/chat/WorkflowHandoffCard.tsx` | The hand-off card: its details, actions and confirmations, the editor path, the creating poll, and the queued run. |
+| `components/chat/OrchestrationWorkflowHandoffNotice.tsx` | The plan card's notice that a hand-off plan always waits. |
+| `components/chat/MessageList.tsx` | Mounting the cards under a hand-off answer, and keeping the proposal and started-workflows cards off it. |
+| `components/chat/OrchestrationPlanCard.tsx` | Showing the notice. |
+| `components/chat/OrchestrationRunView.tsx` | The step's chip and its arguments in words. |
+| `components/chat/WorkflowRunCard.tsx` | `LiveRunRow`, exported with an optional heading and waiting text for the hand-off card. |
+| `lib/orchestrationPlan.ts` | `workflow_handoff` in V2's approval floor list. |
+
 ## Usage
 
 ### Enable or configure
@@ -698,9 +888,6 @@ All paths are under `application/single_app/`.
 4. Under **Limits**, set **Hand-Offs From Chat Per User Per Day** if 5 doesn't
    suit the deployment.
 
-Until the V2 hand-off card ships, users can't accept a hand-off in the browser.
-Leave the setting off until then.
-
 See [Orchestration settings](../../admin/orchestration.md).
 
 ### What a user does
@@ -708,13 +895,22 @@ See [Orchestration settings](../../admin/orchestration.md).
 1. In a private V2 conversation, ask for work too big for one plan, for example
    "Review every contract in the Legal workspace and list the ones that renew
    this year."
-2. The plan has one hand-off step and always waits. Approve it.
+2. The plan has one hand-off step and always waits; the plan card says so.
+   Approve it.
 3. The answer says "Prepared a one-time workflow for this request. Nothing runs
    until you approve it on the hand-off card."
-4. The hand-off card shows what the workflow covers. Accept it as proposed,
-   edit it first, or decline it.
-5. The run appears in the workflow's run history in Workflows. When it
-   finishes, the report is posted into the conversation.
+4. The hand-off card under the answer shows what the workflow covers, its tasks
+   and when the offer expires. Choose one:
+   - **Accept**, then confirm, to create the workflow and start its one run.
+   - **Edit** to change it in the workflow editor first. **Save** asks you to
+     confirm **Save and start**, which creates the edited workflow and starts
+     its run.
+   - **Decline**, then confirm, to create nothing.
+5. The card follows the run. If a search for all matching documents found more
+   than the hand-off can review, the run pauses before reviewing any; **Cancel
+   run** and ask again with a narrower request.
+6. When the run finishes, its report is posted into the conversation. The run
+   is also in the workflow's run history in Workflows.
 
 ## Testing and validation
 
@@ -734,6 +930,14 @@ See [Orchestration settings](../../admin/orchestration.md).
 | `functional_tests/test_workflow_handoff_result_reader.py` | The reader opening only a hand-off's own report; re-proving its lineage against a real parent result, and refusing a malformed receipt, a missing or damaged parent, or an edited definition before the report's text is read; digests and paging. |
 | `functional_tests/test_workflow_handoff_end_to_end.py` | 3-document and 200-document workspace queries through the real durable runtime and runner, ending with one summary posted to chat and no private values in any response or log. |
 | `functional_tests/route_tests/test_route_blueprint_policy_inventory.py`, `functional_tests/route_tests/test_route_unauthenticated_policy_contract.py` | The four routes in the route policy. |
+| `functional_tests/test_v2_orchestration_workflow_handoff_client.mjs` | V2's hand-off client against a recording fetch: the list parser, Accept in both modes with its 201 and 200 split, Decline, the draft, the error and reason sentences, which refusals can be retried, the run-status labels, the join to the run tracker by run id, the over-limit pause, the step's arguments in words, the approval floor, and a hand-off run's running tag, delivery footer and bell notice. The server facts the client mirrors are read from the server modules. |
+| `functional_tests/test_v2_orchestration_workflow_run_floor.mjs` | `workflow_handoff` in V2's approval floor list: an enabled hand-off step holds an auto, timed or manual plan and the floor marker survives; a switched-off one sets no floor; and a hand-off never counts as a run of a saved workflow. |
+| `functional_tests/test_orchestration_workflow_handoff_editor_round_trip.py`, `functional_tests/test_support/workflow_handoff_draft_probe.ts` | The card's real editor handling between the real draft and accept routes: an untouched save creates the same workflow and isn't recorded as an edit, a real change is, the payload never carries a workflow id or task prompt, and a draft with URL Access on is never sent. |
+| `functional_tests/test_workflow_handoff_status_route.py` | An accepted hand-off's run through the real accept and status routes: one row with exactly the keys the tracker reads and no hand-off id, the run the hand-off list names, and the producing attempt's id when the answer is a later attempt. |
+| `functional_tests/test_v2_orchestration_workflow_handoff_xss_guardrail.py` | The card's and the notice's files pass `scripts/check_xss_sinks.py`, both links come from the approved builders, and the checker still flags a link or HTML taken from a hand-off's fields. |
+| `ui_tests/test_v2_orchestration_workflow_handoff_card.py` | The card in Chromium with the routes' captured answers: what each state shows and offers, the confirmations, Accept, Decline, Edit and Save and start, keeping the editor's draft on a refusal, refusing URL Access before anything is sent, the creating poll, each refusal's text, Try again only when it can succeed, and no card or request outside a personal hand-off answer. |
+| `ui_tests/test_v2_orchestration_workflow_handoff_plan.py` | The plan card's notice, the Run view's arguments in words without instructions, handles or filters, a timed or auto hand-off plan that never counts down or runs itself, and a finished step that shows only its summary. |
+| `ui_tests/test_v2_orchestration_workflow_handoff_run_status.py` | The accepted run followed through the real run tracker: the live row joined by run id even when the run names an earlier attempt, the over-limit pause with Cancel run, a deadline pause read as timed out, the run shown once, the running tag, results posted to this chat or another, and the card with workflow runs or personal workflows off. |
 
 ### Performance
 
@@ -749,8 +953,14 @@ document; the 200-document read makes 1,409.
 
 ### Known limitations
 
-- There's no hand-off card in V2 yet, so a user can't accept a hand-off in the
-  browser.
+- The card doesn't count a workspace query's matches before Accept. It shows
+  the bound: a best-matches query reviews at most that many documents, and an
+  all-matches query that matches more than its limit pauses when it runs.
+- The card isn't hidden when **Hand Off Large Work From Chat** is off. It
+  appears only under an answer whose plan has a hand-off step, so it stays to
+  explain why an earlier offer can no longer be accepted.
+- After an accept, the card's chip reads **Run queued** while the run row below
+  it shows the run's current status.
 - The daily limit counts the hand-off workflows that exist. A deleted hand-off
   stops counting, and two accepts at the same moment can both pass the count.
 - At most 25 named documents, or 2,000 from a workspace query, and the run has

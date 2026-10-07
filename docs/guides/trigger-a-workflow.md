@@ -102,6 +102,62 @@ approval or sign-in, its status shows **Needs you**, and for a sign-in the card 
 **Reconnect Microsoft 365**; follow
 [Microsoft 365 authorization waits](#microsoft-365-authorization-waits) to continue it.
 
+## Hand large work off to a workflow
+
+Since **0.261.256**, a request too big for one chat plan, such as "review every
+contract in my Legal workspace and list the renewal terms", can be handed off to a
+one-time workflow. The workflow reviews each document, writes one report, and posts
+the outcome back into the chat. It runs in the background, so the work goes on after
+the chat turn ends and can resume after an interruption.
+
+Before you ask:
+
+- Your administrator must turn on **Hand Off Large Work From Chat** and the settings
+  it needs, and you need access to personal workflows.
+- Ask from a conversation that's private to you. A shared conversation can't hand
+  work off.
+- Name the documents to review, or the workspace to search. A hand-off reviews at
+  most 25 named documents, or a bounded number of documents from a workspace search;
+  the card says how many.
+
+1. Turn on **Orchestrate** and describe the work, naming the documents or the
+   workspace.
+2. Check the plan card. It says the plan hands work off to a one-time workflow and
+   always waits for you, even when your approval mode is a countdown or Auto.
+3. Select **Approve**. Approving only prepares the workflow. The answer says
+   "Prepared a one-time workflow for this request. Nothing runs until you approve it
+   on the hand-off card."
+4. Read the **Workflow hand-off** card under the answer. It says what the workflow
+   covers, such as "200 documents" or "up to 500 best-matching documents", which
+   workspaces it searches, its two tasks and what each runs on, and when the offer
+   expires.
+5. Choose and confirm:
+   - **Accept** creates the workflow, turned off so it never runs on a schedule, and
+     starts its one run.
+   - **Edit** opens it in the workflow editor first. **Save** creates the workflow as
+     edited and starts its run.
+   - **Decline** creates nothing.
+6. Follow the run on the card: its status, the step it's on and the time elapsed,
+   with **Cancel run** and **Open run**. When the run ends, its outcome is posted in
+   this chat.
+
+An edit must keep the manual trigger and the For each over the documents or the
+workspace search, and its tasks can use only your own local agents. URL Access and
+Run as aren't available; turn URL Access on in the workflow editor once the workflow
+exists. If an edit is refused, the editor stays open with your draft and says what
+to change.
+
+A search for all matching documents pauses before it reviews any if, when the run
+starts, more documents match than the hand-off can review. The card shows **Needs
+you** and says why. Select **Cancel run**, then ask again with a narrower request;
+the workflow can't be resumed.
+
+After its run, the workflow stays in Workflows, turned off. Chat won't start it
+again, but you can run it from Workflows. Each hand-off workflow from the last 24
+hours counts toward a daily limit your administrator sets, until you delete it. See
+[Workflow hand-offs]({{ '/reference/chat-controls/' | relative_url }}#workflow-hand-offs-v2-interface)
+for every control on the card.
+
 ## Continue a durable run
 
 With durable execution enabled in **0.261.111**, **Run** queues background work
@@ -307,6 +363,12 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | A started workflow's link says it's unavailable | The workflow was deleted, or the run is no longer in its run history | Open the workflow in Workflows to start a new run. |
 | A started workflow shows **Status unavailable** | V2 couldn't read the run's status with certainty, for example because the run stopped while nothing was checking it | Select **Check now**, or **Open run** to see the run in Workflows. |
 | A failed run started from chat doesn't offer **Retry** | The workflow changed or was deleted after the run started, another run of it is in progress, the run reached its time limit, it didn't run because nothing changed, or starting workflows from chat was turned off | Read the reason on the card, then start a new run from Workflows if you still need one. |
+| Chat never offers to hand work off | **Hand Off Large Work From Chat** or a setting it needs is off, the conversation is shared, or you don't have the workflow role your deployment requires | Ask from your own conversation, or ask your administrator about the settings and your role. |
+| A hand-off card shows **Can't be used** and says the request covers more documents than one hand-off can review | You named more documents, or asked for a broader search, than one hand-off can review | Ask again with a narrower request. |
+| A hand-off run shows **Needs you** and says it paused before reviewing any documents | More documents matched when the run started than the hand-off can review | Select **Cancel run**, then ask again with a narrower request. The workflow can't be resumed. |
+| Accepting a hand-off says you reached the daily limit | You already have as many hand-off workflows from the last 24 hours as your administrator allows | Try again later, or delete a hand-off workflow you no longer need. |
+| Saving an edited hand-off is refused | The edit changed the trigger, removed the For each, used an agent that isn't one of your own local agents, or turned on URL Access or Run as | Read the message in the editor, undo that change and save again. Your draft is kept. |
+| A hand-off card says the offer expired | A hand-off can be accepted for 14 days | Ask again in chat for a new one. |
 
 ## Related
 
