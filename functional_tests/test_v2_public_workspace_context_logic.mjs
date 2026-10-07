@@ -1,12 +1,14 @@
 // test_v2_public_workspace_context_logic.mjs
-// Version: 0.261.185
+// Version: 0.261.294
 // Implemented in: 0.261.179
 // The settings, activity and statistics manage sections and the settings_management hint (M10C): 0.261.185
+// User Settings Open path for a public workspace row: 0.261.294
 // Executes the real public workspace context validator (isPublicWorkspaceContext in
 // lib/workspaceContext.ts) for the M10A additions: the optional top-level membership_management
 // hint, and the `members` manage section validated in the `manage` group exactly as the group
 // validator validates its own manage sections. M10C adds the `settings`, `activity` and
 // `statistics` manage sections, validated the same way, and the optional settings_management hint.
+// Also executes the User Settings tab's Open path for a public workspace row (lib/workspaces.ts).
 // Sits beside test_v2_group_workspace_context_logic.mjs.
 
 import assert from 'node:assert/strict';
@@ -15,6 +17,8 @@ import './test_support/tsResolve.mjs';
 const {
     PUBLIC_WORKSPACE_SECTION_IDS, PUBLIC_MANAGE_SECTION_IDS, isPublicWorkspaceContext,
 } = await import('../application/v2_ui/src/lib/workspaceContext.ts');
+const { publicWorkspacePath } = await import('../application/v2_ui/src/lib/publicWorkspaceNavigation.ts');
+const { PUBLIC_WORKSPACES } = await import('../application/v2_ui/src/lib/workspaces.ts');
 
 let checks = 0;
 
@@ -121,6 +125,27 @@ try {
         };
         assert.equal(isPublicWorkspaceContext(withHint, 'viewer', 'ws-a'), true,
             'The settings hint is optional at the validator, like the other management hints.');
+    });
+
+    run('a settings row opens its public workspace page by encoded id without calling the server', () => {
+        const originalFetch = globalThis.fetch;
+        const calls = [];
+        globalThis.fetch = async (path) => {
+            calls.push(String(path));
+            throw new Error('Building the Open path must not call the server.');
+        };
+        try {
+            assert.equal(PUBLIC_WORKSPACES.openPath('ws-a'), '/public/ws-a');
+            assert.equal(PUBLIC_WORKSPACES.openPath('ws-a'), publicWorkspacePath('ws-a'));
+            assert.equal(PUBLIC_WORKSPACES.openPath('ws a&b'), '/public/ws%20a%26b');
+            for (const invalid of ['', '.', '..', 'ws/a', 'ws?a', 'ws#a', ' ws-a']) {
+                assert.throws(() => PUBLIC_WORKSPACES.openPath(invalid), /Invalid workspace identifier/);
+            }
+            // Open only navigates: a public workspace is never activated by opening it from settings.
+            assert.deepEqual(calls, []);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
     });
 
     console.log(`${checks} public workspace context validator checks passed.`);
