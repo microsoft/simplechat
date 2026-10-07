@@ -463,9 +463,11 @@ runtime progress, outside the definition revision and the Microsoft 365
 fingerprint, so it doesn't change `modified_at` or `is_enabled`. A failure to
 record it never stops the run from finishing.
 
-A workspace query that matches more documents than its limit pauses before
-reviewing any. The run's deadline doesn't expire that pause. The run status
-shows it as needing the user. Cancel it and ask again with a narrower request.
+A workspace query for all matching documents (`all_matches`) that matches more
+documents than its limit pauses before reviewing any. The run's deadline
+doesn't expire that pause. The run status shows it as needing the user. Cancel
+it and ask again with a narrower request. A best-matches query (`best_n`)
+reviews only its best N documents, so more matches don't pause it.
 
 ### Routes
 
@@ -736,11 +738,12 @@ When `chat_delivery` is true, the card adds "The run's outcome is posted in this
 chat when it ends." The posted result, the chat list's running tag and the bell
 notice work as they do for any run started from chat.
 
-A run that pauses because its workspace query matched more documents than the
-hand-off may review shows **Needs you** and "Paused before reviewing any
-documents because more matched than one hand-off can review. Cancel it, then
-ask again with a narrower request." The row offers **Cancel run** and **Open
-run**. The workflow can't be resumed, so cancelling is the only way on.
+A run that pauses because its all-matches workspace query matched more
+documents than the hand-off may review shows **Needs you** and "Paused before
+reviewing any documents because more matched than one hand-off can review.
+Cancel it, then ask again with a narrower request." The row offers **Cancel
+run** and **Open run**. The workflow can't be resumed, so cancelling is the
+only way on.
 
 #### Errors
 
@@ -965,9 +968,9 @@ document; the 200-document read makes 1,409.
   stops counting, and two accepts at the same moment can both pass the count.
 - At most 25 named documents, or 2,000 from a workspace query, and the run has
   a 24-hour deadline.
-- A query that matches more than its limit pauses before reviewing anything.
-  Cancel it and ask again with a narrower request; the hand-off still counts
-  toward the daily limit.
+- An all-matches query that matches more than its limit pauses before
+  reviewing anything. Cancel it and ask again with a narrower request; the
+  hand-off still counts toward the daily limit.
 - Only personal workflows, from a private conversation. No group workflows,
   Microsoft 365 actions, Run as or schedules, and only local agents.
 - One hand-off per plan, with exactly one review task and one report task.
