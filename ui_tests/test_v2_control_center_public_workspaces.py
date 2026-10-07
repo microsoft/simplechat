@@ -1,7 +1,7 @@
 # test_v2_control_center_public_workspaces.py
 """
 Browser tests for public workspace management using the built local V2 assets.
-Version: 0.261.283
+Version: 0.261.284
 Implemented in: 0.261.283
 
 Shared fixture supports Azure Playwright with DefaultAzureCredential when configured.

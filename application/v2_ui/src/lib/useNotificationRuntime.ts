@@ -5,14 +5,23 @@
 // the sidebar and is not the only thing that depends on this. The desktop notifier has to
 // hear about replies on every page, a desktop notification clicked on any page has to be
 // able to open a conversation through the router, and the chat store has to know whether
-// the chat page is on screen when a reply lands.
+// the chat page is on screen when a reply lands. Completion sounds and spoken-reply auto-play
+// listen for finished replies here too, for the same reason.
 
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { announceRouteChange, registerAppNavigator } from './appNavigation';
 import { showReplyNotification } from './desktopNotifications';
 import { subscribeCompletedReplies } from './replyEvents';
+import { createCompletionCueListener } from './completionAudio';
+import { createSpeechAutoplayListener } from './speechPlayback';
+import { messageToPlainText } from './messageText';
 import { startNotificationPolling, stopNotificationPolling } from '../stores/notificationStore';
+import { useChatStore } from '../stores/chatStore';
+
+function chatPageShowing(pathname: () => string): boolean {
+    return document.visibilityState === 'visible' && pathname() === '/chat';
+}
 
 /**
  * `ready` is whether the signed-in session has loaded. Nothing starts before it, because the
@@ -56,8 +65,27 @@ export function useNotificationRuntime(ready: boolean): void {
         }
         startNotificationPolling();
         const stopListening = subscribeCompletedReplies(showReplyNotification);
+        const activeConversationId = () => useChatStore.getState().activeConversationId;
+        const stopCues = subscribeCompletedReplies(createCompletionCueListener({
+            chatPageWatched: () => chatPageShowing(() => pathnameRef.current) && document.hasFocus(),
+            activeConversationId,
+        }));
+        const stopAutoplay = subscribeCompletedReplies(createSpeechAutoplayListener({
+            chatPageShowing: () => chatPageShowing(() => pathnameRef.current),
+            activeConversationId,
+            messageText: (conversationId, messageId) => {
+                const state = useChatStore.getState();
+                if (state.activeConversationId !== conversationId) {
+                    return null;
+                }
+                const message = state.messages.find((item) => item.id === messageId);
+                return message ? messageToPlainText(message) : null;
+            },
+        }));
         return () => {
             stopListening();
+            stopCues();
+            stopAutoplay();
             stopNotificationPolling();
         };
     }, [ready]);

@@ -28,12 +28,12 @@ Use it for workflows that need vector representations, not for conversational an
   does not require storing an API key.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Configure existing/default embedding action settings through Agents controls.
-The default action follows the administrator's global selection. Explicitly
-configured action manifests retain their own endpoint contract; they are not
-silently redirected to the application's document-search model.
+`embedding_model` is hidden from new-action creation because the default embedding action is managed through the global AI Connections embedding selection and governance. Existing explicit manifests remain editable for compatibility.
+
+The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

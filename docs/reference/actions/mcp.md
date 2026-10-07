@@ -28,16 +28,30 @@ Use MCP when a provider already exposes an MCP server and agents should use thos
 - Tool exposure policy: load tools, optional prompts, allowed tool names, and large-result handling.
 - Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
+
 ## Configure the action
 
 1. Choose **MCP**.
-2. Optionally select **Preconfigured MCP Server** and **Server Preset**.
-3. Choose **Transport** and fill **Endpoint** with the remote server URL.
+2. Select a **Server template** if one fits. Ready-to-use servers, such as Microsoft Learn, supply the endpoint and imply the compatibility profile. Vendor compatibility profiles, such as Splunk, apply transport and compatibility defaults while you provide the endpoint.
+3. Choose **Transport** and fill **Endpoint** when the selected template does not fix it.
 4. Choose **Authentication Method** and fill the shown auth fields or **Custom Headers (JSON)**.
 5. Set **Load tools**, **Load prompts**, **Validate tool arguments**, and **Large Result Policy**.
-6. Fill **Allowed Tool Names** to expose only approved tools, or leave blank to expose all discovered tools.
-7. Use **Discover Tools** to populate **Discovered Tool Metadata (JSON)**.
-8. Set **Request Timeout**, **Connect Timeout**, **SSE Read Timeout**, **Retry Count**, and **Retry Backoff**, then use **Test Connection**.
+6. Use **Discover Tools** against the current endpoint, transport, and auth before saving. Discovery records tool metadata, prompt metadata, and SHA-256 fingerprints for approval.
+7. Review the discovered tools, then choose which approved tools to expose. Re-run discovery after endpoint, transport, authentication, prompt loading, or allowed tool names change.
+8. Set **Request Timeout**, **Connect Timeout**, **SSE Read Timeout**, **Retry Count**, and **Retry Backoff**.
+9. Use **Validate and test** in **Authentication**.
+
+The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** only to review preserved legacy values.
+
+## Tool fingerprint pinning
+
+Saving a new or materially changed MCP action is blocked until discovery has approved the current server manifest. SimpleChat computes a stable SHA-256 fingerprint from each tool's original name, description, input schema, output schema, and annotations, and from each prompt's name, description, and arguments. The approved manifest is stored in `additionalFields.mcp_tool_fingerprints` with the approved tool list.
+
+At runtime, pinned actions compare the live server manifest with the approved fingerprints before tools are registered. Tools whose hashes still match can run. New, changed, or removed tools and prompts are treated as drift; new or changed tools are not registered until an owner reviews the diff and rediscovers the server.
+
+The Actions and Agents lists show a **Tools changed — review** badge when stored drift metadata exists. The editor summarizes new, changed, removed, and prompt drift so owners can decide whether to re-approve by rediscovery.
+
+Existing MCP actions that have no approved fingerprints are treated as unpinned legacy actions. They can continue to run until they are saved with a connection-affecting change, at which point discovery and approval are required.
 
 ## Retired stdio actions
 
@@ -64,6 +78,8 @@ Environment-enforced destination restrictions are a minimum that Admin Settings 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Discovery finds too many tools | **Allowed Tool Names** is blank. | Add one approved tool name per line. |
+| Saving is blocked | Discovery has not approved the current endpoint, transport, auth, tools, and prompts. | Run **Discover Tools**, review the metadata, then save. |
+| Tools changed badge appears | The live server manifest no longer matches the approved fingerprints. | Open the action, review drift, rediscover tools, and save if the changes are trusted. |
 | Tool calls fail on arguments | Arguments do not match the discovered schema. | Enable **Validate tool arguments** and rediscover tools. |
 | SSE connections time out | Read timeout is too low or a proxy interrupts the stream. | Increase **SSE Read Timeout** and verify the network path. |
 | An existing action is marked unsupported | It uses the retired stdio transport. | Explicitly configure a supported remote transport and endpoint, or delete the action. Admin/global scope does not restore stdio support. |
