@@ -22,9 +22,13 @@ import {
     isRecord, type ActionConfiguration, type AgentConfiguration, type AgentEditorOptions,
 } from '../../lib/workspaceAuthoring';
 import { takeCreatedWorkspaceAction, useWorkspaceEditorDraft } from '../../lib/workspaceEditorDrafts';
-import { agentForSave, agentText, agentValidationErrors, applySafeAgentDraft, isAgentEditorEnvelope, newAgentDraft } from '../../lib/workspaceAgentAuthoring';
+import { agentForSave, agentReasoningLevels, agentText, agentValidationErrors, applySafeAgentDraft, isAgentEditorEnvelope, newAgentDraft } from '../../lib/workspaceAgentAuthoring';
 import { newAgentActionErrors } from '../../lib/workspaceAgentActions';
 import { agentKnowledgeErrors, type AgentKnowledgeCatalog } from '../../lib/workspaceAgentKnowledge';
+import { agentAssistValues, applyAgentAssistPatch, buildAgentAssistView, type AgentAssistContext } from '../../lib/agentEditorAssist';
+import type { ModelCatalogEntry } from '../../lib/models';
+import { useEditorAssist } from '../../components/editorAssist/useEditorAssist';
+import { EditorAskAiPanel, EditorAskAiToggle, EditorAssistLockBanner } from '../../components/editorAssist/EditorAskAiPanel';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 function message(cause: unknown): string {
@@ -69,6 +73,40 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const readOnly = accessReadOnly || original?.read_only === true || !canAuthor;
     const advancedError = agentAdvancedError(draft, original);
     const arraySecretError = agentText(draft._editor_array_secret_error) || null;
+    const assistEnabled = useBootstrapStore((state) => state.data?.features?.enable_agent_ai_assistant === true);
+    const models = useBootstrapStore((state) => state.data?.catalogs?.models) as ModelCatalogEntry[] | undefined;
+    const [assistOpen, setAssistOpen] = useState(false);
+    const [jumpTo, setJumpTo] = useState<{ section: string; sequence: number } | null>(null);
+    // Ask AI reads and changes the latest draft between renders, so it works from a ref.
+    const draftRef = useRef(draft);
+    draftRef.current = draft;
+    const assistContext = (current: AgentConfiguration): AgentAssistContext | null => options ? {
+        options, actions, targets, knowledge, knowledgeScopes: adapter.knowledgeScopes,
+        reasoningLevels: agentReasoningLevels(current, options, models), ownerId, isNew,
+    } : null;
+    const assist = useEditorAssist({
+        kind: 'agent',
+        available: assistEnabled && !readOnly && !bootLoading && !bootError && Boolean(options),
+        scope: adapter.scope.kind === 'group' ? { kind: 'group', id: adapter.scope.id } : { kind: adapter.scope.kind },
+        recordKey: `${scope}:${resourceId}`,
+        blocked: saving || iconBusy || Boolean(advancedError),
+        buildView: () => {
+            const context = assistContext(draftRef.current);
+            if (!context) throw new Error('The agent editor is still loading.');
+            return buildAgentAssistView(draftRef.current, context);
+        },
+        apply: (patch) => {
+            const current = draftRef.current;
+            const context = assistContext(current);
+            const next = context ? applyAgentAssistPatch(current, patch, context) : null;
+            if (!next || !context) return null;
+            draftRef.current = next;
+            setDraft(next);
+            return agentAssistValues(next, { ...context, reasoningLevels: agentReasoningLevels(next, context.options, models) });
+        },
+        onJump: (section) => setJumpTo((current) => ({ section, sequence: (current?.sequence ?? 0) + 1 })),
+    });
+    const assistShown = assist.available && assistOpen;
 
     useEffect(() => {
         const controller = new AbortController();
@@ -206,7 +244,14 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             backTo={adapter.basePath} dirty={dirty || iconBusy} saving={saving} readOnly={readOnly} error={arraySecretError || saveError}
             onSave={() => void save()} onDiscard={clear} saveLabel="Save agent" saveDisabled={Boolean(advancedError) || iconBusy}
             initialSection={new URLSearchParams(location.search).get('templates') === '1' ? 'templates' : undefined}
+            sidePanel={assist.available ? <EditorAskAiPanel assist={assist} id="agent-ask-ai-panel" inputId="agent-ask-ai-input"
+                onClose={() => setAssistOpen(false)} /> : undefined}
+            sidePanelOpen={assistShown} aiChangedSections={assist.changedSections}
+            locked={Boolean(assist.pending)} jumpTo={jumpTo}
+            lockBanner={assist.pending ? <EditorAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : undefined}
             actions={<>
+                {assist.available ? <EditorAskAiToggle id="agent-ask-ai-toggle" open={assistShown} controls="agent-ask-ai-panel"
+                    onToggle={() => setAssistOpen((value) => !value)} /> : null}
                 {advancedError ? <span role="status" className="max-w-xs text-xs text-danger">
                     {arraySecretError ? 'Review stored array credentials before saving.' : 'Fix Additional settings JSON to enable saving.'}
                 </span> : null}

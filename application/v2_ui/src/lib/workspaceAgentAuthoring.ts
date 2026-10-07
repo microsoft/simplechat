@@ -2,6 +2,8 @@
 // Agent-only draft rules, shared by the routed editor and executable functional tests.
 
 import type { WorkspaceModelEndpoint } from './types';
+import type { ModelCatalogEntry } from './models';
+import { getModelSupportedLevels, type ReasoningEffort } from './reasoning';
 import {
     EDITOR_SECRET_MASK,
     editorName,
@@ -273,6 +275,18 @@ export function selectedAgentModel(draft: AgentConfiguration, choices: AgentMode
     }
     const deployment = draft.enable_agent_gpt_apim ? draft.azure_agent_apim_gpt_deployment : draft.azure_openai_gpt_deployment;
     return choices.find((choice) => !choice.endpointId && choice.deployment === deployment);
+}
+
+/** The reasoning levels the agent's selected model supports, from the bootstrap model catalogue. */
+export function agentReasoningLevels(
+    draft: AgentConfiguration, options: AgentEditorOptions, models: readonly ModelCatalogEntry[] | undefined,
+): ReasoningEffort[] {
+    const selectedModel = selectedAgentModel(draft, agentModelChoices(options));
+    const catalogModel = models?.find((model) => draft.model_endpoint_id
+        ? model.endpoint_id === draft.model_endpoint_id && model.model_id === draft.model_id
+        : model.model_name === selectedModel?.modelName &&
+            model.deployment_name === (draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment));
+    return getModelSupportedLevels(catalogModel?.reasoning_capabilities);
 }
 
 export function selectAgentModel(draft: AgentConfiguration, choice: AgentModelChoice): AgentConfiguration {
