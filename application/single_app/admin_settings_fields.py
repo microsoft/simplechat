@@ -82,6 +82,11 @@ Beyond a field's type, six optional descriptors shape how a section reads:
     input would otherwise save to a top-level key nothing reads. See
     ``_apply_nested_paths``.
 
+``keywords``
+    Extra words the V2 page search matches on. A bespoke component has one label and
+    one help text but can hold a whole workbench, so without these a search for
+    "retention" would not find the backup schedule that contains it.
+
 ``on_enable``
     Companion values a switch sets when it is turned on, as
     ``{"set": {key: value}, "when": <condition>}``. Enhanced extraction is the
@@ -94,7 +99,10 @@ Beyond a field's type, six optional descriptors shape how a section reads:
     result. A value named in the same save always wins.
 
 The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Operations, Scale,
-Workflow, Workspaces and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+Workflow, Workspaces and Security groups are described in full. Backup & Recovery is
+described by one component per section, because its settings are a separate document
+saved through the data-management API and the rest of it is workbenches over that same
+API. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -7738,6 +7746,138 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": [
                 {"key": "enable_image_generation", "equals": True},
                 {"key": "enable_image_gen_apim", "equals": True},
+            ],
+        },
+    ],
+    # Backup & Recovery. Every section is a bespoke component: the data-management
+    # settings live in their own Cosmos document (`backup_settings`) and are saved through
+    # /api/admin/data-management/settings, and the inventory, jobs, migration and editor
+    # are workbenches over that same admin API rather than settings at all. The V2 page
+    # counts the components' unsaved settings in its Save bar and saves them after the
+    # main settings. `keywords` lets the page search find a section by what it contains.
+    "data-management-readiness-section": [
+        {
+            "type": "component",
+            "component": "data-management-readiness",
+            "label": "Backup readiness",
+            "help": (
+                "What is in place for backups, restore and migration, with a guide for "
+                "each."
+            ),
+            "keywords": [
+                "start here", "readiness", "checklist", "guide", "setup", "ru boost",
+                "permissions", "business hours",
+            ],
+        },
+    ],
+    "data-management-backup-section": [
+        {
+            "type": "component",
+            "component": "data-management-backup-runs",
+            "label": "Run a backup",
+            "help": (
+                "Queue a full or partial backup now, and tune how backups load Cosmos DB "
+                "and copy source files."
+            ),
+            "keywords": [
+                "backup now", "full backup", "partial backup", "queue", "performance",
+                "concurrency", "retry", "throughput", "ru boost", "chunk size",
+                "file transfers",
+            ],
+        },
+    ],
+    "data-management-schedule-section": [
+        {
+            "type": "component",
+            "component": "data-management-schedule",
+            "label": "Backup schedule",
+            "help": "When backups run, how long they are kept, and what they include.",
+            "keywords": [
+                "schedule", "frequency", "daily", "weekly", "retention",
+                "delete backups after", "partial backups", "low impact", "scope",
+                "cosmos", "ai search", "source files", "blobs",
+            ],
+        },
+    ],
+    "data-management-storage-section": [
+        {
+            "type": "component",
+            "component": "data-management-storage",
+            "label": "Backup storage",
+            "help": "The dedicated Azure Storage account and container backups are written to.",
+            "keywords": [
+                "storage", "blob", "container", "connection string", "managed identity",
+                "prefix", "test storage",
+            ],
+        },
+    ],
+    "data-management-encryption-section": [
+        {
+            "type": "component",
+            "component": "data-management-encryption",
+            "label": "Backup encryption",
+            "help": "Whether backup files are encrypted, and where the encryption key is kept.",
+            "keywords": ["encryption", "encrypt", "key", "generate key", "key vault"],
+        },
+    ],
+    "data-management-migration-section": [
+        {
+            "type": "component",
+            "component": "data-management-migration",
+            "label": "Migration",
+            "help": (
+                "Move selected users, groups and public workspaces, with their documents, "
+                "into another SimpleChat environment."
+            ),
+            "keywords": [
+                "migrate", "migration", "destination", "target", "users", "groups",
+                "public workspaces", "preflight", "review", "mirror", "catch up",
+                "baseline", "ru boost", "writer freeze",
+            ],
+        },
+    ],
+    "data-management-backup-inventory-section": [
+        {
+            "type": "component",
+            "component": "data-management-backup-inventory",
+            "label": "Backup inventory and restore",
+            "help": (
+                "Completed backups, retention cleanup, and restoring a backup into the "
+                "destination environment."
+            ),
+            "keywords": [
+                "restore", "inventory", "backups", "retention cleanup", "delete backup",
+                "overwrite", "create only",
+            ],
+        },
+    ],
+    "data-management-cosmos-editor-section": [
+        {
+            "type": "component",
+            "component": "data-management-cosmos-editor",
+            "label": "Cosmos DB editor",
+            "help": (
+                "Query SimpleChat's Cosmos DB containers and repair one document at a "
+                "time, with ETag protection."
+            ),
+            "keywords": [
+                "cosmos", "json", "editor", "query", "document", "repair", "etag",
+                "partition key",
+            ],
+        },
+    ],
+    "data-management-jobs-section": [
+        {
+            "type": "component",
+            "component": "data-management-jobs",
+            "label": "Job history",
+            "help": (
+                "Backup, restore and migration jobs, with live progress, retry, resume, "
+                "cancel and migration manifests."
+            ),
+            "keywords": [
+                "jobs", "history", "progress", "cancel", "retry", "resume", "manifest",
+                "dry run",
             ],
         },
     ],
