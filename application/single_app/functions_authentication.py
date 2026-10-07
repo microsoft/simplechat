@@ -1005,7 +1005,7 @@ def control_center_required(access_level='admin'):
     Unified Control Center access control decorator.
     
     Args:
-        access_level: 'admin' for full admin access, 'dashboard' for dashboard-only access
+        access_level: 'admin', 'dashboard', or 'activity_logs' for the matching capability
     
     Access logic when require_member_of_control_center_admin is ENABLED:
     - ControlCenterAdmin role → Full access to everything (admin + dashboard)
@@ -1026,11 +1026,14 @@ def control_center_required(access_level='admin'):
             settings = get_settings()
             require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
             capabilities = get_control_center_capabilities(user, settings)
-            permitted = (
-                capabilities['can_view_dashboard']
-                if access_level == 'dashboard'
-                else capabilities['can_manage_users']
-            )
+            if access_level == 'dashboard':
+                permitted = capabilities['can_view_dashboard']
+            elif access_level == 'activity_logs':
+                permitted = capabilities['can_view_activity_logs']
+            elif access_level == 'admin':
+                permitted = capabilities['can_manage_users']
+            else:
+                permitted = False
             if permitted:
                 return f(*args, **kwargs)
             

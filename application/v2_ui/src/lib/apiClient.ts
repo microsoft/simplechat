@@ -50,6 +50,19 @@ export function apiUrl(path: string): string {
     return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+export function safeSameOriginUrl(value: unknown, fallback: string): string {
+    const candidate = typeof value === 'string' ? value.trim() : '';
+    if (
+        candidate.startsWith('/') &&
+        !candidate.startsWith('//') &&
+        !candidate.includes('\\') &&
+        !/[\u0000-\u001f\u007f]/.test(candidate)
+    ) {
+        return candidate;
+    }
+    return fallback;
+}
+
 interface RequestOptions {
     method?: string;
     body?: unknown;
@@ -59,6 +72,43 @@ interface RequestOptions {
 
 /** A bare machine code, one lowercase token such as `document_propagation_incomplete`. */
 const MACHINE_CODE = /^[a-z][a-z0-9_]*$/;
+
+/** Where the server's Terms of Use gate sends a V2 user, relative to the origin. */
+export const V2_TERMS_OF_USE_PATH = '/v2/terms-of-use';
+
+/** True when a failed response is the server's Terms of Use gate rather than a real error. */
+export function isTermsOfUseRequired(status: number, payload: unknown): boolean {
+    return (
+        status === 403 &&
+        typeof payload === 'object' &&
+        payload !== null &&
+        (payload as Record<string, unknown>).error === 'terms_of_use_required'
+    );
+}
+
+/** The V2 Terms of Use page, set to return to `next` once accepted. */
+export function safeTermsOfUseUrl(next: unknown): string {
+    return `${V2_TERMS_OF_USE_PATH}?${new URLSearchParams({ next: safeSameOriginUrl(next, '/v2') }).toString()}`;
+}
+
+/**
+ * Leave for the Terms of Use page when the server says acceptance is now required.
+ *
+ * Terms can change -- or a daily acceptance lapse -- while a tab is open, after which every
+ * call is refused. Sending the tab to the page that settles it beats a screen full of
+ * failures. Skipped on the page itself so a refused call there cannot loop.
+ */
+export function redirectToTermsOfUse(): boolean {
+    if (typeof window === 'undefined' || !window.location) {
+        return false;
+    }
+    const { pathname, search, hash } = window.location;
+    if (pathname === V2_TERMS_OF_USE_PATH) {
+        return false;
+    }
+    window.location.assign(safeTermsOfUseUrl(`${pathname}${search}${hash}`));
+    return true;
+}
 
 async function readErrorMessage(response: Response): Promise<{ message: string; payload: unknown }> {
     const contentType = response.headers.get('content-type') || '';
@@ -115,6 +165,9 @@ export async function requestWithStatus<T>(path: string, options: RequestOptions
 
     if (!response.ok) {
         const { message, payload } = await readErrorMessage(response);
+        if (isTermsOfUseRequired(response.status, payload)) {
+            redirectToTermsOfUse();
+        }
         throw new ApiError(message, response.status, payload);
     }
 
@@ -166,6 +219,9 @@ export async function uploadFileWithStatus<T>(
 
     if (!response.ok) {
         const { message, payload } = await readErrorMessage(response);
+        if (isTermsOfUseRequired(response.status, payload)) {
+            redirectToTermsOfUse();
+        }
         throw new ApiError(message, response.status, payload);
     }
 

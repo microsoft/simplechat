@@ -87,6 +87,8 @@ export interface UserSettings {
      */
     v2AdminRailCollapsed?: boolean;
 
+    /** Whether the Approvals categories rail shows icons only. Its own key for the same reason. */
+    v2ApprovalsRailCollapsed?: boolean;
     /** Whether the V2 Control Center section rail is collapsed to icons. */
     v2ControlCenterRailCollapsed?: boolean;
 
@@ -237,6 +239,8 @@ export const WRITABLE_USER_SETTING_KEYS = [
     // Whether the Admin Settings categories rail is showing icons only. Separate from the
     // shell and workspace rails for the same reason they are separate from each other.
     'v2AdminRailCollapsed',
+    // Whether the Approvals categories rail is showing icons only.
+    'v2ApprovalsRailCollapsed',
     // Whether the User Settings sections rail is showing icons only.
     'v2UserSettingsRailCollapsed',
     // Separate from the shell and Admin Settings rails so each keeps its own layout.

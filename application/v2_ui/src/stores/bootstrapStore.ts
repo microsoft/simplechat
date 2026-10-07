@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { fetchBootstrap } from '../lib/endpoints';
-import { ApiError } from '../lib/apiClient';
+import { ApiError, isTermsOfUseRequired } from '../lib/apiClient';
 import type { BootstrapPayload, PromptOption } from '../lib/types';
 
 /**
@@ -59,6 +59,12 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
             const data = await fetchBootstrap();
             set({ data, loading: false });
         } catch (error) {
+            // The terms gate refused the call and apiClient is already navigating to the
+            // Terms of Use page. Staying on the boot screen avoids flashing a misleading
+            // "session expired" panel during that navigation.
+            if (error instanceof ApiError && isTermsOfUseRequired(error.status, error.payload)) {
+                return;
+            }
             const isAuthError = error instanceof ApiError && error.isAuthError;
             set({
                 loading: false,

@@ -5,7 +5,7 @@
 // name classic pages: `/chats?conversationId=`, `/group_workspaces`, `/profile?tab=violations`.
 // Every spelling the classic resolver accepts (static/js/notifications.js,
 // resolveNotificationNavigationTarget) is accepted here too and translated to its V2 route
-// where one exists. A page V2 has not rebuilt yet -- approvals, workflow activity -- is opened
+// where one exists. A page V2 has not rebuilt yet, such as workflow activity, is opened
 // in the classic interface rather than dropped, so no notice becomes a dead end.
 //
 // Two rules are stricter than classic's, deliberately. A link must stay on this site: the
@@ -377,7 +377,7 @@ export function resolveNotificationLink(
     }
 
     if (path === '/approvals') {
-        return classic(linkHref(url), notification, origin);
+        return route(`/approvals${url.search}${url.hash}`);
     }
 
     // My Workspace has no per-document link, so a document notice opens the document list.

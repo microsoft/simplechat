@@ -10,6 +10,7 @@ cover the same route set, so adding or removing a route requires both policy
 contracts to stay in sync.
 """
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -67,10 +68,28 @@ def test_route_policy_test_files_are_documented_in_repo_instructions() -> None:
         assert expected_reference in instruction_source, f"Missing route test instruction reference: {expected_reference}"
 
 
+def test_v2_public_workspace_management_routes_require_control_center_admin():
+    """All five Phase 5 routes remain under the login Blueprint and strict role guard."""
+    source = ROOT_DIR / "application" / "single_app" / "route_backend_control_center.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    routes = [
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("api_v2_control_center_public_workspace")
+    ]
+    assert len(routes) == 5
+    for node in routes:
+        decorators = [ast.unparse(decorator) for decorator in node.decorator_list]
+        assert decorators[0].startswith("bp.route(")
+        assert decorators[1] == "swagger_route(security=get_auth_security())"
+        assert "login_required" in decorators
+        assert "control_center_required('admin')" in decorators
+
+
 if __name__ == "__main__":
     tests = [
         test_route_policy_tests_cover_identical_route_sets,
         test_route_policy_test_files_are_documented_in_repo_instructions,
+        test_v2_public_workspace_management_routes_require_control_center_admin,
     ]
     results = []
     for test in tests:

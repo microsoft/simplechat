@@ -2,9 +2,82 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.287)**
+
+#### New Features
+
+*   **V2 Terms of Use Page**
+    *   V2 users who must accept the Terms of Use now see a V2 page at `/v2/terms-of-use` instead of being sent to the classic interface. Accepting returns them to the V2 page they were opening; declining signs them out to the configured destination.
+    *   Acceptance, versioning, recurrence, redirect safety, and audit logging are shared with the classic page. A V2 tab whose acceptance lapses while open is sent to the terms page on its next request.
+    *   (Ref: `app.py` `build_terms_of_use_url`, `/api/v2/terms-of-use` routes in `route_backend_v2.py`, `TermsOfUsePage.tsx`, [V2 Terms of Use and Approval Requests](features/V2_TERMS_AND_APPROVALS.md))
+
+*   **V2 Approval Requests Page**
+    *   **Approval requests** in the V2 sidebar opens a full-page view laid out like Admin Settings: a collapsible category rail, the request list, and a detail pane with the decision controls.
+    *   Covers everything the classic page does: all requests, group requests, Microsoft 365 approvals, content screening (when enabled), outgoing Microsoft 365 actions, waiting requests with resume or connect-and-resume, and admin agent template approvals.
+    *   Each request has its own address. Notification links and classic bookmarks open the matching request, and the Admin Settings agent template link opens the V2 queue.
+    *   (Ref: `ApprovalsPage.tsx`, `components/approvals/`, `approvalsApi.ts`, `notificationLinks.ts`, `Sidebar.tsx`, `v2ApprovalsRailCollapsed` user setting)
+
+### **(v0.261.286)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   Public Workspace list, detail, status, bulk-status and export APIs return stable validation messages rather than exception text.
+    *   Preserves authorization and HTTP status behavior; adds sensitive-error regression coverage.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+### **(v0.261.285)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   List, detail, bulk status, individual status, and export validation failures return stable messages instead of exception text, preserving HTTP 400 and input bounds.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+#### New Features
+
+*   **V2 Control Center Activity Logs**
+    *   Adds URL-filtered activity investigations, deterministic keyset paging, a bounded histogram and activity-type facets, saved browser views, density controls, and escaped JSON detail drawers with related entity/approval links.
+    *   CSV export streams the same filters, escapes spreadsheet formulas and caps exports at 10,000 activity records. Summary charts disclose sampling above 5,000 matching records.
+    *   Existing deployments must apply the expected activity-log composite index through App Maintenance and wait for index transformation; legacy activity browsing remains unchanged.
+    *   (Ref: `ActivityLogsSection.tsx`, `functions_control_center_activity.py`, `functions_cosmos_indexing.py`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
+### **(v0.261.284)**
+
+#### New Features
+
+*   **V2 Control Center Public Workspace Management**
+    *   Adds query-level search/status/owner filters, server sorting and pagination, bounded cross-page bulk status changes, and injection-safe filtered CSV export.
+    *   Reuses detail tabs for ownership, supported manager roles/CSV, status history, retention, recent activity and document totals. Missing recorded metrics remain unavailable, not zero.
+    *   Preserves existing approval semantics and native membership permissions; public retention cannot reset custom values to defaults through its existing save API.
+    *   (Ref: `PublicWorkspacesSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_public_workspaces.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
+### **(v0.261.283)**
+
+#### Bug Fixes
+
+*   **V2 Control Center Validation Error Safety**
+    *   Users and Groups APIs return stable validation messages instead of exception text, preventing internal failure details from reaching the browser.
+    *   (Ref: `route_backend_control_center.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+### **(v0.261.282)**
+
+#### New Features
+
+*   **V2 Control Center Group Management**
+    *   Adds server-filtered group inventory, sortable usage and activity, cross-page bulk status updates with required reasons for locking/inactivation, and filtered CSV export.
+    *   Group drawers include membership search/CSV import, supported member controls, ownership requests, status history, retention, recent activity with JSON/export, and document summaries.
+    *   Deletion and ownership changes remain approval-gated. Existing group membership requirements for role changes, removal and retention are preserved.
+    *   (Ref: `GroupsSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_groups.py`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
 ### **(v0.261.280)**
 
 #### New Features
+
+*   **V2 Control Center User Management**
+    *   Adds filtered, sortable user administration with cached usage metrics, account detail and activity, cross-page bulk access/upload updates, and server-side CSV export.
+    *   Document deletion requests require a reason and are submitted for approval; dashboard drill-through filters and selected-user links are preserved.
+    *   (Ref: `UsersSection.tsx`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
 
 *   **Guided Tours and Latest Features in V2**
     *   Chat and Personal Workspace have step-by-step guided tours, started from a help button in the page header or with **Start now** in User Settings. Tours skip controls that are not on screen, support the keyboard, and respect reduced motion.

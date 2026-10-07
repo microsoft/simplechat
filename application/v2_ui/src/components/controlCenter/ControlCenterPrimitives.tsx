@@ -4,7 +4,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { Download, Search } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { Modal } from '../ui/Modal';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 
 export interface DataColumn<Row> {
@@ -22,6 +24,7 @@ export function useCrossPageSelection() {
     }>(() => ({ allMatchingSelected: false, includedIds: new Set(), excludedIds: new Set() }));
     return {
         selectedIds: selection.includedIds,
+        excludedIds: selection.excludedIds,
         allMatchingSelected: selection.allMatchingSelected,
         isSelected: (id: string) => selection.allMatchingSelected
             ? !selection.excludedIds.has(id)
@@ -225,25 +228,22 @@ export function useUrlQueryParams() {
 
 export function DetailDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
     return (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onMouseDown={(event) => {
-            if (event.target === event.currentTarget) onClose();
-        }}>
-            <aside role="dialog" aria-modal="true" aria-label={title}
-                className="glass-modal h-full w-full max-w-xl overflow-y-auto border-l border-edge p-5">
-                <div className="mb-4 flex items-center justify-between">
+        <Modal title={title} onClose={onClose} placement="drawer" bodyClassName="overflow-y-auto p-5"
+            banner={
+                <div className="flex items-center justify-between gap-3 border-b border-edge p-5">
                     <h2 className="text-lg font-semibold text-text-1">{title}</h2>
                     <GlassButton size="sm" onClick={onClose}>Close</GlassButton>
                 </div>
-                {children}
-            </aside>
-        </div>
+            }>
+            {children}
+        </Modal>
     );
 }
 
 export function StatusBadge({ status }: { status: string }) {
-    const tone = /active|approved|complete|enabled/i.test(status)
+    const tone = /^(active|approved|complete|enabled)$/i.test(status)
         ? 'bg-ok-soft text-ok' : /pending|review|processing/i.test(status)
-            ? 'bg-warn-soft text-warn' : /blocked|denied|failed|disabled/i.test(status)
+            ? 'bg-warn-soft text-warn' : /blocked|denied|failed|disabled|locked|inactive/i.test(status)
                 ? 'bg-danger-soft text-danger' : 'bg-surface-2 text-text-2';
     return <span className={clsx('inline-flex rounded-full px-2 py-0.5 text-xs font-medium', tone)}>{status}</span>;
 }
@@ -274,16 +274,45 @@ export function ReasonConfirmDialog({
 
 export const APPROVALS_URL = '/approvals';
 
-export function ApprovalSubmittedNotice({ children }: { children: ReactNode }) {
+export function ApprovalSubmittedNotice({ children, approvalId, groupId }: {
+    children: ReactNode; approvalId?: string; groupId?: string;
+}) {
+    const path = approvalId ? `${APPROVALS_URL}/all/${encodeURIComponent(approvalId)}` : APPROVALS_URL;
+    const query = groupId ? `?${new URLSearchParams({ group_id: groupId })}` : '';
     return <GlassPanel role="status" className="border border-warn/30 bg-warn-soft p-4 text-sm text-text-1">
-        <p>{children}</p><a className="mt-2 inline-block text-accent underline" href={APPROVALS_URL}>View approval requests</a>
+        <p>{children}</p><Link className="mt-2 inline-block text-accent underline" to={`${path}${query}`}>View approval requests</Link>
     </GlassPanel>;
 }
 
-export function ExportButton({ filename, rows }: { filename: string; rows: Record<string, unknown>[] }) {
+export function ExportButton({
+    filename,
+    rows,
+    serverQuery,
+    entity = 'users',
+}: {
+    filename: string;
+    rows?: Record<string, unknown>[];
+    serverQuery?: string;
+    entity?: 'users' | 'groups' | 'public-workspaces';
+}) {
+    if (serverQuery !== undefined) {
+        return (
+            <a className="inline-flex items-center gap-2 rounded-xl border border-edge bg-surface-1 px-3 py-1.5 text-xs font-medium text-text-1 hover:bg-surface-2"
+                href={`/api/v2/control-center/${entity}/export.csv${serverQuery ? `?${serverQuery}` : ''}`}
+                download={filename}>
+                <Download size={14} aria-hidden="true" />Export CSV
+            </a>
+        );
+    }
+
     const exportCsv = () => {
+        if (!rows) return;
         const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-        const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+        const escape = (value: unknown) => {
+            const text = typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '');
+            const safe = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+            return `"${safe.replaceAll('"', '""')}"`;
+        };
         const csv = [headers.map(escape).join(','), ...rows.map((row) => headers.map((key) => escape(row[key])).join(','))].join('\r\n');
         const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
         const anchor = document.createElement('a');
