@@ -271,6 +271,7 @@ from functions_citation_tracking import (
     merge_cited_documents_into_conversation,
     resolve_citation_location,
 )
+from collaboration_models import is_shared_conversation_backing
 from functions_collaboration import build_conversation_participation_context
 from functions_m365_action_cards import (
     get_request_pending_action_references,
@@ -4105,6 +4106,10 @@ def _resolve_authorized_conversation_context(user_id, conversation_id):
         )
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
+    # Orchestrate's backing record shares its shared conversation's id. Chat in a shared
+    # conversation runs through the shared conversation, never directly in that record.
+    if is_shared_conversation_backing(conversation_item):
+        raise LookupError(f"Conversation {conversation_id} not found")
 
     access_context = build_conversation_participation_context(user_id, conversation_item)
     return conversation_item, access_context

@@ -2,13 +2,15 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 actions in chat orchestration.
-Version: 0.261.238
+Version: 0.261.270
 Implemented in: 0.261.238
+Shared conversations read for their real audience, with the request as consent, in: 0.261.270
 
 An orchestration "Use an action" step runs in its own request context, the execution
 identity's bridge. Before 0.261.238 no Microsoft 365 execution context existed there, so
 every Microsoft 365 function refused the call with ``m365_context_required`` before reaching
-Microsoft Graph, and the step still reported completed.
+Microsoft Graph, and the step still reported completed. Before 0.261.270 a step in a shared
+conversation was refused outright (microsoft/simplechat#1659).
 
 These tests run the real action runner, step scope, Microsoft 365 runtime, execution
 boundary, approval service and email plugin through a real Flask bridge. Storage, tokens,
@@ -143,7 +145,14 @@ def stub_modules(state):
         "functions_global_actions": module("functions_global_actions", get_global_actions=lambda **kwargs: []),
         "functions_group_actions": module(
             "functions_group_actions", get_governed_group_actions=lambda *args, **kwargs: [],
+            get_group_actions=lambda *args, **kwargs: [],
         ),
+        "functions_personal_agents": module(
+            "functions_personal_agents",
+            get_personal_agents=lambda user_id: deepcopy(getattr(state, "agents", [])) if user_id == USER else [],
+        ),
+        "functions_global_agents": module("functions_global_agents", get_global_agents=lambda: []),
+        "functions_group_agents": module("functions_group_agents", get_group_agents=lambda group_id: []),
         "functions_governance": module(
             "functions_governance",
             filter_actions_by_action_type_access=lambda user_id, actions, *args: actions,
@@ -415,11 +424,37 @@ def test_ordinary_graph_outcomes_stay_findings(env, world):
     assert request_record(env, world)["status"] == "completed"
 
 
-def test_shared_conversations_are_refused_before_any_microsoft_365_work(env, world):
+def test_shared_conversation_step_reads_mail_with_the_requests_own_consent(env, world, monkeypatch):
+    """A shared conversation's step reads for its real audience; asking for the mail is the consent."""
+    approvals = CosmosContainer()
+    monkeypatch.setattr(env.approvals, "_service", env.approvals.M365ApprovalService(
+        container_factory=lambda: approvals, notification_sender=lambda approval: None,
+    ))
     world.participation = {"collaboration_conversation_id": "shared-1"}
-    error = stopped(env, world)
-    assert error.orchestration_failure_code == "m365_shared_conversation"
-    assert world.token_requests == [] and world.requests == [] and world.jobs.items == {}
+    world.replies = [tool_call()]
+    result, _context = run_step(env, world)
+
+    request_id = env.orchestration.step_request_id(REQUEST_KEY)
+    assert result["calls"] == 1 and "Quarterly review" in result["findings"]
+    assert len(world.graph_calls) == 1
+    assert world.token_requests and all(request["shared"] is True for request in world.token_requests)
+    records = list(approvals.items.values())
+    # One audit event says the requester shared their mail by asking; no approval is waiting.
+    assert [(record["event_type"], record["source"]) for record in records] == [("shared_by_request", "email")]
+    assert records[0]["context"]["request_id"] == request_id and records[0]["context"]["shared"] is True
+    assert request_record(env, world)["status"] == "completed"
+
+
+def test_shared_conversation_step_still_needs_a_current_participant(env, world):
+    world.participation = {"collaboration_conversation_id": "shared-1"}
+
+    def removed(*args):
+        raise PermissionError("You are no longer a participant in this conversation.")
+
+    with patch.object(env.runtime, "assert_user_can_participate_in_collaboration_conversation", removed):
+        with pytest.raises(PermissionError):
+            run_step(env, world)
+    assert world.token_requests == [] and world.requests == [] and world.graph_calls == []
 
 
 def test_send_only_action_is_refused_as_read_only(env, world):
@@ -515,6 +550,67 @@ def test_a_step_without_a_signed_in_session_is_refused(env, world):
                 pass
     assert caught.value.orchestration_failure_code == "external_session_required"
     assert world.jobs.items == {}
+
+
+def mail_agent(**changes):
+    """A personal agent that loads the mail action, as the agent catalog serializes it."""
+    return {
+        "id": "mail-agent", "name": "mail_agent", "display_name": "Mail agent",
+        "is_global": False, "is_group": False, "group_id": None,
+        "actions_to_load": ["mail"], "other_settings": {}, **changes,
+    }
+
+
+def agent_scope(env, world, agent):
+    scope = env.orchestration.agent_step_scope(
+        agent, user_id=USER, conversation_id=CONVERSATION, request_key=REQUEST_KEY,
+        origin={"run_id": "run-2", "attempt_index": 1, "step_id": "ask_mail_agent"},
+    )
+    request = world.app.test_request_context("/internal/agent-execution")
+    return scope, request
+
+
+def test_agent_step_scope_selects_only_the_agents_microsoft_365_actions(env, world):
+    world.agents = [mail_agent()]
+    assert env.orchestration.agent_loads_actions(mail_agent())
+    assert not env.orchestration.agent_loads_actions(mail_agent(actions_to_load=[]))
+    scope, request = agent_scope(env, world, mail_agent())
+    with request:
+        session["user"] = {"oid": USER, "tid": TENANT}
+        with scope as context:
+            assert context.request_id == env.orchestration.step_request_id(REQUEST_KEY)
+            assert context.shared is False and context.workflow_id is None
+            assert getattr(g, env.runtime.M365_STEP_SELECTION_KEY)["kind"] == "agent"
+            assert env.runtime.resolve_m365_action_selection(context) == ["mail"]
+        assert env.runtime.get_m365_execution_context() is None
+    record = request_record(env, world)
+    assert record["orchestration"] == {
+        "run_id": "run-2", "attempt_index": 1, "step_id": "ask_mail_agent", "capability_id": "agent_invoke",
+    }
+
+
+def test_an_agent_without_microsoft_365_actions_gets_no_step_context(env, world):
+    world.action = {**mail_action(), "id": "weather", "name": "weather", "type": "openapi"}
+    world.agents = [mail_agent(actions_to_load=["weather"])]
+    scope, request = agent_scope(env, world, mail_agent(actions_to_load=["weather"]))
+    with request:
+        session["user"] = {"oid": USER, "tid": TENANT}
+        with scope as context:
+            assert context is None and env.runtime.get_m365_execution_context() is None
+    assert world.jobs.items == {} and world.token_requests == []
+
+
+def test_a_removed_agent_stops_its_step_before_microsoft_365_work(env, world):
+    world.agents = []
+    scope, request = agent_scope(env, world, mail_agent())
+    with request:
+        session["user"] = {"oid": USER, "tid": TENANT}
+        with pytest.raises(env.orchestration.OrchestrationM365Error) as caught:
+            with scope:
+                pass
+    assert caught.value.orchestration_failure_code == "m365_unavailable"
+    assert caught.value.m365_code == "m365_agent_unavailable"
+    assert world.jobs.items == {} and world.token_requests == []
 
 
 def test_refusal_codes_map_to_step_failures(env, world):

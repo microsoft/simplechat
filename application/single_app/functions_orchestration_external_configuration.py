@@ -1,12 +1,14 @@
 # functions_orchestration_external_configuration.py
 """Opaque invocation-configuration proof and capture-independent current reads.
 
-Version: 0.261.209
+Version: 0.261.270
 Research planner profile restriction removed in: 0.261.209
+Metadata refusals keep their own reason code in: 0.261.270
 
 The owning engines supply actual acquisition evidence. The application root
 supplies current metadata reads; this module discovers no settings or clients,
-invokes no model/tool, and never fetches source content.
+invokes no model/tool, and never fetches source content. Agent and action steps
+no longer use these proofs: they trust the signed-in session (0.261.270).
 """
 
 from dataclasses import dataclass
@@ -40,6 +42,7 @@ FOUNDRY_OBSERVED_RUN = "observed-run-v1"
 FOUNDRY_PINNED_REQUEST = "pinned-request-v1"
 MAX_CONFIGURATION_BYTES = 1048576
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_REFUSAL_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}\Z")
 _SOURCE_CAPABILITIES = {
     "web": "web_search", "url": "url_fetch", "deep_research": "deep_research",
     "agent": "agent_invoke", "action": "action_invoke",
@@ -105,6 +108,12 @@ def _http_failure(status):
     return ExternalConfigurationServiceError("external_configuration_metadata_invalid")
 
 
+def _refusal_code(error):
+    """A refusal's own stable code, so diagnostics name the real reason, never exception text."""
+    code = getattr(error, "code", None) if isinstance(error, ResultUnavailableError) else None
+    return code if type(code) is str and _REFUSAL_CODE.fullmatch(code) else "external_configuration_unavailable"
+
+
 def _read_metadata(callback, *args, **kwargs):
     try:
         return callback(*args, **kwargs)
@@ -112,8 +121,8 @@ def _read_metadata(callback, *args, **kwargs):
         raise
     except ExternalConfigurationServiceError as error:
         failure = ExternalConfigurationServiceError(error.code)
-    except (ResultUnavailableError, ClientAuthenticationError, ResourceNotFoundError, PermissionError):
-        failure = ResultUnavailableError("external_configuration_unavailable")
+    except (ResultUnavailableError, ClientAuthenticationError, ResourceNotFoundError, PermissionError) as error:
+        failure = ResultUnavailableError(_refusal_code(error))
     except HttpResponseError as error:
         failure = _http_failure(error.status_code)
     except HTTPError as error:

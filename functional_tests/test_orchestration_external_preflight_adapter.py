@@ -1,15 +1,18 @@
 # test_orchestration_external_preflight_adapter.py
 """Strict invocation authorization and acquisition support for all five v2 adapters.
 
-Version: 0.261.209
+Version: 0.261.270
 Implemented in: 0.261.127
 Early acquisition-support regressions implemented in: 0.261.129
 Missing signed-in session refusal reason implemented in: 0.261.209
+Agent and action steps accepted on a session access check in: 0.261.270
 
 The auth-only runtime hook invokes the real provider before capture or engine
 setup. Capture separately invokes the real combined acquisition guard. The
 current-resource cases use the real metadata reader and attestor with only
-external/storage I/O doubled; neither authorization nor preparation is proof.
+external/storage I/O doubled; neither authorization nor preparation is proof
+for web search, URL fetch or Deep Research. Agent and action steps trust the
+signed-in session instead (microsoft/simplechat#1660).
 """
 
 from contextlib import nullcontext
@@ -530,7 +533,12 @@ def test_real_current_or_actual_unsupported_configuration_stops_before_effects(c
 
 
 @pytest.mark.parametrize("current_acquisition_runtime", ["agent_invoke", "action_invoke"], indirect=True)
-def test_preparation_only_engine_result_cannot_be_accepted(current_acquisition_runtime, monkeypatch):
+def test_session_checked_engine_result_is_accepted_without_attestation(current_acquisition_runtime, monkeypatch):
+    """Agent and action steps trust the signed-in session as manual chat does (#1660, #1661).
+
+    The root checks current access to the exact selection once. The engine then runs without an
+    invocation capture, and its result is accepted without configuration attestation.
+    """
     state = current_acquisition_runtime
     state.stop_after_preparation = False
     engine_name = (
@@ -538,18 +546,22 @@ def test_preparation_only_engine_result_cannot_be_accepted(current_acquisition_r
     )
     engine = importlib.import_module(engine_name)
 
-    async def unobserved_engine(*_args, **_kwargs):
-        return {"findings": "Unattested content", "calls": 0, "invocations": [], "artifacts": []}
+    async def session_engine(*_args, **kwargs):
+        assert kwargs.get("invocation_capture") is None
+        if state.capability == "agent_invoke":
+            return {"response": "Session-trusted content", "citations": []}
+        return {"findings": "Session-trusted content", "calls": 0, "root_id": "root", "invocations": [], "artifacts": []}
 
-    invocation = Mock(side_effect=unobserved_engine)
+    invocation = Mock(side_effect=session_engine)
     monkeypatch.setattr(
         engine, "invoke_scoped_agent" if state.capability == "agent_invoke" else "invoke_action", invocation,
     )
     result = execute(state)
     invocation.assert_called_once()
-    assert result["status"] == "failed"
-    assert result["notes"] == result["artifacts"] == []
-    assert len(state.prepared) == 1
+    assert result["status"] == "completed", result
+    assert "Session-trusted content" in "\n".join(result["notes"])
+    owner = state.runtime.context.result_producer(state.step)
+    assert state.prepared == [(SOURCE_TYPES[state.capability], owner, None, state.selector)]
     assert state.world.attestor._captures == {}
     assert_no_current_effects(state)
 
