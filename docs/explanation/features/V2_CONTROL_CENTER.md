@@ -5,7 +5,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Dashboard implemented in version:** 0.261.279
 **Foundation implemented in version:** 0.261.278
 **Users implemented in version:** 0.261.280
-**Groups implemented in version:** 0.261.281
+**Groups implemented in version:** 0.261.282
 **Activity Logs implemented in version:** 0.261.283
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
@@ -57,7 +57,7 @@ Data health is available to users with `can_run_maintenance`. Its Check button c
 
 ## Groups
 
-Implemented in version: **0.261.281**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.282**, tracked in `application/single_app/config.py`.
 
 The Groups section helps administrators find shared workspaces that need attention, inspect their membership and usage, and perform audited status changes without losing the classic approval boundaries. Dashboard links with `id` open the drawer; `status` filters the list. Every new endpoint uses the existing Control Center Blueprint login policy, Swagger security decorator, and `control_center_required('admin')`.
 
@@ -96,7 +96,7 @@ Member addition reuses `/api/userSearch` and the existing admin `/groups/<id>/ad
 
 Removing members and changing roles reuse the existing `/api/groups/<id>/members/<member_id>` DELETE/PATCH routes. Those operations still require current group Owner/Admin membership; a Control Center role alone does not confer it. The owner cannot be removed or assigned a member role. Retention uses the existing `/api/retention-policy/group/<id>` POST route, requires group Owner/Admin membership and enabled group retention, and accepts `default`, `none`, or organization-bounded whole-number days. Nonmember administrators can inspect these settings and request ownership rather than bypassing the existing membership rules.
 
-Delete group, delete all documents, take ownership and transfer ownership reuse the existing admin approval APIs. Each requires a reason and returns an approval ID, not a performed deletion or ownership change. Transfer recipients must already be members; the UI excludes the current owner. The submitted notice links to the shared approvals destination instead of adding an approvals queue to Control Center.
+Delete group, delete all documents, take ownership and transfer ownership reuse the existing admin approval APIs. Each requires a reason and returns an approval ID, not a performed deletion or ownership change. Transfer recipients must already be members; the UI excludes the current owner. The shared submitted notice links to `/v2/approvals/all/<approval_id>?group_id=<group_id>` using a basename-aware router link, matching the V2 Approvals contract (PR #1687), instead of adding an approvals queue to Control Center. User requests use the same detail destination without a group filter.
 
 ### Validation
 
@@ -142,4 +142,4 @@ Functional checks cover dashboard status normalization, period deltas, cache exp
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.281**, and Activity Logs in **0.261.283**.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.282**, and Activity Logs in **0.261.283**.
