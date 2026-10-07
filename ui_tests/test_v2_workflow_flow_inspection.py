@@ -1,10 +1,11 @@
 # test_v2_workflow_flow_inspection.py
 """
 Offline browser regressions for approved M5A read-only workflow Flow inspection.
-Version: 0.261.231
+Version: 0.261.271
 Implemented in: 0.261.121
 Group saved Flow opens through the group route only: 0.261.178
 An unavailable authored source is marked on its own row: 0.261.231
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 Uses the real local SPA, compiler-derived projections and closed fictional APIs.
 Run with PLAYWRIGHT_SERVICE_URL='' in this same pytest process. No live app,
@@ -41,6 +42,14 @@ from ui_tests.fixtures.workflow_flow import (
     flow_binding,
     workflow_flow_ui,  # noqa: F401
 )
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    edit_workflow,
+    open_workflow_flow,
+    open_workflow_runs,
+    select_workflow,
+    workflow_editor,
+    workflow_editor_path,
+)
 from functions_workflow_definitions import workflow_definition_revision
 from functions_workflow_identity import workflow_execution_id
 
@@ -71,17 +80,16 @@ def open_saved(ui, name=FLOW_NAME, *, group_id=None, **options):
     ui.open("/groups" if group_id else "/workspace/workflows", **options)
     if group_id:
         ui.select_group(group_id)
-    ui.page.get_by_role("button", name=f"View Flow for {name}", exact=True).click()
-    expect(ui.page.get_by_role("dialog", name="Workflow Flow", exact=True)).to_be_visible()
-    view = flow_region(ui.page)
+    panel = open_workflow_flow(ui.page, name)
+    view = panel.get_by_role("region", name="Workflow Flow", exact=True)
     expect(view.get_by_role("heading", name="Read-only Flow", exact=True)).to_be_visible()
     expect(view.get_by_role("button", name="Refresh Flow", exact=True)).to_be_enabled()
     return view
 
 
 def open_editor(ui, workflow_id=FLOW_WORKFLOW_ID, **options):
-    ui.open(f"/workspace/workflows?workflow_id={workflow_id}", **options)
-    editor = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
+    ui.open(workflow_editor_path(workflow_id), **options)
+    editor = workflow_editor(ui.page)
     expect(editor).to_be_visible()
     surface = editor.get_by_role("group", name="Workflow authoring surface", exact=True)
     expect(surface.get_by_role("button", name="List authoring", exact=True)).to_have_attribute("aria-pressed", "true")
@@ -112,19 +120,16 @@ def open_run_flow(ui, *, workflow_name=FLOW_NAME, workflow_id=FLOW_WORKFLOW_ID, 
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
         ui.select_group(GROUP_ID)
-    row = ui.page.get_by_role("listitem").filter(has=ui.page.get_by_role(
-        "button", name=f"View Flow for {workflow_name}", exact=True,
-    )).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    expect(row.get_by_role("list", name="Workflow node executions", exact=True)).to_be_visible()
+    runs = open_workflow_runs(ui.page, workflow_name)
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    expect(runs.get_by_role("list", name="Workflow node executions", exact=True)).to_be_visible()
     before = len([entry for entry in ui.requests if entry.path.endswith("/executions")])
-    row.get_by_role("button", name="Show Flow for this run", exact=True).click()
+    runs.get_by_role("button", name="Show Flow for this run", exact=True).click()
     view = flow_region(ui.page)
     expect(view.get_by_text("Run's frozen definition", exact=True)).to_be_visible()
     expect(view.get_by_role("button", name="Refresh Flow", exact=True)).to_be_enabled()
     expect(view.get_by_text("Loading bounded execution overlay...", exact=True)).to_have_count(0)
-    expect(row.get_by_role("list", name="Workflow node executions", exact=True)).to_have_count(0)
+    expect(runs.get_by_role("list", name="Workflow node executions", exact=True)).to_have_count(0)
     pages = [entry for entry in ui.requests if entry.path.endswith("/executions")][before:]
     assert len(pages) == 1 and pages[0].query == {
         "limit": ["50"], **({"group_id": [GROUP_ID]} if group else {}),
@@ -134,8 +139,8 @@ def open_run_flow(ui, *, workflow_name=FLOW_NAME, workflow_id=FLOW_WORKFLOW_ID, 
 
 
 def close_saved(page):
-    page.get_by_role("dialog", name="Workflow Flow", exact=True).get_by_role("button", name="Close", exact=True).click()
-    expect(page.get_by_role("dialog", name="Workflow Flow", exact=True)).to_have_count(0)
+    page.get_by_role("tab", name="Overview", exact=True).click()
+    expect(flow_region(page)).to_have_count(0)
 
 
 def assert_no_eager_content(ui):
@@ -235,12 +240,13 @@ def test_v1_v2_have_no_implicit_flow_conversion_or_preview_request(workflow_flow
     original = copy.deepcopy({key: ui.personal_workflows[key] for key in (WORKFLOW_ID, ui.legacy_workflow["id"])})
     ui.open("/workspace/workflows")
     for name in ("Quarterly review workflow", "Legacy version one"):
-        expect(page.get_by_role("button", name=f"View Flow for {name}", exact=True)).to_have_count(0)
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+        detail = select_workflow(page, name)
+        expect(detail.get_by_role("tab", name="Flow", exact=True)).to_have_count(0)
+    editor = edit_workflow(page, "Quarterly review workflow")
     expect(page.get_by_role("button", name="Flow authoring", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Enable structured control flow", exact=True)).to_be_visible()
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role("button", name="Close", exact=True).click()
-    expect(page.get_by_role("dialog")).to_have_count(0)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(editor).to_have_count(0)
     assert not ui.topology_requests and not ui.preview_requests
     assert {key: ui.personal_workflows[key] for key in original} == original
 
@@ -409,8 +415,8 @@ def test_opening_and_layout_of_unchanged_preview_does_not_make_editor_dirty(work
         view.get_by_role("button", name=name, exact=True).click()
     editor.get_by_role("button", name="List authoring", exact=True).click()
     expect(editor.get_by_role("region", name="Workflow Flow authoring", exact=True)).to_have_count(0)
-    editor.get_by_role("button", name="Close", exact=True).click()
-    expect(page.get_by_role("dialog")).to_have_count(0)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(editor).to_have_count(0)
     assert ui.personal_workflows[FLOW_WORKFLOW_ID] == original
 
 
@@ -888,11 +894,11 @@ def test_read_only_group_source_switch_rejects_delayed_previous_group_projection
     ui.hold_next_flow(source_kind="saved", group_id=GROUP_ID)
     ui.open("/groups")
     ui.select_group(GROUP_ID)
-    page.get_by_role("button", name="View Flow for Alpha read-only Flow", exact=True).click()
+    open_workflow_flow(page, "Alpha read-only Flow")
     expect(flow_region(page).get_by_text("Loading authorized Flow definition...", exact=True)).to_be_visible()
     close_saved(page)
     ui.select_group(SECOND_GROUP_ID)
-    page.get_by_role("button", name="View Flow for Beta read-only Flow", exact=True).click()
+    open_workflow_flow(page, "Beta read-only Flow")
     view = flow_region(page)
     expect(node_button(view, "evaluate")).to_have_accessible_name("Select Beta-only evaluation (Task)")
     inspector = select_node(view, "evaluate")
@@ -1136,8 +1142,7 @@ def test_saved_mobile_structure_and_diagram_keep_focus_and_fit_the_page(workflow
     select_node(view, "evaluate")
     view.get_by_role("button", name="Fit Flow", exact=True).click()
     ui.assert_no_overflow()
-    dialog = page.get_by_role("dialog", name="Workflow Flow", exact=True)
-    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+    assert view.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
     assert page.evaluate("matchMedia('(prefers-reduced-motion: reduce)').matches")
     assert not ui.preview_requests
     assert all(asset.startswith("/static/") for asset in ui.loaded_assets)

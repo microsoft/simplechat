@@ -214,6 +214,85 @@ def search_all_public_workspaces(search_query: str) -> list:
     ))
 
 
+PUBLIC_WORKSPACE_DIRECTORY_MAX_LIMIT = 200
+PUBLIC_WORKSPACE_DIRECTORY_DEFAULT_LIMIT = 50
+
+
+def _to_public_workspace_directory_row(workspace_doc):
+    """Project a public workspace down to the fields an administrator's picker needs."""
+    return {
+        "id": str(workspace_doc.get("id") or ""),
+        "name": workspace_doc.get("name") or "",
+        "description": workspace_doc.get("description") or "",
+    }
+
+
+def find_public_workspaces_by_ids(workspace_ids):
+    """Return directory rows for specific public workspace ids, skipping ids that no longer exist.
+
+    The counterpart of ``find_groups_by_ids``. Governance policies store public
+    workspace ids beside group ids, so labelling a saved policy has to resolve both.
+    An id that resolves to nothing is absent from the result, which is how the caller
+    tells a live entry apart from one pointing at a deleted workspace.
+    """
+    wanted_ids = [str(workspace_id or "").strip() for workspace_id in (workspace_ids or [])]
+    wanted_ids = [workspace_id for workspace_id in wanted_ids if workspace_id]
+    if not wanted_ids:
+        return []
+
+    results = list(cosmos_public_workspaces_container.query_items(
+        query="SELECT c.id, c.name, c.description FROM c WHERE ARRAY_CONTAINS(@ids, c.id)",
+        parameters=[{"name": "@ids", "value": wanted_ids}],
+        enable_cross_partition_query=True
+    ))
+
+    rows_by_id = {row["id"]: row for row in (_to_public_workspace_directory_row(doc) for doc in results)}
+    return [rows_by_id[workspace_id] for workspace_id in wanted_ids if workspace_id in rows_by_id]
+
+
+def list_public_workspaces_for_admin_directory(search_query="", limit=PUBLIC_WORKSPACE_DIRECTORY_DEFAULT_LIMIT):
+    """Return ``(rows, truncated)`` for an administrator's public workspace picker.
+
+    Mirrors ``list_groups_for_admin_directory``: an empty search browses, and one
+    row more than ``limit`` is requested so a truncated result is reported rather
+    than silently hiding workspaces beyond the cap.
+    """
+    normalized_query = str(search_query or "").strip().lower()
+    capped_limit = max(1, min(int(limit or PUBLIC_WORKSPACE_DIRECTORY_DEFAULT_LIMIT), PUBLIC_WORKSPACE_DIRECTORY_MAX_LIMIT))
+
+    filters = []
+    parameters = []
+    if normalized_query:
+        filters.append(
+            "(CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))"
+            " OR LOWER(c.id) = @search)"
+        )
+        parameters.append({"name": "@search", "value": normalized_query})
+
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    # No ORDER BY, for the same reason as the group directory: Cosmos drops
+    # documents that lack the sorted property. The page is sorted below.
+    query = f"""
+        SELECT c.id, c.name, c.description
+        FROM c
+        {where_clause}
+        OFFSET 0 LIMIT @limit
+    """
+    parameters.append({"name": "@limit", "value": capped_limit + 1})
+
+    results = list(cosmos_public_workspaces_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True
+    ))
+
+    truncated = len(results) > capped_limit
+    rows = [_to_public_workspace_directory_row(doc) for doc in results[:capped_limit]]
+    rows.sort(key=lambda row: (row["name"].lower(), row["id"]))
+    return rows, truncated
+
+
 def delete_public_workspace(ws_id: str) -> None:
     """
     Deletes a public workspace from Cosmos DB. Typically only the owner may call this.

@@ -1,8 +1,8 @@
 # v2_admin_data_management.py
 """
 In-memory Backup & Recovery API for the V2 Admin Settings browser tests.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.274
+Implemented in: 0.261.274
 
 Serves the real built SPA through ``AdminSettingsFixture`` and answers every
 ``/api/admin/data-management/*`` call from memory, so the Backup & Recovery cards can be

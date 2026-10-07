@@ -1,7 +1,8 @@
 # test_v2_workflow_ask_ai_proposal.py
 """
 Real-component browser test for Ask AI on a workflow proposal's draft (Phase 3c).
-Version: 0.261.213
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.213
 Refs: microsoft/simplechat#1548
 

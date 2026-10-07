@@ -140,6 +140,7 @@ def _settings_writer(storage):
         "normalize_key_vault_reminder_settings",
         "normalize_model_endpoint_identity_header_settings",
         "normalize_retired_orchestration_settings",
+        "normalize_mixed_source_derived_settings",
     ):
         namespace[name] = lambda _settings: None
     return _production_function("functions_settings.py", "update_settings", namespace)

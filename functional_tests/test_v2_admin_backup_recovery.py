@@ -2,8 +2,8 @@
 # test_v2_admin_backup_recovery.py
 """
 Functional test for the V2 Admin Settings Backup & Recovery surface.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.274
+Implemented in: 0.261.274
 
 The V2 admin page used to show Backup & Recovery as an empty category. It now renders
 one card per navigation section, backed by the classic data-management API, and its
@@ -67,7 +67,7 @@ def test_every_backup_component_is_declared_and_routed():
     """A declared card with no renderer branch would leave the category empty again."""
     print("Testing Backup & Recovery component declarations and routing...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.274")
 
     declared = {
         field.get("component"): section_id
@@ -136,6 +136,10 @@ def test_the_save_bar_saves_main_settings_before_backup_settings():
     assert "useBlocker(" in page, (
         "In-app navigation away from unsaved changes should ask first; the Save bar's "
         "unload prompt only covers closing the tab."
+    )
+    assert page.count("useBlocker(") == 1, (
+        "A router honours one blocker at a time and silently ignores the others, so the "
+        "page must guard every way out with a single useBlocker."
     )
     assert "useDataManagementStore.getState().reset()" in page, (
         "Leaving the page should reset the Backup & Recovery store, as the main draft is."

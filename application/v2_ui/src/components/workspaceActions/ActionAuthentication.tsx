@@ -95,7 +95,7 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                 </div>
             ) : null}
             {!draft.identity_id ? <>
-                <ActionField id={`${id}-auth`} label="Authentication method" error={actionFieldError(props.errors, '/auth/type')}>
+                <ActionField id={`${id}-auth`} label="Authentication method" width="standard" error={actionFieldError(props.errors, '/auth/type')}>
                     <select id={`${id}-auth`} className={ACTION_INPUT_CLASS} value={selected ? method : 'existing'}
                         disabled={readOnly || modes.length === 0}
                         onChange={(event) => {
@@ -113,17 +113,13 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                 {sql && sqlConnectionMethod(draft) === 'connection_string' ? <p className="text-xs text-text-3">
                     Connection-string mode uses the authentication specified in the connection string, not separate database credentials.
                 </p> : null}
-                {sql && method === 'username_password' && sqlConnectionMethod(draft) === 'parameters' && draft.additionalFields.database_type !== 'sqlite' ? (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        {textField('/additionalFields/username', 'Database username', undefined, true)}
-                        {secretField('/additionalFields/password', 'Database password')}
-                    </div>
-                ) : null}
+                {sql && method === 'username_password' && sqlConnectionMethod(draft) === 'parameters' && draft.additionalFields.database_type !== 'sqlite' ? <>
+                    {textField('/additionalFields/username', 'Database username', undefined, true)}
+                    {secretField('/additionalFields/password', 'Database password')}
+                </> : null}
                 {draft.auth.type === 'servicePrincipal' ? <>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        {textField('/auth/identity', 'Client ID', undefined, true)}
-                        {textField('/auth/tenantId', 'Tenant ID', undefined, true)}
-                    </div>
+                    {textField('/auth/identity', 'Client ID', undefined, true)}
+                    {textField('/auth/tenantId', 'Tenant ID', undefined, true)}
                     {secretField('/auth/key', keyLabel)}
                 </> : null}
                 {['username_password', 'basic'].includes(draft.auth.type) && draft.type !== 'snowflake'
@@ -155,7 +151,7 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                 ? textField('/additionalFields/pat_name', 'Personal access token name', 'The reusable identity contains the PAT secret; its token name is configured on this action.', true) : null}
             {draft.identity_id && draft.type === 'snowflake' && method === 'key_pair'
                 ? secretField('/additionalFields/private_key_passphrase', 'Private key passphrase', 'Only needed for an encrypted private key.') : null}
-            <p className="text-xs leading-relaxed text-text-3">
+            <p className="border-t border-edge pt-3 text-xs leading-relaxed text-text-3">
                 Stored secrets are never returned to this form. Keep their masked state, enter a replacement, or choose Clear.
                 Changing another field does not replace credentials or erase hidden configuration.
             </p>

@@ -1,8 +1,9 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.165
+Version: 0.261.271
 Implemented in: 0.261.161
+The workflow editor is a routed page whose draft freezes the group switcher, as Settings does: 0.261.271
 
 These ride one composite group store (`group_journeys_ui`) that answers the
 directory, membership, prompt, document-collaboration and native-authoring routes
@@ -532,7 +533,9 @@ def _open_file_source_draft(ui):
 def _open_workflow_draft(ui):
     section(ui.page, "Workflows")
     ui.page.get_by_role("button", name="Create workflow", exact=True).click()
-    field = ui.page.get_by_role("dialog").get_by_label("Workflow name", exact=True)
+    # The editor is a page of its own; its draft is the group page's, so the group guards it.
+    expect(ui.page).to_have_url(re.compile(r"/v2/groups/group-a/workflows/new$"))
+    field = ui.page.get_by_role("region", name="Create workflow", exact=True).get_by_label("Workflow name", exact=True)
     field.fill("Draft workflow")
     return field, "Draft workflow"
 
@@ -556,7 +559,7 @@ _EDITORS = [
     pytest.param("modal", _open_identity_draft, id="identities"),
     pytest.param("modal", _open_endpoint_draft, id="endpoints"),
     pytest.param("modal", _open_file_source_draft, id="file-sources"),
-    pytest.param("modal", _open_workflow_draft, id="workflows"),
+    pytest.param("switcher", _open_workflow_draft, id="workflows"),
     pytest.param("switcher", _open_settings_draft, id="settings"),
 ]
 

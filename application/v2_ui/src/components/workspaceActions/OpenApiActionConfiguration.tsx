@@ -1,9 +1,10 @@
 // OpenApiActionConfiguration.tsx
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { GlassButton, GlassPanel } from '../ui/primitives';
+import { GlassButton } from '../ui/primitives';
+import { EditorGroup, EditorPanel, EditorRow } from '../workspace/EditorLayout';
 import { ActionField, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
-import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
+import { connectorTestScope, type ActionConnectorProps } from '../../lib/workspaceActionTypes';
 import { EDITOR_SECRET_MASK, type ActionConfiguration } from '../../lib/workspaceAuthoring';
 import {
     applyOpenApiSpecification, changeConnectorAuthMethod, changeOpenApiBasicCredential,
@@ -188,10 +189,10 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
 
     return (
         <div className="min-w-0 space-y-6" data-testid="openapi-configuration">
-            <p className="text-sm leading-relaxed text-text-2">
+            <p className="text-[0.8125rem] leading-relaxed text-text-2">
                 Import an OpenAPI specification to expose its operations to an agent. Importing or validating a specification does not call those operations.
             </p>
-            <ActionField id="openapi-source-mode" label="Specification source">
+            <ActionField id="openapi-source-mode" label="Specification source" width="standard">
                 <select id="openapi-source-mode" className={ACTION_INPUT_CLASS} value={source.mode} disabled={readOnly || Boolean(busy)}
                     onChange={(event) => {
                         const mode = event.target.value === 'manual' ? 'manual' : 'file';
@@ -219,7 +220,7 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                 </ActionField>
             ) : (
                 <div className="space-y-3">
-                    <ActionField id="openapi-source-format" label="Source format">
+                    <ActionField id="openapi-source-format" label="Source format" width="compact">
                         <select id="openapi-source-format" className={ACTION_INPUT_CLASS} value={source.format} disabled={readOnly || Boolean(busy)}
                             onChange={(event) => {
                                 const format = event.target.value === 'yaml' ? 'yaml' : 'json';
@@ -228,7 +229,7 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                             <option value="json">JSON</option><option value="yaml">YAML</option>
                         </select>
                     </ActionField>
-                    <ActionField id="openapi-source-text" label="Specification source"
+                    <ActionField id="openapi-source-text" label="Specification source" width="full"
                         help="Source text stays in this tab. Process the text to parse and validate it before saving. YAML is parsed on the server, not by a browser-loaded library."
                         error={localErrors['openapi-source'] || errors['additionalFields.openapi_spec_content']}>
                         <textarea id="openapi-source-text" rows={16} spellCheck={false} readOnly={readOnly}
@@ -262,10 +263,9 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                         onChange((current) => ({ ...current, endpoint, additionalFields: { ...current.additionalFields, base_url: endpoint } }));
                     }} />
             </ActionField>
-            {information.servers.length ? <div className="space-y-2">
-                <p className="text-sm font-medium text-text-1">Servers declared in the specification</p>
+            {information.servers.length ? <EditorRow heading="Servers declared in the specification">
                 <ul className="space-y-2">
-                    {information.servers.map((server, index) => <li key={`${server.url}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-edge p-3">
+                    {information.servers.map((server, index) => <li key={`${server.url}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-edge bg-surface-1 p-3">
                         <div className="min-w-0">
                             <p className="break-all font-mono text-xs text-text-1">{server.url}</p>
                             {server.description ? <p className="mt-1 break-words text-xs text-text-3">{server.description}</p> : null}
@@ -276,16 +276,11 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                             }))}>Use this base URL</GlassButton> : null}
                     </li>)}
                 </ul>
-            </div> : null}
-            {information.title || information.operations.length ? <GlassPanel elevation="flat" className="space-y-4 p-4">
-                <div>
-                    <h3 className="break-words font-semibold text-text-1">{information.title || 'API information'}</h3>
-                    <p className="mt-1 text-xs text-text-3">
-                        API version {information.version || 'not specified'} · OpenAPI {information.specificationVersion || 'not specified'} · {information.pathsCount} paths · {information.operations.length} operations
-                    </p>
-                    {information.description ? <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text-2">{information.description}</p> : null}
-                </div>
-                <ActionField id="openapi-operation-search" label="Find an operation">
+            </EditorRow> : null}
+            {information.title || information.operations.length ? <EditorPanel title={information.title || 'API information'}
+                description={`API version ${information.version || 'not specified'} · OpenAPI ${information.specificationVersion || 'not specified'} · ${information.pathsCount} paths · ${information.operations.length} operations`}>
+                {information.description ? <p className="whitespace-pre-wrap break-words text-sm text-text-2">{information.description}</p> : null}
+                <ActionField id="openapi-operation-search" label="Find an operation" width="standard">
                     <input id="openapi-operation-search" type="search" className={ACTION_INPUT_CLASS} value={operationSearch}
                         placeholder="Method, path, operation ID, or tag" onChange={(event) => {
                             setOperationSearch(event.target.value); setOperationLimit(30);
@@ -293,7 +288,7 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                 </ActionField>
                 <p className="text-xs text-text-3">{filteredOperations.length} matching operations. This is a read-only description, not an operation runner.</p>
                 <div className="space-y-2">
-                    {filteredOperations.slice(0, operationLimit).map((operation) => <details key={`${operation.method}:${operation.path}`} className="rounded-xl border border-edge p-3">
+                    {filteredOperations.slice(0, operationLimit).map((operation) => <details key={`${operation.method}:${operation.path}`} className="rounded-lg border border-edge bg-surface-1 p-3">
                         <summary className="cursor-pointer break-words text-sm text-text-1">
                             <span className="mr-2 font-mono font-semibold">{operation.method}</span>
                             <span className="break-all font-mono text-xs">{operation.path}</span>
@@ -318,27 +313,26 @@ export function OpenApiActionConfiguration(props: ActionConnectorProps) {
                     {!filteredOperations.length ? <p className="text-sm text-text-3">No operations match this search.</p> : null}
                     {filteredOperations.length > operationLimit ? <GlassButton type="button" variant="subtle" onClick={() => setOperationLimit((current) => current + 30)}>Show more operations</GlassButton> : null}
                 </div>
-                <details className="text-xs text-text-3">
-                    <summary className="cursor-pointer">Validated specification JSON</summary>
-                    <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-surface-1 p-3">{specJson}</pre>
-                </details>
-            </GlassPanel> : null}
-            <div className="space-y-3 border-t border-edge pt-4">
-                <p className="text-xs leading-relaxed text-text-3">Validation checks the manifest without running it. Connection testing parses the specification and probes the authenticated base URL; it does not invoke an individual API operation.</p>
+                <EditorGroup summary="Validated specification JSON">
+                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-surface-1 p-3 text-xs text-text-3">{specJson}</pre>
+                </EditorGroup>
+            </EditorPanel> : null}
+            <EditorPanel title="Validate and test"
+                description="Validation checks the manifest without running it. Connection testing parses the specification and probes the authenticated base URL; it does not invoke an individual API operation.">
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal, props.groupScope))}>
+                        onClick={() => void run('Validating configuration…', (signal) => validateApiConnector(draft, original, 'openapi', signal, connectorTestScope(props)))}>
                         Validate OpenAPI configuration
                     </GlassButton>
                     <GlassButton type="button" variant="subtle" disabled={readOnly || Boolean(busy) || source.pending}
-                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal, props.groupScope))}>
+                        onClick={() => void run('Testing OpenAPI connection…', (signal) => testApiConnector(draft, original, 'openapi', signal, connectorTestScope(props)))}>
                         Test OpenAPI connection
                     </GlassButton>
                     {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}
                 </div>
                 {readOnly ? <p className="text-xs text-text-3">Provided actions are read-only. Import, validation, and connection testing are disabled.</p> : null}
                 <ConnectorFeedbackPanel feedback={feedback} stale={stale} />
-            </div>
+            </EditorPanel>
         </div>
     );
 }
@@ -361,7 +355,7 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
     return (
         <div className="space-y-5" data-testid="openapi-authentication">
             <ConnectorIdentitySelect {...props} kind="openapi" />
-            <ActionField id="openapi-auth-method" label="Authentication method" error={authError('additionalFields.auth_method')}
+            <ActionField id="openapi-auth-method" label="Authentication method" width="standard" error={authError('additionalFields.auth_method')}
                 help={draft.identity_id ? 'The selected reusable identity controls authentication.' : 'Changing a method does not test or run the action. Choosing no authentication clears action-specific credentials, including their legacy aliases.'}>
                 <select id="openapi-auth-method" className={ACTION_INPUT_CLASS} value={method} disabled={readOnly || Boolean(draft.identity_id)}
                     onChange={(event) => {
@@ -373,8 +367,8 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
                     {OPENAPI_AUTH_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
             </ActionField>
-            {(method === 'api_key' && !draft.identity_id) || apiKeyIdentity ? <div className="grid gap-4 sm:grid-cols-2">
-                <ActionField id="openapi-key-location" label="API key location" error={authError('additionalFields.api_key_location')}>
+            {(method === 'api_key' && !draft.identity_id) || apiKeyIdentity ? <div className="min-w-0">
+                <ActionField id="openapi-key-location" label="API key location" width="standard" error={authError('additionalFields.api_key_location')}>
                     <select id="openapi-key-location" value={location} disabled={readOnly} className={ACTION_INPUT_CLASS}
                         onChange={(event) => {
                             const api_key_location = event.target.value;
@@ -384,7 +378,7 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
                         <option value="header">HTTP header</option><option value="query">Query parameter</option>
                     </select>
                 </ActionField>
-                <ActionField id="openapi-key-name" label={location === 'query' ? 'Query parameter name' : 'Header name'} required error={authError('additionalFields.api_key_name')}>
+                <ActionField id="openapi-key-name" label={location === 'query' ? 'Query parameter name' : 'Header name'} required width="standard" error={authError('additionalFields.api_key_name')}>
                     <input id="openapi-key-name" className={ACTION_INPUT_CLASS} disabled={readOnly}
                         value={connectorText(draft.additionalFields.api_key_name ?? draft.auth.name ?? 'X-API-Key')}
                         onChange={(event) => {
@@ -393,7 +387,7 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
                         }} />
                 </ActionField>
             </div> : null}
-            {method === 'basic' && !draft.identity_id ? <div className="space-y-4">
+            {method === 'basic' && !draft.identity_id ? <div className="min-w-0 space-y-4">
                 {basic.stored && credentialField === 'key' ? <p className="rounded-xl bg-surface-2 p-3 text-sm text-text-2">
                     A stored username/password pair is configured. Its username is also hidden. Keep the stored pair unchanged, or enter both values to replace it.
                 </p> : null}
@@ -421,10 +415,9 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
                 disabled={readOnly} error={authError(`auth.${credentialField}`)}
                 help={method === 'oauth2' ? 'Supply an access token obtained from your provider. This connector does not perform an interactive OAuth sign-in or refresh-token flow.' : undefined}
                 onChange={(value) => setAuthField(credentialField, value)} /> : null}
-            {information.securitySchemes.length ? <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-text-1">Authentication declared by the API</h3>
-                <p className="text-xs text-text-3">Selecting a scheme only configures its method and key location. Credentials and reusable identity references are never imported from a specification.</p>
-                {information.securitySchemes.map((scheme) => <GlassPanel key={scheme.id} elevation="flat" className="space-y-2 p-3">
+            {information.securitySchemes.length ? <EditorPanel title="Authentication declared by the API"
+                description="Selecting a scheme only configures its method and key location. Credentials and reusable identity references are never imported from a specification.">
+                {information.securitySchemes.map((scheme) => <div key={scheme.id} className="min-w-0 space-y-2 rounded-lg border border-edge bg-surface-1 p-3">
                     <p className="break-words text-sm font-medium text-text-1">{scheme.id} · {scheme.method || 'Unspecified scheme'}</p>
                     {scheme.description ? <p className="whitespace-pre-wrap break-words text-xs text-text-2">{scheme.description}</p> : null}
                     {scheme.method === 'api_key' ? <p className="break-words text-xs text-text-3">{scheme.location}: {scheme.name}</p> : null}
@@ -435,8 +428,8 @@ export function OpenApiActionAuthentication(props: ActionConnectorProps) {
                             return scheme.method === 'api_key' ? updateConnectorFields(next, { api_key_location: scheme.location, api_key_name: scheme.name }) : next;
                         })}>Use this authentication scheme</GlassButton> :
                         <p className="text-xs text-warn">This scheme or location is not supported by the current OpenAPI connector. Choose one of the supported methods above.</p>}
-                </GlassPanel>)}
-            </div> : null}
+                </div>)}
+            </EditorPanel> : null}
             {Object.keys(connectorObject(draft.additionalFields.openapi_authentication)).length ? <p className="text-xs text-text-3">Legacy authentication analysis is retained in additional fields.</p> : null}
         </div>
     );

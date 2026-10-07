@@ -1,8 +1,8 @@
 # test_v2_admin_backup_recovery.py
 """
 Browser coverage for V2 Admin Settings > Backup & Recovery.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.274
+Implemented in: 0.261.274
 
 The category used to render "No settings match". It now draws one card per navigation
 section over the classic data-management API. These tests run the built SPA against an
@@ -261,6 +261,8 @@ def test_inventory_invalid_created_range_blocks_fetch(dm):
     dm.open_backup_recovery()
     page = dm.page
     inventory = section(page, "backup-inventory")
+    # The list loads once the card is on screen; count only after that load has landed.
+    expect(inventory.get_by_role("list", name="Backup inventory").get_by_role("button").first).to_be_visible()
     before = len(dm.requests_to("GET", r"/backups"))
     inventory.get_by_label("Created from").fill("2026-09-10")
     inventory.get_by_label("Created through").fill("2026-09-01")
@@ -628,6 +630,8 @@ def test_job_invalid_created_range_blocks_fetch(dm):
     dm.open_backup_recovery()
     page = dm.page
     jobs = section(page, "jobs")
+    # The list loads once the card is on screen; count only after that load has landed.
+    expect(jobs.get_by_role("list", name="Jobs").get_by_role("button").first).to_be_visible()
     before = len(dm.requests_to("GET", r"/jobs"))
     jobs.get_by_label("Created from").fill("2026-09-10")
     jobs.get_by_label("Created through").fill("2026-09-01")

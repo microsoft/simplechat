@@ -1,10 +1,11 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.207
+Version: 0.261.271
 Implemented in: 0.261.108
 Personal workflow row delete coverage: 0.261.178
 Personal File Sync is authored, so it is no longer listed as preserved-only: 0.261.207
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 create/edit, stable task input bindings, shared references, schema validation,
@@ -31,6 +32,16 @@ from ui_tests.fixtures.workflow_editor import (
     WORKFLOW_ID,
     connect_options,  # noqa: F401
     workflow_ui,  # noqa: F401
+)
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    select_workflow,
+    workflow_detail,
+    workflow_editor,
+    workflow_editor_path,
+    workflow_row,
 )
 
 
@@ -61,8 +72,7 @@ def test_create_workflow_with_reorder_bindings_references_and_schema_validation(
     expect(page.get_by_role("heading", name="Workflows", exact=True)).to_be_visible()
     ui.assert_no_overflow()
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     expect(labelled(page, "Workflow name")).to_be_visible()
     expect(page.get_by_text("The default model is not valid here", exact=False)).to_be_visible()
     labelled(page, "Workflow name").fill("V2 evidence workflow")
@@ -119,7 +129,7 @@ def test_create_workflow_with_reorder_bindings_references_and_schema_validation(
     labelled(page, "Optional JSON schema").fill('{"type":"object","properties":{"answer":{"type":"string"}}}')
     expect(page.get_by_role("alert").filter(has_text="JSON schema must be valid JSON.")).to_have_count(0)
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
 
     write = workflow_post(ui)
     body = write.body
@@ -167,6 +177,7 @@ def test_edit_preserves_legacy_fields_and_run_inspection_surfaces_validation(wor
     ui.open("/workspace/workflows")
 
     ui.fail_next_workflow_run()
+    select_workflow(page, "Quarterly review workflow")
     page.get_by_role("button", name=re.compile(r"Run Quarterly review workflow")).click()
     expect(page.get_by_role("alert").filter(has_text="Workflow run completed with failed tasks.")).to_be_visible()
     expect(page.get_by_text("completed_partial", exact=True)).to_be_visible()
@@ -185,14 +196,16 @@ def test_edit_preserves_legacy_fields_and_run_inspection_surfaces_validation(wor
     expect(page.get_by_text("Second transport excerpt page", exact=False)).to_be_visible()
     expect(page.get_by_text("offset 2000", exact=False)).to_be_visible()
 
-    page.get_by_role("button", name=re.compile(r"Edit Quarterly review workflow")).click()
+    edit_workflow(page, "Quarterly review workflow")
     expect(page.get_by_text("Preserved settings", exact=True)).to_be_visible()
     # 0.261.207: V2 authors personal File Sync, so it is no longer listed as preserved-only. An
     # untouched legacy value is still sent back exactly as loaded (checked below).
     expect(page.get_by_text("file sync settings", exact=False)).to_have_count(0)
     labelled(page, "Description").first.fill("Edited without losing legacy settings.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
+    # Saving returns to the list with the saved workflow selected.
+    expect(workflow_row(page, "Quarterly review workflow")).to_have_attribute("aria-pressed", "true")
 
     body = workflow_post(ui).body
     assert body["id"] == WORKFLOW_ID
@@ -208,17 +221,17 @@ def test_unsupported_version_is_read_only_and_409_retains_draft(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name=re.compile(r"Edit Future workflow")).click()
+    editor = edit_workflow(page, "Future workflow")
     expect(page.get_by_role("alert").filter(has_text="definition version 4")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
-        "button", name="Close", exact=True
-    ).last.click()
+    editor.get_by_role("button", name="Close", exact=True).click()
+    expect(workflow_editor(page)).to_have_count(0)
     assert not ui.workflow_writes
 
+    select_workflow(page, "Active running workflow")
     expect(page.get_by_role("button", name=re.compile(r"Active running workflow is running"))).to_be_disabled()
 
-    page.get_by_role("button", name=re.compile(r"Edit Quarterly review workflow")).click()
+    edit_workflow(page, "Quarterly review workflow")
     labelled(page, "Workflow name").fill("Retained stale draft")
     ui.mutate_revision(WORKFLOW_ID)
     with page.expect_response(
@@ -233,7 +246,7 @@ def test_existing_agent_and_legacy_prompt_workflows_preserve_backend_shapes(work
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
-    page.get_by_role("button", name=re.compile(r"Edit Agent review workflow")).click()
+    edit_workflow(page, "Agent review workflow")
     expect(labelled(page, "Agent")).to_have_value(
         '["00000000-0000-4000-8000-000000000001",false,false,""]'
     )
@@ -249,7 +262,7 @@ def test_existing_agent_and_legacy_prompt_workflows_preserve_backend_shapes(work
     assert body["tasks"][0]["runner"]["selected_agent"]["id"] == "00000000-0000-4000-8000-000000000003"
     assert "output_contract" not in body["tasks"][0]
 
-    page.get_by_role("button", name=re.compile(r"Edit Legacy prompt workflow")).click()
+    edit_workflow(page, "Legacy prompt workflow")
     expect(labelled(page, "Instructions").first).to_have_value("Use the legacy single prompt.")
     open_task_details(page, 0)
     expect(labelled(page, "Document action").first).to_have_value("analyze")
@@ -261,7 +274,7 @@ def test_existing_agent_and_legacy_prompt_workflows_preserve_backend_shapes(work
     assert legacy_body["tasks"][0]["document_action"] == {"type": "analyze", "document_ids": ["personal-brief"]}
     assert "output_contract" not in legacy_body["tasks"][0]
 
-    page.get_by_role("button", name=re.compile(r"Edit Legacy prompt workflow")).click()
+    edit_workflow(page, "Legacy prompt workflow")
     open_task_details(page, 0)
     labelled(page, "Document action").first.select_option("none")
     page.get_by_role("button", name="Save workflow", exact=True).click()
@@ -273,7 +286,8 @@ def test_existing_agent_and_legacy_prompt_workflows_preserve_backend_shapes(work
 def test_delete_personal_workflow_from_row_confirm(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
-    expect(page.get_by_text("Quarterly review workflow", exact=True)).to_be_visible()
+    expect(workflow_row(page, "Quarterly review workflow")).to_be_visible()
+    select_workflow(page, "Quarterly review workflow")
     page.get_by_role("button", name="Delete Quarterly review workflow", exact=True).click()
     page.get_by_role("button", name="Delete", exact=True).click()
     delete_requests = [
@@ -289,7 +303,7 @@ def test_delete_personal_workflow_from_row_confirm(workflow_ui):
 def test_document_action_comparison_posts_real_payload(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     labelled(page, "Workflow name").fill("Comparison workflow")
     labelled(page, "Model").select_option(label="Workspace GPT · aoai")
     labelled(page, "Instructions").first.fill("Compare the selected source and target.")
@@ -312,23 +326,33 @@ def test_document_action_comparison_posts_real_payload(workflow_ui):
     assert action["right_document_ids"] == ["personal-second"]
 
 
-def test_initial_workflow_id_opens_once_and_close_stays_closed(workflow_ui):
+def test_initial_workflow_id_selects_and_editor_route_closes_to_it(workflow_ui):
+    """`?workflow_id=` selects a workflow in the workbench; the editor is a route of its own."""
     page = workflow_ui.page
-    workflow_ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
-    page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
-        "button", name="Cancel", exact=True
-    ).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
-    page.get_by_role("button", name=re.compile(r"Show run history")).first.click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    workflow_ui.open("/workspace/workflows?workflow_id=agent-workflow")
+    expect(workflow_row(page, "Agent review workflow")).to_have_attribute("aria-pressed", "true")
+    detail = workflow_detail(page, "Agent review workflow")
+    expect(detail.get_by_role("tab", name="Overview", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(workflow_editor(page)).to_have_count(0)
+
+    workflow_ui.open(workflow_editor_path(WORKFLOW_ID))
+    editor = workflow_editor(page)
+    expect(editor).to_be_visible()
+    expect(editor.get_by_role("heading", name="Quarterly review workflow", exact=True)).to_be_visible()
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(workflow_editor(page)).to_have_count(0)
+    expect(workflow_row(page, "Quarterly review workflow")).to_have_attribute("aria-pressed", "true")
+    workflow_detail(page, "Quarterly review workflow").get_by_role("tab", name="Runs", exact=True).click()
+    expect(workflow_editor(page)).to_have_count(0)
+    expect(page.get_by_role("dialog")).to_have_count(0)
 
 
 def test_pristine_create_cancels_without_invented_dirty_state(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
+    editor = create_workflow(page)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     expect(page.get_by_role("dialog")).to_have_count(0)
     assert not ui.workflow_writes
 
@@ -338,7 +362,7 @@ def test_group_workflows_carry_group_id_and_dirty_guard_blocks_switching(workflo
     ui.open("/groups")
     ui.select_group(GROUP_ID)
     expect(page.get_by_role("heading", name="Workflows", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     labelled(page, "Workflow name").fill("Group workflow from V2")
     labelled(page, "Model").select_option(label="Workspace GPT · aoai")
     expect(page.get_by_label("Group workspace", exact=True)).to_be_disabled()
@@ -348,7 +372,7 @@ def test_group_workflows_carry_group_id_and_dirty_guard_blocks_switching(workflo
     page.get_by_role("listitem").filter(has_text="Group brief").get_by_role("button", name="Add").click()
     labelled(page, "Instructions").first.fill("Review only the selected group evidence.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
 
     group_requests = [
         request for request in ui.requests

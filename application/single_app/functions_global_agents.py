@@ -291,7 +291,12 @@ def delete_global_agent(agent_id):
     try:
         user_id = get_current_user_id()
         print(f"Deleting global agent: {agent_id}")
-        agent_dict = get_global_agent(agent_id)
+        # Read the stored references, not the UI placeholders: a masked read rebuilds the
+        # classic secret name, which misses the fresh names the V2 editor saves under.
+        agent_dict = cosmos_global_agents_container.read_item(
+            item=agent_id,
+            partition_key=agent_id
+        )
         keyvault_agent_delete_helper(agent_dict, agent_id, scope="global")
         cosmos_global_agents_container.delete_item(
             item=agent_id,

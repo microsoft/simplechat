@@ -13,7 +13,7 @@ page, built in the V2 design language: section cards with a status chip, list-an
 workbenches like the Model Catalog, the page's Save bar, and typed confirmations for
 destructive actions. The copy is written for V2 rather than carried over word for word.
 
-## Implemented in version: **0.261.260**
+## Implemented in version: **0.261.274**
 
 The application version is maintained in `application/single_app/config.py`.
 

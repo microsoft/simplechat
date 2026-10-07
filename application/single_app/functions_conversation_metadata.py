@@ -1,6 +1,7 @@
 # functions_conversation_metadata.py
 
 from datetime import datetime
+from collaboration_models import is_shared_conversation_backing
 from config import *
 from functions_settings import get_settings
 from functions_authentication import get_current_user_info
@@ -64,7 +65,11 @@ def _normalize_scope_id_list(raw_ids):
 
 
 def _get_conversation_item_with_source(conversation_id):
-    """Load a conversation from the legacy or collaboration store."""
+    """Load a conversation from the legacy or collaboration store.
+
+    Orchestrate's backing record shares its shared conversation's id, and the shared
+    conversation is the one returned for that id.
+    """
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_conversation_id:
         raise CosmosResourceNotFoundError(message='Conversation not found')
@@ -74,10 +79,12 @@ def _get_conversation_item_with_source(conversation_id):
             item=normalized_conversation_id,
             partition_key=normalized_conversation_id
         )
-        return conversation_item, 'legacy'
+        if not is_shared_conversation_backing(conversation_item):
+            return conversation_item, 'legacy'
     except CosmosResourceNotFoundError:
-        conversation_item = get_collaboration_conversation(normalized_conversation_id)
-        return conversation_item, 'collaboration'
+        pass
+    conversation_item = get_collaboration_conversation(normalized_conversation_id)
+    return conversation_item, 'collaboration'
 
 
 def _build_primary_context_from_scope_selection(

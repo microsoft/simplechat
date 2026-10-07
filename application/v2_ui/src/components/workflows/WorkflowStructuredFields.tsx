@@ -1,12 +1,13 @@
 // WorkflowStructuredFields.tsx
 
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowConditionEditor, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { WorkflowCollectFields, WorkflowForEachFields } from './WorkflowLoopFields';
 import { WorkflowRepeatFields, WorkflowRepeatExports } from './WorkflowRepeatFields';
 import { WorkflowChangedField } from './WorkflowChangeTracking';
+import { WorkflowField, WorkflowFieldList, workflowFieldInputClass } from './WorkflowField';
 import { workflowRegionKey } from '../../lib/workflowChangeTracking';
 import {
     analyzeWorkflowFlow, DEFAULT_FLOW_LIMITS, enclosingFlowLoopControls, flowProducers, FLOW_OUTPUT_KINDS,
@@ -205,21 +206,24 @@ export function WorkflowFlowLimitFields({ workflow, onEdit }: {
     workflow: WorkflowDefinition;
     onEdit: (command: WorkflowEditCommand) => void;
 }) {
+    const baseId = useId();
     const raw = isRecord(workflow.limits) ? workflow.limits : DEFAULT_FLOW_LIMITS;
     const limits = { max_executions: Number(raw.max_executions), deadline_seconds: Number(raw.deadline_seconds) };
-    return <fieldset className="grid min-w-0 gap-3 rounded-xl border border-edge p-3 sm:grid-cols-2">
-        <legend className="px-1 text-sm font-semibold text-text-1">Workflow run limits</legend>
-        <label className="text-xs text-text-2">
-            Maximum execution admissions
-            <input className={inputClass} type="number" min={1} max={DEFAULT_FLOW_LIMITS.max_executions}
-                aria-label="Maximum execution admissions" value={Number.isFinite(limits.max_executions) ? limits.max_executions : ''}
-                onChange={(event) => onEdit({ type: 'limits', value: { ...limits, max_executions: event.currentTarget.valueAsNumber } })} />
-        </label>
-        <label className="text-xs text-text-2">
-            Elapsed deadline (seconds, including waits)
-            <input className={inputClass} type="number" min={1} max={DEFAULT_FLOW_LIMITS.deadline_seconds}
-                aria-label="Workflow elapsed deadline" value={Number.isFinite(limits.deadline_seconds) ? limits.deadline_seconds : ''}
-                onChange={(event) => onEdit({ type: 'limits', value: { ...limits, deadline_seconds: event.currentTarget.valueAsNumber } })} />
-        </label>
+    return <fieldset className="min-w-0">
+        <legend className="sr-only">Workflow run limits</legend>
+        <WorkflowFieldList>
+            <WorkflowField label="Maximum execution admissions" htmlFor={`${baseId}-executions`} width="compact">
+                <input id={`${baseId}-executions`} className={workflowFieldInputClass} type="number" min={1}
+                    max={DEFAULT_FLOW_LIMITS.max_executions} aria-label="Maximum execution admissions"
+                    value={Number.isFinite(limits.max_executions) ? limits.max_executions : ''}
+                    onChange={(event) => onEdit({ type: 'limits', value: { ...limits, max_executions: event.currentTarget.valueAsNumber } })} />
+            </WorkflowField>
+            <WorkflowField label="Elapsed deadline (seconds, including waits)" htmlFor={`${baseId}-deadline`} width="compact">
+                <input id={`${baseId}-deadline`} className={workflowFieldInputClass} type="number" min={1}
+                    max={DEFAULT_FLOW_LIMITS.deadline_seconds} aria-label="Workflow elapsed deadline"
+                    value={Number.isFinite(limits.deadline_seconds) ? limits.deadline_seconds : ''}
+                    onChange={(event) => onEdit({ type: 'limits', value: { ...limits, deadline_seconds: event.currentTarget.valueAsNumber } })} />
+            </WorkflowField>
+        </WorkflowFieldList>
     </fieldset>;
 }

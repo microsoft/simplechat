@@ -1,8 +1,9 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.141
+Version: 0.261.270
 Implemented in: 0.261.127
+Shared conversation answers mirrored into the shared thread in: 0.261.270
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
 legacy contract is refused before any preparation. The ``Harness*`` names below are the
@@ -1204,6 +1205,26 @@ class HarnessExecution:
         except Exception as exc:
             _log_failure("The saved conversation index could not be refreshed.", self.record, exc)
 
+    def _mirror_to_shared_thread(self, answer):
+        """Show a shared conversation's answer to every participant, replying to its question.
+
+        Collaboration storage loads only for a shared conversation's backing conversation, and
+        a mirror failure never changes the run's own published answer.
+        """
+        from functions_orchestration_collaboration import (
+            is_orchestration_backing, log_mirror_failure, mirror_orchestration_answer,
+        )
+
+        try:
+            conversation = self._read_conversation()
+            if is_orchestration_backing(conversation):
+                mirror_orchestration_answer(
+                    conversation, answer, user_message_id=self.record.get("user_message_id"),
+                    owner_user_id=self.record["user_id"],
+                )
+        except Exception as exc:
+            log_mirror_failure("answer", exc)
+
     def _reads_workflow_results(self):
         return any(
             step.get("enabled", True) and step.get("capability_id") == CAPABILITY_WORKFLOW_RESULTS
@@ -1522,6 +1543,7 @@ class HarnessExecution:
                 _log_failure("A chat content incident could not be recorded.", self.record, exc)
         if self._bootstrap is not None:
             self._touch_conversation(documents)
+            self._mirror_to_shared_thread(saved)
         finalized = self.lease.close(release=True)
         self._released = True
         self._final_record = finalized

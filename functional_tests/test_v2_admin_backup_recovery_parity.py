@@ -2,8 +2,8 @@
 # test_v2_admin_backup_recovery_parity.py
 """
 Functional parity test between the classic and V2 Backup & Recovery admin surfaces.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.274
+Implemented in: 0.261.274
 
 Both interfaces drive the same admin API under /api/admin/data-management. The classic
 page is the reference: what it saves, which endpoints it calls, which typed phrases it
@@ -135,7 +135,7 @@ def test_backup_recovery_navigation_is_fully_described():
     """Every Backup & Recovery section is drawn by exactly one V2 component."""
     print("Testing Backup & Recovery navigation against the V2 components...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.274")
 
     group = next(item for item in ADMIN_NAV if item["id"] == "backup-recovery")
     tabs = {tab["id"]: [section["id"] for section in tab["sections"]] for tab in group["tabs"]}
