@@ -13,6 +13,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.285)**
 
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   List, detail, bulk status, individual status, and export validation failures return stable messages instead of exception text, preserving HTTP 400 and input bounds.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
 #### New Features
 
 *   **V2 Control Center Activity Logs**
