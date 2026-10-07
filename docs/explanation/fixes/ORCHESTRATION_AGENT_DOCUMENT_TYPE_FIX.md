@@ -165,6 +165,7 @@ as it did in production.
 | `docs/admin/orchestration.md` | Troubleshooting row. |
 | `docs/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md` | Resolver contract and refusal logging. |
 | `docs/reference/logging-tags.md` | New tag and event. |
+| `docs/explanation/release_notes.md` | 0.261.291 entry, and the missing 0.261.289 entry. |
 
 No setting, deployment or data change is needed.
 
