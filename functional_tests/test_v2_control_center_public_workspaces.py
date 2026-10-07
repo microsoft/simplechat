@@ -209,7 +209,8 @@ def test_query_filters_pagination_and_missing_status_active(routes):
 
 
 @pytest.mark.parametrize("query", ["status=bad", "sort=password", "direction=bad", "page=0",
-                                  "page=-1", "per_page=251", "per_page=x", "search=" + "a" * 201])
+                                  "page=-1", "page=100001", "per_page=251", "per_page=x",
+                                  "search=" + "a" * 201, "owner=" + "a" * 201])
 def test_invalid_requests_do_not_query(routes, query):
     _, client, _, queries, _, _, _ = routes
     result = client.get(f"/api/v2/control-center/public-workspaces?{query}")
@@ -226,6 +227,21 @@ def test_sort_recorded_values_then_missing_without_dropping_workspaces(routes):
         assert result.get_json()["pagination"]["total_items"] == 2
     owner = client.get("/api/v2/control-center/public-workspaces?sort=owner")
     assert owner.status_code == 200
+
+
+def test_unknown_status_is_inactive_and_search_is_bound_not_interpolated(routes):
+    env, client, _, queries, _, _, _ = routes
+    workspace = env.workspaces.get("public-2", "public-2")
+    workspace["status"] = "legacy-unknown"
+    env.workspaces.seed(workspace)
+    result = client.get("/api/v2/control-center/public-workspaces?status=inactive")
+    assert result.status_code == 200
+    assert result.get_json()["workspaces"][0]["status"] == "inactive"
+    malicious = "' OR 1=1 --"
+    searched = client.get("/api/v2/control-center/public-workspaces", query_string={"search": malicious})
+    assert searched.status_code == 200 and searched.get_json()["pagination"]["total_items"] == 0
+    assert all(malicious not in query for query, _ in queries.queries)
+    assert any({"name": "@search", "value": malicious.lower()} in params for _, params in queries.queries)
 
 
 @pytest.mark.parametrize("path,method", [
@@ -274,6 +290,8 @@ def test_bulk_real_writer_partial_results_and_validation_before_writes(routes):
 
 def test_filter_selection_cap_and_exclusions_precede_writes(routes):
     env, client, _, queries, _, _, _ = routes
+    excluded = module.select_workspace_ids(queries, {"filter": {}, "exclude_ids": ["public-1"]})
+    assert excluded == ["public-2"]
     for index in range(2, 502):
         seed_workspace(env, workspace_id=f"w-{index}", status="active")
     capped = client.post("/api/v2/control-center/public-workspaces/bulk-status", json={
@@ -288,6 +306,19 @@ def test_filter_selection_cap_and_exclusions_precede_writes(routes):
         module.select_workspace_ids(queries, {"filter": {"arbitrary": "field"}})
     with pytest.raises(group_module.GroupRequestError):
         module.select_workspace_ids(queries, {"workspace_ids": ["public-1"] * 501})
+
+
+@pytest.mark.parametrize("payload", [
+    {"workspace_ids": ["../admin"], "status": "active"},
+    {"workspace_ids": [], "status": "active"},
+    {"workspace_ids": ["public-1"], "filter": {}, "status": "active"},
+    {"filter": {}, "exclude_ids": "public-1", "status": "active"},
+    {"workspace_ids": ["public-1"], "status": "locked", "reason": "x" * 2001},
+])
+def test_invalid_bulk_payloads_never_write(routes, payload):
+    env, client, _, _, _, _, _ = routes
+    result = client.post("/api/v2/control-center/public-workspaces/bulk-status", json=payload)
+    assert result.status_code == 400 and not env.status_logs
 
 
 def test_safe_filtered_csv_and_failures(routes, monkeypatch):
