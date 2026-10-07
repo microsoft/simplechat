@@ -2,8 +2,8 @@
 # test_v2_control_center_data_health_removed.py
 """
 Browser coverage for the V2 Control Center section rail after Data health was removed.
-Version: 0.261.291
-Implemented in: 0.261.291
+Version: 0.261.292
+Implemented in: 0.261.292
 
 Validates that the rail offers no Data health section even to maintenance-capable
 administrators, that an old data-health bookmark opens the Dashboard without calling the
@@ -103,7 +103,7 @@ class ControlCenterFixture:
                 route.fulfill(status=404, body="Fixture asset not found")
         elif path == "/api/v2/bootstrap" and request.method == "GET":
             route.fulfill(json={
-                "version": "0.261.291",
+                "version": "0.261.292",
                 "user": {"id": "test-admin", "display_name": "Test Admin", "is_admin": True, "roles": ["Admin"]},
                 "branding": {"app_title": "SimpleChat", "show_logo": False, "hide_app_title": False},
                 "features": {},

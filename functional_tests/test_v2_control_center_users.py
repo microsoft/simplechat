@@ -2,12 +2,12 @@
 # test_v2_control_center_users.py
 """
 Functional test for V2 Control Center user management.
-Version: 0.261.291
+Version: 0.261.292
 Implemented in: 0.261.280
 
 This test validates Users filtering, sorting, paging, detail data boundaries,
 bulk-action limits, admin-only authorization, cached metric freshness and CSV safety.
-Since 0.261.291 the list and export order one property per query, because the
+Since 0.261.292 the list and export order one property per query, because the
 user_settings container has no composite index for a two-property ORDER BY.
 """
 
@@ -418,7 +418,7 @@ def test_routes_require_full_control_center_admin_not_dashboard_reader():
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.291")
+    assert_app_version_at_least("0.261.292")
 
 
 TESTS = [

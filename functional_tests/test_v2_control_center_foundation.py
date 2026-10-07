@@ -2,12 +2,12 @@
 # test_v2_control_center_foundation.py
 """
 Functional test for the V2 Control Center foundation.
-Version: 0.261.291
+Version: 0.261.292
 Implemented in: 0.261.278
 
 This test covers the shared access capability contract, bootstrap wiring, stable
 activity-log IDs, removal of the legacy automatic migration check, removal of the
-V2 Data health section and its backfill APIs (0.261.291), and route/pane structure.
+V2 Data health section and its backfill APIs (0.261.292), and route/pane structure.
 """
 
 import ast
@@ -155,7 +155,7 @@ def test_pane_has_section_routes_and_capability_gating():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.291")
+    assert_app_version_at_least("0.261.292")
 
 
 TESTS = [

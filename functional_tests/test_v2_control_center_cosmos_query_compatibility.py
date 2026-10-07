@@ -2,8 +2,8 @@
 # test_v2_control_center_cosmos_query_compatibility.py
 """
 Functional test for V2 Control Center Cosmos query compatibility.
-Version: 0.261.291
-Implemented in: 0.261.291
+Version: 0.261.292
+Implemented in: 0.261.292
 
 The Dashboard, Users and Groups sections returned HTTP 500 because Cosmos DB rejected
 their queries with HTTP 400. The azure-cosmos Python SDK cannot run cross-partition
@@ -151,7 +151,7 @@ def test_scan_covers_the_previously_failing_sections():
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.291")
+    assert_app_version_at_least("0.261.292")
 
 
 TESTS = [
