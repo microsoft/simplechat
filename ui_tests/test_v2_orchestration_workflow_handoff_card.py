@@ -2,7 +2,7 @@
 """
 Real-component browser tests for the workflow hand-off card under an orchestration answer.
 Version: 0.261.253
-Implemented in: 0.261.290
+Implemented in: 0.261.291
 Refs: microsoft/simplechat#1549, microsoft/simplechat#1543
 
 The production MessageList, WorkflowHandoffCards, ConfirmDialog and WorkflowEditorDialog run in
@@ -558,7 +558,7 @@ def mount(page, api, *, kind="personal", theme="light", messages=None):
             H.reset();
             document.documentElement.classList.toggle('dark', spec.theme === 'dark');
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.290', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.291', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: {
                     enable_chat_orchestration: true, allow_user_workflows: true,
                     enable_chat_orchestration_workflow_handoff: true,
