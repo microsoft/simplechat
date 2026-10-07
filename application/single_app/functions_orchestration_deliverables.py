@@ -1,10 +1,11 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.246
+Version: 0.261.291
 Implemented in: 0.261.138
 Document merge recipes added in: 0.261.245
 One-sheet or sheet-per-file question for spreadsheet merges added in: 0.261.246
+Gathered results and charts must reach the answer or a file, with chart delivery notes, in: 0.261.291
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
 diagrams the user asked for (``requested: explicit``) and anything it adds on its own
@@ -18,7 +19,9 @@ describes it for the planner from the live capability resolution and export cata
   format (a file only from ``render_file`` in the same format, an explicit image only from
   ``generate_image``);
 - an unavailable deliverable must carry the exact reason the server reports, and the planner
-  cannot call something unavailable that the server can produce.
+  cannot call something unavailable that the server can produce;
+- what a gather step collects must be read by a later step that ends in the answer, a file, or
+  a generated image, and a planned chart or diagram must reach the answer or a file.
 
 A proposed workflow is a deliverable too: a card after the answer that the user approves before
 anything is created. It is a kind for the planner only while ``enable_chat_orchestration_workflows``
@@ -36,8 +39,10 @@ import json
 import re
 from copy import deepcopy
 
+from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
+    CAPABILITY_AGENT_INVOKE,
     CAPABILITY_COMPOSE,
     CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_DOCUMENT_COMPARE,
@@ -51,6 +56,7 @@ from functions_orchestration_registry import (
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
     MAX_GENERATED_IMAGES_PER_PLAN,
+    ROLE_GATHER,
     TABULAR_COLUMN_MAPPING_PROFILE,
     VISUAL_CHART,
     VISUAL_DIAGRAM,
@@ -64,6 +70,7 @@ from functions_orchestration_registry import (
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, InputBinding, ResultContractError, output_name,
 )
+from functions_orchestration_visuals import collect_run_charts, place_chart_blocks
 
 
 KIND_ANSWER = 'answer'
@@ -181,6 +188,20 @@ _IMAGE_OPTION_NAMES = (('size', 'sizes'), ('quality', 'qualities'), ('background
 
 IMAGE_TOKEN_PATTERN = re.compile(r'`?\[\[image:([A-Za-z][A-Za-z0-9_-]{0,63})\]\]`?')
 ASSET_IMAGE_PATTERN = re.compile(r'!\[([^\]\n]{0,300})\]\(asset:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)')
+# Gather steps that chart the exact rows their tools return when their visuals ask for a chart.
+CHARTING_GATHER_CAPABILITIES = frozenset({CAPABILITY_ACTION_INVOKE, CAPABILITY_AGENT_INVOKE})
+_VISUAL_FENCES = {KIND_CHART: f'```{INLINE_CHART_BLOCK_LANGUAGE}', KIND_DIAGRAM: '```mermaid'}
+# Why the answer does not show a chart or diagram the user asked for. The text is what users see.
+VISUAL_DELIVERY_MESSAGES = {
+    'chart_not_created': 'The chart could not be created from the retrieved data.',
+    'not_in_answer': 'The answer did not include it.',
+    'step_not_completed': 'The step that makes it did not finish.',
+}
+# The reply of a saved plan that gathered information but had no step to write an answer from it.
+UNREAD_GATHER_MESSAGE = (
+    'The information was gathered, but this plan had no step that writes an answer from it. '
+    'Ask again to get an answer.'
+)
 
 
 class DeliverableError(ValueError):
@@ -401,8 +422,8 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
         )
     if CAPABILITY_ACTION_INVOKE in available:
         recipes.append({'for': 'Chart of data an action retrieves', 'steps': (
-            'action_invoke with visuals ["chart"] charts the exact rows it retrieves; the compose '
-            'step that binds it places the chart.'
+            'action_invoke with visuals ["chart"] charts the exact rows it retrieves; bind its "prepared" '
+            'output to the compose step that is the final_response, which places the chart in the answer.'
         )})
     truth = {
         KIND_ANSWER: _available(produced_by=[CAPABILITY_COMPOSE]) if compose else _unavailable(
@@ -829,6 +850,75 @@ def _derive_visuals(step, deliverables):
         step['arguments']['visuals'] = [kind for kind in VISUAL_KINDS if kind in wanted]
 
 
+def _shown_steps(steps, final_step, *, include_files=True, include_images=True):
+    """Enabled steps whose results reach something the user sees.
+
+    The user sees the answer of the step final_response selects, the files render_file steps
+    save, and generated images, which the finished answer always shows. A step reaches them
+    when a chain of named input bindings leads from it to one of those steps.
+    """
+    enabled = {step['step_id']: step for step in steps if step.get('enabled', True)}
+    producers = {step_id: set() for step_id in enabled}
+    for step in enabled.values():
+        for value in (step.get('inputs') or {}).values():
+            producer = InputBinding.from_dict(value['binding']).step_id
+            if producer in enabled:
+                producers[step['step_id']].add(producer)
+    pending = [
+        step_id for step_id, step in enabled.items()
+        if step_id == final_step
+        or (include_files and step['capability_id'] == CAPABILITY_RENDER_FILE)
+        or (include_images and step['capability_id'] == CAPABILITY_GENERATE_IMAGE)
+    ]
+    reached = set()
+    while pending:
+        step_id = pending.pop()
+        if step_id not in reached:
+            reached.add(step_id)
+            pending.extend(producers[step_id] - reached)
+    return reached
+
+
+def _require_shown_work(deliverables, steps, final_step):
+    """While planning: gathered results and planned charts and diagrams must reach the user.
+
+    The answer step used to run in every plan, so whatever was gathered was always read and
+    written up. A plan now writes an answer only when final_response selects one, so a gather
+    step that nothing reads, or a chart that no answer places, would run and never be shown.
+    workflow_run is the exception: nothing may read it, and the server writes its reply.
+    """
+    published = _shown_steps(steps, final_step, include_images=False)
+    for deliverable in deliverables:
+        if deliverable['status'] != STATUS_PLANNED or deliverable['kind'] not in (KIND_CHART, KIND_DIAGRAM):
+            continue
+        producers = [
+            step for step in steps
+            if step.get('enabled', True) and deliverable['id'] in (step.get('delivers') or ())
+        ]
+        if producers and not any(step['step_id'] in published for step in producers):
+            raise DeliverableError(
+                f'{_sentence_label(deliverable)} would never be shown: no step that delivers it reaches '
+                'the final_response answer or a file. A chart or diagram appears only in the compose '
+                'step final_response selects, or in content a render_file step saves. When action_invoke '
+                'charts the rows it retrieves, bind its "prepared" output as a named input of that '
+                'compose step and select that compose step as final_response.',
+                rule='visual_not_published',
+            )
+    shown = _shown_steps(steps, final_step)
+    for step in steps:
+        if (
+            step.get('enabled', True) and step.get('role') == ROLE_GATHER
+            and step['capability_id'] != CAPABILITY_WORKFLOW_RUN and step['step_id'] not in shown
+        ):
+            raise DeliverableError(
+                f'Gather step "{step["step_id"]}" collects results that no later step reads, so they would '
+                'never be shown. Bind its output as a named input of the compose step that writes the '
+                'answer and select that compose step as final_response, or bind it to the step that '
+                'prepares a file.',
+                rule='gather_not_used',
+            )
+
+
 def _brief_entry(deliverable, relation, **extra):
     entry = {
         'relation': relation, 'id': deliverable['id'], 'kind': deliverable['kind'],
@@ -912,7 +1002,10 @@ def compile_deliverables(
     an approved plan; the delivery notes report such gaps instead.
 
     While planning, a ``workflow`` deliverable is accepted only when ``availability``
-    describes the kind, which it does only while workflow proposals are turned on.
+    describes the kind, which it does only while workflow proposals are turned on. Planning
+    also requires every enabled gather step except ``workflow_run`` to feed the answer, a file
+    or a generated image, and every planned chart or diagram to reach the answer or a file;
+    see ``_require_shown_work``.
     """
     workflow_allowed = availability is None or KIND_WORKFLOW in availability
     deliverables = _parse_deliverables(raw_deliverables, workflow_allowed)
@@ -950,6 +1043,8 @@ def compile_deliverables(
                     rule='undeclared_workflow_output',
                 )
             step.pop('delivers')
+        if strict:
+            _require_shown_work([], steps, final_step)
         return [implicit_answer_deliverable()]
     lookup = {deliverable['id']: deliverable for deliverable in deliverables}
     for step in steps:
@@ -1070,6 +1165,7 @@ def compile_deliverables(
                         f'model does not support. Use one of {options.get(plural) or []} or omit it.',
                         rule='unsupported_image_option',
                     )
+        _require_shown_work(deliverables, steps, final_step)
     for step in steps:
         if step['delivers'] and step['capability_id'] in (CAPABILITY_COMPOSE, CAPABILITY_ACTION_INVOKE):
             _derive_visuals(step, [lookup[identifier] for identifier in step['delivers']])
@@ -1342,19 +1438,24 @@ def explicit_image_shortfalls(plan, statuses):
     return shortfalls
 
 
-def delivery_notes(plan, statuses, *, file_steps_with_outputs=()):
+def delivery_notes(plan, statuses, *, file_steps_with_outputs=(), visual_states=()):
     """A deterministic note for explicit deliverables that were not delivered or are unavailable.
 
     ``statuses`` maps step ids to their final status. Files that reached the output service
     are already described by the files summary, so only files that never started are named.
+    ``visual_states`` are the chart and diagram states from ``visual_delivery``.
     """
     lines = []
     steps = {step['step_id']: step for step in plan.get('steps') or ()}
     shortfalls = {item['id']: item for item in explicit_image_shortfalls(plan, statuses)}
+    missing_visuals = {
+        state['id']: state for state in visual_states or () if state.get('state') == 'not_delivered'
+    }
     for deliverable in plan.get('deliverables') or ():
         if deliverable.get('implicit') or deliverable.get('requested') != REQUESTED_EXPLICIT:
             continue
-        description = _safe_markdown_text(deliverable.get('description'))
+        # Each note adds its own period after the description.
+        description = _safe_markdown_text(deliverable.get('description')).rstrip('.').rstrip()
         if deliverable.get('status') == STATUS_UNAVAILABLE:
             reason = deliverable.get('unavailable_reason')
             lines.append(
@@ -1365,6 +1466,9 @@ def delivery_notes(plan, statuses, *, file_steps_with_outputs=()):
         producers = [step for step in steps.values() if deliverable['id'] in (step.get('delivers') or ())]
         if producers and not any(step.get('enabled', True) for step in producers):
             lines.append(f'- Not delivered: {description}. Its step was turned off.')
+            continue
+        if deliverable['id'] in missing_visuals:
+            lines.append(f"- Not delivered: {description}. {missing_visuals[deliverable['id']]['message']}")
             continue
         if deliverable['id'] in shortfalls:
             item = shortfalls[deliverable['id']]
@@ -1407,3 +1511,123 @@ def generated_image_assets(task_results, read_value):
                 if value.get('asset_id') == step_id:
                     assets[step_id] = deepcopy(value)
     return assets
+
+
+def _draws_charts(step):
+    """Whether a plan step is a gather step the plan asked to chart the rows it retrieves."""
+    return (
+        step.get('enabled', True) and step.get('capability_id') in CHARTING_GATHER_CAPABILITIES
+        and VISUAL_CHART in ((step.get('arguments') or {}).get('visuals') or ())
+    )
+
+
+def gathered_charts(plan, task_results, read_value):
+    """The charts each charting gather step drew from its exact rows, by step id in plan order.
+
+    ``task_results`` maps step ids to TaskResult objects; ``read_value(reference)`` reads the
+    step's retained "prepared" value through the owning authorization service. A step that
+    drew no chart is left out.
+    """
+    charts = {}
+    for step in plan.get('steps') or ():
+        task = (task_results or {}).get(step.get('step_id'))
+        if not _draws_charts(step) or task is None or task.status not in ('complete', 'partial'):
+            continue
+        for reference in task.outputs:
+            if reference.output_name != 'prepared' or reference.completeness.status not in ('complete', 'partial'):
+                continue
+            value = read_value(reference)
+            citations = value.get('citations') if isinstance(value, dict) else None
+            drawn = collect_run_charts(citations if isinstance(citations, list) else [])
+            if drawn:
+                charts[step['step_id']] = drawn
+    return charts
+
+
+def _shows_chart(text, chart):
+    return f'"chartId":"{chart["chart_id"]}"' in text or chart['chart_markdown'] in text
+
+
+def show_gathered_charts(text, charts):
+    """The answer with each chart a gather step drew shown once.
+
+    A chart the answer step placed stays where it is. One that no answer step placed, such as
+    in a plan whose answer step did not read the gather step, is added after the answer, the
+    way a generated image is.
+    """
+    text = str(text or '')
+    missing, seen = [], set()
+    for drawn in (charts or {}).values():
+        for chart in drawn:
+            if chart['chart_id'] not in seen and not _shows_chart(text, chart):
+                missing.append(chart)
+            seen.add(chart['chart_id'])
+    return place_chart_blocks(text, missing) if missing else text
+
+
+def visual_delivery(plan, statuses, answer, charts):
+    """Whether the answer shows each chart and diagram the user asked for, and what to run again.
+
+    Returns ``(states, redraw)``. ``states`` has one ``{'id', 'state', 'message'}`` entry, without
+    a message when delivered, for each explicit planned chart or diagram meant for the answer;
+    ``state`` is ``delivered`` or ``not_delivered``. One that only goes into a file is left out,
+    because the file's own status covers it. ``redraw`` lists the steps that finished without the
+    chart or diagram the plan asked of them; a retry runs them, and every step computed from
+    them, again. ``charts`` is ``gathered_charts``' result and ``answer`` the published text.
+    """
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    final_step, _ = _final_step_id(plan.get('final_response'))
+    answer_steps = _shown_steps(steps, final_step, include_files=False, include_images=False)
+    answer = str(answer or '')
+    states, redraw = [], []
+    for deliverable in plan.get('deliverables') or ():
+        kind = deliverable.get('kind')
+        if (
+            kind not in _VISUAL_FENCES or deliverable.get('requested') != REQUESTED_EXPLICIT
+            or deliverable.get('status') != STATUS_PLANNED
+        ):
+            continue
+        shown, reasons, again = False, [], []
+        for step in steps:
+            if deliverable.get('id') not in (step.get('delivers') or ()):
+                continue
+            finished = statuses.get(step['step_id']) in ('completed', 'partial')
+            if kind == KIND_CHART and _draws_charts(step):
+                if not finished:
+                    reasons.append('step_not_completed')
+                elif any(_shows_chart(answer, chart) for chart in (charts or {}).get(step['step_id']) or ()):
+                    shown = True
+                else:
+                    reasons.append('chart_not_created')
+                    again.append(step['step_id'])
+            elif step['step_id'] in answer_steps:
+                if not finished:
+                    reasons.append('step_not_completed')
+                elif _VISUAL_FENCES[kind] in answer:
+                    shown = True
+                else:
+                    reasons.append('not_in_answer')
+                    again.append(step['step_id'])
+        if shown:
+            states.append({'id': deliverable['id'], 'state': 'delivered'})
+        elif reasons:
+            states.append({
+                'id': deliverable['id'], 'state': 'not_delivered', 'message': VISUAL_DELIVERY_MESSAGES[reasons[0]],
+            })
+            redraw.extend(again)
+    return states, list(dict.fromkeys(redraw))
+
+
+def unread_gather_steps(plan):
+    """Enabled gather steps, other than workflow_run, whose results nothing the user sees reads.
+
+    Planning refuses such a plan now; a plan saved before that rule can still have them.
+    """
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    final_step, _ = _final_step_id(plan.get('final_response'))
+    shown = _shown_steps(steps, final_step)
+    return [
+        step['step_id'] for step in steps
+        if step.get('role') == ROLE_GATHER and step.get('capability_id') != CAPABILITY_WORKFLOW_RUN
+        and step['step_id'] not in shown
+    ]

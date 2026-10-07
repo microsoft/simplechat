@@ -979,7 +979,12 @@ gathered knowledge or prepared content, and are represented in the plan by expli
   `chart_retrieved_rows` charts the exact rows an earlier call returned. Series longer than
   the 200 points a chart renders keep each segment's highest and lowest value, and the chart
   subtitle states the sampling. The answer places each chart at its `[[chart:<id>]]` token;
-  any it does not place is appended once.
+  any it does not place is appended once. Since **0.261.291**, a plan that charts an
+  action's rows must also have the compose step that reads the action's output and writes
+  the answer, and the answer step receives each chart as its token instead of its data. A
+  chart an action drew is shown even when no answer step placed it, and one the answer
+  doesn't show is reported as not delivered. See the
+  [action chart not delivered fix](../fixes/ORCHESTRATION_ACTION_CHART_NOT_DELIVERED_FIX.md).
 - **Diagrams** are written by the answer step in Mermaid, using ordinary chat's diagram
   guidance on a `compose` step. Gathering steps keep the entities and relationships the diagram needs.
 - **Image proposals** are `simpleimage` cards the user approves one at a time, through the

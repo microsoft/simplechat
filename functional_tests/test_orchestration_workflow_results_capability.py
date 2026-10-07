@@ -1,7 +1,7 @@
 # test_orchestration_workflow_results_capability.py
 """
 Functional test for the workflow_results orchestration capability (registry, gates, catalog, schema, planner).
-Version: 0.261.217
+Version: 0.261.291
 Implemented in: 0.261.217
 
 This test ensures stored workflow results are offered, planned, validated, degraded, and surfaced only through the approved read-only workflow_results path.
@@ -531,11 +531,11 @@ def test_drop_workflow_results_removes_invalid_steps_and_writes_fixed_notes(resu
 
 def test_degraded_normalize_keeps_remaining_valid_results_with_plan_inputs(monkeypatch, planning):
     digest = _handle(planning, "Weekly digest")
-    reply = _raw_plan([ANSWER, _result(digest), _result(digest, step_id="read_again")])
+    reply = _raw_plan([_answer_from(), _result(digest), _result(digest, step_id="read_again")])
     record = _record()
     kind, plan = _plan_request(monkeypatch, planning, [reply, reply], record)
     assert kind == "plan"
-    assert [step["step_id"] for step in plan["steps"]] == ["answer", "read_digest"]
+    assert [step["step_id"] for step in plan["steps"]] == ["read_digest", "answer"]
     assert plan["workflow_results_notes"] == [{"reason": "workflow_results_duplicate", "name": "Weekly digest"}]
     assert plan["inputs"]["workflow_results"] == [{"handle": digest, "name": "Weekly digest"}]
 

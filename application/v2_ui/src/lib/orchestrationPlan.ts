@@ -21,6 +21,7 @@ import type {
     OrchestrationApproval,
     OrchestrationApprovalFloor,
     OrchestrationDeliverable,
+    OrchestrationDeliverableCheck,
     OrchestrationDeliverableKind,
     OrchestrationImageReferenceDocument,
     OrchestrationImageReferenceMessage,
@@ -252,7 +253,7 @@ export interface DeliverableRow {
     stateLabel: string;
     /** The steps that produce it, by title, in plan order. */
     steps: string[];
-    /** The server's explanation for an unavailable deliverable. */
+    /** The server's explanation for an unavailable deliverable, or one a run did not deliver. */
     reason?: string;
 }
 
@@ -271,22 +272,29 @@ const DELIVERABLE_STATE_LABELS: Record<DeliverableState, string> = {
  * `statusOf` reports a step's live or saved status. A deliverable is delivered only when
  * every step that produces it completed; a step switched off in `edits` or in the plan turns
  * it off. The server's delivery notes remain the authority after a run; this is the preview.
+ * `checks` are the server's own checks after a run of the charts and diagrams the user asked
+ * for. They win over step status, because a step can finish without its chart being shown.
  * The implicit answer of plans that declared nothing is left out.
  */
 export function deliverableRows(
     plan: OrchestrationPlan,
     statusOf: (stepId: string) => StepStatus | undefined,
     edits?: PlanEdits,
+    checks?: OrchestrationDeliverableCheck[],
 ): DeliverableRow[] {
     const disabled = new Set(edits?.disabled_step_ids ?? []);
+    const checked = new Map((checks ?? []).map((check) => [check.id, check]));
     return (plan.deliverables ?? []).filter((deliverable) => !deliverable.implicit).map((deliverable) => {
         const producers = plan.steps.filter((step) => step.delivers?.includes(deliverable.id));
         const enabled = producers.filter((step) => step.enabled && !disabled.has(step.step_id));
+        const check = checked.get(deliverable.id);
         let state: DeliverableState = 'planned';
         if (deliverable.status === 'unavailable') {
             state = 'unavailable';
         } else if (producers.length > 0 && enabled.length === 0) {
             state = 'turned_off';
+        } else if (check) {
+            state = check.state;
         } else {
             const statuses = enabled.map((step) => statusOf(step.step_id) ?? step.status);
             if (statuses.length > 0 && statuses.every((status) => status === 'completed')) {
@@ -308,7 +316,7 @@ export function deliverableRows(
             steps: producers.map((step) => step.title || step.step_id),
             ...(deliverable.status === 'unavailable'
                 ? { reason: deliverable.unavailable_message || 'This is not available here.' }
-                : {}),
+                : state === 'not_delivered' && check?.message ? { reason: check.message } : {}),
         };
     });
 }

@@ -84,6 +84,14 @@ export interface OrchestrationRecovery {
     requires_confirmation: boolean;
 }
 
+/** The server's check, after a run, of whether the answer shows a chart or diagram the user asked for. */
+export interface OrchestrationDeliverableCheck {
+    id: string;
+    state: 'delivered' | 'not_delivered';
+    /** Why it was not delivered, in the server's words. */
+    message?: string;
+}
+
 export interface OrchestrationAttempt {
     run_id?: string;
     turn_id?: string | null;
@@ -99,6 +107,7 @@ export interface OrchestrationAttempt {
     outputs?: OrchestrationOutput[];
     generated_artifacts?: GeneratedArtifact[];
     export_catalog?: OrchestrationExportFormat[];
+    deliverable_states?: OrchestrationDeliverableCheck[];
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -139,6 +148,20 @@ export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRec
     };
 }
 
+export function normalizeDeliverableChecks(value: unknown): OrchestrationDeliverableCheck[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return value.flatMap((entry): OrchestrationDeliverableCheck[] => {
+        const data = recordOf(entry);
+        const state = data.state === 'delivered' || data.state === 'not_delivered' ? data.state : null;
+        if (typeof data.id !== 'string' || !state) return [];
+        return [{
+            id: data.id,
+            state,
+            ...(typeof data.message === 'string' ? { message: data.message } : {}),
+        }];
+    });
+}
+
 export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAttempt {
     const outer = recordOf(value);
     const metadata = recordOf(outer.metadata);
@@ -146,6 +169,7 @@ export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAtte
     const outcome = data.outcome;
     const finalization = data.finalization_status;
     const outputs = normalizeOrchestrationOutputs(data.outputs);
+    const deliverableStates = normalizeDeliverableChecks(data.deliverable_states);
     return {
         run_id: typeof data.run_id === 'string' ? data.run_id : undefined,
         turn_id: typeof data.turn_id === 'string' ? data.turn_id : undefined,
@@ -166,6 +190,7 @@ export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAtte
         ...(Array.isArray(data.generated_artifacts) || Array.isArray(metadata.generated_artifacts)
             ? { generated_artifacts: readGeneratedArtifacts({ ...metadata, ...data }) } : {}),
         ...(Array.isArray(data.export_catalog) ? { export_catalog: data.export_catalog } : {}),
+        ...(deliverableStates ? { deliverable_states: deliverableStates } : {}),
     };
 }
 

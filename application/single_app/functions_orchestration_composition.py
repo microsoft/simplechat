@@ -1,8 +1,9 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.209
+Version: 0.261.291
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
+Charts drawn upstream reach the model as their placement tokens in: 0.261.291
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
 Answer-writing steps receive saved memory, the resolved conversation references, the
@@ -23,6 +24,7 @@ from jsonschema import Draft202012Validator
 
 from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event, workflow_log_context
+from functions_chart_operations import normalize_inline_chart_markdown
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_context import conversation_reference_messages
 from functions_orchestration_deliverables import (
@@ -259,6 +261,33 @@ def _input_charts(inputs):
     return collect_run_charts(citations)
 
 
+def _chart_tokens(value, tokens):
+    """A copy of an input value in which each carried chart is only its placement token."""
+    if isinstance(value, dict):
+        markdown = normalize_inline_chart_markdown(value.get('chart_markdown'))
+        token = tokens.get(markdown) if markdown else None
+        return {
+            key: token if token is not None and key == 'chart_markdown' else _chart_tokens(item, tokens)
+            for key, item in value.items() if token is None or key != 'chart_payload'
+        }
+    if isinstance(value, list):
+        return [_chart_tokens(item, tokens) for item in value]
+    return value
+
+
+def _model_inputs(inputs, charts):
+    """The named inputs as the model reads them.
+
+    The server places every chart drawn upstream from the exact retrieved rows at its token, so
+    the model is sent the token instead of a second copy of the chart's data. Every other value,
+    including the retrieved rows, is sent in full.
+    """
+    if not charts:
+        return inputs
+    tokens = {chart['chart_markdown']: f"[[chart:{chart['chart_id']}]]" for chart in charts}
+    return {name: {**entry, 'value': _chart_tokens(entry['value'], tokens)} for name, entry in inputs.items()}
+
+
 def _answer_memory(context):
     """Reload saved memory right before writing, exactly as the answer step always has."""
     reload_memory = getattr(context, 'reload_memory_context', None)
@@ -397,7 +426,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             'content': json.dumps({
                 'request': context.user_request,
                 'instruction': step['arguments']['instruction'],
-                'inputs': inputs, 'outputs': outputs,
+                'inputs': _model_inputs(inputs, charts), 'outputs': outputs,
                 **({'profiles': profiles} if profiles else {}),
                 **({'unavailable_inputs': [
                     {'name': item['name'], 'reason': item['reason']} for item in missing

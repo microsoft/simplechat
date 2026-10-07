@@ -65,6 +65,30 @@ _OUTPUT_FIELDS = frozenset({
     "kind", "columns", "completeness", "content_sha256", "size_bytes", "item_count", "character_count", "storage",
 })
 _LINEAGE_FIELDS = frozenset({"origin", "source_policy", "sources", "upstream", "allow_partial_inputs"})
+# Characters per saved record of an encoded JSON value. Readers join the records back together.
+_VALUE_RECORD_CHARS = 16384
+
+
+def _value_records(fragments, size=_VALUE_RECORD_CHARS):
+    """The encoder's fragments regrouped into records of ``size`` characters, then the remainder.
+
+    The JSON encoder yields one fragment per token. Saving each fragment as its own record made
+    a 200 KB value hundreds of pages, and every page is authorized and written separately.
+    """
+    pending, length = [], 0
+    for fragment in fragments:
+        pending.append(fragment)
+        length += len(fragment)
+        if length < size:
+            continue
+        text = "".join(pending)
+        cut = len(text) - len(text) % size
+        for offset in range(0, cut, size):
+            yield text[offset:offset + size]
+        rest = text[cut:]
+        pending, length = ([rest], len(rest)) if rest else ([], 0)
+    if length:
+        yield "".join(pending)
 
 
 class ResultUnavailableError(PermissionError):
@@ -600,11 +624,9 @@ class OrchestrationResults:
                     encoder = json.JSONEncoder(
                         ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":"),
                     )
-                    for fragment in encoder.iterencode(output.value):
-                        for offset in range(0, len(fragment), 16384):
-                            text = fragment[offset:offset + 16384]
-                            account(text.encode("ascii"))
-                            writer.append({"data": text})
+                    for text in _value_records(encoder.iterencode(output.value)):
+                        account(text.encode("ascii"))
+                        writer.append({"data": text})
             stored_outputs[output.name] = {
                 "kind": output.kind, "columns": [column.to_dict() for column in output.columns],
                 "completeness": output.completeness.to_dict(), "content_sha256": content_digest.hexdigest(),

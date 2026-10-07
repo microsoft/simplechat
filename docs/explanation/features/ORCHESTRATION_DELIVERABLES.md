@@ -1,9 +1,10 @@
 # Orchestration deliverables
 
-**Version: 0.261.192** (tracked in `application/single_app/config.py`)
+**Version: 0.261.291** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.138**
 **Requested visual styles and reference images for planned images added in version: 0.261.192**
+**Gathered results and charts must reach the user, with chart delivery checks, added in version: 0.261.291**
 
 Deliverables shipped in the React V2 branch as 0.261.138. The V2 shared workspaces branch had already assigned 0.261.138 to its native group agents, so there deliverables arrive with the React V2 base merge in version **0.261.181**.
 
@@ -109,7 +110,8 @@ is shown, so the two cannot disagree:
   - a file only from `render_file`, and its `output_format` must equal the file's format;
   - an explicit image only from `generate_image`;
   - a suggested image only from a compose step with a Markdown output, as a proposal card;
-  - a chart from a compose step with Markdown output or from `action_invoke`;
+  - a chart from a compose step with Markdown output or from `action_invoke`, which charts
+    the rows it retrieves;
   - a diagram from a compose step with Markdown output;
   - the answer from the step that `final_response` selects.
 - Every planned deliverable needs a producing step, and a `quantity` of files or explicit
@@ -133,6 +135,16 @@ While planning, the server truth is also enforced:
   A plan revision may remove those images at the user's request; the revised plan then
   carries a review warning instead of failing.
 - Image options must be values the configured image model supports.
+- Since **0.261.291**, what a plan gathers must reach the user. Following the plan's named
+  input bindings, every enabled gather step except `workflow_run` must lead to the
+  `final_response` step, an enabled `render_file` step or a `generate_image` step (rule
+  `gather_not_used`). Every planned chart or diagram must come from the `final_response`
+  step, a step that leads to it, or a step that leads to an enabled `render_file` step
+  (rule `visual_not_published`). So an action that charts its rows needs the compose step
+  that reads its output and is `final_response`; that step places the chart. Before this
+  rule, a chart request could be planned as one Gather step with no answer, and the chart
+  the action drew was never shown. See the
+  [action chart not delivered fix](../fixes/ORCHESTRATION_ACTION_CHART_NOT_DELIVERED_FIX.md).
 
 A saved plan is revalidated without the server truth, so a later availability change or a
 step the user turns off never invalidates an approved plan. The delivery notes report such
@@ -156,6 +168,12 @@ everything you asked to receive."
 - **Visuals.** Chart, diagram, and suggested-image deliverables become the step's structured
   `visuals` (`chart`, `diagram`, `image_proposal`). The composer's Image control no longer
   forces proposal cards in these plans; it makes the user's images explicit deliverables.
+- **Charts from gather steps.** Since **0.261.291**, finalization reads the saved result of
+  each completed `action_invoke` or `agent_invoke` step whose `visuals` include `chart`, and
+  adds each chart the answer doesn't already show, once, after the answer, the way
+  generated images are added. A compose step that reads such a step receives each chart as
+  its `[[chart:<id>]]` token instead of the chart's data, and the server places the chart
+  at that token.
 - **Images in content.** A compose step bound to generated images receives each one as
   `[[image:<step_id>]]` with its title. Prepared Markdown then carries
   `![AI-generated image: ...](asset:<step_id>)` followed by an italic
@@ -191,6 +209,17 @@ everything you asked to receive."
   answer and the files summary, a deterministic **Delivery notes** list names each explicit
   deliverable that was not delivered or is unavailable, such as "Not delivered: An image of
   each president. 2 of 3 images were generated."
+- **Charts and diagrams.** Since **0.261.291**, `visual_delivery` checks each explicit,
+  planned chart and diagram meant for the answer. One the answer doesn't show gets a
+  delivery note: "The chart could not be created from the retrieved data.", "The answer did
+  not include it." or "The step that makes it did not finish." A run that otherwise
+  completed is then partial, with the failure `visual_not_delivered`. The run saves these
+  checks as `deliverable_states`, and the steps a retry runs again to make the missing
+  visual as `redraw_step_ids`. A chart or diagram that only goes into a file isn't checked.
+- **Gathered without answering.** A plan saved before 0.261.291 whose gather steps nothing
+  reads replies "The information was gathered, but this plan had no step that writes an
+  answer from it. Ask again to get an answer." instead of "The requested content is
+  prepared."
 - **Retries.** A retry of such a run reuses the images that were generated, generates the
   missing image again, and runs again the answer and file steps computed without it, so the
   new answer and file contain every image. The earlier attempt's answer keeps showing its
@@ -199,6 +228,10 @@ everything you asked to receive."
   or `image_request_invalid`) or runs again only because of such a step: the retry would
   send the same prompt. Asking again plans a new request instead. Any other failed or
   unfinished step keeps the retry available.
+- **Redrawing a chart.** A retry runs the steps in `redraw_step_ids` again, with every step
+  computed from them, so the new attempt can draw a chart or write a diagram the earlier
+  one missed. Running an action or agent step again repeats its calls, so such a retry asks
+  for confirmation first, as a retry of a step with uncertain external effects does.
 
 ### The `generate_image` capability
 
@@ -238,7 +271,11 @@ everything you asked to receive."
 - In the V2 interface, the plan panel and the approval card show **You asked for**: each explicit deliverable
   with its state (planned, in progress, delivered, not delivered, turned off, or not
   available with its reason) and, in the plan panel, the step that produces it.
-  Suggested deliverables appear under **Also included**.
+  Suggested deliverables appear under **Also included**. After a run, a chart or diagram
+  takes its state from the run's `deliverable_states`, which `public_execution_fields`
+  returns, rather than from its step's status, because a step can finish without the
+  answer showing its chart. A chart that wasn't shown is listed as not delivered with the
+  server's reason.
 - A `generate_image` step card shows its image prompt and caption, and each reference image
   as a chip with a thumbnail that can be removed before approval.
 - All plan values are rendered as React text.
@@ -313,8 +350,14 @@ everything you asked to receive."
 - `functional_tests/test_v2_orchestration_deliverables.mjs` covers browser normalization,
   deliverable states, a terminal frame read through the real run stream client, and a
   reused image grouped under both answers in React V2 and the classic client.
+- `functional_tests/test_orchestration_action_chart_delivery.py` covers the rule that
+  gathered results and planned charts and diagrams must reach the user, the correction
+  round, a chart an action drew appearing with and without a Reason step, chart tokens in
+  the answer step's inputs, chart and diagram delivery notes and states, the retry that
+  redraws a chart, and saving a large gathered value in a few pages.
 - `ui_tests/test_v2_orchestration_dependency_plans.py` covers the You asked for section in
-  the plan panel and approval card at desktop and mobile widths, including XSS-safe text.
+  the plan panel and approval card at desktop and mobile widths, including XSS-safe text,
+  and the server's check of a chart overriding its step's status.
 - `ui_tests/test_v2_orchestration_generated_images.py` covers the live chat loading an
   answer's images after the run, planned image cards that never offer approval, and a
   reused image shown under both the earlier and the retried answer.
