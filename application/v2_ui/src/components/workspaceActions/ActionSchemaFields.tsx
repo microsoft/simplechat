@@ -4,6 +4,7 @@ import { useId, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { ActionField, ActionJsonInput, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
+import { EditorPanel, EditorPanelFieldset, EditorRow } from '../workspace/EditorLayout';
 import { EDITOR_SECRET_MASK, isRecord, pointerPart, type EditorSchema } from '../../lib/workspaceAuthoring';
 import {
     actionArrayRemovalError, actionFieldError, actionHasStoredArraySecrets, actionSchemaDefaults,
@@ -56,35 +57,29 @@ export function ActionSchemaValue({
             help="Deeply nested configuration can be edited here without replacing sibling properties." />
     );
     if (fieldType === 'object' && value === undefined && !required) return (
-        <div className="space-y-2">
-            <p className="text-sm font-medium text-text-1">{label} <span className="text-xs font-normal text-text-3">(optional)</span></p>
-            {resolved.description ? <p className="text-xs text-text-3">{resolved.description}</p> : null}
+        <EditorRow heading={<>{label} <span className="text-xs font-normal text-text-3">(optional)</span></>} help={resolved.description}>
             {props.readOnly ? <p className="text-xs text-text-3">Not configured.</p> :
-                <GlassButton type="button" size="sm" onClick={() => change(actionSchemaDefaults(resolved, root) ?? {})}>
+                <div><GlassButton type="button" size="sm" variant="subtle" onClick={() => change(actionSchemaDefaults(resolved, root) ?? {})}>
                     <Plus size={13} /> Configure {label.toLowerCase()}
-                </GlassButton>}
-        </div>
+                </GlassButton></div>}
+        </EditorRow>
     );
     if (depth < 12 && fieldType === 'object') return (
-        <fieldset className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
-            <legend className="px-1 text-sm font-medium text-text-1">{label}</legend>
-            {resolved.description ? <p className="text-xs text-text-3">{resolved.description}</p> : null}
+        <EditorPanelFieldset legend={label} description={resolved.description}>
             <ActionSchemaFields props={props} schema={resolved} path={path} root={root} depth={depth + 1}
                 allowCustom={resolved.additionalProperties !== false} />
-            {!required && !props.readOnly ? <GlassButton type="button" size="sm" onClick={() => change(undefined)}>Remove {label.toLowerCase()} configuration</GlassButton> : null}
+            {!required && !props.readOnly ? <div><GlassButton type="button" size="sm" variant="ghost" onClick={() => change(undefined)}>Remove {label.toLowerCase()} configuration</GlassButton></div> : null}
             {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
-        </fieldset>
+        </EditorPanelFieldset>
     );
     if (depth < 12 && fieldType === 'array') {
         const items = Array.isArray(value) ? value : [];
         const itemSchema = resolved.items ?? {};
         return (
-            <fieldset className="min-w-0 space-y-3 rounded-xl border border-edge p-3">
-                <legend className="px-1 text-sm font-medium text-text-1">{label}</legend>
-                {resolved.description ? <p className="text-xs text-text-3">{resolved.description}</p> : null}
+            <EditorPanelFieldset legend={label} description={resolved.description}>
                 {items.map((_, index) => {
                     const removalError = actionArrayRemovalError(props.draft, props.original, path, index);
-                    return <div key={index} className="min-w-0 space-y-2 rounded-lg bg-surface-2 p-3">
+                    return <div key={index} className="min-w-0 space-y-2 rounded-lg border border-edge bg-surface-1 p-3">
                         <ActionSchemaValue props={props} path={`${path}/${index}`} schema={itemSchema} root={root}
                             label={`${label} ${index + 1}`} depth={depth + 1} />
                         {!props.readOnly ? <GlassButton type="button" size="sm" disabled={Boolean(removalError)}
@@ -103,11 +98,11 @@ export function ActionSchemaValue({
                         change([...items, initial ?? (itemType === 'object' ? {} : itemType === 'array' ? [] : itemType === 'boolean' ? false : itemType === 'number' || itemType === 'integer' ? 0 : '')]);
                     }}><Plus size={13} /> Add {label.toLowerCase()} entry</GlassButton> : null}
                 {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
-            </fieldset>
+            </EditorPanelFieldset>
         );
     }
     if (fieldType === 'boolean') return (
-        <ActionField id={id} label={label} help={resolved.description} error={error}>
+        <ActionField id={id} label={label} help={resolved.description} error={error} width="standard">
             <select id={id} value={value === undefined ? '' : String(value)} disabled={props.readOnly}
                 className={ACTION_INPUT_CLASS} aria-invalid={Boolean(error)}
                 onChange={(event) => change(event.target.value === '' ? undefined : event.target.value === 'true')}>
@@ -120,7 +115,7 @@ export function ActionSchemaValue({
     if (values) {
         const selected = values.findIndex((item) => JSON.stringify(item) === JSON.stringify(value));
         return (
-            <ActionField id={id} label={label} help={resolved.description} error={error} required={required}>
+            <ActionField id={id} label={label} help={resolved.description} error={error} required={required} width="standard">
                 <select id={id} value={selected < 0 ? (value === undefined ? '' : 'unavailable') : String(selected)}
                     required={required} disabled={props.readOnly || Object.hasOwn(resolved, 'const')} className={ACTION_INPUT_CLASS}
                     onChange={(event) => change(event.target.value === '' ? undefined : values[Number(event.target.value)])}>
@@ -137,7 +132,7 @@ export function ActionSchemaValue({
         'aria-invalid': Boolean(error), 'aria-describedby': `${id}-help ${id}-error`,
     };
     return (
-        <ActionField id={id} label={label} help={resolved.description} error={error} required={required}>
+        <ActionField id={id} label={label} help={resolved.description} error={error} required={required} width={numeric ? 'compact' : 'wide'}>
             {numeric ? <input {...shared} type="number" step={fieldType === 'integer' ? 1 : 'any'}
                 min={resolved.minimum} max={resolved.maximum} value={typeof value === 'number' ? value : ''}
                 onChange={(event) => change(event.target.value === '' ? undefined : event.target.valueAsNumber)} />
@@ -191,22 +186,22 @@ function ActionAddCustomField({ props, path, existing }: { props: ActionConnecto
     const [type, setType] = useState('text');
     const [error, setError] = useState('');
     return (
-        <div className="rounded-xl border border-edge p-3">
-            <p className="mb-3 text-xs text-text-3">Add an installed connector’s custom property. Names ending in __Secret are treated as credentials.</p>
-            <div className="flex flex-wrap items-end gap-2">
-                <div className="min-w-36 flex-1">
-                    <ActionField id={`${id}-name`} label="Custom field name" error={error}>
-                        <input id={`${id}-name`} value={name} className={ACTION_INPUT_CLASS}
-                            onChange={(event) => { setName(event.target.value); setError(''); }} />
-                    </ActionField>
-                </div>
-                <ActionField id={`${id}-type`} label="Value type">
+        <EditorPanel title="Add a custom field"
+            description="Add an installed connector’s custom property. Names ending in __Secret are treated as credentials.">
+            <div className="min-w-0">
+                <ActionField id={`${id}-name`} label="Custom field name" error={error} width="standard">
+                    <input id={`${id}-name`} value={name} className={ACTION_INPUT_CLASS}
+                        onChange={(event) => { setName(event.target.value); setError(''); }} />
+                </ActionField>
+                <ActionField id={`${id}-type`} label="Value type" width="compact">
                     <select id={`${id}-type`} value={type} className={ACTION_INPUT_CLASS} onChange={(event) => setType(event.target.value)}>
                         <option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option>
                         <option value="object">Object</option><option value="array">List</option><option value="secret">Secret</option>
                     </select>
                 </ActionField>
-                <GlassButton type="button" size="sm" onClick={() => {
+            </div>
+            <div className="flex justify-end">
+                <GlassButton type="button" size="sm" variant="subtle" onClick={() => {
                     const raw = name.trim();
                     const key = type === 'secret' && !raw.endsWith('__Secret') ? `${raw}__Secret` : raw;
                     if (!raw || existing.includes(key)) { setError(raw ? 'That property already exists.' : 'Enter a property name.'); return; }
@@ -215,6 +210,6 @@ function ActionAddCustomField({ props, path, existing }: { props: ActionConnecto
                     setName(''); setError('');
                 }}><Plus size={14} /> Add field</GlassButton>
             </div>
-        </div>
+        </EditorPanel>
     );
 }

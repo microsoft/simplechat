@@ -37,7 +37,7 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
                       title="Trigger a workflow step 3"
                       capture="Capture the trigger a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
-4. Use the workflow row **Actions** to start a manual run, or edit the workflow to adjust **Trigger**.
+4. Use the workflow row **Actions** to start a manual run, or edit the workflow to adjust **Trigger**. In V2, select the workflow and choose **Run** beside its name; its **Runs** tab opens on the new run.
 5. For scheduled operation, choose the **Schedule** trigger (**Interval Schedule** in the classic editor) and leave the workflow enabled. It can repeat at a fixed interval or, in the V2 editor, at a local time on a calendar schedule; see [Run on a calendar schedule]({{ '/guides/create-a-workflow/' | relative_url }}#run-on-a-calendar-schedule).
 6. After a run starts, open **Open workflow activity view** from the chat header when available.
 
@@ -161,8 +161,9 @@ for every control on the card.
 ## Continue a durable run
 
 With durable execution enabled in **0.261.111**, **Run** queues background work
-rather than keeping a browser request open. Open its V2 run history to inspect
-progress and run memory. Closing the page does not cancel the run.
+rather than keeping a browser request open. Open its V2 run history, the
+workflow's **Runs** tab, to inspect progress and run memory. Closing the page
+does not cancel the run.
 
 **Waiting for approval** needs an authorized decision. **Waiting for output**
 keeps the original background result reference and resumes when its supported

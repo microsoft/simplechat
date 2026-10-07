@@ -71,6 +71,7 @@ export function WorkflowDocumentPicker({
     emptyDescription,
     hideAliasFields = false,
     retainRequestedGroupScope = false,
+    hideTitle = false,
 }: {
     scope: WorkflowScope;
     references: WorkflowReferenceInput[];
@@ -83,6 +84,8 @@ export function WorkflowDocumentPicker({
     emptyDescription?: string;
     hideAliasFields?: boolean;
     retainRequestedGroupScope?: boolean;
+    /** Leave the title to a surrounding card that already names the picker; the description stays. */
+    hideTitle?: boolean;
 }) {
     const userId = useBootstrapStore((state) => state.data?.user?.id ?? '');
     const groups = useBootstrapStore((state) => state.data?.scope?.groups ?? []);
@@ -175,8 +178,8 @@ export function WorkflowDocumentPicker({
     return (
         <div className="space-y-3">
             <div>
-                <p className="text-sm font-medium text-text-1">{title}</p>
-                <p className="text-xs text-text-3">
+                {hideTitle ? null : <p className="text-sm font-medium text-text-1">{title}</p>}
+                <p className={hideTitle ? 'max-w-[72ch] text-[0.8125rem] leading-relaxed text-text-3' : 'text-xs text-text-3'}>
                     {description ?? (
                         <>
                             These are shared evidence sources for the whole workflow. Each task can use
@@ -280,9 +283,9 @@ export function WorkflowDocumentPicker({
                                 return (
                                     <li
                                         key={`${source.key}:${documentId(document)}`}
-                                        className="flex items-center justify-between gap-2 rounded-xl border border-edge p-2"
+                                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-edge p-2"
                                     >
-                                        <div className="min-w-0">
+                                        <div className="min-w-0 flex-1 basis-40">
                                             <p className="truncate text-sm text-text-1">{title}</p>
                                             <p className="truncate text-xs text-text-3">
                                                 {document.file_name ? String(document.file_name) : documentId(document)}

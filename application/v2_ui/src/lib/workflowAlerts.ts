@@ -64,6 +64,21 @@ export type WorkflowAlertSize = typeof WORKFLOW_ALERT_SIZES[number];
 export type WorkflowAlertAudience = typeof WORKFLOW_ALERT_AUDIENCES[number];
 export type WorkflowAlertScope = 'personal' | 'group';
 
+// The classic editor's wording for each alert mode and pop-up priority, shared by the V2 alert
+// summary, the workflow editor's Alerts card, and the workflows workbench so all three describe a
+// setting the same way.
+export const WORKFLOW_ALERT_MODE_LABELS: Readonly<Record<WorkflowAlertMode, string>> = {
+    off: 'Never notify me',
+    rules: 'Only when a condition is met',
+    every_run: 'On every run',
+};
+export const WORKFLOW_ALERT_PRIORITY_LABELS: Readonly<Record<WorkflowAlertPriority, string>> = {
+    none: 'No notification',
+    low: 'Low priority',
+    medium: 'Medium priority',
+    high: 'High priority',
+};
+
 /** A stored rule. Fields the editor does not know are kept on the object and sent back. */
 export interface WorkflowAlertRule {
     id?: string;

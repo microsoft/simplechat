@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
-from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED
+from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED, is_shared_conversation_backing
 from config import (
     cosmos_conversations_container,
     cosmos_messages_container,
@@ -31,6 +31,7 @@ from functions_documents import (
     sort_documents,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_message_deletion import is_soft_deleted_message
 from functions_personal_workflows import (
     compute_next_run_at,
     get_personal_workflow,
@@ -256,6 +257,9 @@ def _authorize_personal_conversation_read(delegated_user_id, conversation_id):
         )
     except CosmosResourceNotFoundError:
         conversation_item = None
+    # Orchestrate's backing record shares its shared conversation's id and is part of it.
+    if is_shared_conversation_backing(conversation_item):
+        conversation_item = None
 
     if conversation_item is not None:
         if str(conversation_item.get("user_id") or "").strip() != delegated_user_id:
@@ -285,6 +289,8 @@ def _legacy_message_is_visible(message_item):
         return False
     metadata = message_item.get("metadata", {}) if isinstance(message_item.get("metadata"), dict) else {}
     if metadata.get("is_generated_chat_artifact", False):
+        return False
+    if is_soft_deleted_message(message_item):
         return False
     thread_info = metadata.get("thread_info", {}) if isinstance(metadata.get("thread_info"), dict) else {}
     active_thread = thread_info.get("active_thread")

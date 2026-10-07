@@ -4,6 +4,12 @@
 Dependencies are resolved at operation time, not while config is bootstrapping.
 The approval container keeps its /group_id partition; that field is a physical
 partition only and never confers group or administrator authorization.
+
+Version: 0.261.270
+Shared by your own request in: 0.261.270. In a shared conversation, an interactive
+request by the data owner (a context with ``shared_by_request``) is their consent to share
+the sources it reads with that conversation; it is audited as ``shared_by_request`` and
+needs no pending approval. Workflow Run as and history publication approvals are unchanged.
 """
 
 import copy
@@ -711,6 +717,24 @@ class M365ApprovalService:
             "decision_event_id": approval.get("decision_event_id"), **effective,
         }
 
+    def _request_consent(self, context, source):
+        """Record that the data owner shared a source by asking for it in a shared conversation.
+
+        The grant has the shape of an approved request-only grant, so publishing evidence the
+        request captured references this request's audit event in place of an approval.
+        """
+        event_id = f"m365-request-{material_fingerprint([request_scope_fingerprint(context), source])}"
+        event = self._read(event_id, context.data_user_id) or self._create_once(self._audit_document(
+            context.data_user_id, "shared_by_request", event_id,
+            source=source, context=approval_context(context),
+            effective_grant={"effective_duration": "request"},
+        ))
+        return {
+            "source": source, "sharing_required": False, "shared_by_request": True,
+            "approval_id": event_id, "audit_id": event_id, "decision_event_id": event_id,
+            "effective_duration": "request", "acknowledged_at": event["created_at"], "expires_at": None,
+        }
+
     def authorize_sources(self, context, sources):
         if not isinstance(sources, Mapping) or not sources:
             raise ValueError("At least one Microsoft 365 source is required.")
@@ -719,6 +743,10 @@ class M365ApprovalService:
             return {source: {"source": source, "sharing_required": False} for source in sources}
         if not context.conversation_id or not context.audience_version:
             raise M365PolicyError("m365_context_required", "An authoritative conversation audience is required.")
+        if context.shared_by_request:
+            # Asking for your own Microsoft 365 data in a shared conversation is your consent to
+            # share it with that conversation; workflows and history publication still ask.
+            return {source: self._request_consent(context, source) for source in sources}
         state = self._state(context.data_user_id)
         scope = request_scope_fingerprint(context)
         granted = {}

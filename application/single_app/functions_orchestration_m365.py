@@ -1,19 +1,18 @@
 # functions_orchestration_m365.py
-"""Microsoft 365 for orchestration action steps.
+"""Microsoft 365 for orchestration action and agent steps.
 
-Each action step runs in its own request context, the execution identity's bridge. Classic
-chat and workflows install a Microsoft 365 execution context on their own request, so a
-bridge never had one: every Microsoft 365 function refused the call with
+Each action or agent step runs in its own request context, the execution identity's
+bridge. Classic chat and workflows install a Microsoft 365 execution context on their own
+request, so a bridge never had one: every Microsoft 365 function refused the call with
 ``m365_context_required`` before reaching Microsoft Graph, and the step still reported
-completed. ``action_step_scope`` installs a context for one approved action step. The
-helpers here turn Microsoft 365 sign-in, approval and policy refusals into
+completed. ``action_step_scope`` installs a context for one approved action step, and
+``agent_step_scope`` one for an approved agent step whose agent loads Microsoft 365
+actions. The helpers here turn Microsoft 365 sign-in, approval and policy refusals into
 application-owned step failures, instead of findings the model reports as data.
 
-Agent steps need no scope: a plan runs only Foundry agents, whose tools run in Foundry,
-and refuses local agents, the only agents that load Microsoft 365 actions.
-
-Version: 0.261.238
+Version: 0.261.270
 Implemented in: 0.261.238
+Agent steps get their own Microsoft 365 scope in: 0.261.270
 """
 
 import hashlib
@@ -166,4 +165,29 @@ def action_step_scope(action_ref, *, user_id, conversation_id, request_key, user
     return _step_scope(
         user_id=user_id, conversation_id=conversation_id, request_key=request_key,
         selection=selection, origin={**(origin or {}), 'capability_id': 'action_invoke'},
+    )
+
+
+def agent_loads_actions(agent):
+    """Whether an agent step could need a Microsoft 365 scope: only an agent that loads actions."""
+    actions = agent.get('actions_to_load') if isinstance(agent, dict) else None
+    return isinstance(actions, list) and any(isinstance(action, str) and action for action in actions)
+
+
+def agent_step_scope(agent, *, user_id, conversation_id, request_key, origin=None):
+    """Authorize one approved agent step's Microsoft 365 actions, selecting only that agent's.
+
+    The agent's actions and their overrides resolve from current storage as a chat-selected
+    agent's do. An agent that loads no Microsoft 365 action gets no context.
+    """
+    selection = {
+        'kind': 'agent',
+        'agent': {
+            key: agent.get(key) for key in ('id', 'name', 'is_global', 'is_group', 'group_id')
+            if isinstance(agent, dict) and key in agent
+        },
+    }
+    return _step_scope(
+        user_id=user_id, conversation_id=conversation_id, request_key=request_key,
+        selection=selection, origin={**(origin or {}), 'capability_id': 'agent_invoke'},
     )

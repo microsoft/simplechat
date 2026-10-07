@@ -1,20 +1,27 @@
 # test_v2_orchestration_streaming_bubble.py
 """
 Browser regression for the V2 orchestration streaming bubble.
-Version: 0.261.204
+Version: 0.261.256
 Implemented in: 0.261.204
 
-While an orchestrated turn is planned or run, the streaming bubble shows only the
-"N reasoning steps" toggle and the "Thinking" indicator. It used to also draw an
-Orchestration progress card (heading, "Current step: Building a plan", a percentage,
-a step count and a progress bar) that repeated what the toggle and the plan card
-already say, so that card is no longer drawn, live or in a finished answer's
-expanded reasoning. Tabular analysis keeps its progress card.
+An orchestrated turn shows one progress indicator at a time.
 
-The production controller, stores, SSE reader, MessageList and plan card run in
-Chromium with production CSS. Only HTTP is deterministic: the plan and run streams
-are held open and fed one server-shaped frame at a time, so each intermediate state
-of the bubble can be inspected. No live model, deployment or workspace content is used.
+While a turn plans, the streaming bubble shows only the "N reasoning steps" toggle and a
+"Planning" indicator. It used to also draw an Orchestration progress card (heading, "Current
+step: Building a plan", a percentage, a step count and a progress bar) that repeated what the
+toggle and the plan card already say (0.261.204), and it said "Thinking" (0.261.256).
+
+While an approved plan runs, the plan card is the only indicator. The streaming bubble used to
+show "Thinking", and its run notices, beside the card's own progress line (0.261.256). The card's
+status line now says what the run is doing: "Starting", the running step's kind of work and title,
+and "Preparing the answer" once every step has settled. The run's notices stay with the finished
+answer's reasoning steps. Any stream that is not the run's own, such as a chat reply sent while a
+run waits, still shows "Thinking". Tabular analysis keeps its progress card.
+
+The production controller, stores, SSE reader, MessageList and plan card run in Chromium with
+production CSS. Only HTTP is deterministic: the plan and run streams are held open and fed one
+server-shaped frame at a time, so each intermediate state of the bubble can be inspected. No live
+model, deployment or workspace content is used.
 
 Build CSS with the existing V2 build, keeping outputs in UI test artifacts:
 npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
@@ -79,6 +86,39 @@ INSTALL_STREAMS = r"""
 }
 """
 
+# Records every activity label that reaches the DOM, including one drawn for a single frame and
+# replaced before a locator could see it, so a test can prove a label never appeared at all.
+WATCH_ACTIVITY_LABELS = r"""
+() => {
+    window.__activityLabels = [];
+    const record = (text) => {
+        const value = (text || '').trim();
+        if (value === 'Thinking' || value === 'Planning') {
+            window.__activityLabels.push(value);
+        }
+    };
+    const visit = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            record(node.data);
+            return;
+        }
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            record(walker.currentNode.data);
+        }
+    };
+    visit(document.body);
+    new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'characterData') {
+                record(mutation.target.data);
+            }
+            mutation.addedNodes.forEach(visit);
+        }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+}
+"""
+
 
 def planning_thought(content, status="running"):
     """A planner reasoning step, shaped exactly as build_planning_thought serializes it."""
@@ -95,6 +135,11 @@ def planning_thought(content, status="running"):
             "status": status,
         },
     }
+
+
+def step_frame(step_id, status):
+    """A plan step changing state, shaped as build_step_event serializes it."""
+    return {"type": "orchestration_step", "step_id": step_id, "status": status, "summary": ""}
 
 
 def run_done(plan, turn):
@@ -220,10 +265,34 @@ def expect_toggle_first(button):
     assert button.evaluate("(node) => node.parentElement.firstElementChild === node")
 
 
-def start_plan(page):
+def watch_activity_labels(page):
+    page.evaluate(WATCH_ACTIVITY_LABELS)
+
+
+def activity_labels(page):
+    """Every Thinking or Planning label drawn since watch_activity_labels, in order."""
+    return page.evaluate("() => window.__activityLabels")
+
+
+def expect_run_status(page, text):
+    """The running plan card's status line, which is the run's only progress indicator."""
+    expect(page.get_by_text(text, exact=True)).to_have_attribute("role", "status")
+
+
+def expect_only_the_run_card(page):
+    """While a plan runs, the card is drawn and the streaming bubble is not."""
+    expect(page.get_by_role("button", name="Review the running plan")).to_be_visible()
+    expect(page.get_by_text("Thinking", exact=True)).to_have_count(0)
+    expect(page.get_by_text("Planning", exact=True)).to_have_count(0)
+    # The bubble's animated dots, and its live reasoning toggle, are the bubble.
+    expect(page.locator(".animate-bounce")).to_have_count(0)
+    expect(page.get_by_role("button", name=re.compile(r"^\d+ reasoning steps?$"))).to_have_count(0)
+
+
+def start_plan(page, approval_mode="manual"):
     page.evaluate(
         """(spec) => { void window.OrchHarness.controller.startOrchestrationPlan(spec); }""",
-        {"conversationId": CONVERSATION, "message": QUESTION, "approvalMode": "manual", "seeds": {}},
+        {"conversationId": CONVERSATION, "message": QUESTION, "approvalMode": approval_mode, "seeds": {}},
     )
     wait_for_stream(page, PLAN)
     return page.evaluate(
@@ -242,25 +311,26 @@ def finish_plan(page, turn):
     return plan
 
 
-def test_planning_bubble_shows_reasoning_toggle_and_thinking_without_a_progress_card(bubble_ui):
+def test_planning_bubble_shows_reasoning_toggle_and_planning_without_a_progress_card(bubble_ui):
     page, api = bubble_ui
     turn = start_plan(page)
-    thinking = page.get_by_text("Thinking", exact=True)
-    expect(thinking).to_be_visible()
+    planning = page.get_by_text("Planning", exact=True)
+    expect(planning).to_be_visible()
+    expect(page.get_by_text("Thinking", exact=True)).to_have_count(0)
     expect(page.get_by_text(QUESTION, exact=True)).to_be_visible()
 
     emit(page, PLAN, planning_thought(DECIDING))
     steps = toggle(page, 1)
     expect(steps).to_be_visible()
     expect(steps).to_have_attribute("aria-expanded", "false")
-    expect(thinking).to_be_visible()
+    expect(planning).to_be_visible()
     expect_no_progress_card(page)
     # The card repeated the latest planner sentence under its bar; collapsed, it stays hidden.
     expect(page.get_by_text(DECIDING, exact=True)).to_have_count(0)
     expect_toggle_first(steps)
     toggle_box = steps.bounding_box()
-    thinking_box = thinking.bounding_box()
-    assert toggle_box and thinking_box and toggle_box["y"] < thinking_box["y"]
+    planning_box = planning.bounding_box()
+    assert toggle_box and planning_box and toggle_box["y"] < planning_box["y"]
 
     steps.click()
     expect(steps).to_have_attribute("aria-expanded", "true")
@@ -269,13 +339,14 @@ def test_planning_bubble_shows_reasoning_toggle_and_thinking_without_a_progress_
     expect_no_progress_card(page)
 
     finish_plan(page, turn)
-    expect(thinking).to_have_count(0)
+    expect(planning).to_have_count(0)
     expect(page.get_by_text(DECIDING, exact=True)).to_have_count(0)
     expect_no_progress_card(page)
 
 
-def test_run_and_finished_answer_show_no_orchestration_progress_card(bubble_ui):
+def test_a_run_shows_only_the_plan_card_and_its_answer_keeps_the_notice(bubble_ui):
     page, api = bubble_ui
+    watch_activity_labels(page)
     turn = start_plan(page)
     emit(page, PLAN, planning_thought(DECIDING))
     expect(toggle(page, 1)).to_be_visible()
@@ -283,24 +354,36 @@ def test_run_and_finished_answer_show_no_orchestration_progress_card(bubble_ui):
 
     page.get_by_role("button", name="Approve and run the plan").first.click()
     wait_for_stream(page, RUN)
-    thinking = page.get_by_text("Thinking", exact=True)
-    expect(thinking).to_be_visible()
-    # Run progress stays on the plan card, which keeps its own compact line.
-    expect(page.get_by_role("button", name="Review the running plan")).to_be_visible()
+    expect_only_the_run_card(page)
+    expect_run_status(page, "Starting")
 
+    emit(page, RUN, step_frame("read", "running"))
+    expect_run_status(page, "Gathering: Read quarterly reports")
+
+    # A run notice is a reasoning step. It no longer opens a live toggle beside the card.
     emit(page, RUN, planning_thought(MEMORY_NOTICE))
-    steps = toggle(page, 1)
-    expect(steps).to_be_visible()
-    expect(thinking).to_be_visible()
     expect(page.get_by_text(MEMORY_NOTICE, exact=True)).to_have_count(0)
-    expect_toggle_first(steps)
+    expect_only_the_run_card(page)
     expect_no_progress_card(page)
+
+    emit(page, RUN, step_frame("read", "completed"))
+    emit(page, RUN, step_frame("research", "running"))
+    expect_run_status(page, "Gathering: Investigate context")
+    emit(page, RUN, step_frame("research", "completed"))
+    emit(page, RUN, step_frame("answer", "running"))
+    expect_run_status(page, "Reasoning: Write the comparison")
+    expect(page.get_by_text("2/3", exact=True)).to_be_visible()
+
+    # The answer arrives in one piece after every step settles; the wait before it is named.
+    emit(page, RUN, step_frame("answer", "completed"))
+    expect_run_status(page, "Preparing the answer")
+    expect_only_the_run_card(page)
 
     emit(page, RUN, {"content": ANSWER})
     emit(page, RUN, run_done(plan, turn))
     page.evaluate("(path) => window.endStream(path)", RUN)
     expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
-    expect(thinking).to_have_count(0)
+    expect(page.get_by_role("button", name="Review the running plan")).to_have_count(0)
 
     saved = toggle(page, 1)
     expect(saved).to_be_visible()
@@ -308,6 +391,60 @@ def test_run_and_finished_answer_show_no_orchestration_progress_card(bubble_ui):
     expect(saved).to_have_attribute("aria-expanded", "true")
     expect(page.get_by_text(MEMORY_NOTICE, exact=True)).to_be_visible()
     expect_no_progress_card(page)
+
+    labels = activity_labels(page)
+    assert "Planning" in labels, labels
+    assert "Thinking" not in labels, f"Thinking was drawn during the orchestrated turn: {labels}"
+
+
+def test_an_auto_approved_plan_goes_from_planning_straight_to_the_run_card(bubble_ui):
+    page, api = bubble_ui
+    watch_activity_labels(page)
+    turn = start_plan(page, approval_mode="auto")
+    expect(page.get_by_text("Planning", exact=True)).to_be_visible()
+
+    plan = editor_tests.make_plan(CONVERSATION, turn, mode="auto")
+    plan["approval"] = {"mode": "auto", "timeout_seconds": 0, "state": "approved"}
+    plan["status"] = "approved"
+    emit(page, PLAN, {"type": "orchestration_plan", "plan": plan, "done": True})
+    page.evaluate("(path) => window.endStream(path)", PLAN)
+    wait_for_stream(page, RUN)
+    expect_only_the_run_card(page)
+    expect_run_status(page, "Starting")
+
+    emit(page, RUN, {"content": ANSWER})
+    emit(page, RUN, run_done(plan, turn))
+    page.evaluate("(path) => window.endStream(path)", RUN)
+    expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Review the running plan")).to_have_count(0)
+
+    labels = activity_labels(page)
+    assert "Planning" in labels, labels
+    assert "Thinking" not in labels, f"Thinking flashed between the plan and its run: {labels}"
+
+
+def test_a_stream_that_is_not_the_run_still_shows_thinking_beside_its_card(bubble_ui):
+    page, api = bubble_ui
+    turn = start_plan(page)
+    plan = finish_plan(page, turn)
+    page.get_by_role("button", name="Approve and run the plan").first.click()
+    wait_for_stream(page, RUN)
+    review = page.get_by_role("button", name="Review the running plan")
+    thinking = page.get_by_text("Thinking", exact=True)
+    expect_only_the_run_card(page)
+
+    # A chat stream takes the streaming flag with no orchestration owner. That is the state a reply
+    # sent while a run waits in the same conversation leaves, with the run still on its card. Its
+    # Thinking must not be mistaken for the run's and hidden.
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({orchestrationSurface: null})")
+    expect(thinking).to_be_visible()
+    expect(review).to_be_visible()
+
+    emit(page, RUN, {"content": ANSWER})
+    emit(page, RUN, run_done(plan, turn))
+    page.evaluate("(path) => window.endStream(path)", RUN)
+    expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
+    expect(thinking).to_have_count(0)
 
 
 def test_tabular_streaming_bubble_keeps_its_progress_card(bubble_ui):

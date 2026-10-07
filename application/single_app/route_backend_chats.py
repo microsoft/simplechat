@@ -271,6 +271,7 @@ from functions_citation_tracking import (
     merge_cited_documents_into_conversation,
     resolve_citation_location,
 )
+from collaboration_models import is_shared_conversation_backing
 from functions_collaboration import build_conversation_participation_context
 from functions_m365_action_cards import (
     get_request_pending_action_references,
@@ -345,6 +346,11 @@ from functions_message_masking import (
     apply_message_mask_action,
     remove_masked_content,
     resolve_mask_display_name,
+)
+from functions_message_deletion import (
+    NOT_SOFT_DELETED_COSMOS_FILTER,
+    exclude_soft_deleted_messages,
+    is_soft_deleted_message,
 )
 from functions_message_visual_styles import (
     UNSET as VISUAL_STYLE_HEIGHT_UNSET,
@@ -859,44 +865,6 @@ def _normalize_capability_action(document_action_type):
     if normalized_action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
         return ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE
     return ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH
-
-
-def _maybe_resolve_chat_source_manifest(
-    settings,
-    user_id,
-    conversation_id,
-    selected_document_ids,
-    scope_context,
-):
-    if not is_mixed_source_manifest_enabled(settings):
-        return []
-
-    requested_source_ids = _normalize_conversation_task_document_ids(
-        selected_document_ids
-    )
-    if not requested_source_ids:
-        return []
-
-    scope_context = scope_context if isinstance(scope_context, dict) else {}
-    try:
-        return resolve_authorized_source_manifest(
-            requested_source_ids,
-            user_id=user_id,
-            selection_mode='selected',
-            conversation_id=conversation_id,
-            active_group_ids=scope_context.get('active_group_ids'),
-            active_public_workspace_ids=scope_context.get('active_public_workspace_ids'),
-        )
-    except Exception:
-        log_event(
-            '[MIXED_SOURCE_MANIFEST] Chat shadow resolution failed.',
-            extra={
-                'requested_source_count': len(requested_source_ids),
-                'selection_mode': 'selected',
-            },
-            level=logging.WARNING,
-        )
-        return []
 
 
 def _normalize_chat_document_context_contract(
@@ -2628,9 +2596,12 @@ def _resolve_prior_turn_history_window(settings=None):
 
 
 def _read_recent_assistant_messages(conversation_id, message_limit):
+    # A deleted reply's tool results and wording must not carry into later turns. Excluded in
+    # the query so TOP counts only replies that still exist, and checked again as a backstop.
     query = (
         f'SELECT TOP {int(message_limit)} c.id, c.conversation_id, c.role, c.content, c.metadata, c.agent_citations, c.hybrid_citations FROM c '
         'WHERE c.conversation_id = @conversation_id AND c.role = @role '
+        f'AND {NOT_SOFT_DELETED_COSMOS_FILTER} '
         'ORDER BY c.timestamp DESC'
     )
     messages = list(cosmos_messages_container.query_items(
@@ -2641,6 +2612,7 @@ def _read_recent_assistant_messages(conversation_id, message_limit):
         ],
         partition_key=conversation_id,
     ))
+    messages = exclude_soft_deleted_messages(messages)
     return _sanitize_saved_analysis_history(messages)
 
 
@@ -4134,6 +4106,10 @@ def _resolve_authorized_conversation_context(user_id, conversation_id):
         )
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
+    # Orchestrate's backing record shares its shared conversation's id. Chat in a shared
+    # conversation runs through the shared conversation, never directly in that record.
+    if is_shared_conversation_backing(conversation_item):
+        raise LookupError(f"Conversation {conversation_id} not found")
 
     access_context = build_conversation_participation_context(user_id, conversation_item)
     return conversation_item, access_context
@@ -18401,14 +18377,6 @@ def register_route_backend_chats(bp):
                             xml_schema_guidance=xsd_generation_contract['guidance'],
                         ),
                     })
-            else:
-                _maybe_resolve_chat_source_manifest(
-                    settings,
-                    user_id,
-                    conversation_id,
-                    effective_selected_document_ids,
-                    scope_context,
-                )
             request_document_context_enabled = bool(
                 hybrid_search_enabled
                 or (
@@ -23011,14 +22979,6 @@ def register_route_backend_chats(bp):
                                 xml_schema_guidance=xsd_generation_contract['guidance'],
                             ),
                         })
-                else:
-                    _maybe_resolve_chat_source_manifest(
-                        settings,
-                        user_id,
-                        conversation_id,
-                        effective_selected_document_ids,
-                        scope_context,
-                    )
                 request_document_context_enabled = bool(
                     hybrid_search_enabled
                     or (
@@ -26634,6 +26594,11 @@ def register_route_backend_chats(bp):
 
                     message_doc = message_results[0]
 
+                # Deleted while archiving was enabled. Its mask is the delete route's fail-safe,
+                # so clearing it here would reveal deleted content to the reader and the model.
+                if is_soft_deleted_message(message_doc):
+                    return jsonify({'error': 'Message not found'}), 404
+
                 conversation_id = message_doc.get('conversation_id')
 
                 # Verify ownership - only the message author can mask their message
@@ -27014,7 +26979,8 @@ def register_route_backend_chats(bp):
 
         The nearest preceding user message. "Make it match what we discussed" nearly always
         means the request the diagram came from, and passing that one message is enough for it
-        to mean something without sending the whole conversation to redraw a flowchart.
+        to mean something without sending the whole conversation to redraw a flowchart. A
+        deleted message is skipped, so its text never reaches the model.
 
         Best effort: an edit works perfectly well with no grounding at all, so a failure here is
         swallowed rather than failing the edit.
@@ -27028,6 +26994,7 @@ def register_route_backend_chats(bp):
                     'SELECT TOP 1 c.content FROM c '
                     'WHERE c.conversation_id = @conversation_id '
                     "AND c.role = 'user' AND c.timestamp < @timestamp "
+                    f'AND {NOT_SOFT_DELETED_COSMOS_FILTER} '
                     'ORDER BY c.timestamp DESC'
                 ),
                 parameters=[
@@ -28408,6 +28375,10 @@ def build_conversation_history_segments(
     filtered_messages = filter_assistant_artifact_items(all_messages or [])
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     ordered_messages = sort_messages_by_thread(filtered_messages)
+    # Dropped after ordering, so the surviving messages keep the order the thread chain gives
+    # them. A deleted message must not reach the summary or the recent window, nor take a slot
+    # in the history limit; its mask is only a fail-safe, not what keeps it out.
+    ordered_messages = exclude_soft_deleted_messages(ordered_messages)
 
     total_messages = len(ordered_messages)
     num_recent_messages = min(total_messages, conversation_history_limit)

@@ -1,10 +1,12 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.195
+Version: 0.261.267
 Implemented in: 0.261.093
 Separate release check boundary: 0.261.133
 The rail's notification count is answered: 0.261.195
+Selectable sections, Model Catalog, and AI Connections stubs: 0.261.258
+Seeded user preferences on open: 0.261.267
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in
@@ -21,7 +23,7 @@ are created and no access tokens are stored.
 import copy
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from playwright.sync_api import Page, Route, expect
@@ -48,22 +50,51 @@ AGENT_SECTION_IDS = (
 )
 
 
+def _select_navigation(sections):
+    """The real navigation, narrowed to the named sections of the named groups."""
+    nav = []
+    section_ids = []
+    for group in ADMIN_NAV:
+        wanted = sections.get(group["id"])
+        if not wanted:
+            continue
+        group = copy.deepcopy(group)
+        for tab in group["tabs"]:
+            tab["sections"] = [section for section in tab["sections"] if section["id"] in wanted]
+            section_ids.extend(section["id"] for section in tab["sections"])
+        group["tabs"] = [tab for tab in group["tabs"] if tab["sections"]]
+        nav.append(group)
+    missing = {section for wanted in sections.values() for section in wanted} - set(section_ids)
+    assert not missing, f"Unknown fixture sections: {sorted(missing)}"
+    return nav, tuple(section_ids)
+
+
 class AdminSettingsFixture:
     """Load the production admin page with a closed, in-memory API boundary."""
 
-    def __init__(self, page: Page, *, validate_updates=False):
+    def __init__(self, page: Page, *, validate_updates=False, sections=None):
+        """Serve the Agents settings, or the sections named per navigation group.
+
+        ``sections`` maps a navigation group id to the section ids to include, in
+        navigation order, for tests that need more than the Agents group.
+        """
         self.page = page
         fields_module = import_app_module("admin_settings_fields")
+        self.catalog_module = import_app_module("functions_model_catalog")
         self.normalize_updates = fields_module.normalize_admin_settings_updates if validate_updates else None
         schema = fields_module.get_admin_settings_fields()
-        group = copy.deepcopy(next(item for item in ADMIN_NAV if item["id"] == "agents-actions"))
-        agents_tab = next(tab for tab in group["tabs"] if tab["id"] == "agents")
-        actions_tab = next(tab for tab in group["tabs"] if tab["id"] == "actions")
-        actions_tab["sections"] = [
-            section for section in actions_tab["sections"] if section["id"] == "core-plugin-toggles"
-        ]
-        group["tabs"] = [agents_tab, actions_tab]
-        section_ids = (*AGENT_SECTION_IDS, "core-plugin-toggles")
+        if sections is None:
+            group = copy.deepcopy(next(item for item in ADMIN_NAV if item["id"] == "agents-actions"))
+            agents_tab = next(tab for tab in group["tabs"] if tab["id"] == "agents")
+            actions_tab = next(tab for tab in group["tabs"] if tab["id"] == "actions")
+            actions_tab["sections"] = [
+                section for section in actions_tab["sections"] if section["id"] == "core-plugin-toggles"
+            ]
+            group["tabs"] = [agents_tab, actions_tab]
+            nav = [group]
+            section_ids = (*AGENT_SECTION_IDS, "core-plugin-toggles")
+        else:
+            nav, section_ids = _select_navigation(sections)
         self.schema = {section_id: copy.deepcopy(schema[section_id]) for section_id in section_ids}
         self.settings = {
             field["key"]: copy.deepcopy(field["default"])
@@ -78,12 +109,18 @@ class AdminSettingsFixture:
         })
         self.payload = {
             "settings": self.settings,
-            "admin_nav": [group],
+            "admin_nav": nav,
             "field_schema": self.schema,
             "section_status": {},
             "runtime_flags": {},
             "suppressed_capabilities": fields_module.get_suppressed_capability_keys(),
         }
+        # The Model Catalog and AI Connections read their own endpoints. Catalog writes go
+        # through the real validator and transform, as test_model_catalog_management does.
+        self.catalog_settings = {}
+        self.catalog_revision = 1
+        self.catalog_writes = []
+        self.endpoints = []
         self.update_payload = {
             "version": "0.261.093",
             "update_status": {
@@ -200,11 +237,66 @@ class AdminSettingsFixture:
             route.fulfill(json={"orchestration_type": "default_agent", "max_rounds_per_agent": 1})
         elif path == "/api/agents/catalog" and request.method == "GET":
             route.fulfill(json={"agents": self.catalog_agents})
+        elif path.startswith("/api/admin/model-catalog"):
+            self._model_catalog(route)
+        elif path == "/api/models/catalog" and request.method == "GET":
+            route.fulfill(json=self._catalog_payload(admin=False))
+        elif path == "/api/v2/admin/model-endpoints" and request.method == "GET":
+            route.fulfill(json={"endpoints": self.endpoints, "custom_api_types": [], "default_notices": {}})
         else:
             self.unexpected_requests.append(f"{request.method} {path}")
             route.fulfill(status=404, json={"error": "Unexpected fixture request."})
 
-    def open(self, theme="light", width=1440, font_size="m", *, wait_until="networkidle"):
+    def _catalog_payload(self, *, admin):
+        profiles = self.catalog_module.get_effective_model_profiles(self.catalog_settings)
+        if not admin:
+            return {
+                "profiles": [profile for profile in profiles if not profile["archived"]],
+                "tasks": self.catalog_module.TASKS,
+            }
+        for profile in profiles:
+            profile["linked_models"] = [
+                {
+                    "connection": endpoint["name"], "connection_id": endpoint["id"],
+                    "model": model.get("displayName") or model["deploymentName"],
+                    "model_id": model.get("id", ""), "enabled": True,
+                    "capabilities": {
+                        key: value for key, value in (profile["capabilities"] or {}).items()
+                        if type(value) is bool
+                    },
+                }
+                for endpoint in self.endpoints
+                for model in endpoint.get("models", [])
+                if model.get("catalogProfileId") == profile["id"]
+            ]
+        return {"profiles": profiles, "tasks": self.catalog_module.TASKS, "etag": str(self.catalog_revision)}
+
+    def _model_catalog(self, route: Route):
+        request = route.request
+        if request.method == "GET":
+            route.fulfill(json=self._catalog_payload(admin=True))
+            return
+        body = request.post_data_json
+        self.catalog_writes.append(copy.deepcopy(body))
+        if body.get("etag") != str(self.catalog_revision):
+            route.fulfill(status=409, json={"error": "The catalog changed. Reload and review before saving."})
+            return
+        profile_id = unquote(request.url.rsplit("/", 1)[-1]) if request.method == "PATCH" else None
+        try:
+            self.catalog_settings = self.catalog_module.change_catalog(
+                self.catalog_settings,
+                profile_id=profile_id,
+                profile=body.get("profile"),
+                preferences=body.get("preferences"),
+            )
+        except self.catalog_module.ModelCatalogError as error:
+            route.fulfill(status=400, json={"error": error.public_message})
+            return
+        self.catalog_revision += 1
+        route.fulfill(json=self._catalog_payload(admin=True))
+
+    def open(self, theme="light", width=1440, font_size="m", *, wait_until="networkidle",
+             height=1000, ready_region="Agent Runtime", preferences=None):
         if not SPA_INDEX.is_file():
             pytest.fail("Build the V2 SPA first: npm --prefix application/v2_ui run build")
         source_root = REPO_ROOT / "application" / "v2_ui" / "src"
@@ -218,11 +310,13 @@ class AdminSettingsFixture:
             "darkModeEnabled": theme == "dark",
             "v2RailCollapsed": width < 1024,
             "fontSizePreference": font_size,
+            # Saved user preferences the page should start from, e.g. a collapsed rail.
+            **(preferences or {}),
         }
-        self.page.set_viewport_size({"width": width, "height": 1000})
+        self.page.set_viewport_size({"width": width, "height": height})
         # A held release check keeps a request open, which networkidle would wait on.
         self.page.goto(f"{ORIGIN}/v2/admin", wait_until=wait_until)
-        expect(self.page.get_by_role("region", name="Agent Runtime", exact=True)).to_be_visible()
+        expect(self.page.get_by_role("region", name=ready_region, exact=True)).to_be_visible()
         expect(self.page.locator("html")).to_have_attribute("data-font-size", font_size)
 
     def release_update_status(self):
@@ -231,8 +325,8 @@ class AdminSettingsFixture:
         while self.held_update_status:
             self.held_update_status.pop(0).fulfill(json=self.update_payload)
 
-    def capture(self, name):
-        artifacts = REPO_ROOT / "ui_tests" / "artifacts" / "v2_admin_agents"
+    def capture(self, name, folder="v2_admin_agents"):
+        artifacts = REPO_ROOT / "ui_tests" / "artifacts" / folder
         artifacts.mkdir(parents=True, exist_ok=True)
         self.page.screenshot(
             path=str(artifacts / f"{name}.png"), full_page=True, animations="disabled"

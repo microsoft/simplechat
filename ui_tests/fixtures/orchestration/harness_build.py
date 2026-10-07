@@ -44,9 +44,7 @@ class HarnessUnavailable(RuntimeError):
 def _newest_source_mtime():
     """The newest modification time among the harness entry and every V2 source file."""
     newest = max(ENTRY.stat().st_mtime, Path(__file__).stat().st_mtime)
-    shared_assets = REPO_ROOT / "application" / "single_app" / "static"
-    paths = [*V2_SRC.rglob("*"), shared_assets / "js/admin/model_catalog_ui.js", shared_assets / "css/model-catalog.css"]
-    for path in paths:
+    for path in V2_SRC.rglob("*"):
         if path.is_file():
             mtime = path.stat().st_mtime
             if mtime > newest:

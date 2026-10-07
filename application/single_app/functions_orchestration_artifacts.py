@@ -148,6 +148,26 @@ def is_orchestration_artifact_source(value):
     return type(value) is dict and value.get("kind") == ORCHESTRATION_ARTIFACT_KIND
 
 
+def is_retained_orchestration_file(message):
+    """Whether a file message is a retained orchestration output, deleted by output cleanup.
+
+    Conversation deletion leaves these records and their bytes to the conditional output
+    cleanup it enrolls, whether the conversation is personal or a shared conversation's
+    Orchestrate backing.
+    """
+    if not isinstance(message, dict) or message.get("role") != "file":
+        return False
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    key = metadata.get("generated_artifact_idempotency_key")
+    return (
+        is_orchestration_artifact_source(metadata.get("generated_artifact_source"))
+        or metadata.get("generated_artifact_origin") == ORCHESTRATION_ARTIFACT_KIND
+        or isinstance(key, str) and key.startswith(ORCHESTRATION_ARTIFACT_KEY_PREFIX)
+    )
+
+
 def validate_orchestration_artifact_binding(value):
     if (
         type(value) is not dict or set(value) != _SOURCE_FIELDS

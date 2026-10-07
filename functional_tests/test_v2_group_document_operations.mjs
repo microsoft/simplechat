@@ -1,7 +1,8 @@
 // test_v2_group_document_operations.mjs
-// Version: 0.261.164
+// Version: 0.261.268
 // Implemented in: 0.261.129
 // A download returns the attachment name the server gave its file: 0.261.164
+// Only an `updated` 200 confirms a metadata edit; receipts report a pending search sync: 0.261.268
 // Executes immutable operation paths, capability gates and complete outcome receipts.
 
 import assert from 'node:assert/strict';
@@ -231,22 +232,51 @@ try {
         }
         assert.equal(calls.length, 1);
     });
-    await run('metadata acknowledges exact fields, document, group and updated/queued HTTP status', async () => {
-        handler = () => json({ message: 'Saved for screening', document_id: 'doc-1', group_id: 'group-a', updated_fields: ['title'], status: 'queued' }, 202);
-        const result = await adapter.editMetadata(document(), { title: 'New' });
-        assert.equal(result, 'queued');
+    await run('metadata acknowledges exact fields, document, group and an updated 200, and reports a pending search sync', async () => {
         const valid = { message: 'Saved', document_id: 'doc-1', group_id: 'group-a', updated_fields: ['title'], status: 'updated' };
+        handler = () => json({ ...valid, search_sync: { status: 'pending', revision: 1, fields: ['title'] } });
+        assert.deepEqual(await adapter.editMetadata(document(), { title: 'New' }), { searchSyncPending: true });
+        // The search sync flag is informational: a confirmed change never fails because of it.
+        for (const searchSync of [undefined, { status: 'not_required' }, 'pending', { status: 'unknown' }, null]) {
+            handler = () => json(searchSync === undefined ? valid : { ...valid, search_sync: searchSync });
+            assert.deepEqual(await adapter.editMetadata(document(), { title: 'New' }), { searchSyncPending: false });
+        }
         for (const [payload, status] of [
             [{ message: 'Maybe saved' }, 200], [{ ...valid, document_id: 'other' }, 200],
             [{ ...valid, group_id: 'other' }, 200], [{ ...valid, updated_fields: [] }, 200],
             [{ ...valid, updated_fields: ['title', 'authors'] }, 200], [{ ...valid, status: 'queued' }, 200],
+            [{ ...valid, status: 'queued', message: 'Saved for screening' }, 202], [valid, 202],
             [valid, 207], [{ ...valid, errors: [{ document_id: 'doc-1', error: 'partial' }] }, 200],
+            [{ ...valid, status: 'queued', search_sync: { status: 'pending' } }, 200],
         ]) {
             handler = () => json(payload, status);
             await assert.rejects(adapter.editMetadata(document(), { title: 'New' }), /did not confirm/);
         }
         handler = () => new Response('<html>Sign in</html>', { headers: { 'Content-Type': 'text/html' } });
         await assert.rejects(adapter.editMetadata(document(), { title: 'New' }), /did not confirm/);
+    });
+    await run('tag receipts report a pending search sync only for confirmed documents', async () => {
+        const targets = [document(), document('doc-2')];
+        const pending = { status: 'pending', document_count: 2 };
+        handler = () => json({ ...receipt(['doc-1', 'doc-2'], 'success'), search_sync: pending });
+        assert.deepEqual(await adapter.tagDocuments(targets, 'add_tags', ['tag']), {
+            succeeded: ['doc-1', 'doc-2'], errors: [], searchSyncPending: true,
+        });
+        handler = () => json({ ...receipt(['doc-1', 'doc-2'], 'success'), search_sync: { status: 'not_required' } });
+        assert.deepEqual(await adapter.tagDocuments(targets, 'add_tags', ['tag']), { succeeded: ['doc-1', 'doc-2'], errors: [] });
+        const errors = [{ document_id: 'doc-1', error: 'operation_failed', message: 'Unable to tag.' }, { document_id: 'doc-2', error: 'operation_failed', message: 'Unable to tag.' }];
+        handler = () => json({ ...receipt([], 'success', errors), search_sync: pending }, 207);
+        assert.deepEqual(await adapter.tagDocuments(targets, 'add_tags', ['tag']), { succeeded: [], errors });
+        handler = () => json({
+            message: 'Renamed', documents_updated: 1, success: [{ document_id: 'doc-1', tags: ['new'] }], errors: [],
+            vocabulary_retained: false, tag: { name: 'new', color: '#0078d4' }, search_sync: { status: 'pending', document_count: 1 },
+        });
+        assert.equal((await adapter.updateTag('old', { new_name: 'new' })).searchSyncPending, true);
+        handler = () => json({
+            message: 'Updated', documents_updated: 0, success: [], errors: [], vocabulary_retained: false,
+            tag: { name: 'old', color: '#123456' }, search_sync: { status: 'not_required' },
+        });
+        assert.equal((await adapter.updateTag('old', { color: '#123456' })).searchSyncPending, undefined);
     });
     await run('207 batch outcomes retain every failure instead of claiming all succeeded', async () => {
         const targets = [document(), document('doc-2')];
@@ -394,9 +424,12 @@ try {
         assert.equal(calls.at(-1).path, '/api/documents/bulk-delete');
         assert.equal(calls.at(-1).body.file_sync_delete_action, 'keep_source');
         handler = () => json({ message: 'Saved' });
-        const status = await PERSONAL_DOCUMENT_OPERATIONS.editMetadata(target, { title: 'Changed' });
-        assert.equal(status, 'updated');
+        assert.deepEqual(await PERSONAL_DOCUMENT_OPERATIONS.editMetadata(target, { title: 'Changed' }), { searchSyncPending: false });
         assert.equal(calls.at(-1).path, '/api/documents/personal');
+        handler = () => json({ message: 'Saved', search_sync: { status: 'pending', revision: 2, fields: ['title'] } });
+        assert.deepEqual(await PERSONAL_DOCUMENT_OPERATIONS.editMetadata(target, { title: 'Changed' }), { searchSyncPending: true });
+        handler = () => json({ success: false, errors: ['Unable to save.'] });
+        await assert.rejects(PERSONAL_DOCUMENT_OPERATIONS.editMetadata(target, { title: 'Changed' }), /not fully saved/);
     });
     await run('status-bearing helpers preserve body-only contracts for existing API and upload callers', async () => {
         handler = () => json({ message: 'Accepted' }, 202);

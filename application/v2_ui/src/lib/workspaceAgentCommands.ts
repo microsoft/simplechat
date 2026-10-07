@@ -10,15 +10,17 @@ import { agentKnowledgeReference, type AgentKnowledgeCatalog } from './workspace
 /**
  * Which workspace an instruction drafting request speaks for. Personal keeps the historical
  * `agent_scope: 'user'` spelling with no group; a group draft names its group so the server drafts
- * against the group's own actions and knowledge rather than the caller's personal ones. Personal
+ * against the group's own actions and knowledge rather than the caller's personal ones. A global
+ * draft speaks for the organisation, which the server allows only for an administrator. Personal
  * callers pass nothing and their request stays byte-identical.
  */
 export interface InstructionDraftScope {
-    agentScope: 'user' | 'group';
+    agentScope: 'user' | 'group' | 'global';
     groupId?: string;
 }
 
 export const PERSONAL_INSTRUCTION_SCOPE: InstructionDraftScope = { agentScope: 'user' };
+export const GLOBAL_INSTRUCTION_SCOPE: InstructionDraftScope = { agentScope: 'global' };
 
 export function agentInstructionRequest(
     draft: AgentConfiguration, actions: ActionConfiguration[], catalog: AgentKnowledgeCatalog | null,

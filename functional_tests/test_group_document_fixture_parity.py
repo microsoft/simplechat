@@ -1,11 +1,12 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.230
+Version: 0.261.268
 Implemented in: 0.261.161
 A tag vocabulary conflict is pinned from the etag pre-check and from a lost patch: 0.261.167
 A bulk tagging batch or metadata save that meets it is refused whole, with no document written: 0.261.168
 A released screened document's metadata change applies directly and returns the ordinary receipt: 0.261.230
+Metadata and re-tag receipts report the background search sync; only the access index fails a save: 0.261.268
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:
@@ -484,9 +485,9 @@ def real_synced_delete_guard(file_sync):
 
 @pytest.mark.parametrize("scenario", ["updated", "screened", "propagation_incomplete"])
 def test_metadata_receipt_parity(management, scenario):
-    """A saved change names its fields in request order; a released screened document's change applies
-    directly and returns the same receipt; a change whose projections failed after the document saved
-    is a coded 500."""
+    """A saved change names its fields in request order and reports its background search sync; a
+    released screened document's change applies directly and returns the same receipt; a change whose
+    access index projection failed after the document saved is a coded 500."""
     env = management
     body = {"title": "Changed title", "keywords": ["alpha", "beta"]}
     expected, status = metadata_result("document-a", body), 200
@@ -496,10 +497,7 @@ def test_metadata_receipt_parity(management, scenario):
         body = {"abstract": "Updated abstract"}
         expected = metadata_result("document-a", body)
     elif scenario == "propagation_incomplete":
-        def fail_chunk(**_kwargs):
-            raise StoreFailure()
-
-        env.document_helpers["update_chunk_metadata"] = fail_chunk
+        env.index_updates.return_value = {"success": False}
         expected, status = propagation_incomplete("document-a"), 500
     # The server names fields in the order the body sends them; Flask's test client would sort a
     # `json=` body's keys, so this one is sent exactly as written, as the browser sends its own.
@@ -758,12 +756,15 @@ def test_tag_vocabulary_conflict_receipt_parity(management, operation, check):
     env = management
     env.groups[GROUP_A]["tag_definitions"] = deepcopy(TAG_DEFINITIONS)
     if check == "pre_check":
-        def concurrent_group_edit(**_kwargs):
+        schedule_sync = env.document_helpers["schedule_document_search_metadata_sync"]
+
+        def concurrent_group_edit(*args, **kwargs):
             env.group_container.change(GROUP_A, tag_definitions={
                 **env.groups[GROUP_A]["tag_definitions"], "parallel": {"color": "#ffffff"},
             })
+            return schedule_sync(*args, **kwargs)
 
-        env.document_helpers["update_chunk_metadata"] = concurrent_group_edit
+        env.document_helpers["schedule_document_search_metadata_sync"] = concurrent_group_edit
     else:
         lose_the_vocabulary_patch(env, removing=True)
     tag, tags = ({"name": "archive", "color": "#8b5cf6"}, ["archive"]) if operation == "rename" else (None, [])

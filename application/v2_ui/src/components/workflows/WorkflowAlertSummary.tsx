@@ -1,53 +1,39 @@
 // WorkflowAlertSummary.tsx
 // Read-only summary of a workflow's stored alerts, for viewers who cannot manage the workflow.
 
-import { useId } from 'react';
+import { BellRing } from 'lucide-react';
 import {
     workflowAlertSummary,
-    type WorkflowAlertMode,
-    type WorkflowAlertPriority,
+    WORKFLOW_ALERT_MODE_LABELS,
+    WORKFLOW_ALERT_PRIORITY_LABELS,
 } from '../../lib/workflowAlerts';
 import type { WorkflowDefinition } from '../../lib/workflowEditor';
+import { SectionCard } from '../ui/SectionCard';
+import type { WorkflowCardFrame } from './WorkflowField';
 
-// The alert editor's own option labels, so both views describe a setting the same way.
-const MODE_LABELS: Record<WorkflowAlertMode, string> = {
-    off: 'Never notify me',
-    rules: 'Only when a condition is met',
-    every_run: 'On every run',
-};
-const PRIORITY_LABELS: Record<WorkflowAlertPriority, string> = {
-    none: 'No notification',
-    low: 'Low priority',
-    medium: 'Medium priority',
-    high: 'High priority',
-};
+/** One fact, label beside value on a wide card, the way Admin shows a readout. */
+function SummaryRow({ term, children }: { term: string; children: string }) {
+    return (
+        <div className="admin-field admin-field-inline py-3" data-field-width="wide">
+            <dt className="admin-field-heading text-sm font-semibold text-text-1">{term}</dt>
+            <dd className="admin-field-control text-sm text-text-2">{children}</dd>
+        </div>
+    );
+}
 
-export function WorkflowAlertSummary({ workflow }: { workflow: WorkflowDefinition }) {
-    const titleId = useId();
+export function WorkflowAlertSummary({ workflow, card }: { workflow: WorkflowDefinition; card: WorkflowCardFrame }) {
     const summary = workflowAlertSummary(workflow);
     return (
-        <section aria-labelledby={titleId} className="space-y-3 rounded-2xl border border-edge p-4">
-            <h3 id={titleId} className="text-base font-semibold text-text-1">Alerts</h3>
-            <dl className="grid gap-3 text-sm sm:grid-cols-3">
-                <div>
-                    <dt className="text-xs text-text-3">When to alert</dt>
-                    <dd className="text-text-1">{MODE_LABELS[summary.mode]}</dd>
-                </div>
-                <div>
-                    <dt className="text-xs text-text-3">Pop-up priority</dt>
-                    <dd className="text-text-1">{PRIORITY_LABELS[summary.priority]}</dd>
-                </div>
-                <div>
-                    <dt className="text-xs text-text-3">Alert rules</dt>
-                    <dd className="text-text-1">{summary.ruleCount === 1 ? '1 rule' : `${summary.ruleCount} rules`}</dd>
-                </div>
+        <SectionCard id={card.id} title="Alerts" icon={BellRing} status={card.status} meta={card.meta}
+            headingLevel={card.headingLevel}>
+            <dl className="divide-y divide-edge-strong">
+                <SummaryRow term="When to alert">{WORKFLOW_ALERT_MODE_LABELS[summary.mode]}</SummaryRow>
+                <SummaryRow term="Pop-up priority">{WORKFLOW_ALERT_PRIORITY_LABELS[summary.priority]}</SummaryRow>
+                <SummaryRow term="Alert rules">{summary.ruleCount === 1 ? '1 rule' : `${summary.ruleCount} rules`}</SummaryRow>
                 {summary.optionSummary.length ? (
-                    <div className="sm:col-span-3">
-                        <dt className="text-xs text-text-3">Pop-up options</dt>
-                        <dd className="text-text-1">{summary.optionSummary.join(' · ')}</dd>
-                    </div>
+                    <SummaryRow term="Pop-up options">{summary.optionSummary.join(' · ')}</SummaryRow>
                 ) : null}
             </dl>
-        </section>
+        </SectionCard>
     );
 }

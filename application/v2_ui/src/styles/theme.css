@@ -340,6 +340,11 @@ html[data-font-size='xl'] {
 }
 
 @layer utilities {
+    /*
+     * The Admin Settings card and field rules below are shared with the V2 workflow editor
+     * (SectionCard.tsx and WorkflowField.tsx), so a workflow card reads as the same object as an
+     * Admin section. Change them here once rather than forking a copy for workflows.
+     */
     .admin-settings-distinct {
         container-type: inline-size;
         overflow-wrap: anywhere;
@@ -348,6 +353,208 @@ html[data-font-size='xl'] {
     /* Same layer as field borders; focus utilities retain their higher specificity. */
     .admin-settings-distinct :where(input:not([type='checkbox']), select, textarea) {
         border-color: color-mix(in srgb, var(--text-3) 85%, transparent);
+    }
+
+    /*
+     * One setting: label, help, and control.
+     *
+     * Stacked on a narrow card -- label, control, help, which is the order the page has
+     * always used. Once the card is wide enough, the label and its help take a left column
+     * and the control a right one, so a section reads as a list of settings rather than a
+     * column of inputs stretched across the screen. Container queries resolve against the
+     * card, so a larger text size moves a card back to stacked on its own.
+     */
+    .admin-field {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            'heading'
+            'control'
+            'help';
+        row-gap: 0.375rem;
+    }
+
+    .admin-field > .admin-field-heading {
+        grid-area: heading;
+    }
+
+    .admin-field > .admin-field-help {
+        grid-area: help;
+        max-width: 72ch;
+    }
+
+    .admin-field > .admin-field-control {
+        grid-area: control;
+    }
+
+    /* A short readout, such as an On/Off chip, stays beside its label when stacked. */
+    .admin-field.admin-field-inline {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            'heading control'
+            'help help';
+        column-gap: 0.75rem;
+    }
+
+    /* Independent switches, one per row until the card can hold two side by side. */
+    .admin-switch-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-switch-grid > * + * {
+        border-top: 1px solid var(--edge-strong);
+    }
+
+    @container (min-width: 50rem) {
+        .admin-field,
+        .admin-field.admin-field-inline {
+            grid-template-columns: minmax(13rem, 26rem) minmax(18rem, 1fr);
+            grid-template-rows: auto 1fr;
+            grid-template-areas:
+                'heading control'
+                'help control';
+            column-gap: 2rem;
+            row-gap: 0.25rem;
+            align-items: start;
+        }
+
+        /* Lines the label up with the text inside a 40px control. */
+        .admin-field > .admin-field-heading {
+            padding-top: 0.625rem;
+        }
+
+        .admin-field.admin-field-inline > .admin-field-heading {
+            padding-top: 0;
+        }
+
+        /* A nested row starts further in, so its label column gives up the indent and
+           its control lines up with the rows that are not nested. */
+        [data-setting-emphasis='dependent'] .admin-field {
+            grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
+        }
+
+        /* An anchored panel lines up with the text of the switch it belongs to, the
+           same 3.5rem a switch row indents its notices by. A narrow card keeps the full
+           width instead, where the indent would cost more room than it explains. */
+        .admin-anchored-groups {
+            margin-inline-start: 3.5rem;
+        }
+
+        .admin-field[data-field-width='compact'] > .admin-field-control {
+            max-width: 12rem;
+        }
+
+        .admin-field[data-field-width='standard'] > .admin-field-control {
+            max-width: 26rem;
+        }
+
+        .admin-field[data-field-width='wide'] > .admin-field-control {
+            max-width: 42rem;
+        }
+    }
+
+    @container (min-width: 64rem) {
+        .admin-switch-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            column-gap: 2.5rem;
+        }
+
+        .admin-switch-grid > * + * {
+            border-top: 0;
+        }
+
+        .admin-switch-grid > :nth-child(n + 3) {
+            border-top: 1px solid var(--edge-strong);
+        }
+    }
+
+    /*
+     * Agent and action editor rows (components/workspace/EditorLayout.tsx).
+     *
+     * The editors reuse the setting row above, but they nest fields in panels, groups and
+     * fieldsets, so a row cannot go by the card's width. Each row measures its own width
+     * and is marked `data-wide` from 50rem, the width at which an Admin Settings row puts
+     * its label beside the control. Neither rows nor editor cards are size containers: in
+     * Chromium a size container can be left with a stale, collapsed layout when React adds
+     * an editor section after it. The stacked rules win over any container query above.
+     */
+    .editor-field {
+        inline-size: 100%;
+        min-inline-size: 0;
+    }
+
+    .editor-field > .admin-field {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        grid-template-areas:
+            'heading'
+            'control'
+            'help';
+        column-gap: 0;
+        row-gap: 0.375rem;
+    }
+
+    .editor-field > .admin-field > .admin-field-heading {
+        padding-top: 0;
+    }
+
+    .editor-field > .admin-field > .admin-field-control {
+        max-width: none;
+    }
+
+    .editor-field[data-wide] > .admin-field {
+        grid-template-columns: minmax(13rem, 26rem) minmax(18rem, 1fr);
+        grid-template-rows: auto 1fr;
+        grid-template-areas:
+            'heading control'
+            'help control';
+        column-gap: 2rem;
+        row-gap: 0.25rem;
+        align-items: start;
+    }
+
+    /* Lines the label up with the text inside a 40px control. */
+    .editor-field[data-wide] > .admin-field > .admin-field-heading {
+        padding-top: 0.625rem;
+    }
+
+    /* A nested row gives its label column the indent, so its control lines up. */
+    [data-setting-emphasis='dependent'] .editor-field[data-wide] > .admin-field {
+        grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='compact'] > .admin-field-control {
+        max-width: 12rem;
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='standard'] > .admin-field-control {
+        max-width: 26rem;
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='wide'] > .admin-field-control {
+        max-width: 42rem;
+    }
+
+    /* Consecutive rows read as one list, separated by a hairline as settings rows are. */
+    .editor-field + .editor-field {
+        border-top: 1px solid var(--edge-strong);
+    }
+
+    .editor-field:has(+ .editor-field) {
+        margin-block-end: 0;
+    }
+
+    .admin-settings-distinct.editor-section {
+        container-type: normal;
+    }
+
+    /* Panels and groups have the solid surface of an Admin Settings group, where the
+       translucent light-theme edge disappears. Rows and outlined buttons inside one use the
+       strong edge so they stay visible; inputs keep the admin field border above. */
+    .editor-panel :is(.border-edge, .glass-flat):not(input, select, textarea),
+    .editor-group :is(.border-edge, .glass-flat):not(input, select, textarea) {
+        border-color: var(--edge-strong);
     }
 
     /* Relative to the card, not the viewport, so text scaling also triggers wrapping. */
@@ -395,6 +602,61 @@ html[data-font-size='xl'] {
             grid-column: 2;
             margin-inline-start: 0;
         }
+    }
+
+    /*
+     * A native <details> drawn like an Admin field group: a bordered block with a chevron row
+     * that turns when it opens. It stays a real disclosure, so the browser keeps its keyboard
+     * behaviour and an invalid control inside still opens it. The chevron is scoped to its own
+     * summary, so a disclosure nested inside another turns only when it opens itself.
+     */
+    .workflow-disclosure {
+        border: 1px solid var(--edge-strong);
+        border-radius: 0.75rem;
+        background-color: var(--surface-solid);
+    }
+
+    .workflow-disclosure > summary {
+        display: flex;
+        min-height: 2.75rem;
+        cursor: pointer;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--text-1);
+        list-style: none;
+    }
+
+    .workflow-disclosure > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .workflow-disclosure > summary:hover {
+        background-color: var(--surface-sunken);
+    }
+
+    .workflow-disclosure[open] > summary {
+        border-bottom: 1px solid var(--edge-strong);
+        border-end-start-radius: 0;
+        border-end-end-radius: 0;
+        background-color: var(--surface-sunken);
+    }
+
+    .workflow-disclosure > summary > .workflow-disclosure-chevron {
+        flex-shrink: 0;
+        color: var(--text-2);
+        transition: transform 150ms ease-out;
+    }
+
+    .workflow-disclosure[open] > summary > .workflow-disclosure-chevron {
+        transform: rotate(90deg);
+    }
+
+    .workflow-disclosure > .workflow-disclosure-body {
+        padding: 0.75rem;
     }
 
     /*

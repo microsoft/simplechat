@@ -20,7 +20,7 @@ from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFo
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from flask import current_app, has_app_context, session
 
-from collaboration_models import normalize_collaboration_user
+from collaboration_models import is_shared_conversation_backing, normalize_collaboration_user
 from conversation_memory_lifecycle import clone_owned_memory, delete_referenced_conversation_memory, remap_memory_references
 from functions_conversation_memory import ConversationMemoryStore, MemoryContext, is_conversation_memory_blob_path
 from config import (
@@ -114,6 +114,7 @@ from functions_orchestration_artifacts import (
 )
 from functions_orchestration_output_store import OutputStorageError, OutputUnavailableError
 from functions_m365_action_cards import strip_pending_action_references
+from functions_message_deletion import exclude_soft_deleted_messages
 from functions_personal_workflows import save_personal_workflow
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
@@ -461,7 +462,9 @@ def _collect_fork_documents(
     all_documents: List[Dict[str, Any]],
     selected_message_id: str,
 ) -> List[Dict[str, Any]]:
-    ordered_documents = sorted(all_documents, key=_message_fork_sort_key)
+    # Messages deleted while archiving was enabled are not part of the conversation and are
+    # not copied. The caller still compares the full set to detect concurrent changes.
+    ordered_documents = sorted(exclude_soft_deleted_messages(all_documents), key=_message_fork_sort_key)
     timeline_documents = [
         document
         for document in ordered_documents
@@ -1154,6 +1157,9 @@ def add_conversation_message_for_current_user(
             partition_key=normalized_conversation_id,
         )
     except CosmosResourceNotFoundError:
+        conversation_item = None
+    # Orchestrate's backing record shares its shared conversation's id; posts go to the thread.
+    if is_shared_conversation_backing(conversation_item):
         conversation_item = None
 
     if conversation_item is not None:

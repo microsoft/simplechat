@@ -86,7 +86,13 @@ import {
     type TabularRunSettings,
 } from '../../lib/tabularRunEstimate';
 import { LargeRunDialog } from './LargeRunDialog';
-import type { MentionSuggestion } from '../../lib/mentions';
+import {
+    conversationParticipants,
+    extractMentionedParticipants,
+    resolveInvocationTarget,
+    sharedConversationTarget,
+    type MentionSuggestion,
+} from '../../lib/mentions';
 import { useUiStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
 import { chatWidthClass } from '../../lib/chatWidth';
@@ -107,7 +113,7 @@ import { messageToPlainText } from '../../lib/messageText';
 import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
 import { WORKFLOW_RESULT_PLACEHOLDER } from '../../lib/workflowResults';
 import { WorkflowResultChip } from './WorkflowResultChip';
-import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
+import type { AgentOption, Json, PromptOption, WorkspaceRef } from '../../lib/types';
 import { rememberPromptValues } from '../../lib/promptVariableMemory';
 import {
     EMPTY_PROMPT_DRAFT,
@@ -236,6 +242,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const canPost = !shared || collaboration?.can_post_messages === true;
     const awaitingInvite = Boolean(shared && collaboration?.can_accept_invite);
     const checkingAccess = shared && !collaboration;
+    // Plans in a shared conversation run for the person who started it (the server serializes
+    // that person as the conversation's `user_id`); everyone else asks the assistant directly.
+    const sharedOrchestrationAllowed = Boolean(
+        shared && collaboration && bootstrap?.user?.id && collaboration.user_id === bootstrap.user.id,
+    );
     const replyTo = useCollaborationStore((state) => state.replyTo);
     const setReplyTo = useCollaborationStore((state) => state.setReplyTo);
 
@@ -245,6 +256,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const [draft, setDraft] = useState(createComposerDraft);
     const { text, attachedPrompt } = draft;
+    // A message made only of mention chips is a ping, which typing `@Name` alone always allowed.
+    const hasMentionChips = (draft.mentions?.length ?? 0) > 0;
     const promptInstance = draft.promptInstance ?? 0;
     const contextItems = composerDraftContextItems(draft);
     const imageCapability = useImageEditCapability();
@@ -620,10 +633,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         imageReferenceConversationRef.current = activeConversationId;
         setDraft((current) => {
             const clearReferences = conversationChanged && Boolean(current.imageReferences?.length);
-            if (!current.uploads.length && !clearReferences) {
+            // Mention chips name the people and agents of the conversation being left.
+            const clearMentions = conversationChanged && Boolean(current.mentions?.length);
+            if (!current.uploads.length && !clearReferences && !clearMentions) {
                 return current;
             }
-            return { ...current, uploads: [], ...(clearReferences ? { imageReferences: [] } : {}) };
+            return {
+                ...current,
+                uploads: [],
+                ...(clearReferences ? { imageReferences: [] } : {}),
+                ...(clearMentions ? { mentions: [] } : {}),
+            };
         });
     }, [activeConversationId]);
 
@@ -1001,7 +1021,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         // An attached prompt is a complete message on its own, so a turn carrying one may be
         // sent without anything typed under it.
-        if (!text.trim() && !attachedPrompt) {
+        if (!text.trim() && !attachedPrompt && !hasMentionChips) {
             return;
         }
         if (attachedPrompt && !allowUnfilled && composerDraftUnfilledVariables(draft, promptContext()).length > 0) {
@@ -1020,11 +1040,24 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // Orchestration takes a different road entirely: the server plans the work rather than
         // running a chat stream, so the large-run confirmation — a manual-flow concern about a
         // tabular export the planner has not chosen — does not apply.
+        //
+        // A shared conversation applies its own rule first, exactly as manual mode does: a
+        // message that only addresses people is posted to them and never planned. Only the person
+        // who started the conversation plans in it, so anyone else's request to the assistant is
+        // answered the classic way.
+        const sharedRequest = orchestrating && shared ? sharedOrchestrationRequest(outgoing.message) : null;
+        if (orchestrating && shared && !sharedRequest) {
+            dispatch(outgoing);
+            return;
+        }
         if (orchestrating) {
             // Asked inside the click or key press that sent the message, because that is the
             // only moment a browser shows its prompt. Does nothing once it has been answered.
             void requestDesktopNotificationPermission();
-            dispatchOrchestration(outgoing.message, outgoing.promptInfo);
+            dispatchOrchestration(outgoing.message, outgoing.promptInfo, sharedRequest);
+            if (sharedRequest) {
+                setReplyTo(null);
+            }
             return;
         }
 
@@ -1137,17 +1170,27 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (options.imageGeneration && draftImageReferences.length > 0) {
             seeds.image_references = draftImageReferences;
         }
+        // An explicit @agent or @model tag says who should answer, the way it does in a shared
+        // chat: an agent tag seeds that agent, so the plan asks it rather than using its actions
+        // directly, and a model tag pins that model. A tag wins over the manual controls.
+        const tagged = resolveInvocationTarget(
+            message,
+            bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        );
+        const taggedAgent = tagged?.target_type === 'agent' ? tagged.agent_selection_key : undefined;
+        const taggedModel = tagged?.target_type === 'model' ? tagged.selection_key : undefined;
         Object.assign(
             seeds,
             buildSelectionFields({
                 agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
                 models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-                agentSelection: options.agentSelection,
-                modelDeployment: orchestrationModel || options.modelDeployment,
+                agentSelection: taggedAgent ?? (taggedModel ? undefined : options.agentSelection),
+                modelDeployment: taggedModel ?? (orchestrationModel || options.modelDeployment),
                 reasoningEffort: options.reasoningEffort,
             }),
         );
-        if (autoModelRouting) {
+        if (autoModelRouting && !taggedModel) {
             seeds.model_routing = 'auto';
             for (const key of ['model_deployment', 'model_id', 'model_endpoint_id', 'model_provider', 'reasoning_effort']) {
                 delete seeds[key];
@@ -1162,7 +1205,35 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         return seeds;
     };
 
-    const dispatchOrchestration = (message: string, promptInfo: Json | null = null) => {
+    /**
+     * Who a shared conversation's planned question addresses, or null when it isn't planned.
+     *
+     * Null when the message addresses only people, or when the reader didn't start the
+     * conversation. The plan request carries the target, mentions and reply so the server
+     * can post the question to the shared thread as it was asked.
+     */
+    const sharedOrchestrationRequest = (message: string): Record<string, unknown> | null => {
+        const target = sharedConversationTarget(message, options, {
+            agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        });
+        if (!target || !sharedOrchestrationAllowed) {
+            return null;
+        }
+        return {
+            invocation_target: target,
+            mentioned_participants: extractMentionedParticipants(
+                message, conversationParticipants(collaboration),
+            ),
+            ...(replyTo?.message_id ? { reply_to_message_id: replyTo.message_id } : {}),
+        };
+    };
+
+    const dispatchOrchestration = (
+        message: string,
+        promptInfo: Json | null = null,
+        sharedDetails: Record<string, unknown> | null = null,
+    ) => {
         if (attachedPrompt && promptInfo) {
             rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
@@ -1175,7 +1246,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             conversationId,
             message,
             approvalMode: effectiveApprovalMode,
-            seeds: buildOrchestrationSeeds(message, promptInfo),
+            // Who a shared conversation's question addressed travels with the plan request, so
+            // the server can post the question to the shared thread as it was asked.
+            seeds: { ...buildOrchestrationSeeds(message, promptInfo), ...(sharedDetails ?? {}) },
         });
         clearDraft();
         stopTyping();
@@ -1935,7 +2008,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
+                                    disabled={(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

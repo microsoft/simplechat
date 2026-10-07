@@ -56,6 +56,7 @@ from functions_group import (
     get_user_groups,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_message_deletion import exclude_soft_deleted_messages
 from functions_message_image_revisions import (
     IMAGE_REVISIONS_METADATA_KEY,
     resolve_image_message_content,
@@ -967,6 +968,8 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
         partition_key=source_conversation_id,
     ))
     raw_messages = filter_assistant_artifact_items(raw_messages)
+    # Deleted while archiving was enabled: not part of the conversation being shared.
+    raw_messages = exclude_soft_deleted_messages(raw_messages)
 
     copied_messages = []
     source_to_collaboration_message_ids = {}
@@ -1164,6 +1167,7 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
         partition_key=source_conversation_id,
     ))
     raw_messages = filter_assistant_artifact_items(raw_messages)
+    raw_messages = exclude_soft_deleted_messages(raw_messages)
 
     copied_messages = []
     source_to_collaboration_message_ids = {}
@@ -1255,6 +1259,11 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     allowed, reason = check_group_status_allows_operation(group_doc, 'chat')
     if not allowed:
         raise PermissionError(reason)
+
+    invited_participants = (
+        _normalize_group_conversation_participants(group_doc, invited_participants)
+        if invited_participants else []
+    )
 
     collaboration_conversation_doc = None
     linked_collaboration_id = str(source_conversation_doc.get('collaboration_conversation_id') or '').strip()
@@ -1937,12 +1946,19 @@ def remove_personal_collaboration_member(conversation_id, owner_user_id, member_
 
 
 def list_collaboration_messages(conversation_id):
+    """Return a shared conversation's messages, oldest first.
+
+    A shared message is deleted outright, but a conversation shared from a personal one can
+    hold copies of messages that were deleted there while archiving was enabled; earlier
+    conversions copied them. They are not part of the conversation and are excluded.
+    Conversation deletion queries the container directly, so the copies still go with it.
+    """
     query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id ORDER BY c.timestamp ASC'
-    return list(cosmos_collaboration_messages_container.query_items(
+    return exclude_soft_deleted_messages(list(cosmos_collaboration_messages_container.query_items(
         query=query,
         parameters=[{'name': '@conversation_id', 'value': conversation_id}],
         partition_key=conversation_id,
-    ))
+    )))
 
 
 def persist_collaboration_message(
@@ -2223,7 +2239,11 @@ def mirror_source_message_to_collaboration(
     if source_role == 'image':
         message_metadata['last_message_preview'] = '[Uploaded image]' if bool(source_metadata.get('is_user_upload')) else '[Generated image]'
 
-    return (*_save_collaboration_message_doc(conversation_doc, collaboration_message), True)
+    saved_message, saved_conversation = _save_collaboration_message_doc(
+        conversation_doc,
+        collaboration_message,
+    )
+    return saved_message, saved_conversation, True
 
 
 def _refresh_collaboration_conversation_message_summary(conversation_doc):
@@ -2798,6 +2818,20 @@ def _delete_collaboration_conversation_records(
         conversation_doc = live_conversation_doc
 
     _cancel_collaboration_pending_deliveries(conversation_doc)
+
+    # Orchestrate's backing record, stored under this shared conversation's id, goes with it.
+    # Removed first, so a failure leaves the shared conversation intact for a retry.
+    from functions_orchestration_collaboration import delete_orchestration_backing
+    delete_orchestration_backing(
+        conversation_doc,
+        archiving_enabled=archiving_enabled,
+        expected_user_id=expected_source_user_id,
+        conversation_container=cosmos_conversations_container,
+        message_container=cosmos_messages_container,
+        archived_conversation_container=cosmos_archived_conversations_container if archiving_enabled else None,
+        archived_message_container=cosmos_archived_messages_container if archiving_enabled else None,
+        not_found_error=CosmosResourceNotFoundError,
+    )
 
     if is_personal_collaboration_conversation(conversation_doc):
         revocation_conversation_doc = deepcopy(conversation_doc)

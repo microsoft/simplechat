@@ -1,9 +1,10 @@
 # test_content_screening_history.py
 """
 Functional regressions for public history and native evidence quarantine.
-Version: 0.261.232
+Version: 0.261.257
 Implemented in: 0.261.106
 Upload-only history checks covered in: 0.261.232
+Soft-deleted message filter seeded in the history route in: 0.261.257
 
 Executes the real history route, artifact hydration, and model-history guard
 against fake Cosmos. Removed metadata aliases and missing release proofs must
@@ -182,6 +183,9 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
             "cosmos_messages_container": SimpleNamespace(query_items=lambda **kwargs: deepcopy(items)),
             "build_message_artifact_payload_map": lambda messages: {"artifact-one": {"citation": citation}},
             "filter_assistant_artifact_items": lambda messages: messages,
+            "exclude_soft_deleted_messages": import_app_module(
+                "functions_message_deletion",
+            ).exclude_soft_deleted_messages,
             "hydrate_image_messages": lambda messages, **kwargs: messages,
             "public_history_messages": access.public_history_messages,
             "sanitize_saved_analysis_messages": import_app_module("functions_saved_analysis").sanitize_saved_analysis_messages,

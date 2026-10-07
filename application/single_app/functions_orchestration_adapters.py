@@ -1903,14 +1903,16 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
     visual_request = _step_visuals(context, settings, task, step=step)
     task = _with_conversation_reference(task, context)
     try:
-        invocation_kwargs = {
-            'invocation_capture': _external_invocation_capture(
-                step, context, settings, user_id=user_id,
-                capability_id=CAPABILITY_ACTION_INVOKE, selector=action_ref,
-            ),
-        }
+        # The step trusts the signed-in session, like classic chat: current access to the
+        # conversation, the run's step and this exact action is rechecked here, and the action
+        # then runs without configuration attestation.
+        access = _external_invocation_capture(
+            step, context, settings, user_id=user_id,
+            capability_id=CAPABILITY_ACTION_INVOKE, selector=action_ref,
+        )
         settings = deepcopy(settings)
-        invocation_kwargs['invocation_capture']('action', settings=settings, selector=action_ref)
+        access('action', settings=settings, selector=action_ref)
+        invocation_kwargs = {}
         if visual_request:
             invocation_kwargs['visual_request'] = visual_request
         invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)
@@ -1922,7 +1924,6 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             cancel_requested=lambda: _is_cancelled(cancel_requested),
             **invocation_kwargs,
         ))
-        invocation_kwargs['invocation_capture'].require_valid(captured=True)
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Action execution was cancelled.')
     except (
@@ -2037,13 +2038,17 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
         expected_selector = f"{reference['scope_type']}:{reference['scope_id']}:{reference['id']}"
         if type(selector) is not str or selector != expected_selector:
             raise ResultContractError('result_external_configuration_selection_mismatch')
-        invocation_capture = _external_invocation_capture(
+        # Like an action step, the agent trusts the signed-in session: current access to the
+        # conversation, the run's step and this exact agent is rechecked here, and the agent then
+        # runs as a delegated agent does in chat, without configuration attestation.
+        access = _external_invocation_capture(
             step, context, settings, user_id=user_id,
             capability_id=CAPABILITY_AGENT_INVOKE, selector=selector,
         )
         invocation_settings = deepcopy(settings)
-        invocation_capture('agent', settings=invocation_settings, selector=selector)
+        access('agent', settings=invocation_settings, selector=selector)
         from agent_delegation_runtime import delegation_citations, invoke_scoped_agent
+        from functions_orchestration_m365 import agent_loads_actions, agent_step_scope
         from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 
         budget = _ctx(context, 'delegation_budget', None)
@@ -2053,12 +2058,22 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
         plugin_logger = get_plugin_logger()
         conversation_id = _ctx(context, 'conversation_id', None)
         seen_before = {id(inv) for inv in budget.invocations()}
+        scope = None
+        if agent_loads_actions(agent_cfg):
+            # An agent's Microsoft 365 actions need the step's own Microsoft 365 context, entered
+            # inside the agent's bridge; an agent with no such action gets none. The catalog
+            # entry, not the stored record, carries the agent's normalized scope.
+            m365_request_key, m365_origin = _m365_step_identity(step, context)
+
+            def scope(_target):
+                return agent_step_scope(
+                    agent_cfg, user_id=user_id, conversation_id=conversation_id,
+                    request_key=m365_request_key, origin=m365_origin,
+                )
         result = asyncio.run(invoke_scoped_agent(
             agent_cfg, task, identity=execution_identity, budget=budget,
-            cancel_requested=cancel_requested,
-            settings=invocation_settings, invocation_capture=invocation_capture,
+            cancel_requested=cancel_requested, scope=scope,
         ))
-        invocation_capture.require_valid(captured=True)
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Agent execution was cancelled.')
     except (

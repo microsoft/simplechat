@@ -1,7 +1,8 @@
 # test_v2_workflow_change_tracking.py
 """
 Offline real-bundle browser regressions for change tracking in the V2 workflow editor.
-Version: 0.261.203
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.203
 
 Covers the highlight on each unsaved change (its author badge, Previously value and Revert),
@@ -36,6 +37,12 @@ from ui_tests import test_v2_workflow_flow_authoring as authoring
 from ui_tests.fixtures.workflow_editor import OWNER_ID, WORKFLOW_ID
 from ui_tests.fixtures.workflow_flow import GROUP_ID, FLOW_WORKFLOW_ID, MALICIOUS_LABEL
 from ui_tests.test_v2_workflow_flow_authoring import authoring_ui, connect_options  # noqa: F401
+
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    create_workflow,
+    workflow_editor,
+    workflow_editor_path,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -111,8 +118,8 @@ footer => [...footer.querySelectorAll('button')].filter((button) => button.getCl
 
 
 def open_classic(ui, **options):
-    ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}", **options)
-    editor = ui.page.get_by_role("dialog", name="Edit workflow", exact=True)
+    ui.open(workflow_editor_path(WORKFLOW_ID), **options)
+    editor = workflow_editor(ui.page)
     expect(editor).to_be_visible()
     expect(editor.get_by_label("Workflow name", exact=True)).to_have_value(ui.personal_workflows[WORKFLOW_ID]["name"])
     return editor
@@ -205,12 +212,17 @@ def assert_readable(*elements):
 
 
 def assert_dialog_fits(ui, editor):
+    """The editor page fits, and its action labels (Changes, Cancel, Save workflow) stay on one line.
+
+    Until 0.261.271 the actions sat in the editor dialog's footer; on the page they sit in its header.
+    """
     ui.assert_no_overflow()
-    modal = editor.locator(".glass-modal")
-    footer = modal.locator(":scope > div").last
-    for part in (modal, footer):
-        assert part.evaluate("element => element.scrollWidth <= element.clientWidth + 1"), "The editor overflows."
-    assert footer.evaluate(SINGLE_LINE_BUTTONS), "A footer button label wraps."
+    assert editor.evaluate("element => element.scrollWidth <= element.clientWidth + 1"), "The editor overflows."
+    header = editor.locator(":scope > header")
+    expect(header).to_have_count(1)
+    expect(header.get_by_role("button", name="Save workflow", exact=True)).to_be_visible()
+    assert header.evaluate("element => element.scrollWidth <= element.clientWidth + 1"), "The editor header overflows."
+    assert header.evaluate(SINGLE_LINE_BUTTONS), "An editor action label wraps."
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
@@ -568,13 +580,13 @@ def test_read_only_editors_show_no_change_tracking(authoring_ui, restriction):
         page.get_by_role("button", name="View Alpha read-only Flow", exact=True).click()
     elif restriction == "unsupported":
         ui.personal_workflows[FLOW_WORKFLOW_ID]["flow"]["nodes"][0]["future_executor"] = {"unchanged": True}
-        ui.open(f"/workspace/workflows?workflow_id={FLOW_WORKFLOW_ID}")
+        ui.open(workflow_editor_path(FLOW_WORKFLOW_ID))
     else:
         ui.personal_workflows[WORKFLOW_ID].update(
             trigger_type="interval", schedule=copy.deepcopy(UNSUPPORTED_SCHEDULE))
-        ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
-    editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
-    expect(editor).to_contain_text("This workflow is read-only.")
+        ui.open(workflow_editor_path(WORKFLOW_ID))
+    editor = workflow_editor(page)
+    expect(editor.get_by_text("Read only", exact=True).first).to_be_visible()
     if restriction == "schedule":
         expect(editor.get_by_role("status").filter(has_text=UNSUPPORTED_SCHEDULE_NOTE)).to_be_visible()
     expect(editor.get_by_role("button", name="Close", exact=True).last).to_be_visible()
@@ -625,8 +637,7 @@ def test_narrow_editor_shows_the_changes_panel_in_place_of_the_fields(authoring_
 def test_new_workflow_points_out_nothing_until_it_is_saved(authoring_ui):
     ui, page = authoring_ui, authoring_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    editor = page.get_by_role("dialog", name="Create workflow", exact=True)
+    editor = create_workflow(page)
     editor.get_by_label("Workflow name", exact=True).fill("Brand new workflow")
     expect(changes_toggle(editor)).to_have_accessible_name("Changes (0 unsaved)")
     expect(editor.locator("[data-workflow-change-key]")).to_have_count(0)

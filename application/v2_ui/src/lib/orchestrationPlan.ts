@@ -904,6 +904,59 @@ export function stepRoleLabel(step: OrchestrationStep, progress = false): string
     return ROLE_LABELS[role][progress ? 'progress' : 'label'];
 }
 
+/** Step statuses after which a step reports nothing more in this run. */
+const SETTLED_STEP_STATUSES: ReadonlySet<StepStatus> = new Set<StepStatus>([
+    'completed', 'partial', 'skipped', 'failed', 'cancelled',
+]);
+
+/**
+ * The running plan card's one-line account of what the run is doing, or null for nothing new.
+ *
+ * The card is the only progress shown while a plan runs, so this line has to say what is
+ * happening in words: which kind of work the running step is and what it is called, that the run
+ * is starting or finishing, or that it is waiting. A bare role label such as "Reasoning" did not
+ * say what was being reasoned about. The server sends the answer in one piece once every step has
+ * settled, so the quiet gap before it is named rather than left blank. Disabled steps never run and
+ * are ignored. Between two steps, which lasts only as long as the executor takes to start the
+ * next, there is nothing new to say.
+ */
+export function describeRunProgress(
+    steps: readonly OrchestrationStep[],
+    runtime: Readonly<Record<string, { status: StepStatus } | undefined>>,
+    waiting = false,
+): string | null {
+    if (waiting) {
+        return 'Waiting for results';
+    }
+    const enabled = steps.filter((step) => step.enabled);
+    const statusOf = (step: OrchestrationStep): StepStatus | undefined => runtime[step.step_id]?.status;
+    const running = enabled.find((step) => statusOf(step) === 'running');
+    if (running) {
+        const role = stepRoleLabel(running, true);
+        const title = running.title?.trim();
+        if (role && title) {
+            return `${role}: ${title}`;
+        }
+        return role || title || 'Running';
+    }
+    if (enabled.some((step) => statusOf(step) === 'waiting')) {
+        return 'Waiting for results';
+    }
+    if (enabled.length > 0 && enabled.every((step) => {
+        const status = statusOf(step);
+        return status !== undefined && SETTLED_STEP_STATUSES.has(status);
+    })) {
+        return 'Preparing the answer';
+    }
+    if (enabled.every((step) => {
+        const status = statusOf(step);
+        return status === undefined || status === 'pending';
+    })) {
+        return 'Starting';
+    }
+    return null;
+}
+
 export interface OrchestrationStepGroup {
     key: string;
     label: string | null;

@@ -33,6 +33,7 @@ from admin_settings_fields import (
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
     SECRET_REDACTED_VALUE,
+    get_admin_section_guides,
     get_admin_section_status,
     get_admin_settings_fields,
     get_secret_field_keys,
@@ -46,13 +47,15 @@ from admin_settings_fields import (
 from admin_settings_nav import ADMIN_NAV
 from content_screening.contracts import ScreeningError
 from functions_mcp_server_config import is_mcp_ui_enabled
+from functions_mcp_destinations import describe_mcp_destination_environment_policy
 from config import (
     CLIENTS,
     ensure_custom_favicon_file_exists,
     ensure_custom_logo_file_exists,
     get_allowed_extension_categories,
 )
-from functions_appinsights import log_event
+from functions_activity_logging import log_governance_change
+from functions_appinsights import get_appinsights_runtime_state, log_event
 from functions_branding_images import (
     ALLOWED_FAVICON_EXTENSIONS,
     ALLOWED_LOGO_EXTENSIONS,
@@ -81,6 +84,7 @@ from functions_authentication import (
 )
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_custom_pages import get_custom_pages_nav
+from functions_governance import GOVERNANCE_AUDITED_SETTING_KEYS
 from functions_group import (
     GROUP_DIRECTORY_DEFAULT_LIMIT,
     GROUP_DIRECTORY_MAX_LIMIT,
@@ -140,6 +144,7 @@ from functions_settings import (
     is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
     is_chat_workflow_results_enabled_for_user,
+    is_content_understanding_supported_environment,
     is_user_workflows_enabled_for_user,
     is_workflow_assistant_enabled_for_user,
     merge_model_endpoint_payload,
@@ -192,7 +197,7 @@ from functions_model_endpoint_validation import (
 )
 from functions_documents import get_audio_runtime_capabilities
 from config import VERSION
-from swagger_wrapper import get_auth_security, swagger_route
+from swagger_wrapper import are_swagger_routes_registered, get_auth_security, swagger_route
 
 logger = logging.getLogger(__name__)
 
@@ -1186,6 +1191,59 @@ def _seed_connections_on_first_enable(updates, current_settings):
     )
 
 
+def _log_governance_setting_changes(current_settings, normalized):
+    """Record governance switch changes in the governance audit log.
+
+    The server-rendered save writes one ``governance_feature_toggles_updated`` entry,
+    with the before and after state of every governance switch, whenever a save
+    changes one of them. The V2 page saves through the settings PATCH instead, so
+    without this a governance change made there would leave no audit trail at all.
+
+    Nothing is coerced here. A governance switch keeps its value while the feature it
+    governs is off, so turning a feature off and on again cannot silently drop the
+    governance an administrator configured for it.
+    """
+    changed_toggles = {}
+    for key in GOVERNANCE_AUDITED_SETTING_KEYS:
+        if key not in normalized:
+            continue
+        before_value = bool(current_settings.get(key, False))
+        after_value = bool(normalized[key])
+        if before_value != after_value:
+            changed_toggles[key] = {"before": before_value, "after": after_value}
+
+    if not changed_toggles:
+        return
+
+    before_state = {key: bool(current_settings.get(key, False)) for key in GOVERNANCE_AUDITED_SETTING_KEYS}
+    after_state = dict(before_state)
+    after_state.update({key: change["after"] for key, change in changed_toggles.items()})
+
+    try:
+        user_info = get_current_user_info() or {}
+        log_governance_change(
+            admin_user_id=str(get_current_user_id() or "").strip(),
+            admin_email=str(user_info.get("email") or "").strip(),
+            action="governance_feature_toggles_updated",
+            scope="feature_policy",
+            target_id="governance_feature_toggles",
+            before_state=before_state,
+            after_state=after_state,
+            change_details={"changed_toggles": changed_toggles},
+        )
+    except Exception as exc:
+        # The settings are already saved; a failed audit write is reported rather
+        # than turned into a failed save the administrator would retry.
+        log_event(
+            "[V2_ADMIN_SETTINGS] Failed to record a governance setting change.",
+            extra={
+                "error_type": type(exc).__name__,
+                "changed_keys": sorted(changed_toggles),
+            },
+            level=logging.ERROR,
+        )
+
+
 def register_route_backend_v2_admin(bp):
     def _build_model_catalog(settings):
         """Return the models an administrator can pick, with resolved capabilities.
@@ -1295,7 +1353,107 @@ def register_route_backend_v2_admin(bp):
                 "message": "Audio runtime support could not be checked.",
             }
 
+        try:
+            floor = describe_mcp_destination_environment_policy()
+            forced = []
+            if floor.get("enforcement_required"):
+                forced.append("requires the destination allowlist")
+            if floor.get("unsafe_blocking_required"):
+                forced.append("blocks private and local IP destinations")
+            pattern_count = int(floor.get("allowed_pattern_count") or 0)
+            pattern_note = (
+                f" It contributes {pattern_count} allowed destination pattern"
+                f"{'' if pattern_count == 1 else 's'}."
+                if pattern_count
+                else ""
+            )
+            if forced:
+                # Tinted as a warning because a switch above can read "off" while the
+                # deployment enforces anyway, and that is worth noticing.
+                readouts["mcp_destination_environment_policy"] = {
+                    "ok": False,
+                    "message": (
+                        f"The deployment environment {' and '.join(forced)}. Settings "
+                        f"here can add restrictions but cannot turn these off.{pattern_note}"
+                    ),
+                }
+            else:
+                readouts["mcp_destination_environment_policy"] = {
+                    "ok": True,
+                    "message": (
+                        "The deployment environment adds no destination restrictions, "
+                        f"so the switches above decide enforcement.{pattern_note}"
+                    ),
+                }
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] MCP destination environment policy could not be read.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            readouts["mcp_destination_environment_policy"] = {
+                "ok": False,
+                "message": "Deployment destination restrictions could not be checked.",
+            }
+
+        readouts["appinsights_connection"] = _build_appinsights_connection_readout()
+
         return readouts
+
+    def _build_appinsights_connection_readout():
+        """Say whether Application Insights has anywhere to send telemetry.
+
+        Global logging is a switch on this page, but the destination is an App Service
+        application setting. Turning the switch on without one does nothing at all,
+        and nothing else on the page would say so.
+        """
+        state = get_appinsights_runtime_state()
+        if not state["connection_configured"]:
+            return {
+                "ok": False,
+                "message": (
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING is not set on this App "
+                    "Service, so nothing reaches Application Insights whatever the "
+                    "switch above says."
+                ),
+            }
+        if not state["exporter_configured"]:
+            return {
+                "ok": False,
+                "message": (
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING is set, but the exporter did "
+                    "not start. Check the application's startup log."
+                ),
+            }
+        return {
+            "ok": True,
+            "message": (
+                "Connected through the APPLICATIONINSIGHTS_CONNECTION_STRING App "
+                "Service setting."
+            ),
+        }
+
+    def _build_runtime_flags():
+        """Server-resolved flags the admin surface reads but cannot set.
+
+        ``mcp_ui_enabled`` gates a navigation section on an App Service application
+        setting. ``content_understanding_supported`` says whether this Azure cloud
+        offers Content Understanding, which only the server's AZURE_ENVIRONMENT can
+        say. The rest describe how this process was started -- whether Application
+        Insights has a destination, whether its global logging is live and whether
+        the Swagger routes were registered -- so a section can say when a saved
+        change is still waiting for a restart.
+        """
+        appinsights = get_appinsights_runtime_state()
+        return {
+            "mcp_ui_enabled": is_mcp_ui_enabled(),
+            "content_understanding_supported": (
+                is_content_understanding_supported_environment()
+            ),
+            "appinsights_connection_configured": appinsights["connection_configured"],
+            "appinsights_global_logging_active": appinsights["global_logging_active"],
+            "swagger_routes_registered": are_swagger_routes_registered(current_app),
+        }
 
     def _build_endpoint_readouts(settings):
         """Readouts derived from the settings document rather than from the host."""
@@ -1382,7 +1540,8 @@ def register_route_backend_v2_admin(bp):
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
         not been described yet keep working. ``suppressed_capabilities`` names the keys
         that scan must skip because they are derived or are staged rollout flags with no
-        administrator control.
+        administrator control. ``section_guides`` names the in-app guide a section header
+        offers, for settings that depend on work done outside SimpleChat.
 
         The application release status is deliberately not part of this response. A
         release check can contact GitHub, so it is served by ``v2_admin_get_update_status``
@@ -1398,6 +1557,7 @@ def register_route_backend_v2_admin(bp):
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "section_status": get_admin_section_status(),
+                        "section_guides": get_admin_section_guides(),
                         "app_role_requirements": get_app_role_requirements(),
                         "branding_assets": _build_branding_assets(settings),
                         "status_readouts": {
@@ -1406,10 +1566,9 @@ def register_route_backend_v2_admin(bp):
                         },
                         "model_catalog": _build_model_catalog(settings),
                         # Navigation sections may be conditional on a runtime flag
-                        # rather than a stored setting. Inbound MCP is gated by an
-                        # App Service application setting, so its value cannot be
-                        # read out of the settings document the SPA already holds.
-                        "runtime_flags": {"mcp_ui_enabled": is_mcp_ui_enabled()},
+                        # rather than a stored setting, and Operations reports how
+                        # the running process was started. See _build_runtime_flags.
+                        "runtime_flags": _build_runtime_flags(),
                         "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
                     }
@@ -1588,6 +1747,7 @@ def register_route_backend_v2_admin(bp):
                 f"{', '.join(sorted(normalized.keys()))}",
                 level=logging.INFO,
             )
+            _log_governance_setting_changes(current_settings, normalized)
 
             # Logo scale and title changes are read from the settings document on the
             # next request, but the favicon and logo static files are written from it, so

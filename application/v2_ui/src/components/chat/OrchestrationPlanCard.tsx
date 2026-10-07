@@ -36,12 +36,12 @@ import {
 import {
     applyPlanEdits,
     describePlanner,
+    describeRunProgress,
     isPlanRunnable,
     isPlanTerminal,
     planBindingIssues,
     planHasApprovalFloor,
     planRequiresApproval,
-    stepRoleLabel,
     summarizePlan,
 } from '../../lib/orchestrationPlan';
 import {
@@ -237,7 +237,9 @@ export function OrchestrationPlanCard({
     }
 
     // Running: a compact progress line. The full step list is a click away in the drawer, so this
-    // stays a single row rather than duplicating it.
+    // stays a single row rather than duplicating it. It is the run's only progress indicator, as
+    // the streaming bubble stays out of the way until there is an answer, so its status line says
+    // what the run is doing in words.
     if (runInFlight || waiting) {
         const total = summary.step_count;
         let completed = 0;
@@ -250,9 +252,7 @@ export function OrchestrationPlanCard({
                 completed += 1;
             }
         }
-        const currentStep = editedPlan?.steps.find((step) => stepRuntime[step.step_id]?.status === 'running');
-        const progress = waiting ? 'Waiting for results'
-            : currentStep ? stepRoleLabel(currentStep, true) : null;
+        const progress = describeRunProgress(editedPlan?.steps ?? [], stepRuntime, waiting);
         return (
             <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
                 <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />

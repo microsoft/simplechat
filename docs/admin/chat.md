@@ -254,15 +254,51 @@ appears. Chunk work normally reuses whichever model the user selected; pointing 
 at a dedicated deployment keeps bulk row processing off the interactive model's
 quota.
 
+**Documents and spreadsheets together.** With Enhanced Citations on, a CSV or Excel
+file is indexed as a short description of its sheets and columns, and its rows are
+handled by a spreadsheet engine that calculates over them instead of searching their
+text. That engine only exists while Enhanced Citations is on, so the behaviors that
+depend on it follow this switch rather than having switches of their own:
+
+- Chat and workflow Search use the files a user selected as the sources, even when the
+  Search Documents panel is closed. Each selected spreadsheet is analyzed on its own,
+  documents are searched as usual, and the answer says which sources could not be used.
+- When a follow-up question with no new selection goes back to the earlier sources,
+  access is checked again, and a source that changed, was revoked, or was only partly
+  covered is worked on again instead of being answered from the earlier reply.
+- Compare accepts documents and spreadsheets in the same comparison, with as many
+  Targets as the Comparison document limits allow.
+
+With Enhanced Citations off, spreadsheets are indexed row by row and searched as text,
+the classic chat page uses selected documents only while its Search Documents panel is
+on, and comparing a document with a spreadsheet is refused with a message that names
+Enhanced Citations. If these behaviors ever need to be switched off during an incident,
+set the `SIMPLECHAT_DISABLE_MIXED_SOURCE` environment variable to `true` on the app.
+It applies to every settings read and changes nothing that is stored, so removing it
+restores them.
+
+**Finding spreadsheets nobody selected.** A question about figures often lives in a
+spreadsheet whose description does not rank among the first search results.
+*Look for relevant spreadsheets when no files are selected* runs a second search aimed
+at spreadsheet sheets and columns whenever a chat searches workspace documents without
+specific files, and keeps up to six spreadsheets that fit the question. The extra
+search adds a little time to those messages, and a matched spreadsheet that gets
+analyzed adds model calls. Leave it on where people ask about data held in
+spreadsheets; turn it off where those chats must stay as fast as possible.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Enhanced Citations | Stores original files in Azure Storage so citations can open the source document, not just quoted text. | Off | `enable_enhanced_citations`; capability toggle |
+| Enable Enhanced Citations | Stores original files in Azure Storage so citations can open the source document, not just quoted text. Also turns on spreadsheet analysis and the mixed document and spreadsheet behaviors below. | Off | `enable_enhanced_citations`; capability toggle |
 | Enhanced Citations mount path | Enables use of the configured Enhanced Citations mount path for document-view routing when Enhanced Citations is on; the saved value is forced off unless Enhanced Citations is enabled. | Off | `enable_enhanced_citations_mount`; no visible field in `admin_settings.html` |
 | Storage Account Authentication Type | Whether SimpleChat authenticates to the storage account with a connection string or a managed identity. | key | `office_docs_authentication_type` |
 | Storage Account Connection String | Credential used for connection string authentication. Stored write-only. | Empty | `office_docs_storage_account_url` |
 | Storage Account Blob Service Endpoint | Blob endpoint used for managed identity authentication. Stored write-only. | Empty | `office_docs_storage_account_blob_endpoint` |
+| Look for relevant spreadsheets when no files are selected | When a chat searches workspace documents without specific files selected, runs a second search aimed at spreadsheet sheets and columns and keeps up to six spreadsheets that fit the question. | On | `enable_mixed_source_relevance_candidates`; shown while Enhanced Citations is on |
+| Mixed document and spreadsheet Chat and Search | Uses selected files as the sources, analyzes each selected spreadsheet with the spreadsheet engine, and reports sources that could not be used. | Follows Enhanced Citations | `enable_mixed_source_chat_search`; derived, no control |
+| Follow-up source continuity | Records which sources grounded an answer, so a follow-up rechecks access and works again on sources that changed or were only partly covered. | Follows Enhanced Citations | `enable_mixed_source_conversation_continuity`; derived, no control |
+| Compare documents with spreadsheets | Lets one comparison combine documents and spreadsheets, including more than one Target. | Follows Enhanced Citations | `enable_cross_format_compare` and `enable_cross_format_compare_one_to_many`; derived, no control |
 | Maximum File Size for Tabular Preview (MB) | CSV and XLSX files above this size are not previewed, which protects the host from loading very large spreadsheets into memory. | 200 | `tabular_preview_max_blob_size_mb` |
 | Confirm very large row-level runs before starting | When a prompt includes an explicit large row count, users are asked to continue or narrow scope before the run starts. | On | `enable_tabular_durable_run_confirmation`; capability toggle |
 | Confirmation Row Threshold | Row count at or above which the confirmation is shown. | 500 | `tabular_durable_run_confirmation_threshold_rows` |

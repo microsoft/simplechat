@@ -317,7 +317,7 @@ def load_update_settings(store):
         "normalize_group_workflow_assignment_settings", "normalize_agents_page_promoted_popular_settings",
         "normalize_document_access_index_required_settings", "normalize_inbound_mcp_settings",
         "normalize_public_workspace_display_settings", "normalize_key_vault_reminder_settings",
-        "normalize_model_endpoint_identity_header_settings",
+        "normalize_model_endpoint_identity_header_settings", "normalize_mixed_source_derived_settings",
     ):
         namespace[name] = lambda settings: None
     nodes = [
@@ -380,6 +380,7 @@ def load_get_settings(store):
         "SettingsUnavailableError": SettingsUnavailableError,
         "log_event": lambda *_args, **_kwargs: None,
         "_apply_tabular_parity_env_kill_switch": lambda settings: settings,
+        "_apply_mixed_source_env_kill_switch": lambda settings: settings,
         "attach_public_workspace_label_context": lambda settings: settings,
         "normalize_document_intelligence_pdf_image_extraction_mode": lambda mode: mode,
         "is_tabular_processing_enabled": lambda settings: False,

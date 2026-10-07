@@ -1,7 +1,7 @@
 # test_v2_new_chat_reset.py
 """
 Browser regressions for starting a new chat in V2 while the open conversation is busy.
-Version: 0.261.226
+Version: 0.261.256
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
@@ -10,6 +10,10 @@ and refused to send until the page was reloaded. A first message still creating 
 conversation could take the new chat over, a conversation still loading left its loading
 placeholders in the new chat, and Home's Start chatting reopened whichever conversation
 was last open (issue #1617).
+
+Since 0.261.256 a planning turn's bubble says "Planning" rather than "Thinking", and a running
+plan shows its progress only on the plan card, so those are what the orchestration checks look
+for. A chat reply still says "Thinking".
 
 The production AppShell, Sidebar, HomePage, ChatPage, Composer, MessageList, stores,
 orchestration controller and SSE reader run in Chromium with production CSS. Only HTTP is
@@ -369,6 +373,16 @@ def thinking(page):
     return page.get_by_text("Thinking", exact=True)
 
 
+def planning(page):
+    """The streaming bubble's label while an orchestration turn plans."""
+    return page.get_by_text("Planning", exact=True)
+
+
+def running_card(page):
+    """The plan card's running row, the only progress shown while a plan runs."""
+    return page.get_by_role("button", name="Review the running plan")
+
+
 def stop_button(page):
     return page.get_by_role("button", name="Stop generating", exact=True)
 
@@ -400,6 +414,8 @@ def expect_clean_new_chat(page, *absent):
     expect(page.get_by_role("heading", name="New chat", level=1)).to_be_visible()
     expect(page.get_by_text(EMPTY_STATE, exact=True)).to_be_visible()
     expect(thinking(page)).to_have_count(0)
+    expect(planning(page)).to_have_count(0)
+    expect(running_card(page)).to_have_count(0)
     expect(stop_button(page)).to_have_count(0)
     expect(send_button(page)).to_be_visible()
     for text in absent:
@@ -446,7 +462,7 @@ def test_new_chat_while_planning_starts_clean_and_returning_restores_the_turn(ch
     mount(page, api)
     turn = start_plan(page)
     persist_question(api, turn)
-    expect(thinking(page)).to_be_visible()
+    expect(planning(page)).to_be_visible()
     expect(stop_button(page)).to_be_visible()
     expect(page.get_by_text(QUESTION, exact=True)).to_be_visible()
 
@@ -457,7 +473,7 @@ def test_new_chat_while_planning_starts_clean_and_returning_restores_the_turn(ch
     # working, with Stop, and its next reasoning step lands there as usual.
     open_from_rail(page, BUSY_TITLE)
     expect(page.get_by_text(QUESTION, exact=True)).to_be_visible()
-    expect(thinking(page)).to_be_visible()
+    expect(planning(page)).to_be_visible()
     expect(stop_button(page)).to_be_visible()
     emit(page, PLAN, BUSY, planning_thought(DECIDING))
     expect(page.get_by_role("button", name="1 reasoning step", exact=True)).to_be_visible()
@@ -469,9 +485,10 @@ def test_new_chat_while_planning_starts_clean_and_returning_restores_the_turn(ch
     expect(approve_button(page)).to_have_count(0)
     expect_clean_new_chat(page, QUESTION, EARLIER_ANSWER)
 
-    # Its turn settled while the reader was away, so coming back shows the plan, not Thinking.
+    # Its turn settled while the reader was away, so coming back shows the plan, not Planning.
     open_from_rail(page, BUSY_TITLE)
     expect(approve_button(page).first).to_be_visible()
+    expect(planning(page)).to_have_count(0)
     expect(thinking(page)).to_have_count(0)
     expect(stop_button(page)).to_have_count(0)
     expect(send_button(page)).to_be_visible()
@@ -485,7 +502,9 @@ def test_new_chat_while_a_plan_runs_keeps_the_answer_in_its_own_chat_and_can_sen
     plan = finish_plan(page, turn)
     approve_button(page).first.click()
     wait_for_stream(page, RUN, BUSY)
-    expect(thinking(page)).to_be_visible()
+    # A run's progress is on its plan card alone; Stop still belongs to it.
+    expect(running_card(page)).to_be_visible()
+    expect(thinking(page)).to_have_count(0)
     expect(stop_button(page)).to_be_visible()
 
     click_new_chat(page)
@@ -507,14 +526,14 @@ def test_new_chat_while_a_plan_runs_keeps_the_answer_in_its_own_chat_and_can_sen
     send_button(page).click()
     wait_for_stream(page, PLAN, CREATED)
     expect(page.get_by_text(FOLLOW_UP, exact=True)).to_be_visible()
-    expect(thinking(page)).to_be_visible()
+    expect(planning(page)).to_be_visible()
     assert chat_state(page)["active"] == CREATED
     assert len(api.created()) == 1
     expect(page.get_by_text(QUESTION, exact=True)).to_have_count(0)
 
     # Stop now belongs to the new chat's turn, and ends it.
     stop_button(page).click()
-    expect(thinking(page)).to_have_count(0)
+    expect(planning(page)).to_have_count(0)
     expect(send_button(page)).to_be_visible()
 
 

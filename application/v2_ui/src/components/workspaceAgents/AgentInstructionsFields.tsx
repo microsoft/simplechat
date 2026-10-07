@@ -8,6 +8,7 @@ import { readAgentKnowledge, type AgentKnowledgeCatalog } from '../../lib/worksp
 import { agentMentions, agentMentionTrigger, filterAgentMentions, type AgentMention } from '../../lib/workspaceAgentReferences';
 import { draftAgentInstructions, withAgentInstructionProposal } from '../../lib/workspaceAgentCommands';
 import { GlassButton } from '../ui/primitives';
+import { EditorPanel } from '../workspace/EditorLayout';
 import { AgentField, AgentNotice } from './AgentFields';
 
 export function AgentInstructionsFields({
@@ -96,7 +97,7 @@ export function AgentInstructionsFields({
     }
     return (
         <div className="space-y-4">
-            <AgentField id="agent-instructions" label="Instructions" help={'Type # to reference selected actions, enabled capabilities, or assigned knowledge. Values with spaces or colons are quoted, for example #knowledge:doc:"Employee Handbook.pdf".'}>
+            <AgentField id="agent-instructions" label="Instructions" width="full" help={'Type # to reference selected actions, enabled capabilities, or assigned knowledge. Values with spaces or colons are quoted, for example #knowledge:doc:"Employee Handbook.pdf".'}>
                 <textarea id="agent-instructions" ref={textarea} value={draft.instructions} rows={18} required spellCheck
                     className={`${AGENT_INPUT_CLASS} resize-y leading-relaxed`}
                     aria-autocomplete="list" aria-controls={suggestions.length ? menuId : undefined}
@@ -137,8 +138,9 @@ export function AgentInstructionsFields({
                 </ul>
             ) : null}
             {!readOnly ? (
-                <div className="space-y-3 rounded-xl border border-edge p-3">
-                    <AgentField id="agent-instruction-brief" label="Instruction brief" help="Describe the task, audience, guardrails, and desired output. Drafting runs only when requested and includes the selected action and knowledge context.">
+                <EditorPanel title="Draft instructions"
+                    description="Describe the task and let the assistant draft instructions for you to review. Nothing changes until you apply a draft.">
+                    <AgentField id="agent-instruction-brief" label="Instruction brief" width="full" help="Describe the task, audience, guardrails, and desired output. Drafting runs only when requested and includes the selected action and knowledge context.">
                         <textarea id="agent-instruction-brief" rows={3} value={brief} className={AGENT_INPUT_CLASS}
                             onChange={(event) => setDraft((current) => ({ ...current, _editor_instruction_brief: event.target.value }))} />
                     </AgentField>
@@ -149,7 +151,7 @@ export function AgentInstructionsFields({
                     {error ? <AgentNotice error>{error}</AgentNotice> : null}
                     {proposal ? (
                         <div className="space-y-3">
-                            <AgentField id="agent-generated-instructions" label="Generated instructions — not yet applied">
+                            <AgentField id="agent-generated-instructions" label="Generated instructions — not yet applied" width="full">
                                 <textarea id="agent-generated-instructions" rows={12} value={proposal} readOnly className={AGENT_INPUT_CLASS} />
                             </AgentField>
                             {draft.instructions !== baseline ? <AgentNotice>Your instructions changed while this draft was generated. They have not been overwritten.</AgentNotice> : null}
@@ -165,7 +167,7 @@ export function AgentInstructionsFields({
                             </div>
                         </div>
                     ) : null}
-                </div>
+                </EditorPanel>
             ) : null}
         </div>
     );

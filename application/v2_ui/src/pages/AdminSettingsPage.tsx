@@ -25,10 +25,12 @@
 // saving per keystroke would mint a version per character.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBlocker } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Loader2, PanelLeftClose, PanelLeftOpen, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
+import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
@@ -39,16 +41,22 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
+import { ClassificationCategoriesEditor } from '../components/admin/ClassificationCategoriesEditor';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
+import { ControlCenterAccessMatrix } from '../components/admin/ControlCenterAccessMatrix';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { EndpointLinks } from '../components/admin/EndpointLinks';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
+import { EnhancedExtractionEngine } from '../components/admin/EnhancedExtractionEngine';
 import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { FileProcessingLogCleanup } from '../components/admin/FileProcessingLogCleanup';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
+import { LoggingTimerStatus } from '../components/admin/LoggingTimerStatus';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelCatalogManager } from '../components/admin/ModelCatalogManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
@@ -59,18 +67,41 @@ import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { OrchestrationPlannerModelPicker } from '../components/admin/OrchestrationPlannerModelPicker';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
-import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
-import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
+import { AgentTemplateApprovalsLink } from '../components/admin/AgentTemplateApprovalsLink';
+import { GlobalActionsManager } from '../components/admin/GlobalActionsManager';
+import { GlobalAgentsManager } from '../components/admin/GlobalAgentsManager';
+import { RefreshScheduleStatus } from '../components/admin/RefreshScheduleStatus';
+import { RelatedSectionLink } from '../components/admin/RelatedSectionLink';
+import { RestartStatus } from '../components/admin/RestartStatus';
+import { RetentionResetDefaults, RetentionRunNow } from '../components/admin/RetentionOperations';
+import { RetentionSchedule } from '../components/admin/RetentionSchedule';
+import { SectionGuide, hasSectionGuide } from '../components/admin/guides/sectionGuides';
+import { GovernanceDialogHost } from '../components/admin/governance/GovernanceDialogHost';
+import { GovernanceFeaturePolicies } from '../components/admin/governance/GovernanceFeaturePolicies';
+import { GovernanceItemPolicyManager } from '../components/admin/governance/GovernanceItemPolicyManager';
+import {
+    GovernanceInboundMcpPolicies,
+    GovernanceMcpDestinationPolicies,
+} from '../components/admin/governance/GovernanceMcpSections';
+import { GovernanceOverview } from '../components/admin/governance/GovernanceOverview';
+import { InboundMcpGovernanceShortcut } from '../components/admin/governance/InboundMcpGovernanceShortcut';
+import { RelatedSettingsLinks } from '../components/admin/governance/RelatedSettingsLinks';
+import { newItemPolicyDraft } from '../lib/governance';
+import { openGovernanceResourceAccess } from '../stores/governanceStore';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
+import { SettingsIndex, type SettingsIndexEntry } from '../components/admin/SettingsIndex';
 import { agentSectionAppearances } from '../components/admin/agentSectionAppearance';
+import { ALL_SETTINGS_ICON, resolveAdminNavIcon } from '../components/admin/adminSectionIcons';
 import { SettingField } from '../components/admin/fields';
+import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
 import {
     ClassificationBannerPreview,
     UserAgreementPreview,
 } from '../components/admin/previews';
 import {
+    applyEnableEffect,
     asBoolean,
     asNumber,
     asString,
@@ -83,7 +114,9 @@ import {
     isRequirementSatisfied,
     isSectionVisible,
     readFieldValue,
+    readStoredFieldValue,
     type AdminField,
+    type AdminSectionGuide,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
     type AdminUpdateStatusResponse,
@@ -91,10 +124,17 @@ import {
     type BrandingAssets,
     type BrandingUploadResponse,
 } from '../lib/adminFields';
+import { CONTROL_CENTER_ACCESS_KEYS, findNavLocation } from '../lib/adminOperations';
 import { toast } from '../stores/toastStore';
+import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
+import {
+    CONTENT_UNDERSTANDING_SUPPORTED_FLAG,
+    resolveEnhancedExtractionEngine,
+} from '../lib/enhancedExtraction';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
-import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
+import { modelConnectionsChanged, requestConnectionFocus } from '../stores/modelConnectionsStore';
+import type { CatalogConnectionTarget } from '../lib/modelCatalog';
 import type { AdminNavGroup, Json } from '../lib/types';
 
 /** One fallback row: an `enable_*` key with no declared field. */
@@ -115,12 +155,20 @@ interface RenderedSection {
     groupId: string;
     groupLabel: string;
     tabLabel: string;
+    /** The Bootstrap icon name the navigation declares for the section. */
+    icon?: string;
+    /** The fields to draw. A search narrows these to the matches. */
     fields: AdminField[];
+    /** Every visible field, which status and field nesting are read from. */
+    allFields: AdminField[];
     capabilities: CapabilityRow[];
 }
 
 /** Synthetic field definitions used to read a sibling's current value for a preview. */
 const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: '' });
+
+/** The global agent and action editors, which open in place of this page. */
+const GLOBAL_EDITOR_PATH = /^\/admin\/(?:agents|actions)\/[^/]+$/;
 
 /**
  * Associate each undeclared `enable_*` setting with a section.
@@ -203,9 +251,20 @@ function buildCapabilityIndex(
     });
 }
 
-export function AdminSettingsPage() {
+/**
+ * The Admin Settings page.
+ *
+ * `focusSection` opens the page on one section's category with that section in view. The
+ * global agent and action editors return through it, at /admin/agents and /admin/actions,
+ * so finishing an edit lands back on the list it started from.
+ */
+export function AdminSettingsPage({ focusSection }: { focusSection?: string } = {}) {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
     const bootstrapVersion = useBootstrapStore((state) => state.data?.version);
+    // The categories rail's icons-only state is its own per-user preference, so making room
+    // here leaves the workspace and shell rails as they are.
+    const railCollapsed = useUserSettingsStore((state) => state.settings.v2AdminRailCollapsed === true);
+    const updateUserSettings = useUserSettingsStore((state) => state.update);
 
     /**
      * Re-read the bootstrap payload once a save lands.
@@ -225,7 +284,11 @@ export function AdminSettingsPage() {
     const [checkingForUpdates, setCheckingForUpdates] = useState(true);
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
-    const [delegationDirty, setDelegationDirty] = useState(false);
+    /** Counts category choices, so each one restarts the page index at the top. */
+    const [categoryVisit, setCategoryVisit] = useState(0);
+    // An inline feature policy edit lives in its section, so changing category or searching
+    // it out of view would discard it. Both stay locked until it is saved or discarded.
+    const [governanceDirty, setGovernanceDirty] = useState(false);
 
     const [draft, setDraft] = useState<Json>({});
     const [saving, setSaving] = useState(false);
@@ -234,8 +297,11 @@ export function AdminSettingsPage() {
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
     const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+    const [openGuide, setOpenGuide] = useState<AdminSectionGuide | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
+    /** The pane the cards scroll inside; the page index watches it to mark the current section. */
+    const scrollRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (!isAdmin) {
@@ -326,6 +392,20 @@ export function AdminSettingsPage() {
     const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
     const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
+    /**
+     * The in-app guide a section's header offers, if the UI has one by that id.
+     *
+     * A guide the server names but this build cannot draw is left off rather than shown as
+     * a button that opens nothing.
+     */
+    const guideFor = useCallback(
+        (sectionId: string): AdminSectionGuide | undefined => {
+            const guide = data?.section_guides?.[sectionId];
+            return guide && hasSectionGuide(guide.id) ? guide : undefined;
+        },
+        [data],
+    );
+
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
         for (const fields of Object.values(schema)) {
@@ -341,6 +421,27 @@ export function AdminSettingsPage() {
     // A gate may live inside a nested settings object, so resolving a dependency
     // needs the schema rather than the key alone.
     const fieldsByKey = useMemo(() => buildFieldIndex(schema), [schema]);
+
+    /**
+     * The section that owns each settings key.
+     *
+     * Links that name a setting rather than a section -- the governance state under an
+     * Agents & Actions switch, or the section a hidden one is enabled from -- resolve
+     * through here. A writable declaration wins over a read-only mirror of the same key.
+     */
+    const sectionOfKey = useMemo(() => {
+        const owners = new Map<string, string>();
+        for (const writableOnly of [true, false]) {
+            for (const [sectionId, fields] of Object.entries(schema)) {
+                for (const field of fields) {
+                    if (field.key && !owners.has(field.key) && (!writableOnly || !field.readonly)) {
+                        owners.set(field.key, sectionId);
+                    }
+                }
+            }
+        }
+        return owners;
+    }, [schema]);
 
     const suppressedKeys = useMemo(
         () => new Set(data?.suppressed_capabilities ?? []),
@@ -408,7 +509,9 @@ export function AdminSettingsPage() {
                         groupId: group.id,
                         groupLabel: group.label,
                         tabLabel: tab.label,
+                        icon: section.icon,
                         fields,
+                        allFields: fields,
                         capabilities,
                     });
                 }
@@ -424,6 +527,7 @@ export function AdminSettingsPage() {
                 groupLabel: capabilities[0]?.groupLabel ?? 'Other',
                 tabLabel: capabilities[0]?.tabLabel ?? '',
                 fields: [],
+                allFields: [],
                 capabilities,
             });
         }
@@ -441,7 +545,9 @@ export function AdminSettingsPage() {
                 }
 
                 const location =
-                    `${section.label} ${section.tabLabel} ${section.groupLabel}`.toLowerCase();
+                    `${section.label} ${section.tabLabel} ${section.groupLabel} ${
+                        guideFor(section.sectionId)?.label ?? ''
+                    }`.toLowerCase();
                 if (location.includes(needle)) {
                     return section;
                 }
@@ -459,9 +565,48 @@ export function AdminSettingsPage() {
                     : null;
             })
             .filter((section): section is RenderedSection => section !== null);
-    }, [sections, query, activeGroup]);
+    }, [sections, query, activeGroup, guideFor]);
 
     const settingCount = declaredKeys.size + capabilityRows.length;
+
+    /**
+     * Each section's status, read from the whole section rather than a search's matches.
+     *
+     * The card chip and the page index both show this, so they cannot disagree, and
+     * narrowing the page with a search does not change what a section reports.
+     */
+    const statusBySection = useMemo(() => {
+        const statuses = new Map<string, SectionStatus>();
+        for (const section of sections) {
+            statuses.set(
+                section.sectionId,
+                computeSectionStatus(
+                    section.allFields,
+                    settings,
+                    draft,
+                    sectionStatus[section.sectionId],
+                    fieldsByKey,
+                ),
+            );
+        }
+        return statuses;
+    }, [sections, settings, draft, sectionStatus, fieldsByKey]);
+
+    /** The page index follows the same filters as the cards. */
+    const indexEntries = useMemo<SettingsIndexEntry[]>(
+        () =>
+            visibleSections.map((section) => ({
+                sectionId: section.sectionId,
+                label: section.label,
+                groupId: section.groupId,
+                groupLabel: section.groupLabel,
+                Icon:
+                    agentSectionAppearances[section.sectionId]?.Icon ??
+                    resolveAdminNavIcon(section.icon),
+                status: statusBySection.get(section.sectionId) ?? 'none',
+            })),
+        [visibleSections, statusBySection],
+    );
 
     /**
      * App role requirements, for the roster that mirrors them into Security.
@@ -536,6 +681,10 @@ export function AdminSettingsPage() {
      *
      * Custom Pages does not take full effect until the App Service restarts, so an
      * administrator has to be told before the toggle can be turned on.
+     *
+     * A switch may also declare `on_enable` companions. Turning Enhanced extraction on
+     * moves the extraction mode from Standard to Auto in the draft, so the administrator
+     * sees the mode that will be saved rather than learning about it afterwards.
      */
     const onSwitchChange = useCallback(
         (field: AdminField, next: boolean) => {
@@ -563,8 +712,11 @@ export function AdminSettingsPage() {
             }
 
             setValue(field.key, next);
+            if (field.on_enable) {
+                setDraft((current) => applyEnableEffect(current, settings, field, next, fieldsByKey));
+            }
         },
-        [settings, setValue],
+        [settings, setValue, fieldsByKey],
     );
 
     const discard = useCallback(() => {
@@ -572,6 +724,19 @@ export function AdminSettingsPage() {
         setFieldErrors({});
         setFieldWarnings({});
     }, []);
+
+    // Opening a global agent or action editor replaces this page, and its unsaved settings
+    // with it. Ask first, as the editors themselves do when they are left with changes.
+    const unsavedSettings = dirtyKeys.length > 0 || saving;
+    const leaveForEditor = useBlocker(
+        ({ nextLocation }) => unsavedSettings && GLOBAL_EDITOR_PATH.test(nextLocation.pathname),
+    );
+    useEffect(() => {
+        // A save that finishes while the question is open leaves nothing to lose.
+        if (leaveForEditor.state === 'blocked' && !unsavedSettings) {
+            leaveForEditor.proceed();
+        }
+    }, [leaveForEditor, unsavedSettings]);
 
     const save = useCallback(async () => {
         if (!Object.keys(draft).length) {
@@ -655,28 +820,158 @@ export function AdminSettingsPage() {
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
     /**
+     * Fold values the server changed outside a save into the page's copy of the settings.
+     *
+     * A retention run writes its own last and next run. Without this the schedule beside
+     * it would keep showing the times from when the page was opened.
+     */
+    const mergeStoredSettings = useCallback((partial: Json) => {
+        setData((current) =>
+            current ? { ...current, settings: { ...current.settings, ...partial } } : current,
+        );
+    }, []);
+
+    /**
+     * Show a category from its first section.
+     *
+     * Every category shares one scroll pane, so changing the filter alone kept the offset
+     * the previous category was left at: leaving Knowledge near its end opened Security
+     * near its end too. Choosing a category -- including the one already shown -- now
+     * starts at the top, and the index is restarted so it marks that first section.
+     */
+    const selectCategory = useCallback((groupId: string | null) => {
+        setActiveGroup(groupId);
+        setCategoryVisit((visit) => visit + 1);
+        scrollRef.current?.scrollTo({ top: 0 });
+    }, []);
+
+    /**
+     * A switch's value, saved or with unsaved edits applied, falling back to its declared
+     * default. Swagger has no seeded default, so without the declared one a fresh
+     * deployment would read as off while the app treats it as on.
+     */
+    const readSwitch = (key: string, includeDraft: boolean) =>
+        asBoolean(
+            readFieldValue(fieldsByKey.get(key) ?? READ_ONLY_REF(key), settings, includeDraft ? draft : {}),
+        );
+
+    /** A link from a setting to the section its effect shows up in. */
+    const renderRelatedSection = (field: AdminField) => {
+        const related = field.related_section;
+        if (!related || !data) {
+            return null;
+        }
+        const shownHere =
+            !related.classic_only && sections.some((section) => section.sectionId === related.section_id);
+        return (
+            <div className={clsx('pb-2', field.type === 'switch' && 'ml-14')}>
+                <RelatedSectionLink
+                    label={related.label}
+                    location={findNavLocation(data.admin_nav, related.section_id)}
+                    onNavigate={shownHere ? () => goToSection(related.section_id) : undefined}
+                />
+            </div>
+        );
+    };
+
+    /**
      * Move the page to a section, from a cross-reference elsewhere on it.
      *
-     * The role catalog links to settings that live in other groups, so clearing the
-     * filters is part of the jump: with a group selected or a search active, the target
-     * section may not be on screen to scroll to. The scroll itself is deferred to an
-     * effect, because the element only exists once that filter change has rendered.
+     * The target has to be on screen to scroll to, so a filter that hides it is changed: a
+     * search that leaves it out is cleared, and a different category switches to the
+     * target's own. Filters that already show it are left alone, so a jump within the
+     * current category keeps the administrator where they were. The scroll is deferred to
+     * an effect, because the element only exists once that filter change has rendered.
      */
     const goToSection = useCallback((sectionId: string) => {
-        setQuery('');
-        setActiveGroup(null);
+        const shown = visibleSections.some((section) => section.sectionId === sectionId);
+        if (!shown) {
+            const target = sections.find((section) => section.sectionId === sectionId);
+            const nextGroup = !target ? null : activeGroup && target.groupId !== activeGroup ? target.groupId : activeGroup;
+            if (nextGroup !== activeGroup && governanceDirty) {
+                // Changing category would unmount a feature policy editor holding unsaved edits.
+                toast.error('Save or discard the feature policy you are editing before changing settings categories.');
+                return;
+            }
+            setQuery('');
+            setActiveGroup(nextGroup);
+        }
         setPendingScroll(sectionId);
-    }, []);
+    }, [visibleSections, sections, activeGroup, governanceDirty]);
+
+    // Open a deep-linked section once its section exists: its own category, with it in view.
+    // Only once per link, so choosing another category afterwards is not undone.
+    const focusedSectionRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!focusSection || focusedSectionRef.current === focusSection) {
+            return;
+        }
+        const target = sections.find((section) => section.sectionId === focusSection);
+        if (!target) {
+            return;
+        }
+        focusedSectionRef.current = focusSection;
+        setActiveGroup(target.groupId);
+        setPendingScroll(focusSection);
+    }, [focusSection, sections]);
 
     useEffect(() => {
         if (!pendingScroll) {
             return;
         }
-        document
-            .getElementById(`admin-section-${pendingScroll}`)
-            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Cards carry their section id as their own id; the heading takes focus so a
+        // keyboard or screen reader user lands where the page now shows.
+        const target = document.getElementById(pendingScroll);
+        if (target) {
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+            document.getElementById(`${pendingScroll}-title`)?.focus({ preventScroll: true });
+        }
         setPendingScroll(null);
     }, [pendingScroll]);
+
+    /**
+     * Go from the Model Catalog to AI Connections, opening one connection when named.
+     *
+     * The connection list opens the editor itself once it holds the row; this only leaves
+     * the request and brings the section into view.
+     */
+    const openConnection = useCallback(
+        (target?: CatalogConnectionTarget) => {
+            if (target) {
+                requestConnectionFocus(target);
+            }
+            goToSection('multi-endpoint-configuration');
+        },
+        [goToSection],
+    );
+
+    /**
+     * Move to a section named by a link, or to where it is switched on when it is hidden.
+     *
+     * A section can be conditional -- the workspace permissions only exist while Workspace
+     * Mode is on -- and a link to it then has nothing to scroll to. It leads instead to the
+     * section owning the condition, which is where the reader can make the target appear.
+     */
+    const navigateToSetting = useCallback(
+        (sectionId: string) => {
+            if (!sections.some((section) => section.sectionId === sectionId)) {
+                const condition = (data?.admin_nav ?? [])
+                    .flatMap((group) => group.tabs.flatMap((tab) => tab.sections))
+                    .find((section) => section.id === sectionId)?.condition;
+                const owner = condition ? sectionOfKey.get(condition) : undefined;
+                if (owner && owner !== sectionId) {
+                    goToSection(owner);
+                    return;
+                }
+            }
+            goToSection(sectionId);
+        },
+        [sections, data, sectionOfKey, goToSection],
+    );
+
+    /** Settings with unsaved edits applied, for governance dialogs that list configured values. */
+    const effectiveSettings = useMemo<Json>(() => ({ ...settings, ...draft }), [settings, draft]);
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
@@ -744,7 +1039,9 @@ export function AdminSettingsPage() {
                     value={value}
                     // The saved value, not the draft: only that says whether a credential
                     // exists, which is what tells an empty box apart from a pending delete.
-                    storedValue={field.key ? settings[field.key] : undefined}
+                    // Read from where the field is stored, which for the Web Search client
+                    // secret is inside `web_search_agent` rather than under its own key.
+                    storedValue={readStoredFieldValue(field, settings)}
                     error={error}
                     warning={warning}
                     disabled={saving}
@@ -806,6 +1103,7 @@ export function AdminSettingsPage() {
                             field={field}
                             settings={settings}
                             draft={draft}
+                            fieldsByKey={fieldsByKey}
                             disabled={saving}
                         />
                     );
@@ -813,10 +1111,84 @@ export function AdminSettingsPage() {
                     return <OrchestrationCard key={key} help={field.help} />;
                 case 'inbound-mcp-disabled-notice':
                     return <InboundMcpNotice key={key} />;
+                case 'inbound-mcp-governance-shortcut':
+                    return (
+                        <InboundMcpGovernanceShortcut
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                            onNavigate={navigateToSetting}
+                        />
+                    );
+                case 'governance-overview':
+                    return <GovernanceOverview key={key} />;
+                case 'governance-feature-policies':
+                    return (
+                        <GovernanceFeaturePolicies
+                            key={key}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                            onNavigate={navigateToSetting}
+                            onDirtyChange={setGovernanceDirty}
+                        />
+                    );
+                case 'governance-item-policies':
+                    return (
+                        <div key={key} className="py-3">
+                            {field.help ? (
+                                <p className="mb-3 max-w-[72ch] text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
+                            ) : null}
+                            <GovernanceItemPolicyManager
+                                newPolicy={() => newItemPolicyDraft({ entity_type: 'global_agent' })}
+                                emptyText="No delegated item policies yet. Every global endpoint, agent, and action is open to everyone who passes its feature policy until a policy here narrows it."
+                                label="Delegated item policies"
+                            />
+                        </div>
+                    );
+                case 'governance-mcp-destination-policies':
+                    return (
+                        <GovernanceMcpDestinationPolicies
+                            key={key}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                        />
+                    );
+                case 'governance-inbound-mcp-policies':
+                    return (
+                        <GovernanceInboundMcpPolicies
+                            key={key}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                            mcpUiEnabled={Boolean(runtimeFlags.mcp_ui_enabled)}
+                        />
+                    );
                 case 'model-connections-manager':
-                    return <ModelConnectionsManager key={key} help={field.help} />;
+                    // The section card is already the "AI Connections" region.
+                    return (
+                        <ModelConnectionsManager
+                            key={key}
+                            help={field.help}
+                            landmark={false}
+                            onManageAccess={(connection) => openGovernanceResourceAccess({
+                                entityType: 'global_endpoint',
+                                itemId: connection.id,
+                                label: connection.name || connection.id,
+                            })}
+                        />
+                    );
                 case 'model-catalog-manager':
-                    return <ModelCatalogManager key={key} />;
+                    return (
+                        <ModelCatalogManager
+                            key={key}
+                            help={field.help}
+                            onOpenConnection={openConnection}
+                        />
+                    );
                 case 'model-picker':
                     return (
                         <ModelPicker
@@ -918,6 +1290,19 @@ export function AdminSettingsPage() {
                     );
                 case 'global-identities-list':
                     return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'global-agents-manager':
+                    // The editor's template gallery reads the saved setting, so the shortcut does too.
+                    return (
+                        <GlobalAgentsManager
+                            key={key}
+                            help={field.help}
+                            templatesEnabled={asBoolean(settings['enable_agent_template_gallery'])}
+                        />
+                    );
+                case 'global-actions-manager':
+                    return <GlobalActionsManager key={key} help={field.help} />;
+                case 'agent-template-approvals-link':
+                    return <AgentTemplateApprovalsLink key={key} help={field.help} />;
                 case 'promoted-popular-agents':
                     return (
                         <PromotedAgentsEditor
@@ -979,6 +1364,32 @@ export function AdminSettingsPage() {
                     return (
                         <KeyVaultReminders key={key} label={field.label} help={field.help} />
                     );
+                case 'enhanced-extraction-engine': {
+                    // Read twice: once as the page stands, and once as saved, so the
+                    // notice can say when what it describes is not in force yet.
+                    const supported = Boolean(runtimeFlags[CONTENT_UNDERSTANDING_SUPPORTED_FLAG]);
+                    const reading = resolveEnhancedExtractionEngine(
+                        (settingKey) => readFieldValue(READ_ONLY_REF(settingKey), settings, draft),
+                        supported,
+                    );
+                    const saved = resolveEnhancedExtractionEngine(
+                        (settingKey) => readFieldValue(READ_ONLY_REF(settingKey), settings, {}),
+                        supported,
+                    );
+                    const pending =
+                        !asBoolean(settings['enable_enhanced_extraction']) ||
+                        saved.engine !== reading.engine ||
+                        saved.reason !== reading.reason;
+                    return (
+                        <EnhancedExtractionEngine
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            reading={reading}
+                            pending={pending}
+                        />
+                    );
+                }
                 case 'front-door-redirect-preview':
                     return (
                         <FrontDoorRedirectPreview
@@ -986,6 +1397,128 @@ export function AdminSettingsPage() {
                             origin={readSibling('front_door_url')}
                             label={field.label}
                             help={field.help}
+                        />
+                    );
+                case 'retention-schedule':
+                    return (
+                        <RetentionSchedule
+                            key={key}
+                            field={field}
+                            value={value}
+                            settings={settings}
+                            draft={draft}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                            onStoredSettingsChange={mergeStoredSettings}
+                        />
+                    );
+                case 'retention-reset-defaults':
+                    return (
+                        <RetentionResetDefaults
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                        />
+                    );
+                case 'retention-run-now':
+                    return (
+                        <RetentionRunNow
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                            onStoredSettingsChange={mergeStoredSettings}
+                            onOpenSection={goToSection}
+                        />
+                    );
+                case 'document-classification-categories':
+                    return (
+                        <ClassificationCategoriesEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'control-center-refresh-schedule':
+                    return (
+                        <RefreshScheduleStatus
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                        />
+                    );
+                case 'control-center-access-matrix': {
+                    const accessKeys = Object.values(CONTROL_CENTER_ACCESS_KEYS);
+                    return (
+                        <ControlCenterAccessMatrix
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            requireAdminRole={readSwitch(CONTROL_CENTER_ACCESS_KEYS.requireAdminRole, true)}
+                            allowDashboardReader={readSwitch(
+                                CONTROL_CENTER_ACCESS_KEYS.allowDashboardReader,
+                                true,
+                            )}
+                            unsaved={accessKeys.some(
+                                (accessKey) => readSwitch(accessKey, true) !== readSwitch(accessKey, false),
+                            )}
+                        />
+                    );
+                }
+                case 'restart-status':
+                    // Compared against how the running process started, which no save changes.
+                    return field.watches && field.runtime_flag ? (
+                        <RestartStatus
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            saved={readSwitch(field.watches, false)}
+                            draft={readSwitch(field.watches, true)}
+                            running={Boolean(runtimeFlags[field.runtime_flag])}
+                            available={
+                                field.runtime_requires ? Boolean(runtimeFlags[field.runtime_requires]) : true
+                            }
+                        />
+                    ) : null;
+                case 'logging-timer-status':
+                    return field.timer_keys ? (
+                        <LoggingTimerStatus
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            keys={field.timer_keys}
+                            settings={settings}
+                            draft={draft}
+                        />
+                    ) : null;
+                case 'file-processing-log-cleanup':
+                    return (
+                        <FileProcessingLogCleanup
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            disabled={saving}
+                        />
+                    );
+                case 'endpoint-links':
+                    return (
+                        <EndpointLinks
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            endpoints={field.endpoints ?? []}
+                            isSavedOn={(gateKey) => readSwitch(gateKey, false)}
+                            isDraftOn={(gateKey) => readSwitch(gateKey, true)}
+                            runtimeFlags={runtimeFlags}
                         />
                     );
                 default:
@@ -1026,17 +1559,35 @@ export function AdminSettingsPage() {
             return (
                 <div key={key}>
                     {control}
-                    <div className="mb-3 rounded-lg border border-edge bg-surface-1 p-3">
-                        <span className="mb-1.5 block text-xs font-medium text-text-3">
+                    {/* A row of its own, so on a wide card the preview sits under the editor in
+                        the control column instead of spanning the label column as well. */}
+                    <div className="admin-field pb-3" data-field-width="full">
+                        <div className="admin-field-heading text-xs font-medium text-text-3">
                             Preview
-                        </span>
-                        <AdminMarkdown content={asString(value)} align={align} />
+                        </div>
+                        <div className="admin-field-control min-w-0 rounded-lg border border-edge bg-surface-1 p-3">
+                            <AdminMarkdown content={asString(value)} align={align} />
+                        </div>
                     </div>
                 </div>
             );
         }
 
-        return <div key={key}>{control}</div>;
+        return (
+            <div key={key}>
+                {control}
+                {renderRelatedSection(field)}
+                {field.related_settings?.length ? (
+                    <RelatedSettingsLinks
+                        related={field.related_settings}
+                        read={(relatedKey) =>
+                            readFieldValue(fieldsByKey.get(relatedKey) ?? READ_ONLY_REF(relatedKey), settings, draft)}
+                        sectionOf={(relatedKey) => sectionOfKey.get(relatedKey)}
+                        onNavigate={navigateToSetting}
+                    />
+                ) : null}
+            </div>
+        );
     };
 
     if (!isAdmin) {
@@ -1063,9 +1614,18 @@ export function AdminSettingsPage() {
         (section) =>
             section.capabilities.length > 0 && (!activeGroup || section.groupId === activeGroup),
     );
-    const showDelegationManager = !loading && Boolean(data) && !error &&
-        (activeGroup === 'agents-actions' ||
-            (activeGroup === null && /call agent|delegation/i.test(query)));
+
+    // The index needs at least two sections to be worth the width it takes.
+    const showIndex = !loading && !error && indexEntries.length > 1;
+
+    const categories: { id: string | null; label: string; Icon: LucideIcon }[] = [
+        { id: null, label: 'All settings', Icon: ALL_SETTINGS_ICON },
+        ...(data?.admin_nav ?? []).map((group) => ({
+            id: group.id,
+            label: group.label,
+            Icon: resolveAdminNavIcon(group.icon),
+        })),
+    ];
 
     return (
         <>
@@ -1121,180 +1681,251 @@ export function AdminSettingsPage() {
             </div>
 
             <div className="flex min-h-0 flex-1">
-                <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block">
+                <aside
+                    aria-label="Settings categories"
+                    className={clsx(
+                        'hidden shrink-0 overflow-y-auto border-r border-edge transition-[width] motion-reduce:transition-none lg:block',
+                        railCollapsed ? 'w-16 px-2 py-3' : 'w-56 p-3',
+                    )}
+                >
                     <button
                         type="button"
-                        disabled={delegationDirty}
-                        onClick={() => setActiveGroup(null)}
+                        onClick={() => updateUserSettings({ v2AdminRailCollapsed: !railCollapsed })}
+                        aria-label={railCollapsed ? 'Expand settings categories' : 'Collapse settings categories'}
+                        aria-expanded={!railCollapsed}
+                        aria-controls="admin-settings-category-list"
+                        title={railCollapsed ? 'Expand settings categories' : 'Collapse settings categories'}
                         className={clsx(
-                            'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                            activeGroup === null
-                                ? 'bg-accent-soft font-medium text-accent'
-                                : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+                            'mb-2 flex w-full items-center gap-2 rounded-lg py-1.5 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                            railCollapsed ? 'justify-center px-2' : 'px-3',
                         )}
                     >
-                        All settings
+                        {railCollapsed ? <PanelLeftOpen size={15} aria-hidden="true" /> : (
+                            <><PanelLeftClose size={15} aria-hidden="true" /><span>Collapse</span></>
+                        )}
                     </button>
-                    {(data?.admin_nav ?? []).map((group) => (
-                        <button
-                            key={group.id}
-                            type="button"
-                            disabled={delegationDirty}
-                            onClick={() => setActiveGroup(group.id)}
-                            className={clsx(
-                                'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                                activeGroup === group.id
-                                    ? 'bg-accent-soft font-medium text-accent'
-                                    : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
-                            )}
-                        >
-                            {group.label}
-                        </button>
-                    ))}
+                    <div id="admin-settings-category-list" className="space-y-0.5">
+                        {categories.map((category) => {
+                            const active = activeGroup === category.id;
+                            return (
+                                <button
+                                    key={category.id ?? '__all'}
+                                    type="button"
+                                    disabled={governanceDirty}
+                                    aria-pressed={active}
+                                    title={railCollapsed ? category.label : undefined}
+                                    onClick={() => selectCategory(category.id)}
+                                    className={clsx(
+                                        'flex w-full items-center gap-2.5 rounded-lg py-2.5 text-left text-sm transition-colors',
+                                        railCollapsed ? 'justify-center px-2' : 'px-3',
+                                        'disabled:cursor-not-allowed disabled:opacity-60',
+                                        active
+                                            ? 'bg-accent-soft font-semibold text-accent'
+                                            : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+                                    )}
+                                >
+                                    <category.Icon
+                                        size={16}
+                                        aria-hidden="true"
+                                        className={clsx('shrink-0', active ? 'text-accent' : 'text-text-3')}
+                                    />
+                                    {/* Collapsed, the label stays as the button's accessible name. */}
+                                    <span className={railCollapsed ? 'sr-only' : 'min-w-0 flex-1'}>{category.label}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </aside>
 
                 <div className="flex min-w-0 flex-1 flex-col">
-                    <div className="shrink-0 border-b border-edge p-4">
-                        <div className="mx-auto mb-3 max-w-2xl lg:hidden">
-                            <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
-                            <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
-                                onChange={(event) => setActiveGroup(event.target.value || null)}
-                                className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
-                                <option value="">All settings</option>
-                                {(data?.admin_nav ?? []).map((group) => (
-                                    <option key={group.id} value={group.id}>{group.label}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="relative mx-auto max-w-2xl">
-                            <Search
-                                size={16}
-                                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
-                            />
-                            <input
-                                ref={searchRef}
-                                type="search"
-                                value={query}
-                                onChange={(event) => setQuery(event.target.value)}
-                                placeholder="Search every setting…  (press / to focus)"
-                                aria-label="Search settings"
-                                disabled={delegationDirty}
-                                className={clsx(
-                                    'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
-                                    'text-sm text-text-1 placeholder:text-text-3',
-                                    'focus:border-accent focus:outline-none',
-                                )}
-                            />
+                    <div className="shrink-0 border-b border-edge px-4 py-3 lg:px-6">
+                        <div className="mx-auto w-full max-w-[112rem]">
+                            <div className="mb-3 max-w-md lg:hidden">
+                                <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
+                                <select id="admin-settings-category" value={activeGroup ?? ''} disabled={governanceDirty}
+                                    onChange={(event) => selectCategory(event.target.value || null)}
+                                    className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
+                                    <option value="">All settings</option>
+                                    {(data?.admin_nav ?? []).map((group) => (
+                                        <option key={group.id} value={group.id}>{group.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="relative max-w-2xl">
+                                <Search
+                                    size={16}
+                                    className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
+                                />
+                                <input
+                                    ref={searchRef}
+                                    type="search"
+                                    value={query}
+                                    onChange={(event) => setQuery(event.target.value)}
+                                    placeholder="Search every setting…  (press / to focus)"
+                                    aria-label="Search settings"
+                                    disabled={governanceDirty}
+                                    className={clsx(
+                                        'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
+                                        'text-sm text-text-1 placeholder:text-text-3',
+                                        'focus:border-accent focus:outline-none',
+                                    )}
+                                />
+                            </div>
                         </div>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                        <div className="mx-auto max-w-3xl space-y-4">
-                            {error && (
-                                <GlassPanel
-                                    elevation="flat"
-                                    className="flex items-start gap-2 p-3 text-sm text-danger"
-                                >
-                                    <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-                                    {error}
-                                </GlassPanel>
-                            )}
+                    <div
+                        ref={scrollRef}
+                        data-testid="admin-settings-scroll"
+                        className="@container min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6"
+                    >
+                        <div className="mx-auto grid w-full max-w-[112rem] items-start gap-6 @min-[76rem]:grid-cols-[minmax(0,1fr)_15rem]">
+                            <div data-testid="admin-settings-content" className="min-w-0 space-y-4">
+                                {error && (
+                                    <GlassPanel
+                                        elevation="flat"
+                                        className="flex items-start gap-2 p-3 text-sm text-danger"
+                                    >
+                                        <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+                                        {error}
+                                    </GlassPanel>
+                                )}
 
-                            {loading && (
-                                <div className="space-y-3">
-                                    {Array.from({ length: 5 }).map((_, index) => (
-                                        <Skeleton key={index} className="h-24 w-full" />
-                                    ))}
-                                </div>
-                            )}
+                                {loading && (
+                                    <div className="space-y-3">
+                                        {Array.from({ length: 5 }).map((_, index) => (
+                                            <Skeleton key={index} className="h-24 w-full" />
+                                        ))}
+                                    </div>
+                                )}
 
-                            {showDelegationManager ? (
-                                <GlassPanel elevation="flat" className="space-y-3 p-4">
-                                    <h2 className="text-base font-semibold text-text-1">Global agent delegation</h2>
-                                    <AgentDelegationManager scope={GLOBAL_DELEGATION_SCOPE}
-                                        allowManage={isAdmin} onDirtyChange={setDelegationDirty} />
-                                    {delegationDirty ? <p className="text-xs text-warn">Save or cancel Call agent changes before changing settings categories.</p> : null}
-                                    <p className="text-xs text-text-3">These resources save separately from settings. Full global agent and other connector management remains on the <a href="/admin/settings" className="text-accent underline">classic admin page</a>.</p>
-                                </GlassPanel>
+                                {!loading && visibleSections.length === 0 && (
+                                    <p className="py-12 text-center text-sm text-text-3">
+                                        No settings match “{query}”.
+                                    </p>
+                                )}
+
+                                {visibleSections.map((section) => {
+                                    const guide = guideFor(section.sectionId);
+                                    return (
+                                    <SettingsSection
+                                        key={section.sectionId}
+                                        sectionId={section.sectionId}
+                                        label={section.label}
+                                        groupLabel={section.groupLabel}
+                                        tabLabel={section.tabLabel}
+                                        icon={resolveAdminNavIcon(section.icon)}
+                                        fields={section.fields}
+                                        hierarchyFields={section.allFields}
+                                        fieldsByKey={fieldsByKey}
+                                        settings={settings}
+                                        draft={draft}
+                                        // Sections that describe a status rule use it;
+                                        // the rest have their status derived from which
+                                        // of their required fields are filled.
+                                        statusRule={sectionStatus[section.sectionId]}
+                                        status={statusBySection.get(section.sectionId)}
+                                        renderField={renderField}
+                                        renderCapability={renderField}
+                                        appearance={agentSectionAppearances[section.sectionId]}
+                                        guide={
+                                            guide
+                                                ? { label: guide.label, onOpen: () => setOpenGuide(guide) }
+                                                : undefined
+                                        }
+                                        runtimeFlags={runtimeFlags}
+                                        onNavigate={navigateToSetting}
+                                        // While a search is filtering, a match inside a
+                                        // collapsed group has to be shown or the card would
+                                        // appear empty.
+                                        forceExpanded={Boolean(query.trim())}
+                                    >
+                                        {section.capabilities.length ? (
+                                            <div className="admin-switch-grid" data-testid="admin-switch-grid">
+                                                {section.capabilities.map((row) => (
+                                                    <div key={row.key} className="py-1">
+                                                        <Toggle
+                                                            label={row.label}
+                                                            description={row.key}
+                                                            labelClassName="font-semibold"
+                                                            descriptionClassName="font-mono text-xs"
+                                                            checked={asBoolean(
+                                                                Object.prototype.hasOwnProperty.call(
+                                                                    draft,
+                                                                    row.key,
+                                                                )
+                                                                    ? draft[row.key]
+                                                                    : settings[row.key],
+                                                            )}
+                                                            disabled={saving}
+                                                            onChange={(next) =>
+                                                                setValue(row.key, next)
+                                                            }
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : null}
+                                    </SettingsSection>
+                                    );
+                                })}
+
+                                {!loading && activeGroupUsesFallback && (
+                                    <p className="pb-6 text-center text-xs text-text-3">
+                                        Settings in this group that need more than a switch —
+                                        endpoints, keys, prompts and connection tests — are still on
+                                        the{' '}
+                                        <a href="/admin/settings" className="text-accent underline">
+                                            classic admin page
+                                        </a>
+                                        .
+                                    </p>
+                                )}
+
+                                <SaveBar
+                                    dirtyCount={dirtyKeys.length}
+                                    saving={saving}
+                                    onSave={() => void save()}
+                                    onDiscard={discard}
+                                />
+                            </div>
+
+                            {showIndex ? (
+                                <SettingsIndex
+                                    // A fresh index per category choice, so a section pinned
+                                    // from the index cannot stay marked after the jump to the top.
+                                    key={categoryVisit}
+                                    className="hidden @min-[76rem]:block"
+                                    entries={indexEntries}
+                                    grouped={activeGroup === null || Boolean(query.trim())}
+                                    scrollRoot={scrollRef}
+                                    onJump={setPendingScroll}
+                                />
                             ) : null}
-
-                            {!loading && !showDelegationManager && visibleSections.length === 0 && (
-                                <p className="py-12 text-center text-sm text-text-3">
-                                    No settings match “{query}”.
-                                </p>
-                            )}
-
-                            {visibleSections.map((section) => (
-                                <SettingsSection
-                                    key={section.sectionId}
-                                    sectionId={section.sectionId}
-                                    label={section.label}
-                                    groupLabel={section.groupLabel}
-                                    tabLabel={section.tabLabel}
-                                    fields={section.fields}
-                                    settings={settings}
-                                    draft={draft}
-                                    // Sections that describe a status rule use it;
-                                    // the rest have their status derived from which
-                                    // of their required fields are filled.
-                                    statusRule={sectionStatus[section.sectionId]}
-                                    renderField={renderField}
-                                    renderCapability={renderField}
-                                    appearance={agentSectionAppearances[section.sectionId]}
-                                    // While a search is filtering, a match inside a
-                                    // collapsed group has to be shown or the card would
-                                    // appear empty.
-                                    forceExpanded={Boolean(query.trim())}
-                                >
-                                    {section.capabilities.length ? (
-                                        <div className="divide-y divide-edge">
-                                            {section.capabilities.map((row) => (
-                                                <div key={row.key} className="py-1">
-                                                    <Toggle
-                                                        label={row.label}
-                                                        description={row.key}
-                                                        checked={asBoolean(
-                                                            Object.prototype.hasOwnProperty.call(
-                                                                draft,
-                                                                row.key,
-                                                            )
-                                                                ? draft[row.key]
-                                                                : settings[row.key],
-                                                        )}
-                                                        disabled={saving}
-                                                        onChange={(next) =>
-                                                            setValue(row.key, next)
-                                                        }
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : null}
-                                </SettingsSection>
-                            ))}
-
-                            {!loading && activeGroupUsesFallback && (
-                                <p className="pb-6 text-center text-xs text-text-3">
-                                    Settings in this group that need more than a switch —
-                                    endpoints, keys, prompts and connection tests — are still on
-                                    the{' '}
-                                    <a href="/admin/settings" className="text-accent underline">
-                                        classic admin page
-                                    </a>
-                                    .
-                                </p>
-                            )}
-
-                            <SaveBar
-                                dirtyCount={dirtyKeys.length}
-                                saving={saving}
-                                onSave={() => void save()}
-                                onDiscard={discard}
-                            />
                         </div>
                     </div>
                 </div>
             </div>
+
+            {leaveForEditor.state === 'blocked' ? (
+                <WorkspaceLeavePrompt
+                    saving={saving}
+                    onStay={() => leaveForEditor.reset()}
+                    onDiscard={() => {
+                        discard();
+                        leaveForEditor.proceed();
+                    }}
+                />
+            ) : null}
+
+            {openGuide ? (
+                <SectionGuide
+                    guide={openGuide}
+                    // Saved settings, not the draft: a guide describes what is live.
+                    context={{ settings, runtimeFlags }}
+                    onClose={() => setOpenGuide(null)}
+                />
+            ) : null}
 
             {pendingAck?.requires_acknowledgement ? (
                 <AdminModal
@@ -1347,6 +1978,9 @@ export function AdminSettingsPage() {
                     </span>
                 </div>
             ) : null}
+
+            {/* Governance dialogs open from several sections, so one host serves them all. */}
+            {data ? <GovernanceDialogHost settings={effectiveSettings} /> : null}
         </>
     );
 }

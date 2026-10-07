@@ -70,7 +70,7 @@ import {
     conversationParticipants,
     extractMentionedParticipants,
     mentionsCurrentUser,
-    resolveSendTarget,
+    sharedConversationTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
 import {
@@ -124,6 +124,7 @@ import {
     type ContextItem,
 } from '../lib/chatContext';
 import { messageThreadId } from '../lib/threads';
+import { withoutDeletedMessages } from '../lib/deletedMessages';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
@@ -216,6 +217,16 @@ export type { ConversationKind };
  * like an ordinary response rather than continuing to advertise the interruption.
  */
 export type ReconnectPhase = 'connecting' | 'reconnected' | null;
+
+/**
+ * Which part of an orchestrated turn holds the streaming surface.
+ *
+ * `planning` is the planner working before a plan or question exists, and `running` is an approved
+ * plan executing. They are told apart because they draw differently. While a turn plans, the
+ * streaming bubble is the only sign of progress. A run's progress is already on the plan card, so a
+ * bubble beside it only repeated it.
+ */
+export type OrchestrationSurfacePhase = 'planning' | 'running';
 
 export interface ComposerOptions {
     /**
@@ -352,6 +363,16 @@ interface ChatState {
      * the first state for the whole reattached stream makes working output look stalled.
      */
     reconnectPhase: ReconnectPhase;
+    /**
+     * The orchestration phase holding the open conversation's `streaming` flag, or null when the
+     * flag belongs to an ordinary chat stream or nothing is streaming.
+     *
+     * `streaming` alone cannot say whose it is. A chat message can be sent while an orchestration
+     * run waits or is being reconciled in the same conversation, and that reply must still show
+     * Thinking, so the owner is recorded when the flag is taken rather than guessed from the
+     * orchestration store.
+     */
+    orchestrationSurface: OrchestrationSurfacePhase | null;
 
     /** Right-hand drawer state. Null means closed. */
     drawerMode: DrawerMode;
@@ -453,7 +474,9 @@ interface ChatState {
      * `beginOrchestrationTurn` returns the optimistic user bubble's id so the controller can hand
      * it back on completion for reconciliation with the server's persisted id. Passing
      * `addUserMessage: false` re-enters the thinking state for a re-plan without adding a second
-     * bubble, because the user's question is already in the thread from the first plan.
+     * bubble, because the user's question is already in the thread from the first plan. `phase`
+     * says which part of the turn takes the surface: a plan by default, or `running` for an
+     * approved plan, whose progress the plan card shows instead of the streaming bubble.
      */
     beginOrchestrationTurn: (
         conversationId: string,
@@ -461,6 +484,7 @@ interface ChatState {
         addUserMessage?: boolean,
         turnId?: string,
         promptInfo?: Json | null,
+        phase?: OrchestrationSurfacePhase,
     ) => string;
     pushOrchestrationThought: (conversationId: string, event: RunStreamEvent) => void;
     pushOrchestrationContent: (conversationId: string, accumulated: string) => void;
@@ -873,7 +897,7 @@ let streamingConversationId: string | null = null;
 let streamingConversationKind: ConversationKind = 'personal';
 
 /**
- * Conversations whose orchestration turn currently holds the streaming surface.
+ * Conversations whose orchestration turn currently holds the streaming surface, and in which phase.
  *
  * A plan or run is driven by its own controller, not `activeStreamController`, so
  * `detachActiveStream` knows nothing about it. The turn takes the shared `streaming` flag in
@@ -883,9 +907,10 @@ let streamingConversationKind: ConversationKind = 'personal';
  * Stop with nothing to stop, and refused to send until the page was reloaded.
  *
  * Kept per conversation, whatever is on screen, so leaving can drop the flag and reopening a
- * conversation whose turn is still running in this tab can put it back.
+ * conversation whose turn is still running in this tab can put it back. The phase comes back with
+ * it, so a reopened run still shows its progress on the plan card alone.
  */
-const orchestrationSurfaces = new Set<string>();
+const orchestrationSurfaces = new Map<string, OrchestrationSurfacePhase>();
 
 /**
  * Bumped each time the reader starts a new chat or opens a conversation.
@@ -949,6 +974,12 @@ function stopCollaborationEvents(): void {
     }
 }
 
+/** The message a shared-thread copy was mirrored from, or '' when it is not a copy. */
+function mirroredSourceId(message: ChatMessage | CollaborationMessage): string {
+    const metadata = message.metadata as { source_message_id?: unknown } | undefined;
+    return typeof metadata?.source_message_id === 'string' ? metadata.source_message_id.trim() : '';
+}
+
 /**
  * Merge a message that arrived from the server into the thread.
  *
@@ -961,7 +992,7 @@ function stopCollaborationEvents(): void {
  * matched on the pending id when it is known, and otherwise on the reader's own unsent
  * text, which is how a message posted from another tab still lands in one place.
  */
-function mergeCollaborationMessage(
+export function mergeCollaborationMessage(
     messages: ChatMessage[],
     incoming: CollaborationMessage,
     options: { pendingId?: string | null; currentUserId?: string } = {},
@@ -976,6 +1007,26 @@ function mergeCollaborationMessage(
         merged[existingIndex] = isReplyRemoved(incoming.metadata)
             ? { ...incoming, thoughts: undefined }
             : { ...merged[existingIndex], ...incoming };
+        return merged;
+    }
+
+    // A shared conversation's orchestrated question and answer are mirrored into its thread
+    // from the run's own messages, so the shared copy and the run's live bubble name each other
+    // through `metadata.source_message_id`. Either can arrive first; the second updates the first.
+    const incomingSourceId = mirroredSourceId(incoming);
+    const mirroredIndex = messages.findIndex((message) =>
+        (incomingSourceId && message.id === incomingSourceId)
+        || (Boolean(incoming.id) && mirroredSourceId(message) === incoming.id),
+    );
+    if (mirroredIndex !== -1) {
+        if (
+            isReplyRemoved(messages[mirroredIndex].metadata)
+            && !isReplyRemoved(incoming.metadata)
+        ) return messages;
+        const merged = [...messages];
+        merged[mirroredIndex] = isReplyRemoved(incoming.metadata)
+            ? { ...incoming, thoughts: undefined }
+            : { ...merged[mirroredIndex], ...incoming };
         return merged;
     }
 
@@ -1550,6 +1601,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
 
     set({
         streaming: true,
+        orchestrationSurface: null,
         streamingContent: '',
         thoughts: [],
         streamingReasoningAdjustments: [],
@@ -1664,6 +1716,8 @@ function attachCollaborationEvents(conversationId: string): void {
                     currentUserId: currentUserId(),
                 }),
             }));
+            // The answer is proof its request has finished, should that event be late or lost.
+            collaboration().finishAiRunsAnsweredBy(message);
 
             const senderId = String(message.sender?.user_id ?? '').trim();
             if (!senderId || senderId === currentUserId()) {
@@ -1797,6 +1851,13 @@ function attachCollaborationEvents(conversationId: string): void {
                 return;
             }
             collaboration().applyTyping(user, isTyping, expiresAt, currentUserId());
+        },
+
+        onAiActivity: (activity) => {
+            if (!stillOpen()) {
+                return;
+            }
+            collaboration().applyAiActivity(activity);
         },
 
         onConversationUpdated: (conversation) => {
@@ -2060,6 +2121,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamError: null,
     streamAuthUrl: null,
     reconnectPhase: null,
+    orchestrationSurface: null,
 
     drawerMode: null,
     metadata: null,
@@ -2167,6 +2229,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // thoughts and its settle land here as usual. A chat stream is picked back up by
             // `resumeChatStream` below.
             streaming: conversationId ? orchestrationSurfaces.has(conversationId) : false,
+            orchestrationSurface: conversationId ? orchestrationSurfaces.get(conversationId) ?? null : null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -2205,20 +2268,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             set({ activeConversationKind: kind });
 
-            const { messages } =
+            const { messages: loadedMessages } =
                 kind === 'collaborative'
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
+            // A message deleted while archiving was enabled is never shown, not even as a
+            // masked one; see deletedMessages.ts.
+            const messages = withoutDeletedMessages(loadedMessages);
 
             if (get().activeConversationId !== conversationId) {
                 return;
             }
-            set({ messages: messages ?? [], messagesLoading: false });
-            const descriptor = latestSavedAnalysis(messages ?? []);
+            set({ messages, messagesLoading: false });
+            const descriptor = latestSavedAnalysis(messages);
             if (descriptor && !get().analysisContextChosen) {
                 get().selectAnalysisResult(descriptor, analysisRevision);
             }
-            const workflowResult = latestWorkflowResult(messages ?? []);
+            const workflowResult = latestWorkflowResult(messages);
             if (workflowResult && !get().analysisContextChosen) {
                 get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
             }
@@ -2380,6 +2446,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // once its conversation is off screen, so the new chat kept the old turn's Thinking
             // state and a Stop button with nothing to stop. The turn itself keeps running.
             streaming: false,
+            orchestrationSurface: null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -2848,25 +2915,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const replyTo = useCollaborationStore.getState().replyTo;
 
         // In a shared conversation most messages are people talking to each other, so the
-        // AI is only brought in when something asks for it. `resolveSendTarget` applies the
-        // classic client's rule; null means this message is for the participants alone.
+        // AI is only brought in when something asks for it. `sharedConversationTarget` applies
+        // the classic client's rule, the same one Orchestrate applies; null means this message
+        // is for the participants alone.
         const invocationTarget = collaborative
-            ? resolveSendTarget(
+            ? sharedConversationTarget(
                   trimmed,
-                  {
-                      agentSelection: options.agentSelection,
-                      promptId: options.promptId,
-                      documentSearch: !savedContext && options.documentSearch,
-                      webSearch: !savedContext && options.webSearch,
-                      imageGeneration: !savedContext && options.imageGeneration,
-                      deepResearch: !savedContext && options.deepResearch,
-                      urlAccess: !savedContext && options.urlAccess,
-                      modelDeployment: options.modelDeployment,
-                  },
+                  options,
                   {
                       agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
                       models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
                   },
+                  { savedContext: Boolean(savedContext) },
               ) ?? (savedContext ? {
                   target_type: 'model' as const,
                   display_name: 'Model',
@@ -2895,6 +2955,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   effectiveReferenceImageLimit(bootstrap?.capabilities?.image_edit),
               )
             : [];
+        const mentionedParticipants = collaborative
+            ? extractMentionedParticipants(
+                  trimmed,
+                  conversationParticipants(collaborationConversation),
+              )
+            : [];
         const pendingUserMessageId = `pending-user-${Date.now()}`;
         const optimisticUserMessage: ChatMessage = {
             id: pendingUserMessageId,
@@ -2906,6 +2972,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // away. Without it the message would render as one blob until the server echo
             // arrived and then silently rearrange itself.
             ...(options.promptInfo || optimisticImageReferences.length > 0 || workflowContext
+                || mentionedParticipants.length > 0 || (collaborative && invocationTarget)
                 ? {
                       metadata: {
                           ...(options.promptInfo
@@ -2918,6 +2985,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                           // about a workflow result before its echo arrives.
                           ...(workflowContext
                               ? { workflow_result_context: workflowResultContext(workflowContext.descriptor) }
+                              : {}),
+                          // As the server stores them, so the mention pills replace the
+                          // `@Name` text before the echo arrives rather than after.
+                          ...(mentionedParticipants.length > 0
+                              ? { mentioned_participants: mentionedParticipants as unknown as Json }
+                              : {}),
+                          ...(collaborative && invocationTarget
+                              ? { ai_invocation_target: invocationTarget as unknown as Json }
                               : {}),
                       },
                   }
@@ -2946,13 +3021,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reconnectPhase: null,
             }));
         }
-
-        const mentionedParticipants = collaborative
-            ? extractMentionedParticipants(
-                  trimmed,
-                  conversationParticipants(collaborationConversation),
-              )
-            : [];
 
         if (collaborative && !invocationTarget) {
             // Posted rather than streamed. The response carries the stored message, which
@@ -3165,6 +3233,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     },
                 ],
                 streaming: true,
+                orchestrationSurface: null,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
@@ -3235,12 +3304,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    beginOrchestrationTurn: (conversationId, text, addUserMessage = true, turnId, promptInfo) => {
+    beginOrchestrationTurn: (
+        conversationId,
+        text,
+        addUserMessage = true,
+        turnId,
+        promptInfo,
+        phase = 'planning',
+    ) => {
         const trimmed = text.trim();
         const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
         // Recorded whether or not the conversation is on screen, so opening it while this turn
         // is still in flight shows it working.
-        orchestrationSurfaces.add(conversationId);
+        orchestrationSurfaces.set(conversationId, phase);
         // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
         // started here keeps going after the reader opens another thread, and its question must
         // not appear inside that other thread.
@@ -3270,6 +3346,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ]
                     : state.messages,
                 streaming: true,
+                orchestrationSurface: phase,
                 analysisTurnRevision: state.analysisContextRevision,
                 streamingContent: '',
                 thoughts: [],
@@ -3336,6 +3413,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // the next turn's streaming bubble.
             set({
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
@@ -3347,6 +3425,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (outcome.status === 'failed' && !('event' in outcome)) {
             set({
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
                 streamError: outcome.error,
@@ -3375,6 +3454,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       ]
                     : state.messages,
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
             }));
@@ -3445,6 +3525,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     finalMessage as CollaborationMessage,
                 ),
                 streaming: false,
+                orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
                 streamError: null,
@@ -3481,8 +3562,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
         // The turn's claim on the streaming surface follows it to the id the server named.
-        if (conversationChanged && orchestrationSurfaces.delete(fromConversationId)) {
-            orchestrationSurfaces.add(toConversationId);
+        const surfacePhase = orchestrationSurfaces.get(fromConversationId);
+        if (conversationChanged && surfacePhase && orchestrationSurfaces.delete(fromConversationId)) {
+            orchestrationSurfaces.set(toConversationId, surfacePhase);
         }
         set((state) => {
             const messages = state.messages.map((message) => {
@@ -3579,7 +3661,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return 'done';
         }
         try {
-            const { messages } =
+            const { messages: loadedMessages } =
                 get().activeConversationKind === 'collaborative'
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
@@ -3590,15 +3672,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (options?.onlyIfUnchanged && (get().streaming || get().messages !== shownBefore)) {
                 return 'superseded';
             }
-            set({ messages: messages ?? [] });
+            // A message deleted while archiving was enabled is never shown, not even as a
+            // masked one; see deletedMessages.ts.
+            const messages = withoutDeletedMessages(loadedMessages);
+            set({ messages });
             const selected = get().analysisResultContext;
-            if (selected && get().analysisContextRevision === analysisRevision && !(messages ?? []).some((message) =>
+            if (selected && get().analysisContextRevision === analysisRevision && !messages.some((message) =>
                 sameAnalysis(selected, latestSavedAnalysis([message])),
             )) {
                 get().clearAnalysisResultContext();
             }
             if (!get().analysisContextChosen) {
-                const descriptor = latestSavedAnalysis(messages ?? []);
+                const descriptor = latestSavedAnalysis(messages);
                 if (descriptor) {
                     get().selectAnalysisResult(descriptor, analysisRevision);
                 }
@@ -3607,7 +3692,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // with Ask in chat is in no message until its first answer arrives. A result that
             // became unavailable is refused, and its chip removed, when it is next asked about.
             if (!get().analysisContextChosen) {
-                const workflowResult = latestWorkflowResult(messages ?? []);
+                const workflowResult = latestWorkflowResult(messages);
                 if (workflowResult) {
                     get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
                 }
@@ -3637,9 +3722,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             } else {
                 await deleteMessageApi(messageId, deleteThread);
             }
-            // Deletion is soft when archiving is enabled: the server masks the message
-            // rather than removing it, so the authoritative list is re-read instead of
-            // trusting the optimistic removal.
+            // The authoritative list is re-read rather than trusting the optimistic removal:
+            // deleting a question removes its whole turn, every attempt included, which the
+            // client cannot work out from the one message it removed.
             await get().reloadMessages();
         } catch (error) {
             set({
@@ -3692,6 +3777,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         set({
             streaming: true,
+            orchestrationSurface: null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -3748,6 +3834,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         set({
             streaming: true,
+            orchestrationSurface: null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],

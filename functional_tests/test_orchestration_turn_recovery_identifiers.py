@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.213
+Version: 0.261.270
 Implemented in: 0.261.099
 Chat content-check metadata binding included in: 0.261.131
+Shared conversation question posting included in: 0.261.270
 
 A run is only recoverable if its question can be found in the thread. The live card stamps
 ``orchestration_turn_id`` on its optimistic user bubble, but the server saved the same message
@@ -154,11 +155,13 @@ def test_run_record_keeps_the_turn_and_question_ids():
         context = import_app_module("functions_orchestration_context")
         authorize = Mock(return_value={"id": "conversation-1", "user_id": "user-1"})
         latest_run = Mock(return_value=None)
+        mirror = Mock()
         namespace = {
             '_save_turn_message': save_message, 'create_orchestration_run': create_run,
             'validate_memory_context': memory.validate_memory_context,
             '_authorize_context_conversation': authorize,
             'get_latest_turn_run': latest_run,
+            '_mirror_planned_turn': mirror,
             'CHECK_METADATA': checks.CHECK_METADATA,
             'image_reference_provenance_from_seeds': context.image_reference_provenance_from_seeds,
             'g': g, 'has_request_context': has_request_context,
@@ -170,6 +173,8 @@ def test_run_record_keeps_the_turn_and_question_ids():
 
         authorize.assert_called_once_with('conversation-1', 'user-1')
         latest_run.assert_called_once_with('conversation-1', 'user-1', 'turn-1')
+        # A shared conversation's question is posted to its thread under the saved message id.
+        mirror.assert_called_once_with('conversation-1', 'user-1', 'saved-question', turn_context)
         assert saved_messages == [('conversation-1', 'user-1', 'turn-1', 'The original question')]
         assert len(created_runs) == 1, 'the turn must be persisted once'
         stored_plan, stored_user, arguments = created_runs[0]
