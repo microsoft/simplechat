@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OpenAPI plugin additional settings",
+  "description": "Settings that control OpenAPI specification import, base URL overrides, and operation exposure.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "base_url": {
+      "type": "string",
+      "description": "Resolved API base URL used by the connector."
+    },
+    "base_url_override": {
+      "type": "boolean",
+      "description": "Whether the action uses a manually overridden base URL instead of the specification server."
+    },
+    "allowed_operations": {
+      "type": "array",
+      "description": "Optional list of operation IDs or generated operation keys exposed to agents. Missing or empty means all operations are available.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "openapi_spec_content": {
+      "type": "object",
+      "description": "Validated OpenAPI specification content."
+    },
+    "openapi_source_type": {
+      "type": "string",
+      "description": "How the specification content is stored.",
+      "enum": ["content", "file", "path"]
+    }
+  }
+}

@@ -412,8 +412,8 @@ def register_route_backend_retention_policy(bp):
         Update retention policy settings for the current user's personal workspace.
         
         Body:
-            conversation_retention_days (str|int): Number of days or 'none'
-            document_retention_days (str|int): Number of days or 'none'
+            conversation_retention_days (str|int): Number of days, 'none' or 'default'
+            document_retention_days (str|int): Number of days, 'none' or 'default'
         """
         try:
             user_id = get_current_user_id()
@@ -426,6 +426,8 @@ def register_route_backend_retention_policy(bp):
                 conv_retention = data['conversation_retention_days']
                 if conv_retention == 'none' or conv_retention is None:
                     retention_settings['conversation_retention_days'] = 'none'
+                elif conv_retention == 'default':
+                    retention_settings['conversation_retention_days'] = 'default'
                 else:
                     try:
                         days = int(conv_retention)
@@ -451,6 +453,8 @@ def register_route_backend_retention_policy(bp):
                 doc_retention = data['document_retention_days']
                 if doc_retention == 'none' or doc_retention is None:
                     retention_settings['document_retention_days'] = 'none'
+                elif doc_retention == 'default':
+                    retention_settings['document_retention_days'] = 'default'
                 else:
                     try:
                         days = int(doc_retention)

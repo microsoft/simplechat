@@ -97,6 +97,16 @@ export interface ActionTypeDefinition {
     allowed_auth_types: string[];
     additional_fields_schema: EditorSchema;
     metadata_schema: EditorSchema;
+    capabilities?: {
+        key: string;
+        label: string;
+        description: string;
+        default?: boolean;
+    }[];
+    defaults?: Record<string, unknown>;
+    graph_endpoint?: string;
+    hidden?: boolean;
+    legacy?: boolean;
 }
 
 export interface AgentEditorOptions {

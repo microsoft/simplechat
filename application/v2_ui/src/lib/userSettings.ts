@@ -34,6 +34,11 @@ export interface UserSettings {
     fontSizePreference?: FontSizePreference;
     sidebarToggleStyle?: SidebarToggleStyle;
     showTutorialButtons?: boolean;
+    /**
+     * Per-tour visibility, `{ tourId: boolean }`. A tour missing from the map is shown,
+     * as long as `showTutorialButtons` is not off. The route accepts only shipped tour ids.
+     */
+    tutorialVisibility?: Record<string, boolean>;
     desktopNotificationsEnabled?: boolean;
     conversationContentsDrawerEnabled?: boolean;
     /**
@@ -86,6 +91,12 @@ export interface UserSettings {
     v2ApprovalsRailCollapsed?: boolean;
     /** Whether the V2 Control Center section rail is collapsed to icons. */
     v2ControlCenterRailCollapsed?: boolean;
+
+    /**
+     * Whether the User Settings sections rail shows icons only. Its own key for the same
+     * reason the admin and workspace rails have theirs.
+     */
+    v2UserSettingsRailCollapsed?: boolean;
 
     /**
      * How the workspace documents explorer is presented, and the views pinned in its rail.
@@ -143,7 +154,7 @@ export interface UserSettings {
     ttsSpeed?: number;
     ttsAutoplay?: boolean;
 
-    /** Read-only here; the route sets it when the user hides the shortcut. */
+    /** The version the user hid the Latest Features shortcut for; the route accepts only the current one. */
     latestFeaturesHiddenVersion?: string | null;
 
     /**
@@ -208,6 +219,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'fontSizePreference',
     'sidebarToggleStyle',
     'showTutorialButtons',
+    'tutorialVisibility',
+    // Written by the Latest Features hide control: the current version, or null to show it again.
+    'latestFeaturesHiddenVersion',
     'desktopNotificationsEnabled',
     'conversationContentsDrawerEnabled',
     'showConversationWorkspaceTags',
@@ -227,6 +241,8 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2AdminRailCollapsed',
     // Whether the Approvals categories rail is showing icons only.
     'v2ApprovalsRailCollapsed',
+    // Whether the User Settings sections rail is showing icons only.
+    'v2UserSettingsRailCollapsed',
     // Separate from the shell and Admin Settings rails so each keeps its own layout.
     'v2ControlCenterRailCollapsed',
     // Workspace documents explorer: how the list is presented, and the saved filter

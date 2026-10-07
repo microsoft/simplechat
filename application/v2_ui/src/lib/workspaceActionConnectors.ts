@@ -216,6 +216,7 @@ export function connectorUrlError(value: unknown, websocket = false): string | n
 }
 
 export interface OpenApiOperation {
+    key: string;
     id: string;
     method: string;
     path: string;
@@ -249,6 +250,16 @@ export interface OpenApiInformation {
     pathsCount: number;
     operations: OpenApiOperation[];
     securitySchemes: OpenApiSecurityScheme[];
+}
+
+export function openApiOperationKeyFromParts(method: string, path: string, operationId?: unknown): string {
+    const explicit = connectorText(operationId).trim();
+    if (explicit) return explicit;
+    return `${method.toLowerCase()}_${path.replaceAll('/', '_').replaceAll('{', '').replaceAll('}', '')}`;
+}
+
+export function openApiOperationKey(operation: Pick<OpenApiOperation, 'id' | 'method' | 'path'>): string {
+    return openApiOperationKeyFromParts(operation.method, operation.path, operation.id);
 }
 
 function resolveSpecObject(spec: Record<string, unknown>, value: unknown): Record<string, unknown> {
@@ -298,8 +309,10 @@ export function openApiInformation(value: unknown): OpenApiInformation {
             }
             const body = resolveSpecObject(spec, operation.requestBody);
             const security = operation.security ?? spec.security;
+            const operationId = connectorText(operation.operationId);
             operations.push({
-                id: connectorText(operation.operationId), method: method.toUpperCase(), path,
+                key: openApiOperationKeyFromParts(method, path, operationId),
+                id: operationId, method: method.toUpperCase(), path,
                 summary: connectorText(operation.summary), description: connectorText(operation.description),
                 deprecated: operation.deprecated === true, tags: connectorStrings(operation.tags),
                 parameters: [...parameterMap.values()], bodyRequired: body.required === true,
@@ -308,6 +321,7 @@ export function openApiInformation(value: unknown): OpenApiInformation {
                 security: Array.isArray(security) ? security.flatMap((entry) => Object.keys(connectorObject(entry))) : [],
             });
         }
+
     }
     const securitySchemes = Object.entries(
         connectorObject(connectorObject(spec.components).securitySchemes ?? spec.securityDefinitions),
@@ -341,6 +355,20 @@ export function openApiInformation(value: unknown): OpenApiInformation {
         specificationVersion: connectorText(spec.openapi ?? spec.swagger),
         servers, pathsCount: Object.keys(paths).length, operations, securitySchemes,
     };
+}
+
+export function openApiSpecificationBaseUrl(value: unknown): string {
+    return openApiInformation(value).servers.find(({ url }) => !connectorUrlError(url))?.url || '';
+}
+
+export function openApiBaseUrlOverrideEnabled(
+    draft: ActionConfiguration,
+    specContent: unknown = draft.additionalFields.openapi_spec_content,
+): boolean {
+    if (typeof draft.additionalFields.base_url_override === 'boolean') return draft.additionalFields.base_url_override;
+    const specBaseUrl = openApiSpecificationBaseUrl(specContent);
+    const configuredBaseUrl = connectorText(draft.endpoint || draft.additionalFields.base_url);
+    return Boolean(specBaseUrl && configuredBaseUrl && configuredBaseUrl !== specBaseUrl);
 }
 
 export interface OpenApiUploadResult {
@@ -403,15 +431,17 @@ export function processOpenApiText(text: string, format: 'json' | 'yaml', signal
 
 export function applyOpenApiSpecification(draft: ActionConfiguration, result: OpenApiUploadResult): ActionConfiguration {
     if (!result.success || !isRecord(result.spec_content)) throw new Error('A validated specification is required.');
-    const information = openApiInformation(result.spec_content);
     const source = openApiSourceDraft(draft);
-    const endpoint = draft.endpoint || connectorText(draft.additionalFields.base_url) ||
-        information.servers.find(({ url }) => !connectorUrlError(url))?.url || '';
+    const overrideEnabled = openApiBaseUrlOverrideEnabled(draft, result.spec_content);
+    const currentEndpoint = connectorText(draft.endpoint || draft.additionalFields.base_url);
+    const specEndpoint = openApiSpecificationBaseUrl(result.spec_content);
+    const endpoint = overrideEnabled ? currentEndpoint : specEndpoint || currentEndpoint;
     return {
         ...draft, endpoint,
         additionalFields: {
             ...draft.additionalFields,
-            openapi_spec_content: result.spec_content, openapi_source_type: 'content', base_url: endpoint,
+            openapi_spec_content: result.spec_content, openapi_source_type: 'content',
+            base_url: endpoint, base_url_override: overrideEnabled,
         },
         _openApiSourceDraft: {
             ...source, pending: false,
@@ -657,6 +687,13 @@ export interface McpTool extends Record<string, unknown> {
     annotations?: Record<string, unknown>;
 }
 
+export interface McpToolFingerprints {
+    manifest_hash: string;
+    tools: Record<string, string>;
+    prompts: Record<string, string>;
+    discovered_at: string;
+}
+
 export function parseMcpTools(value: unknown): McpTool[] {
     if (!Array.isArray(value)) return [];
     return value.filter(isRecord).flatMap((tool) => {
@@ -700,6 +737,68 @@ export function setMcpToolSelection(draft: ActionConfiguration, name: string, se
     const current = connectorStrings(draft.additionalFields.allowed_tool_names);
     return updateConnectorFields(draft, {
         allowed_tool_names: selected ? [...new Set([...current, name])] : current.filter((item) => item !== name),
+    });
+}
+
+export function mcpFingerprints(value: unknown): McpToolFingerprints | null {
+    if (!isRecord(value) || typeof value.manifest_hash !== 'string' || typeof value.discovered_at !== 'string'
+        || !isRecord(value.tools) || !isRecord(value.prompts)) {
+        return null;
+    }
+    const tools = Object.fromEntries(Object.entries(value.tools).filter((entry): entry is [string, string] =>
+        typeof entry[0] === 'string' && typeof entry[1] === 'string'));
+    const prompts = Object.fromEntries(Object.entries(value.prompts).filter((entry): entry is [string, string] =>
+        typeof entry[0] === 'string' && typeof entry[1] === 'string'));
+    return { manifest_hash: value.manifest_hash, discovered_at: value.discovered_at, tools, prompts };
+}
+
+export function mcpFingerprintChangeSummary(approved: unknown, current: unknown): {
+    hasChanges: boolean; new: string[]; changed: string[]; removed: string[];
+    promptsNew: string[]; promptsChanged: string[]; promptsRemoved: string[];
+} {
+    const before = mcpFingerprints(approved);
+    const after = mcpFingerprints(current);
+    const diff = (left: Record<string, string>, right: Record<string, string>) => {
+        const leftNames = new Set(Object.keys(left));
+        const rightNames = new Set(Object.keys(right));
+        return {
+            newItems: [...rightNames].filter((name) => !leftNames.has(name)).sort(),
+            changedItems: [...rightNames].filter((name) => leftNames.has(name) && left[name] !== right[name]).sort(),
+            removedItems: [...leftNames].filter((name) => !rightNames.has(name)).sort(),
+        };
+    };
+    if (!before || !after) {
+        return { hasChanges: Boolean(after), new: [], changed: [], removed: [], promptsNew: [], promptsChanged: [], promptsRemoved: [] };
+    }
+    const tools = diff(before.tools, after.tools);
+    const prompts = diff(before.prompts, after.prompts);
+    return {
+        hasChanges: before.manifest_hash !== after.manifest_hash,
+        new: tools.newItems,
+        changed: tools.changedItems,
+        removed: tools.removedItems,
+        promptsNew: prompts.newItems,
+        promptsChanged: prompts.changedItems,
+        promptsRemoved: prompts.removedItems,
+    };
+}
+
+export function mcpDiscoverySignature(draft: ActionConfiguration): string {
+    const fields = draft.additionalFields;
+    const headers = connectorObject(fields.custom_headers);
+    return JSON.stringify({
+        endpoint: draft.endpoint || '',
+        transport: connectorText(fields.transport) || 'streamable_http',
+        server_profile: connectorText(fields.server_profile) || 'generic',
+        preconfiguration_id: connectorText(fields.preconfiguration_id),
+        auth_method: connectorAuthMethod(draft, 'mcp'),
+        identity_id: draft.identity_id || '',
+        identity_auth_type: connectorText(fields.identity_auth_type),
+        api_key_header_name: connectorText(fields.api_key_header_name ?? 'X-API-Key'),
+        auth_type: draft.auth.type,
+        auth_identity: connectorText(draft.auth.identity),
+        auth_key: connectorText(draft.auth.key),
+        custom_headers: Object.fromEntries(Object.keys(headers).sort().map((name) => [name, connectorText(headers[name])])),
     });
 }
 
@@ -788,6 +887,13 @@ export function validateConnectorConfiguration(
             errors['additionalFields.openapi_spec_content'] = 'Upload or process an OpenAPI JSON/YAML specification.';
         }
         if (connectorObject(draft._openApiSourceDraft).pending === true) errors['openapi-source'] = 'Process the edited specification before saving or testing.';
+        if (fields.allowed_operations !== undefined &&
+            (!Array.isArray(fields.allowed_operations) || connectorStrings(fields.allowed_operations).length !== fields.allowed_operations.length)) {
+            errors['additionalFields.allowed_operations'] = 'Allowed OpenAPI operations must be an array of operation IDs.';
+        }
+        if (fields.openapi_operations_disabled_all === true) {
+            errors['additionalFields.allowed_operations'] = 'Enable at least one OpenAPI operation before saving. An empty allowed list is reserved for backward-compatible "all operations" behavior.';
+        }
         return errors;
     }
     if (!allowedMcpTransports(preset).some(({ value }) => value === transport)) {
@@ -961,6 +1067,8 @@ export function validateApiConnector(draft: ActionConfiguration, original: Conne
 export interface McpDiscoveryResult {
     success?: boolean;
     tools?: unknown[];
+    prompts?: unknown[];
+    fingerprints?: McpToolFingerprints;
     capabilities?: Record<string, unknown>;
     warnings?: string[];
     error?: string;
@@ -973,11 +1081,12 @@ export interface McpDiscoveryResult {
 export async function discoverMcpAction(draft: ActionConfiguration, original: ConnectorResource, signal?: AbortSignal, testScope?: ActionTestScope): Promise<McpDiscoveryResult> {
     const result = await api.post<McpDiscoveryResult>('/api/plugins/mcp/discover', buildConnectorSupportPayload(draft, original, 'mcp', 'discover', testScope), signal);
     if (!result || (result.success === true && (!Array.isArray(result.tools) ||
-        parseMcpTools(result.tools).length !== result.tools.length))) {
+        parseMcpTools(result.tools).length !== result.tools.length || !mcpFingerprints(result.fingerprints)))) {
         throw new Error('The server returned an invalid MCP tool catalogue.');
     }
     return {
         ...result, warnings: connectorStrings(result.warnings), capabilities: connectorObject(result.capabilities),
         ...(Array.isArray(result.tools) ? { tools: parseMcpTools(result.tools) } : {}),
+        ...(mcpFingerprints(result.fingerprints) ? { fingerprints: mcpFingerprints(result.fingerprints) ?? undefined } : {}),
     };
 }

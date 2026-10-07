@@ -23,11 +23,16 @@ Use it when an agent needs to turn known locations, areas, or paths into a map i
 - Azure Maps subscription key; key auth; agents enabled with `enable_semantic_kernel`.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Use common setup, then provide **Subscription Key** and test the Azure Maps connection.
+Azure Maps now has no separate Configuration section in the V2 action editor because the action only needs credentials. Enter the subscription key in **Authentication**, then run the connection check from the same section after the credential is present.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
+
+## V2 editor cleanup
+
+The V2 editor no longer offers ad hoc custom fields for this action. Use **Advanced → JSON** only when reviewing preserved legacy values that are not part of the supported Azure Maps setup.
 
 ## What people see in chat
 

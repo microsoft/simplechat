@@ -1892,6 +1892,9 @@ def build_action_editor_types(discovered_types):
             ),
             "allowed_auth_types": sorted(validation.get_allowed_auth_types_for_plugin_type(action_type)),
         }
+        for optional_field in ("hidden", "legacy", "capabilities", "defaults", "graph_endpoint"):
+            if optional_field in definition:
+                record[optional_field] = definition[optional_field]
         for field, suffix in (
             ("additional_fields_schema", "additional_settings"), ("metadata_schema", "metadata"),
         ):

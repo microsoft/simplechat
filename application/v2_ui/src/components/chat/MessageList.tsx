@@ -64,6 +64,7 @@ import { ImageLightbox } from './ImageLightbox';
 import { ImageEditor } from './ImageEditor';
 import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 import { ImageProposalScope } from './ImageProposalContext';
+import { normalizeFoundryAuthUrl } from '../../lib/foundryAuth';
 import {
     answerGeneratedImages,
     extractProposalSpecs,
@@ -1492,6 +1493,7 @@ export function MessageList() {
         streamAuthUrl,
         activeConversationId,
     } = useChatStore();
+    const safeStreamAuthUrl = normalizeFoundryAuthUrl(streamAuthUrl);
     const appTitle = useBootstrapStore((state) => state.data?.branding?.app_title);
     const chatWidth = useUiStore((state) => state.chatWidth);
 
@@ -1619,6 +1621,7 @@ export function MessageList() {
             ref={scrollRef}
             onScroll={onScroll}
             className="min-h-0 flex-1 overflow-y-auto px-4 py-6"
+            data-tour="message-list"
         >
             <div className={clsx('mx-auto w-full space-y-4', chatWidthClass(chatWidth))}>
                 {messagesLoading && (
@@ -1674,9 +1677,9 @@ export function MessageList() {
                         <TriangleAlert size={16} className="mt-0.5 shrink-0" />
                         <div className="min-w-0 space-y-2 break-words">
                             <p>{streamError}</p>
-                            {streamAuthUrl ? (
+                            {safeStreamAuthUrl ? (
                                 <>
-                                    <a href={streamAuthUrl} target="_blank" rel="noopener noreferrer"
+                                    <a href={safeStreamAuthUrl} target="_blank" rel="noopener noreferrer"
                                         className="inline-block text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
                                         Sign in or grant Foundry access
                                     </a>

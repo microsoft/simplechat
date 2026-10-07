@@ -1,8 +1,9 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.166
+// Version: 0.261.281
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
 // Members section validation (M7B): 0.261.155
+// Workspace navigation URL validation: 0.261.281
 // Executes the real context API and stores with controlled HTTP ordering.
 
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ import './test_support/tsResolve.mjs';
 
 const {
     GROUP_WORKSPACE_SECTION_IDS, isGroupWorkspaceContext, workspaceScopeKey,
-    workspaceBasePath, requireWorkspaceId,
+    workspaceBasePath, normalizeWorkspaceUrl, requireWorkspaceId,
 } = await import('../application/v2_ui/src/lib/workspaceContext.ts');
 const { useBootstrapStore } = await import('../application/v2_ui/src/stores/bootstrapStore.ts');
 const { resolveWorkspaceSections } = await import('../application/v2_ui/src/lib/workspaceSections.ts');
@@ -117,6 +118,17 @@ try {
         assert.equal(workspaceBasePath({ kind: 'public', id: 'a b' }), '/public/a%20b');
         assert.equal(workspaceBasePath({ kind: 'group', id: "a!'()*" }), '/groups/a%21%27%28%29%2A');
         assert.equal(workspaceBasePath({ kind: 'personal', id: 'viewer' }), '/workspace');
+        assert.equal(
+            normalizeWorkspaceUrl('/groups/a%20b/documents', 'https://simplechat.test'),
+            '/groups/a%20b/documents',
+        );
+        for (const path of [
+            'javascript:alert(1)', '//evil.test/groups/a', '/groups/%2e%2e/chat',
+            '/groups/a%2fb/documents', '/groups/a?next=/chat',
+        ]) {
+            assert.throws(() => normalizeWorkspaceUrl(path, 'https://simplechat.test'));
+        }
+        assert.throws(() => normalizeWorkspaceUrl('/groups/a', 'https://evil.test/path'));
         for (const id of ['', '.', '..', ' leading', 'trailing ', 'a/b', 'a\\b', 'a?b', 'a#b', 'a\nb']) {
             assert.throws(() => requireWorkspaceId(id));
         }

@@ -35,7 +35,6 @@ import {
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
-import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { ApiError } from '../../lib/apiClient';
@@ -55,7 +54,7 @@ import {
     type MessageExportFormat,
 } from '../../lib/endpoints';
 import { buildMessageVisualAssets } from '../../lib/exportVisuals';
-import { synthesizeSpeech } from '../../lib/voice';
+import { speak, stopSpeech, useSpeechState } from '../../lib/speechPlayback';
 import { suggestPromptName } from '../../lib/promptSlash';
 import { createPrompt } from '../../lib/workspaceApi';
 import {
@@ -97,60 +96,30 @@ export function IconButton({
     );
 }
 
-/** Play a message aloud via the speech endpoint. */
+/**
+ * Play a message aloud via the speech endpoint.
+ *
+ * Playback lives in the shared reader (lib/speechPlayback), so only one message is read at a
+ * time and a message auto-play started shows here as playing and can be stopped here.
+ */
 function SpeakButton({ message }: { message: ChatMessage }) {
-    const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle');
-    const audioRef = useRef<HTMLAudioElement | null>(null);
-    const urlRef = useRef<string | null>(null);
-    const preferredVoice = useUserSettingsStore((store) =>
-        String(store.settings.ttsVoice ?? ''),
-    );
+    const state = useSpeechState(message.id);
 
-    // Release the object URL and stop playback if the message unmounts mid-play.
-    useEffect(
-        () => () => {
-            audioRef.current?.pause();
-            if (urlRef.current) {
-                URL.revokeObjectURL(urlRef.current);
-            }
-        },
-        [],
-    );
-
-    const toggle = async () => {
-        if (state === 'playing') {
-            audioRef.current?.pause();
-            setState('idle');
+    const toggle = () => {
+        if (state !== 'idle') {
+            stopSpeech();
             return;
         }
-
-        setState('loading');
-        try {
-            // The chosen voice comes from the user's preferences, and the message is read
-            // through the same conversion the clipboard uses: citation markers and masked
-            // spans should not be spoken aloud any more than they should be pasted.
-            const url = await synthesizeSpeech(
-                messageToPlainText(message),
-                preferredVoice || undefined,
-            );
-            urlRef.current = url;
-            const audio = new Audio(url);
-            audioRef.current = audio;
-            audio.onended = () => setState('idle');
-            audio.onerror = () => setState('idle');
-            await audio.play();
-            setState('playing');
-        } catch {
-            // Speech is optional; a failure leaves the control back at rest rather than
-            // interrupting the conversation.
-            setState('idle');
-        }
+        // The message is read through the same conversion the clipboard uses: citation
+        // markers and masked spans should not be spoken aloud any more than they should be
+        // pasted. Speech is optional, so a failure just leaves the control back at rest.
+        void speak(message.id, messageToPlainText(message)).catch(() => undefined);
     };
 
     return (
         <IconButton
             label={state === 'playing' ? 'Stop reading' : 'Read aloud'}
-            onClick={() => void toggle()}
+            onClick={toggle}
             active={state === 'playing'}
             disabled={state === 'loading'}
         >

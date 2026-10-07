@@ -48,6 +48,7 @@ from functions_legacy_action_management import (
     validate_action_configuration,
     validate_scoped_mcp_action,
 )
+from functions_mcp_tool_pinning import validate_mcp_tool_pinning_for_save
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_PERSONAL,
     hydrate_action_identity_reference,
@@ -250,6 +251,7 @@ def _save_personal_action(user_id, action_data, enforce_governance=True, migrati
         if action_data.get('id'):
             existing_action = _read_personal_action_record(user_id, action_data['id'])
         validate_legacy_action_update(submitted_action, existing_action, 'user_id', user_id)
+        validate_mcp_tool_pinning_for_save(action_data, existing_action)
         if legacy_type:
             action_data['type'] = 'msgraph'
         elif not action_data.get('id') and action_data.get('name'):

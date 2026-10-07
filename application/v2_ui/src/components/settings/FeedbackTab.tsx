@@ -7,9 +7,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { ThumbsDown, ThumbsUp } from 'lucide-react';
+import { MessageSquareHeart, PieChart, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { api, apiUrl } from '../../lib/apiClient';
 import { GlassPanel, Skeleton } from '../ui/primitives';
+import { SettingsCard } from './SettingsCard';
 
 const PAGE_SIZE = 10;
 
@@ -137,135 +138,154 @@ export function FeedbackTab() {
     const lastPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
     return (
-        <div className="space-y-3">
-            {stats && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <StatCard label="Submitted" value={stats.total_count ?? 0} />
-                    <StatCard label="Positive" value={stats.positive_count ?? 0} />
-                    <StatCard label="Negative" value={stats.negative_count ?? 0} />
-                    <StatCard label="Reviewed" value={stats.acknowledged_count ?? 0} />
-                </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-2">
-                <select
-                    value={type}
-                    onChange={(event) => setType(event.target.value)}
-                    className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
-                >
-                    <option value="">Any rating</option>
-                    <option value="Positive">Positive</option>
-                    <option value="Negative">Negative</option>
-                    <option value="Neutral">Neutral</option>
-                </select>
-                <select
-                    value={ack}
-                    onChange={(event) => setAck(event.target.value)}
-                    className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
-                >
-                    <option value="">Reviewed or not</option>
-                    <option value="true">Reviewed</option>
-                    <option value="false">Awaiting review</option>
-                </select>
-                <a
-                    href={apiUrl(`/feedback/my/export?${params(1)}`)}
-                    className="ml-auto rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1 hover:bg-surface-2"
-                >
-                    Export CSV
-                </a>
-            </div>
-
-            {error ? (
-                <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-                    {error}
-                </p>
-            ) : loading ? (
-                <div className="space-y-2">
-                    <Skeleton className="h-24 w-full" />
-                    <Skeleton className="h-24 w-full" />
-                </div>
-            ) : items.length === 0 ? (
-                <GlassPanel className="p-6 text-center">
-                    <p className="text-sm text-text-2">
-                        {type || ack
-                            ? 'No feedback matches these filters.'
-                            : 'You have not rated any replies yet. Use the thumbs on an assistant message to send feedback.'}
-                    </p>
-                </GlassPanel>
-            ) : (
-                <ul className="space-y-2">
-                    {items.map((item) => {
-                        const acknowledged = Boolean(item.adminReview?.acknowledged);
-                        return (
-                            <li key={item.id}>
-                                <GlassPanel className="p-3">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <TypeBadge type={item.feedbackType} />
-                                        <span
-                                            className={clsx(
-                                                'rounded-full px-2 py-0.5 text-[11px]',
-                                                acknowledged
-                                                    ? 'bg-ok-soft text-ok'
-                                                    : 'bg-surface-2 text-text-3',
-                                            )}
-                                        >
-                                            {acknowledged ? 'Reviewed' : 'Awaiting review'}
-                                        </span>
-                                        {item.timestamp && (
-                                            <span className="text-[11px] text-text-3">
-                                                {new Date(item.timestamp).toLocaleString()}
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {item.prompt && (
-                                        <p className="mt-1.5 line-clamp-2 text-xs text-text-3">
-                                            <span className="font-medium">You asked: </span>
-                                            {item.prompt}
-                                        </p>
-                                    )}
-                                    {item.reason && (
-                                        <p className="mt-1 text-sm text-text-1">{item.reason}</p>
-                                    )}
-
-                                    {item.adminReview?.responseToUser && (
-                                        <p className="mt-1.5 rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-text-2">
-                                            <span className="font-medium">Reply: </span>
-                                            {item.adminReview.responseToUser}
-                                        </p>
-                                    )}
-                                </GlassPanel>
-                            </li>
-                        );
-                    })}
-                </ul>
-            )}
-
-            {totalCount > PAGE_SIZE && (
-                <div className="flex items-center justify-between text-xs text-text-3">
-                    <span>
-                        Page {page} of {lastPage} · {totalCount} submissions
-                    </span>
-                    <div className="flex gap-1.5">
-                        <button
-                            type="button"
-                            disabled={page <= 1 || loading}
-                            onClick={() => void load(page - 1)}
-                            className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
-                        >
-                            Previous
-                        </button>
-                        <button
-                            type="button"
-                            disabled={page >= lastPage || loading}
-                            onClick={() => void load(page + 1)}
-                            className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
-                        >
-                            Next
-                        </button>
+        <div className="space-y-4">
+            <SettingsCard
+                title="Summary"
+                Icon={PieChart}
+                description="Counts across the filters below."
+            >
+                {stats ? (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <StatCard label="Submitted" value={stats.total_count ?? 0} />
+                        <StatCard label="Positive" value={stats.positive_count ?? 0} />
+                        <StatCard label="Negative" value={stats.negative_count ?? 0} />
+                        <StatCard label="Reviewed" value={stats.acknowledged_count ?? 0} />
                     </div>
+                ) : loading ? (
+                    <Skeleton className="h-16 w-full" />
+                ) : (
+                    <p className="text-xs text-text-3">The summary could not be loaded.</p>
+                )}
+            </SettingsCard>
+
+            <SettingsCard
+                title="Your feedback"
+                Icon={MessageSquareHeart}
+                description="Ratings you have given assistant replies, and any response from the team that reviewed them."
+                actions={
+                    <a
+                        href={apiUrl(`/feedback/my/export?${params(1)}`)}
+                        className="rounded-lg border border-edge-strong bg-surface-solid px-2.5 py-1.5 text-xs font-medium text-text-1 hover:bg-surface-sunken"
+                    >
+                        Export CSV
+                    </a>
+                }
+                bodyClassName="space-y-3"
+            >
+                <div className="flex flex-wrap items-center gap-2">
+                    <select
+                        value={type}
+                        onChange={(event) => setType(event.target.value)}
+                        className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
+                    >
+                        <option value="">Any rating</option>
+                        <option value="Positive">Positive</option>
+                        <option value="Negative">Negative</option>
+                        <option value="Neutral">Neutral</option>
+                    </select>
+                    <select
+                        value={ack}
+                        onChange={(event) => setAck(event.target.value)}
+                        className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
+                    >
+                        <option value="">Reviewed or not</option>
+                        <option value="true">Reviewed</option>
+                        <option value="false">Awaiting review</option>
+                    </select>
                 </div>
-            )}
+
+                {error ? (
+                    <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                        {error}
+                    </p>
+                ) : loading ? (
+                    <div className="space-y-2">
+                        <Skeleton className="h-24 w-full" />
+                        <Skeleton className="h-24 w-full" />
+                    </div>
+                ) : items.length === 0 ? (
+                    <GlassPanel className="p-6 text-center">
+                        <p className="text-sm text-text-2">
+                            {type || ack
+                                ? 'No feedback matches these filters.'
+                                : 'You have not rated any replies yet. Use the thumbs on an assistant message to send feedback.'}
+                        </p>
+                    </GlassPanel>
+                ) : (
+                    <ul className="space-y-2">
+                        {items.map((item) => {
+                            const acknowledged = Boolean(item.adminReview?.acknowledged);
+                            return (
+                                <li key={item.id}>
+                                    <GlassPanel className="p-3">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <TypeBadge type={item.feedbackType} />
+                                            <span
+                                                className={clsx(
+                                                    'rounded-full px-2 py-0.5 text-[11px]',
+                                                    acknowledged
+                                                        ? 'bg-ok-soft text-ok'
+                                                        : 'bg-surface-2 text-text-3',
+                                                )}
+                                            >
+                                                {acknowledged ? 'Reviewed' : 'Awaiting review'}
+                                            </span>
+                                            {item.timestamp && (
+                                                <span className="text-[11px] text-text-3">
+                                                    {new Date(item.timestamp).toLocaleString()}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {item.prompt && (
+                                            <p className="mt-1.5 line-clamp-2 text-xs text-text-3">
+                                                <span className="font-medium">You asked: </span>
+                                                {item.prompt}
+                                            </p>
+                                        )}
+                                        {item.reason && (
+                                            <p className="mt-1 text-sm text-text-1">{item.reason}</p>
+                                        )}
+
+                                        {item.adminReview?.responseToUser && (
+                                            <p className="mt-1.5 rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-text-2">
+                                                <span className="font-medium">Reply: </span>
+                                                {item.adminReview.responseToUser}
+                                            </p>
+                                        )}
+                                    </GlassPanel>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                )}
+
+                {totalCount > PAGE_SIZE && (
+                    <div className="flex items-center justify-between text-xs text-text-3">
+                        <span>
+                            Page {page} of {lastPage} · {totalCount} submissions
+                        </span>
+                        <div className="flex gap-1.5">
+                            <button
+                                type="button"
+                                disabled={page <= 1 || loading}
+                                onClick={() => void load(page - 1)}
+                                className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                type="button"
+                                disabled={page >= lastPage || loading}
+                                onClick={() => void load(page + 1)}
+                                className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </SettingsCard>
         </div>
     );
 }
