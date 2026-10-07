@@ -89,7 +89,7 @@ Call agent has a target picker and summary rather than external endpoint or
 credential inputs.
 
 V2 uses focused reusable delegation controls in group delegation management.
-Personal workspaces and, since **0.261.269**, V2 Admin Settings author Call agent
+Personal workspaces and, since **0.261.270**, V2 Admin Settings author Call agent
 as an ordinary action in the full-page action and agent editors; a global Call
 agent action's target picker lists only global agents. These controls do not
 replace unrelated connector, model, or full group-management interfaces.

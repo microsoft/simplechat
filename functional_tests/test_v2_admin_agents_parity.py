@@ -2,9 +2,9 @@
 # test_v2_admin_agents_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Agents & Actions group.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.074
-Global Agents and Global Actions sections: 0.261.269
+Global Agents and Global Actions sections: 0.261.270
 
 The V2 React admin surface renders from ``admin_settings_fields.py``. A setting
 present in a V1 pane but absent from that schema does not fail anything: it

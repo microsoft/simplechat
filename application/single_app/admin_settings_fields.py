@@ -83,8 +83,8 @@ Beyond a field's type, five optional descriptors shape how a section reads:
     the switch on without naming the companion, so an API client gets the same
     result. A value named in the same save always wins.
 
-The Appearance, Agents & Actions, Chat, Knowledge, Workflow, Workspaces and
-Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+The Appearance, Agents & Actions, Chat, Knowledge, Operations, Workflow, Workspaces
+and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -128,6 +128,12 @@ from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
     normalize_content_safety_violation_message,
 )
+from functions_control_center_schedule import (
+    is_valid_control_center_auto_refresh_time,
+    is_valid_control_center_auto_refresh_timezone,
+    normalize_control_center_auto_refresh_time,
+    resolve_control_center_auto_refresh_settings,
+)
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -136,6 +142,11 @@ from functions_model_endpoint_identity_header import (
 )
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
+)
+from functions_logging_timers import (
+    LOGGING_TIMERS,
+    clamp_logging_timer_value,
+    resolve_logging_timer_settings,
 )
 from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_model_endpoint_identity_header import (
@@ -245,11 +256,31 @@ NON_PATCHABLE_KEYS = {
         "Model endpoints hold credentials that are stripped before they reach "
         "the browser, so they cannot be saved from here."
     ),
+    # Calculated by the server whenever the settings they follow from are saved.
+    # Accepting one directly would let a save move a scheduled refresh or extend a
+    # running debug session without touching the controls that are meant to.
+    "control_center_auto_refresh_next_run": (
+        "The next refresh is calculated from the schedule when it is saved."
+    ),
+    "control_center_auto_refresh_hour": (
+        "The refresh hour is taken from the refresh time when it is saved."
+    ),
+    "control_center_auto_refresh_minute": (
+        "The refresh minute is taken from the refresh time when it is saved."
+    ),
+    "debug_logging_turnoff_time": (
+        "The turnoff time is calculated from the debug logging timer when it is saved."
+    ),
+    "file_processing_logs_turnoff_time": (
+        "The turnoff time is calculated from the file processing log timer when it is saved."
+    ),
 }
 
 # ``input_type`` values a text field may ask the browser for. Anything else would
-# reach the DOM unvalidated, so the schema test rejects it.
-TEXT_INPUT_TYPES = ("text", "email", "url")
+# reach the DOM unvalidated, so the schema test rejects it. ``time`` is a 24-hour
+# HH:MM picker and ``timezone`` an IANA zone with suggestions; both are validated
+# on save rather than trusted from the browser.
+TEXT_INPUT_TYPES = ("text", "email", "url", "time", "timezone")
 
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
@@ -836,72 +867,15 @@ ADMIN_SETTINGS_FIELDS = {
     # The sections below are not part of the Appearance group. They are described
     # here because the V2 surface's `enable_*` fallback was filing their toggles
     # under Appearance: it matches a key to a section by shared leading word
-    # stems and takes the first section that scores at all, so
-    # `enable_external_healthcheck` matched "external" in External Links long
-    # before it could reach Health Check, whose id splits into "health" and
-    # "check" and so never matches the single token "healthcheck". Declaring a
-    # key is what takes it out of that scan, so these five are declared rather
-    # than guessed at. Wording is taken from the V1 panes so both interfaces say
-    # the same thing.
-    #
-    # Application Insights is declared for the same reason. The scan splits
-    # `enable_appinsights_global_logging` into "appinsights", which matches no
-    # section, and "logging", which matches Debug Logging, so the switch that sends
-    # everything to Application Insights sat under Debug Logging. The mixed-source
-    # telemetry switch, which the scan had filed under Deep Research on the word
-    # "source", reports to the same place and is declared beside it.
-    "application-insights-section": [
-        {
-            "key": "enable_appinsights_global_logging",
-            "type": "switch",
-            "label": "Enable Application Insights Global Logging",
-            "help": (
-                "Sends global logging for all agents and orchestration events to "
-                "Application Insights. Changing this requires an application restart "
-                "to take effect."
-            ),
-            "default": False,
-        },
-        {
-            "key": "enable_mixed_source_development_telemetry",
-            "type": "switch",
-            "label": "Record mixed document and spreadsheet metrics",
-            "help": (
-                "Logs aggregate counts, timings and token totals for the processing "
-                "behind Chat, Search, Analyze and Compare over workspace documents and "
-                "spreadsheets: how many sources completed, were partial, failed, were "
-                "skipped or were canceled, plus authorization failures and background "
-                "exports. Never records prompts, content, file names, document IDs or "
-                "storage paths. Turn it on while checking how these requests behave; "
-                "each request adds several log entries."
-            ),
-            "default": False,
-        },
-    ],
-    "health-check-section": [
-        {
-            "key": "enable_external_healthcheck",
-            "type": "switch",
-            "label": "Enable /external/healthcheck",
-            "help": (
-                "Authenticated endpoint for external monitoring systems. Best for "
-                "internal monitors or diagnostics tooling that already signs in to "
-                "the application."
-            ),
-            "default": False,
-        },
-        {
-            "key": "enable_no_auth_external_healthcheck",
-            "type": "switch",
-            "label": "Enable /external/healthcheckz",
-            "help": (
-                "Unauthenticated endpoint for platform probes that cannot sign in. "
-                "This route is intentionally unauthenticated, so only enable it for "
-                "trusted health probes or controlled network paths."
-            ),
-            "default": False,
-        },
-    ],
+    # stems and takes the first section that scores at all. Declaring a key is
+    # what takes it out of that scan, so these are declared rather than guessed
+    # at. Health Check had the same problem -- `enable_external_healthcheck`
+    # matched "external" in External Links -- and so did Application Insights,
+    # whose global logging switch the scan filed under Debug Logging on the word
+    # "logging". Both are now declared with the rest of the Operations group
+    # below, beside the mixed-source telemetry switch that reports to the same
+    # place. Wording is taken from the V1 panes so both interfaces say the same
+    # thing.
     "user-facing-latest-features-section": [
         {
             "key": "enable_support_latest_feature_documentation_links",
@@ -3670,31 +3644,6 @@ ADMIN_SETTINGS_FIELDS = {
     # including this role requirement gated on the capability itself. A second
     # declaration here would override that one and silently drop
     # `enable_chat_file_uploads`, because a later key wins in a dict literal.
-    "control-center-overview-section": [
-        {
-            "key": "require_member_of_control_center_admin",
-            "type": "switch",
-            "label": "Require ControlCenterAdmin App Role",
-            "help": (
-                "Narrows the Control Center -- user management, group oversight, "
-                "public workspace control and activity logs -- to holders of the "
-                "ControlCenterAdmin app role. Note that this takes it away from "
-                "general Admins, so assign the role before switching it on."
-            ),
-            "default": False,
-        },
-        {
-            "key": "require_member_of_control_center_dashboard_reader",
-            "type": "switch",
-            "label": "Allow ControlCenterDashboardReader App Role",
-            "help": (
-                "Grants the Control Center dashboard, and nothing else, to holders of "
-                "the ControlCenterDashboardReader app role. Useful for giving someone "
-                "the usage picture without any management ability."
-            ),
-            "default": False,
-        },
-    ],
     "group-workspaces-section": [
         {
             "key": "enable_group_workspaces",
@@ -6495,6 +6444,453 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
     ],
+    # ------------------------------------------------------------------
+    # Operations group: Control Center and Logging & Health. Sections and order
+    # follow admin_settings_nav.py, and every control follows the V1
+    # control-center-config and logging panes, so a setting never exists in one
+    # interface only.
+    #
+    # Several values in this group are calculated rather than edited: the next
+    # scheduled Control Center refresh and each log's turnoff time. They are worked
+    # out on save by the helpers both admin surfaces share (see
+    # ``_apply_operations_derivations``) and refused if submitted directly.
+    # ------------------------------------------------------------------
+    "control-center-auto-refresh-section": [
+        {
+            "key": "control_center_auto_refresh_enabled",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Daily Control Center Refresh",
+            "help": (
+                "Recalculates the Control Center's cached activity figures for every "
+                "user and group once a day, so the dashboard is current each morning "
+                "without anyone refreshing it by hand. When off, the figures change "
+                "only when an administrator refreshes them from the Control Center."
+            ),
+            "default": True,
+        },
+        {
+            "key": "control_center_auto_refresh_time",
+            "type": "text",
+            "input_type": "time",
+            "label": "Refresh Time",
+            "help": (
+                "When the refresh starts each day, read in the timezone below. Pick a "
+                "quiet hour: the refresh reads every user and group record."
+            ),
+            "default": "02:00",
+            "max_length": 8,
+            "depends_on": {"key": "control_center_auto_refresh_enabled", "equals": True},
+        },
+        {
+            "key": "control_center_auto_refresh_timezone",
+            "type": "text",
+            "input_type": "timezone",
+            "label": "Timezone",
+            "help": (
+                "The refresh follows this zone's clock, daylight saving included, so "
+                "02:00 stays 02:00 all year. The next run is stored in UTC."
+            ),
+            "default": "America/New_York",
+            "max_length": 64,
+            "depends_on": {"key": "control_center_auto_refresh_enabled", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "control-center-refresh-schedule",
+            "label": "Next refresh",
+            "help": (
+                "Worked out when the schedule is saved and again after each scheduled "
+                "refresh. Refreshing by hand in the Control Center leaves it where it is."
+            ),
+        },
+    ],
+    "control-center-overview-section": [
+        {
+            "key": "require_member_of_control_center_admin",
+            "type": "switch",
+            "label": "Require ControlCenterAdmin App Role",
+            "help": (
+                "Restricts the whole Control Center -- dashboard, user management, "
+                "group oversight, public workspace control and activity logs -- to "
+                "accounts holding the ControlCenterAdmin app role. General Admins lose "
+                "access, so assign the role before switching this on."
+            ),
+            "notice": (
+                "A new role assignment reaches a user at their next sign-in. Assign "
+                "ControlCenterAdmin, including to yourself, and sign in again before "
+                "saving. Admin Settings stays open to general Admins either way, so this "
+                "can always be switched back off."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "require_member_of_control_center_dashboard_reader",
+            "type": "switch",
+            "label": "Allow ControlCenterDashboardReader App Role",
+            "help": (
+                "Opens the Control Center dashboard -- usage statistics, activity "
+                "trends and metrics -- to accounts holding the ControlCenterDashboardReader "
+                "app role, without any management ability. It works whether or not the "
+                "ControlCenterAdmin requirement is on."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "control-center-access-matrix",
+            "label": "Who can open the Control Center",
+            "help": (
+                "Follows the two switches above, including changes you have not saved "
+                "yet. Copy a role value to paste it into the Entra app registration."
+            ),
+        },
+    ],
+    "application-insights-section": [
+        {
+            "key": "enable_appinsights_global_logging",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Application Insights Global Logging",
+            "help": (
+                "Raises the application-wide log level to informational, so messages "
+                "from every module and library reach Application Insights -- agents and "
+                "orchestration included -- rather than only SimpleChat's own events and "
+                "the warnings and errors from elsewhere. Useful while tracing a problem; "
+                "expect noticeably more ingestion, and cost, while it is on."
+            ),
+            "notice": (
+                "Application Insights is wired up once, when the app starts. Restart the "
+                "App Service after saving for this to take effect."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "type": "status",
+            "status_source": "appinsights_connection",
+            "label": "Connection",
+            "help": (
+                "Application Insights is reached through the "
+                "APPLICATIONINSIGHTS_CONNECTION_STRING App Service setting, not through "
+                "anything on this page."
+            ),
+        },
+        {
+            "type": "component",
+            "component": "restart-status",
+            "label": "Running state",
+            "help": "Compares the saved setting with how the running app was started.",
+            "watches": "enable_appinsights_global_logging",
+            "runtime_flag": "appinsights_global_logging_active",
+            "runtime_requires": "appinsights_connection_configured",
+        },
+        {
+            "key": "enable_mixed_source_development_telemetry",
+            "type": "switch",
+            "label": "Record mixed document and spreadsheet metrics",
+            "help": (
+                "Logs aggregate counts, timings and token totals for the processing "
+                "behind Chat, Search, Analyze and Compare over workspace documents and "
+                "spreadsheets: how many sources completed, were partial, failed, were "
+                "skipped or were canceled, plus authorization failures and background "
+                "exports. Never records prompts, content, file names, document IDs or "
+                "storage paths. Turn it on while checking how these requests behave; "
+                "each request adds several log entries."
+            ),
+            "default": False,
+        },
+    ],
+    "debug-logging-section": [
+        {
+            "key": "enable_debug_logging",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Debug Logging",
+            "help": (
+                "Turns on SimpleChat's DEBUG output everywhere, for troubleshooting a "
+                "problem you can reproduce. It is written to the App Service log stream "
+                "and, while Application Insights is connected, sent there as traces."
+            ),
+            "notice": (
+                "Debug output can include tokens, keys and request content that ordinary "
+                "logs leave out. Turn it off once you have what you need, or let the "
+                "timer below do it."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "debug_logging_timer_enabled",
+            "type": "switch",
+            "label": "Turn off automatically",
+            "help": (
+                "Switches debug logging off by itself once the time below has passed, "
+                "so a troubleshooting session cannot quietly keep running for weeks."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_debug_logging", "equals": True},
+        },
+        {
+            "key": "debug_timer_value",
+            "type": "number",
+            "label": "Duration",
+            "help": "How long debug logging stays on, counted from the save that starts the timer.",
+            "default": 1,
+            "min": 1,
+            "max": 120,
+            "depends_on": [
+                {"key": "enable_debug_logging", "equals": True},
+                {"key": "debug_logging_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "key": "debug_timer_unit",
+            "type": "select",
+            "label": "Time Unit",
+            "help": "Each unit has its own cap, shown beside it. The longest a timer can run is 52 weeks.",
+            "default": "hours",
+            "options": [
+                {"value": "minutes", "label": "Minutes (1-120)"},
+                {"value": "hours", "label": "Hours (1-24)"},
+                {"value": "days", "label": "Days (1-7)"},
+                {"value": "weeks", "label": "Weeks (1-52)"},
+            ],
+            "depends_on": [
+                {"key": "enable_debug_logging", "equals": True},
+                {"key": "debug_logging_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "type": "component",
+            "component": "logging-timer-status",
+            "label": "Turns off",
+            "help": "Calculated when the timer is saved, and shown in your own timezone.",
+            "timer_keys": LOGGING_TIMERS["debug"],
+            "depends_on": {"key": "enable_debug_logging", "equals": True},
+        },
+        {
+            "key": "enable_dai_debug",
+            "type": "switch",
+            "label": "Document Access Index diagnostics",
+            "help": (
+                "Adds the manual backfill, checkpoint reset and shadow validation "
+                "diagnostics to Scale > Cosmos > DAI Metrics. Leave it off unless you are "
+                "investigating document access projection problems; the background "
+                "maintenance runs either way."
+            ),
+            "default": False,
+            "group": {
+                "id": "feature-diagnostics",
+                "label": "Feature diagnostics",
+                "variant": "advanced",
+            },
+            "related_section": {
+                "section_id": "document-access-index-section",
+                "label": "DAI Metrics",
+                # The diagnostics this reveals are drawn by the server-rendered pane
+                # only; V2's card for the section holds its switches, not them.
+                "classic_only": True,
+            },
+        },
+    ],
+    "file-processing-logs-section": [
+        {
+            "key": "enable_file_processing_logs",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable File Processing Logs",
+            "help": (
+                "Records each step SimpleChat takes while processing an uploaded file, "
+                "including the errors, in the file_processing container in Cosmos DB. "
+                "Read them there when an upload stalls or fails. Turning this off stops "
+                "new records; existing ones stay until you delete them below."
+            ),
+            "default": True,
+        },
+        {
+            "key": "file_processing_logs_timer_enabled",
+            "type": "switch",
+            "label": "Turn off automatically",
+            "help": (
+                "Switches file processing logs off by itself once the time below has "
+                "passed, which keeps a temporary investigation from growing the "
+                "container indefinitely."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_file_processing_logs", "equals": True},
+        },
+        {
+            "key": "file_timer_value",
+            "type": "number",
+            "label": "Duration",
+            "help": "How long the logs stay on, counted from the save that starts the timer.",
+            "default": 1,
+            "min": 1,
+            "max": 120,
+            "depends_on": [
+                {"key": "enable_file_processing_logs", "equals": True},
+                {"key": "file_processing_logs_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "key": "file_timer_unit",
+            "type": "select",
+            "label": "Time Unit",
+            "help": "Each unit has its own cap, shown beside it. The longest a timer can run is 52 weeks.",
+            "default": "hours",
+            "options": [
+                {"value": "minutes", "label": "Minutes (1-120)"},
+                {"value": "hours", "label": "Hours (1-24)"},
+                {"value": "days", "label": "Days (1-7)"},
+                {"value": "weeks", "label": "Weeks (1-52)"},
+            ],
+            "depends_on": [
+                {"key": "enable_file_processing_logs", "equals": True},
+                {"key": "file_processing_logs_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "type": "component",
+            "component": "logging-timer-status",
+            "label": "Turns off",
+            "help": "Calculated when the timer is saved, and shown in your own timezone.",
+            "timer_keys": LOGGING_TIMERS["file"],
+            "depends_on": {"key": "enable_file_processing_logs", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "file-processing-log-cleanup",
+            "label": "Delete stored logs",
+            "help": (
+                "Permanently removes file processing records from Cosmos DB, whether or "
+                "not logging is on. These act immediately and are not part of Save."
+            ),
+        },
+    ],
+    "health-check-section": [
+        {
+            "key": "enable_external_healthcheck",
+            "type": "switch",
+            "label": "Enable /external/healthcheck",
+            "help": (
+                "A lightweight availability check for monitors that reach the app "
+                "through its normal access boundary, such as App Service Authentication. "
+                "It answers with the server time once the app can read its settings, and "
+                "does not exercise Azure AI Search, Azure OpenAI or storage."
+            ),
+            "notice": (
+                "The bundled deployers set App Service Health check to this path. While "
+                "that is configured, switching this off makes the route answer HTTP 400, "
+                "and App Service starts treating its instances as unhealthy."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "enable_no_auth_external_healthcheck",
+            "type": "switch",
+            "label": "Enable /external/healthcheckz",
+            "help": (
+                "The same check for platform probes that cannot sign in. It returns a "
+                "small JSON status and nothing else."
+            ),
+            "notice": (
+                "This route answers anyone who can reach the app, without signing in. "
+                "Only enable it for trusted health probes or controlled network paths."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "endpoint-links",
+            "label": "Endpoints",
+            "help": (
+                "Copy a full address into your monitoring tool. Open is offered once the "
+                "saved setting has the endpoint turned on."
+            ),
+            "endpoints": [
+                {
+                    "path": "/external/healthcheck",
+                    "label": "Authenticated check",
+                    "gate_key": "enable_external_healthcheck",
+                    "access": "protected",
+                    "returns": "HTTP 200 with the server time as text.",
+                },
+                {
+                    "path": "/external/healthcheckz",
+                    "label": "Unauthenticated check",
+                    "gate_key": "enable_no_auth_external_healthcheck",
+                    "access": "public",
+                    "returns": 'HTTP 200 with {"status": "ok", "time": ...}.',
+                },
+            ],
+        },
+    ],
+    "swagger-section": [
+        {
+            "key": "enable_swagger",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Swagger/OpenAPI Documentation (/swagger)",
+            "help": (
+                "Serves an interactive explorer for SimpleChat's API at /swagger, and the "
+                "OpenAPI specification it is generated from at /swagger.json and "
+                "/swagger.yaml. Any signed-in user can open them. Useful for developers "
+                "and integrations; turn it off if you would rather not publish the API "
+                "surface to every user."
+            ),
+            "notice": (
+                "These routes are registered when the app starts. Restart the App Service "
+                "after saving for this to take effect."
+            ),
+            "notice_level": "warning",
+            # No seeded default exists; swagger_wrapper treats a missing value as on.
+            "default": True,
+        },
+        {
+            "type": "component",
+            "component": "restart-status",
+            "label": "Running state",
+            "help": "Compares the saved setting with how the running app was started.",
+            "watches": "enable_swagger",
+            "runtime_flag": "swagger_routes_registered",
+        },
+        {
+            "type": "component",
+            "component": "endpoint-links",
+            "label": "Documentation links",
+            "help": (
+                "Share these with developers. They need to sign in, and the specification "
+                "endpoints answer at most 30 requests a minute per client address."
+            ),
+            "endpoints": [
+                {
+                    "path": "/swagger",
+                    "label": "Swagger UI",
+                    "runtime_flag": "swagger_routes_registered",
+                    "access": "signed_in",
+                    "returns": "The interactive API explorer.",
+                },
+                {
+                    "path": "/swagger.json",
+                    "label": "OpenAPI specification (JSON)",
+                    "runtime_flag": "swagger_routes_registered",
+                    "access": "signed_in",
+                    "returns": "The OpenAPI 3 document, for client generators and API tools.",
+                },
+                {
+                    "path": "/swagger.yaml",
+                    "label": "OpenAPI specification (YAML)",
+                    "runtime_flag": "swagger_routes_registered",
+                    "access": "signed_in",
+                    "returns": "The same specification as YAML.",
+                },
+            ],
+        },
+    ],
 }
 
 
@@ -6536,6 +6932,10 @@ LEGACY_FIELD_NAMES = {
     "inbound_mcp_allowed_client_app_entries": ["inbound_mcp_allowed_client_app_entries_json"],
     "inbound_mcp_allowed_tenant_entries": ["inbound_mcp_allowed_tenant_entries_json"],
     "inbound_mcp_allowed_source_entries": ["inbound_mcp_allowed_source_entries_json"],
+    # V1 names the auto-turnoff switches after the control rather than after the
+    # stored key, which reads the other way round.
+    "debug_logging_timer_enabled": ["enable_debug_logging_timer"],
+    "file_processing_logs_timer_enabled": ["enable_file_processing_logs_timer"],
 }
 
 # Field names present in the V1 panes covered by a parity test that intentionally
@@ -6584,6 +6984,13 @@ V2_ONLY_FIELDS = {
         "Same as enable_app_maintenance: no server-rendered control, and misfiled "
         "into Security by the fallback scan until it was declared."
     ),
+    "enable_dai_debug": (
+        "The server-rendered DAI Metrics pane only reads it, to decide whether to "
+        "show its backfill, checkpoint reset and shadow validation diagnostics, so "
+        "it could only be changed by editing the settings document. The fallback "
+        "scan drew it as an unexplained 'Dai debug' switch under Debug Logging; it "
+        "is declared there instead, named for what it does and linked to DAI Metrics."
+    ),
     "enable_search_result_caching": (
         "The classic Azure AI Search card showed this switch briefly in late 2025, "
         "but the classic save handler never stored it and the control was removed. "
@@ -6595,6 +7002,41 @@ V2_ONLY_FIELDS = {
         "since the classic control was removed alongside the caching switch. "
         "Declared with that switch so the cache lifetime can be tuned."
     ),
+}
+
+
+# In-app guides a section header offers, keyed by section id.
+#
+# Some settings only make sense alongside work done outside SimpleChat -- creating
+# app roles in Entra, pointing App Service Health check at a path -- and the
+# server-rendered panes carry that walkthrough in a modal next to the section. The
+# V2 surface draws the same guide from its own registry of guide components, so
+# this names which guide a section offers and what its button says. ``docs_url``
+# is the matching page on the documentation site, linked from inside the guide.
+ADMIN_SECTION_GUIDES = {
+    "control-center-overview-section": {
+        "id": "control-center-roles",
+        "label": "Role setup guide",
+        "docs_url": (
+            "https://microsoft.github.io/simplechat/admin/operations/"
+            "#control-center-overview-section"
+        ),
+    },
+    "health-check-section": {
+        "id": "health-check",
+        "label": "Configuration guide",
+        "docs_url": (
+            "https://microsoft.github.io/simplechat/admin/operations/"
+            "#health-check-section"
+        ),
+    },
+    "swagger-section": {
+        "id": "swagger",
+        "label": "Why enable Swagger?",
+        "docs_url": (
+            "https://microsoft.github.io/simplechat/admin/operations/#swagger-section"
+        ),
+    },
 }
 
 
@@ -6746,6 +7188,11 @@ def get_admin_settings_fields():
 def get_admin_section_status():
     """Return the section-id keyed status descriptors."""
     return ADMIN_SECTION_STATUS
+
+
+def get_admin_section_guides():
+    """Return the section-id keyed in-app guide descriptors."""
+    return ADMIN_SECTION_GUIDES
 
 
 def iter_fields():
@@ -7890,6 +8337,22 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 normalized[key] = front_door_value
             continue
 
+        if key == "control_center_auto_refresh_time":
+            refresh_time, refresh_time_error = _validate_control_center_refresh_time(value)
+            if refresh_time_error:
+                errors[key] = refresh_time_error
+            else:
+                normalized[key] = refresh_time
+            continue
+
+        if key == "control_center_auto_refresh_timezone":
+            refresh_zone, refresh_zone_error = _validate_control_center_refresh_timezone(value)
+            if refresh_zone_error:
+                errors[key] = refresh_zone_error
+            else:
+                normalized[key] = refresh_zone
+            continue
+
         field_value, error, warning = _normalize_field_value(key, value, field)
         if error:
             errors[key] = error
@@ -7929,8 +8392,69 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     if not errors:
         _apply_nested_paths(normalized, current)
         _apply_inbound_mcp_derivations(normalized, current)
+        _apply_operations_derivations(normalized, current)
 
     return normalized, errors, warnings
+
+
+def _validate_control_center_refresh_time(value):
+    """Return ``(time, error)`` for the daily Control Center refresh time.
+
+    The shared schedule normalizer reads anything it cannot parse as 02:00. That is
+    right for a stored value and wrong for one an administrator just typed, which
+    would otherwise save as a different time with no word said.
+    """
+    candidate = str(value if value is not None else "").strip()
+    if not candidate:
+        # A cleared time picker sends an empty value; the picker itself shows the
+        # reader's own clock format, so the 24-hour wording below would not match it.
+        return None, "Choose the time the refresh starts each day."
+    if not is_valid_control_center_auto_refresh_time(candidate):
+        return None, "Enter the time as HH:MM on a 24-hour clock, such as 02:00."
+    return normalize_control_center_auto_refresh_time(candidate)["time"], None
+
+
+def _validate_control_center_refresh_timezone(value):
+    """Return ``(zone, error)`` for the Control Center refresh timezone.
+
+    Refused rather than replaced: the shared normalizer substitutes
+    America/New_York for an unknown zone, which would quietly move the refresh by
+    several hours for anyone outside it.
+    """
+    candidate = str(value if value is not None else "").strip()
+    if not is_valid_control_center_auto_refresh_timezone(candidate):
+        return None, "Choose an IANA timezone, such as America/New_York or Europe/London."
+    return candidate, None
+
+
+def _apply_operations_derivations(normalized, current_settings):
+    """Work out the Operations values that are calculated rather than edited.
+
+    The next scheduled Control Center refresh and each log's turnoff time follow
+    from other settings. The server-rendered form calculates them on every save;
+    without the same step here, a schedule or timer edited in V2 would be stored and
+    then ignored. Both surfaces call the same helpers, so they agree on when a save
+    moves a refresh or restarts a timer, and a save that touches neither leaves both
+    alone.
+    """
+    for kind, keys in LOGGING_TIMERS.items():
+        inputs = (keys["enabled_key"], keys["timer_key"], keys["value_key"], keys["unit_key"])
+        incoming = {key: normalized[key] for key in inputs if key in normalized}
+        if incoming:
+            normalized.update(
+                resolve_logging_timer_settings(kind, incoming, current_settings)
+            )
+
+    schedule_inputs = (
+        "control_center_auto_refresh_enabled",
+        "control_center_auto_refresh_time",
+        "control_center_auto_refresh_timezone",
+    )
+    incoming = {key: normalized[key] for key in schedule_inputs if key in normalized}
+    if incoming:
+        normalized.update(
+            resolve_control_center_auto_refresh_settings(incoming, current_settings)
+        )
 
 
 def _check_content_screening_dependency(normalized, current_settings, errors):
@@ -8061,12 +8585,18 @@ def _apply_enable_defaults(normalized, current_settings, warnings):
 def _apply_cross_field_rules(normalized, current_settings, warnings):
     """Reconcile settings whose valid range depends on another setting.
 
-    Only the idle warning needs this today. It has to arrive before the sign-out it
-    warns about, and the two are separate fields that can be saved independently,
-    so the check cannot live on either field's own definition. The server-rendered
-    form silently lowers the warning to match; doing the same and saying so is
-    kinder than rejecting a save over a value the administrator did not touch.
+    The pairs may be edited together or one at a time, so the check cannot live on
+    either field's own definition: only the merged state of a save can be judged.
+    The server-rendered form silently brings an out-of-range value back into range;
+    doing the same and saying so is kinder than rejecting a save over a value the
+    administrator did not touch.
     """
+    _apply_idle_warning_rule(normalized, current_settings, warnings)
+    _apply_logging_timer_limits(normalized, current_settings, warnings)
+
+
+def _apply_idle_warning_rule(normalized, current_settings, warnings):
+    """Keep the idle warning from arriving after the sign-out it warns about."""
     if "idle_warning_minutes" not in normalized and "idle_timeout_minutes" not in normalized:
         return
 
@@ -8090,6 +8620,38 @@ def _apply_cross_field_rules(normalized, current_settings, warnings):
         f"Lowered to {timeout} minutes, because a warning cannot arrive after the "
         "sign-out it warns about."
     )
+
+
+def _apply_logging_timer_limits(normalized, current_settings, warnings):
+    """Keep each log's auto-turnoff duration inside its unit's range.
+
+    The duration field accepts 1 to 120 because that is the widest any unit
+    allows, but the real cap depends on the unit -- 24 hours, 7 days, 52 weeks --
+    and either may be saved on its own. Switching 90 minutes to hours would
+    otherwise ask for a 90-hour timer.
+    """
+    for keys in LOGGING_TIMERS.values():
+        value_key, unit_key = keys["value_key"], keys["unit_key"]
+        if value_key not in normalized and unit_key not in normalized:
+            continue
+
+        value = normalized.get(value_key, current_settings.get(value_key))
+        unit = normalized.get(unit_key, current_settings.get(unit_key))
+        try:
+            requested = int(float(value))
+        except (TypeError, ValueError):
+            continue
+
+        allowed, normalized_unit = clamp_logging_timer_value(requested, unit)
+        if allowed == requested:
+            continue
+
+        normalized[value_key] = allowed
+        direction = "Lowered" if requested > allowed else "Raised"
+        limit = "the longest" if requested > allowed else "the shortest"
+        warnings[value_key] = (
+            f"{direction} to {allowed}, {limit} a timer measured in {normalized_unit} can run."
+        )
 
 
 def _check_minimum_selections(normalized, current_settings, errors):

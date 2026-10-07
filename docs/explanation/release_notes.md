@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.269)**
+### **(v0.261.270)**
 
 #### New Features
 
@@ -31,6 +31,31 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll or start editing.
     *   The Global Agents and Global Actions lists now match AI Connections: an Enabled or Disabled badge, a Default agent badge, and icon buttons to make an agent the default, enable or disable, edit, and delete.
     *   (Ref: `EditorLayout.tsx`, `WorkspaceEditorFrame.tsx`, `theme.css` `.editor-field`, `AgentFields.tsx`, `ActionFields.tsx`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminListPill.tsx`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+### **(v0.261.269)**
+
+#### New Features
+
+*   **V2 Operations Settings Match the Classic Page**
+    *   All seven Operations sections are now described in V2 Admin Settings, so none fall back to guessed switches named after their settings keys. Automatic Data Refresh, Health Check, and API Documentation appear in V2 for the first time.
+    *   Automatic Data Refresh shows the next refresh in the schedule's timezone and in yours, when it last ran, and what a change would schedule before you save. **Use my timezone** sets the schedule to your browser's zone, and V2 refuses a time or timezone it cannot read instead of quietly falling back to the default.
+    *   Debug and file processing logs nest their automatic turnoff under the switch it belongs to, state each unit's limit, and show the turnoff time in your own timezone. Turnoff times are now stored in UTC; timers set before the upgrade still end when they were meant to.
+    *   Control Center Access shows who can open the dashboard and the management features under the switches as they stand, unsaved changes included, with role values to copy.
+    *   Health Check and API Documentation list each endpoint as a full, copyable address for the deployment, with its sign-in requirement and whether it answers now. Application Insights global logging and Swagger say when a restart is still needed, and Application Insights reports whether its connection string is set.
+    *   File Process Logging can delete stored logs by age or all at once, after a confirmation that states exactly what will be removed.
+    *   **Document Access Index diagnostics** (`enable_dai_debug`) can now be switched on from Debug Logging, with a description and a link to the DAI Metrics card it affects. The classic page has no control for it, and V2 previously showed it only as an unexplained "Dai debug" switch.
+    *   (Ref: `admin_settings_fields.py`, `functions_logging_timers.py`, `functions_control_center_schedule.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminOperations.ts`, `test_v2_admin_operations_settings.py`, [V2 Admin Operations Settings](features/V2_ADMIN_OPERATIONS_SETTINGS.md))
+
+*   **In-App Setup Guides for Operations**
+    *   The classic page's role setup, health check configuration, and "Why enable Swagger?" dialogs are available from the matching V2 section headers, with values to copy and a link to the documentation.
+    *   The V2 guides correct three statements the classic dialogs make: health checks return the server time as text or a two-field JSON status, not per-dependency results or HTTP 503; Swagger is open to any signed-in user, not only admins; and ControlCenterAdmin does not also require the Admin role.
+    *   (Ref: `components/admin/guides/`, `docs/admin/operations.md`)
+
+#### Bug Fixes
+
+*   **ControlCenterDashboardReader Described Correctly in App Role Requirements**
+    *   The app role registry said the dashboard reader role only worked alongside the ControlCenterAdmin requirement. It works on its own, and the description now says so.
+    *   (Ref: `admin_app_roles.py`, `control_center_required`)
 
 ### **(v0.261.268)**
 

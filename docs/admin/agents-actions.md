@@ -5,7 +5,7 @@ description: "Agents & Actions controls the Semantic Kernel runtime, agent marke
 section: "Administration"
 audience: admin
 admin_tab: agents-actions
-version: "0.261.269"
+version: "0.261.270"
 redirect_from:
   - /admin/agents/
 ---
@@ -244,7 +244,7 @@ personal, group, and global agents. In V2 Admin Settings a global Call agent
 action is an ordinary global action: create it under **Global Actions** with the
 **Call agent** type, which offers only global agents as targets, then attach it in
 a global agent's editor. The separate **Global agent delegation** card was removed
-in **0.261.269**. See
+in **0.261.270**. See
 [Call another agent]({{ '/guides/call-another-agent/' | relative_url }}) for the
 workflow, context-sharing rules, and execution limits.
 
