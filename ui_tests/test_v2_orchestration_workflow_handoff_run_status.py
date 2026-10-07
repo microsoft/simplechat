@@ -228,7 +228,8 @@ class HandoffRunHarness(RunHarness):
     def __init__(self, page, stylesheets):
         super().__init__(page, stylesheets)
         self.messages_by_chat[CHAT] = handoff_messages()
-        self.link_items = []
+        # Phase 5's run list names only workflow_run steps, and a hand-off plan has none.
+        self.link_items.clear()
         self.handoff_items = [queued_item()]
         self.handoff_error = None
         self.handoff_queries = []
