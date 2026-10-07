@@ -1,8 +1,9 @@
 # test_v2_workflow_publication_completion.py
 """
 UI coverage for publication completion authoring and exact run inspection.
-Version: 0.261.127
+Version: 0.261.271
 Implemented in: 0.261.118
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 The production SPA uses a closed API fixture with serialized public publication
 status. Tests never publish a document, invoke a model, or contact a live service.
@@ -30,6 +31,12 @@ from ui_tests.fixtures.workflow_publication_completion import (
     publication_status,
     publication_ui,  # noqa: F401
 )
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    edit_workflow,
+    open_workflow_runs,
+    workflow_editor,
+    workflow_editor_path,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -49,10 +56,10 @@ def open_editor(ui, scope="user", **viewport):
     if scope == "group":
         ui.open("/groups", **viewport)
         ui.select_group(GROUP_ID)
-        ui.page.get_by_role("button", name=f"Edit {record['name']}", exact=True).click()
+        edit_workflow(ui.page, record["name"])
     else:
-        ui.open(f"/workspace/workflows?workflow_id={record['id']}", **viewport)
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+        ui.open(workflow_editor_path(record["id"]), **viewport)
+    expect(workflow_editor(ui.page)).to_be_visible()
     return publication_fields(ui.page)
 
 
@@ -68,7 +75,7 @@ def policy_field(block):
 
 def save_editor(ui):
     ui.page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(ui.page)).to_have_count(0)
     return ui.workflow_writes[-1]
 
 
@@ -79,9 +86,8 @@ def open_run(ui, scope="user", **viewport):
         ui.select_group(GROUP_ID)
     else:
         ui.open("/workspace/workflows", **viewport)
-    row = ui.page.get_by_role("listitem").filter(has_text=record["name"]).first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
+    runs = open_workflow_runs(ui.page, record["name"])
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
     expect(ui.page.get_by_text("Workflow execution history", exact=True)).to_be_visible()
     _, workflow_id, run_id = publication_key(scope)
     return execution_id(workflow_id, run_id, "publish")
@@ -117,7 +123,7 @@ def test_authoring_reopens_policy_and_clears_only_incompatible_destination_ids(p
     }
     assert write.body["definition_version"] == 3 and write.body["durable_execution"] is True
     assert write.query.get("group_id") == ([GROUP_ID] if scope == "group" else None)
-    page.get_by_role("button", name=f"Edit {saved_workflow(ui, scope)['name']}", exact=True).click()
+    edit_workflow(page, saved_workflow(ui, scope)["name"])
     expect(policy_field(publication_fields(page))).to_have_value(policy)
     assert not runtime_writes(ui)
 
@@ -161,7 +167,7 @@ def test_explicitly_returning_to_existing_behavior_removes_the_policy(publicatio
     block = open_editor(ui)
     policy_field(block).select_option("")
     assert "completion_policy" not in save_editor(ui).body["tasks"][1]["publication"]
-    page.get_by_role("button", name="Edit Publication workflow", exact=True).click()
+    edit_workflow(page, "Publication workflow")
     expect(policy_field(publication_fields(page))).to_have_value("")
 
 
@@ -186,7 +192,7 @@ def test_unsupported_completion_semantics_preserve_payload_read_only(publication
     ui.publication_policies = capabilities
     record.pop("active_run_id", None)
     ui.workflow_runs[record["id"]] = []
-    ui.open(f"/workspace/workflows?workflow_id={record['id']}")
+    ui.open(workflow_editor_path(record["id"]))
     expect(page.get_by_role("alert").filter(has_text="completion polic")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     expect(page.get_by_label("Workflow name", exact=True)).to_be_disabled()
@@ -444,7 +450,7 @@ def test_mobile_keyboard_policy_selection_preserves_task_and_flow_identity(publi
     save = page.get_by_role("button", name="Save workflow", exact=True)
     save.focus()
     save.press("Enter")
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     payload = ui.workflow_writes[-1].body
     assert payload["tasks"][1]["publication"]["completion_policy"] == "approved"
     assert payload["flow"] == original["flow"]

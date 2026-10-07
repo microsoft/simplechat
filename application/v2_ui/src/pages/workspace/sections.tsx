@@ -34,7 +34,9 @@ import { FileSourcesSection } from './FileSourcesSection';
 import { IdentitiesSection } from './IdentitiesSection';
 import { PromptsSection } from './PromptsSection';
 import { TagsSection } from './TagsSection';
+import { WorkflowEditorPage } from './WorkflowEditorPage';
 import { WorkflowsSection } from './WorkflowsSection';
+import { DEFAULT_WORKFLOW_SCOPE } from '../../lib/workflowEditor';
 
 export interface WorkspaceSectionContext {
     resourceId?: string;
@@ -127,7 +129,11 @@ export const WORKSPACE_SECTIONS: WorkspaceSectionDefinition[] = [
         group: 'automation',
         icon: Workflow,
         blurb: 'Repeatable tasks that run on a schedule or on demand.',
-        render: () => <WorkflowsSection />,
+        layout: 'full',
+        render: (context) => context.resourceId
+            ? <WorkflowEditorPage key={`${context.ownerId}:${context.resourceId}`} scope={DEFAULT_WORKFLOW_SCOPE}
+                resourceId={context.resourceId} />
+            : <WorkflowsSection />,
     },
     {
         id: 'identities',

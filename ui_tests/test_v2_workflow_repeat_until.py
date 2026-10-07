@@ -1,9 +1,10 @@
 # test_v2_workflow_repeat_until.py
 """
 Local closed-browser regressions for typed Repeat until and manual continuation.
-Version: 0.261.231
+Version: 0.261.271
 Implemented in: 0.261.120
 source_snapshot_changed stopped being authoritative in: 0.261.231
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 Exercises the actual built V2 SPA, strict guards, scoped API requests and production
 definition normalization. Fixtures intercept every request; no live workflow runs.
@@ -35,6 +36,14 @@ from ui_tests.fixtures.workflow_repeat_until import (
     state_binding,
     workflow_repeat_ui,  # noqa: F401
 )
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    open_workflow_runs,
+    workflow_editor,
+    workflow_editor_path,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -56,16 +65,16 @@ def open_repeat(ui, *, group=False, **kwargs):
     if group:
         ui.open("/groups", **kwargs)
         ui.select_group(GROUP_ID)
-        ui.page.get_by_role("button", name="Edit Group Repeat review", exact=True).click()
+        edit_workflow(ui.page, "Group Repeat review")
     else:
-        ui.open(f"/workspace/workflows?workflow_id={REPEAT_WORKFLOW_ID}", **kwargs)
+        ui.open(workflow_editor_path(REPEAT_WORKFLOW_ID), **kwargs)
     return repeat_block(ui.page)
 
 
 def test_author_repeat_with_explicit_maximum_next_state_and_typed_condition(workflow_repeat_ui):
     ui, page = workflow_repeat_ui, workflow_repeat_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     page.get_by_label("Workflow name", exact=True).fill("Authored Repeat review")
     page.get_by_label("Model", exact=True).select_option(label="Workspace GPT \u00b7 aoai")
     page.get_by_role("button", name="Enable structured control flow", exact=True).click()
@@ -117,7 +126,7 @@ def test_author_repeat_with_explicit_maximum_next_state_and_typed_condition(work
     repeat.get_by_label("Repeat export 1 output", exact=True).select_option("next_review")
     ui.assert_no_overflow()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     payload = ui.workflow_writes[-1].body
     node = payload["flow"]["nodes"][1]
     assert node["kind"] == "repeat_until" and node["max_iterations"] == 2
@@ -133,10 +142,10 @@ def test_author_repeat_with_explicit_maximum_next_state_and_typed_condition(work
     }
     assert node["until"] == {"op": "eq", "left": {"input": "review", "path": "/ready"}, "right": {"literal": True}}
     assert node["exports"] == [{"name": "review", "output": "next_review"}]
-    page.get_by_role("button", name="Edit Authored Repeat review", exact=True).click()
+    edit_workflow(page, "Authored Repeat review")
     expect(page.get_by_label("Maximum rounds before manual continuation", exact=True)).to_have_value("2")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["flow"] == payload["flow"]
     assert not any(request.path.endswith("/run") for request in ui.writes)
 
@@ -159,7 +168,7 @@ def test_personal_group_mobile_keyboard_roundtrip_preserves_all_typed_state(work
     save = page.get_by_role("button", name="Save workflow", exact=True)
     save.focus()
     save.press("Enter")
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     expected = copy.deepcopy(record["flow"])
     expected["nodes"][-1]["max_iterations"] = 3
     assert ui.workflow_writes[-1].body["flow"] == expected
@@ -178,7 +187,7 @@ def test_invalid_or_over_policy_maximum_is_not_clamped_or_saved(workflow_repeat_
     repeat.get_by_label("Maximum rounds before manual continuation", exact=True).fill(maximum)
     expect(repeat.get_by_role("alert")).to_contain_text("administrator ceiling" if maximum == "26" else "whole number from 1 to 1,000")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+    expect(workflow_editor(page)).to_be_visible()
     assert not ui.workflow_writes
     assert ui.personal_workflows[REPEAT_WORKFLOW_ID] == original
 
@@ -188,10 +197,9 @@ def open_repeat_run(ui, *, group=False, **kwargs):
     ui.open("/groups" if group else "/workspace/workflows", **kwargs)
     if group:
         ui.select_group(GROUP_ID)
-    row = page.get_by_role("listitem").filter(has_text="Group Repeat review" if group else "Repeat review").first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
-    return row
+    runs = open_workflow_runs(page, "Group Repeat review" if group else "Repeat review")
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
+    return runs
 
 
 def open_rounds(ui):
@@ -639,7 +647,7 @@ def test_current_repeat_collection_can_be_selected_for_saved_record_reporting(wo
     revise.get_by_label("Revise draft inputs input 3 state", exact=True).select_option(kind)
     revise.get_by_label("Large saved inputs", exact=True).select_option("saved_record_report")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     saved = ui.workflow_writes[-1].body["tasks"][2]
     assert saved["input_processing"] == "saved_record_report"
     assert saved["inputs"][2]["source"] == state_binding("unused", kind, kind)["source"]
@@ -678,7 +686,7 @@ def test_for_each_freezes_current_repeat_collection_with_typed_item_fields(workf
     expect(loop).to_contain_text("start of this Repeat round")
     expect(loop.get_by_label("If / else condition left field", exact=True)).to_have_value("/value/finding")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     saved_loop = ui.workflow_writes[-1].body["flow"]["nodes"][-1]["body"]["nodes"][0]
     assert saved_loop["inputs"] == [state_binding("rows", kind, kind)]
     assert saved_loop["body"]["nodes"][0]["condition"]["left"]["path"] == "/value/finding"
@@ -708,7 +716,7 @@ def test_nested_repeat_initial_state_is_explicitly_named_outer_state(workflow_re
     expect(nested.get_by_label("State 1 initial state", exact=True)).to_have_value("draft")
     nested.get_by_label("Maximum rounds before manual continuation", exact=True).fill("3")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     inner["max_iterations"] = 3
     assert ui.workflow_writes[-1].body["flow"] == record["flow"]
 
@@ -832,7 +840,7 @@ def test_repeat_state_contracts_cannot_coerce_or_silently_omit_atomic_next_slots
     open_repeat(ui)
     page.get_by_role("button", name="Save workflow", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text="required, declared next body output" if invalid == "optional_next" else "exactly kind json")).to_be_visible()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+    expect(workflow_editor(page)).to_be_visible()
     assert not ui.workflow_writes
     assert ui.personal_workflows[REPEAT_WORKFLOW_ID] == original
 
@@ -844,7 +852,7 @@ def test_explicit_supported_batch_boundaries_save_exactly(workflow_repeat_ui, ma
     repeat = open_repeat(ui)
     repeat.get_by_label("Maximum rounds before manual continuation", exact=True).fill(str(maximum))
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["flow"]["nodes"][-1]["max_iterations"] == maximum
 
 
@@ -857,7 +865,7 @@ def test_partial_current_state_pass_through_requires_explicit_opt_in(workflow_re
     repeat.get_by_label("Repeat body outputs input 3 allow partial", exact=True).check()
     expect(repeat.get_by_text("Partial coverage and limitations stay attached", exact=False)).to_be_visible()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     node = ui.workflow_writes[-1].body["flow"]["nodes"][-1]
     assert node["state"][2]["output_contract"]["allow_partial"] is True
     assert node["body"]["outputs"][2]["source"] == {
@@ -885,7 +893,7 @@ def test_unsupported_repeat_definitions_stay_intact_and_read_only(workflow_repea
     else:
         record["tasks"][2]["inputs"][0]["source"]["iteration"] = 42
     original = copy.deepcopy(record)
-    ui.open(f"/workspace/workflows?workflow_id={REPEAT_WORKFLOW_ID}")
+    ui.open(workflow_editor_path(REPEAT_WORKFLOW_ID))
     expect(page.get_by_role("alert").filter(has_text="cannot safely save")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     assert ui.personal_workflows[REPEAT_WORKFLOW_ID] == original
@@ -902,7 +910,7 @@ def test_missing_repeat_capabilities_preserve_saved_definition_read_only(workflo
         ui.repeat_ceiling = None
     else:
         ui.repeat_hard_ceiling = None
-    ui.open(f"/workspace/workflows?workflow_id={REPEAT_WORKFLOW_ID}")
+    ui.open(workflow_editor_path(REPEAT_WORKFLOW_ID))
     expect(page.get_by_role("alert").filter(has_text="cannot safely save")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Add Repeat until to Main", exact=True)).to_have_count(0)
@@ -915,7 +923,7 @@ def test_invalid_advertised_repeat_hard_ceiling_never_enables_authoring(workflow
     ui, page = workflow_repeat_ui, workflow_repeat_ui.page
     original = copy.deepcopy(ui.personal_workflows[REPEAT_WORKFLOW_ID])
     ui.repeat_hard_ceiling = hard_ceiling
-    ui.open(f"/workspace/workflows?workflow_id={REPEAT_WORKFLOW_ID}")
+    ui.open(workflow_editor_path(REPEAT_WORKFLOW_ID))
     expect(page.get_by_role("alert").filter(has_text="invalid loop capabilities or limits")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Add Repeat until to Main", exact=True)).to_have_count(0)
@@ -940,7 +948,7 @@ def test_lowered_repeat_policy_preserves_schema_valid_authored_maximum(workflow_
     assert not ui.workflow_writes
     maximum.fill("25")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["flow"]["nodes"][-1]["max_iterations"] == 25
 
 

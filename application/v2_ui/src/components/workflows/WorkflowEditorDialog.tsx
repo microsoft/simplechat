@@ -1,14 +1,37 @@
 // WorkflowEditorDialog.tsx
-// Native V2 workflow create/edit dialog.
+// Native V2 workflow create/edit editor.
+//
+// One editor, two frames. In a workspace it is a routed page (`WorkflowEditorPage`) in the V2
+// Admin Settings wide frame: a header with the actions, the cards, and an On this page index of
+// the cards and their status. Chat's proposal card opens the same editor as a dialog, where the
+// conversation should stay underneath. The cards, change tracking, Ask AI, undo and redo, and
+// validation are identical in both; only the frame and how Close leaves differ.
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { AlertTriangle, Plus, Redo2, Undo2 } from 'lucide-react';
+import {
+    Fragment, useCallback, useEffect, useId, useMemo, useRef, useState,
+    type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type SetStateAction,
+} from 'react';
+import { AlertTriangle, ArrowLeft, GitBranch, Lock, Plus, Redo2, Undo2 } from 'lucide-react';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Modal } from '../ui/Modal';
-import { GlassButton, Toggle } from '../ui/primitives';
+import { SectionCard } from '../ui/SectionCard';
+import { GlassButton } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
+import { SettingsIndex, type SettingsIndexEntry } from '../admin/SettingsIndex';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowAgentPicker, WorkflowModelPicker, WorkflowTaskFields } from './WorkflowTaskFields';
+import {
+    WorkflowCardHelp,
+    WorkflowField,
+    WorkflowFieldEmphasis,
+    WorkflowFieldList,
+    WorkflowReadout,
+    WorkflowSwitch,
+    WorkflowSwitchGrid,
+    workflowFieldInputClass,
+    type WorkflowCardFrame,
+} from './WorkflowField';
+import { WORKFLOW_EDITOR_SECTION_ICONS } from './workflowEditorSectionIcons';
 import { WorkflowFieldDraftsProvider, workflowDraftOwners } from './WorkflowFieldDrafts';
 import { WorkflowHistoryBoundary, useWorkflowAuthoringHistory } from './WorkflowAuthoringHistory';
 import { WorkflowStructuredList } from './WorkflowStructuredList';
@@ -53,9 +76,9 @@ import {
     workflowForFlowPreview,
     workflowForSave,
     workflowMonitorFileSyncConfig,
+    workflowScheduleTimezones,
     workflowScopeKey,
     workflowValidationErrors,
-    workflowAgentKey,
     WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE,
     type WorkflowDefinition,
     type WorkflowEditorOptions,
@@ -63,16 +86,15 @@ import {
     type WorkflowScope,
     type WorkflowTask,
 } from '../../lib/workflowEditor';
-
-const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
-const textareaClass = `${inputClass} min-h-24`;
+import {
+    workflowEditorSections,
+    workflowRunnerSummary,
+    WORKFLOW_EDITOR_SECTION_LABELS,
+    type WorkflowEditorSectionId,
+} from '../../lib/workflowEditorSections';
 
 function fieldId(prefix: string, name: string): string {
     return `${prefix}-${name}`;
-}
-
-function fieldLabel(name: string, required = false) {
-    return `${name}${required ? ' *' : ''}`;
 }
 
 function setTaskAt(
@@ -88,30 +110,37 @@ function sidePanelBesideEditor(): boolean {
     return typeof window.matchMedia !== 'function' || window.matchMedia('(min-width: 80rem)').matches;
 }
 
-/** Where Jump goes when a change has no element of its own on screen: the section it belongs to. */
-function changeSection(root: HTMLElement, key: string): HTMLElement | null {
+/** The card a workflow-level field is drawn in, for a jump that finds nothing closer. */
+const WORKFLOW_FIELD_CARDS: Readonly<Partial<Record<string, WorkflowEditorSectionId>>> = {
+    schedule: 'trigger',
+    is_enabled: 'trigger',
+    file_sync: 'file-sync',
+    error_handling: 'execution',
+    durable_execution: 'execution',
+    chat_capabilities_enabled: 'execution',
+    limits: 'limits',
+    alerts: 'alerts',
+};
+
+/**
+ * Where Jump goes when a change has no element of its own on screen: the card it belongs to.
+ * `cardFor` turns a card's id into its element id, which is unique to this editor.
+ */
+function changeSection(root: HTMLElement, key: string, cardFor: (id: WorkflowEditorSectionId) => string): HTMLElement | null {
     const info = parseWorkflowChangeKey(key);
     if (info.scope === 'workflow' && info.field === 'file_sync') {
         const fileSync = root.querySelector('[aria-label="File Sync sources"]')?.closest<HTMLElement>('section');
         if (fileSync) return fileSync;
     }
-    const label = info.scope === 'reference' || info.scope === 'order' && info.list === 'references' ? 'Workflow shared references'
-        : info.scope !== 'workflow' || info.field === 'definition_version' ? 'Workflow tasks' : 'Workflow basics';
-    return root.querySelector<HTMLElement>(`section[aria-label="${label}"]`);
+    const card: WorkflowEditorSectionId = info.scope === 'reference' || info.scope === 'order' && info.list === 'references' ? 'references'
+        : info.scope !== 'workflow' || info.field === 'definition_version' ? 'tasks'
+            : WORKFLOW_FIELD_CARDS[info.field] ?? 'basics';
+    return root.querySelector<HTMLElement>(`#${CSS.escape(cardFor(card))}`)
+        ?? root.querySelector<HTMLElement>(`#${CSS.escape(cardFor('basics'))}`);
 }
 
 /** Where Jump goes: a change from the Changes tab, or one Ask AI made. */
 type WorkflowJumpChange = Pick<WorkflowChange, 'key' | 'target'>;
-
-function workflowRunnerSummary(workflow: WorkflowDefinition, options: WorkflowEditorOptions): string {
-    if (workflow.runner_type === 'agent') {
-        const agent = options.agents.find((item) => workflowAgentKey(item) === workflowAgentKey(workflow.selected_agent));
-        return agent?.display_name || agent?.name || 'Agent not selected';
-    }
-    const model = options.models.find((item) =>
-        item.endpoint_id === workflow.model_endpoint_id && item.model_id === workflow.model_id);
-    return model?.label || 'App default model';
-}
 
 export function WorkflowEditorDialog({
     scope,
@@ -125,6 +154,8 @@ export function WorkflowEditorDialog({
     initialDraft = null,
     onSaveOverride,
     onReload,
+    presentation = 'dialog',
+    pageScopeLabel,
 }: {
     scope: WorkflowScope;
     workflow: WorkflowDefinition | null;
@@ -146,6 +177,14 @@ export function WorkflowEditorDialog({
      * changed after the editor opened; without it, the reader closes and reopens the editor.
      */
     onReload?: () => Promise<void>;
+    /**
+     * `page` is the routed editor in a workspace: Back and Cancel leave through `onClose`, and the
+     * router's leave guard, not this editor, asks about unsaved changes. `dialog` is the modal
+     * Chat opens for a proposal, which asks before discarding.
+     */
+    presentation?: 'dialog' | 'page';
+    /** The workspace the page names under its title, such as a group's name. */
+    pageScopeLabel?: string;
 }) {
     const [original] = useState<WorkflowDefinition | null>(() =>
         workflow ? structuredClone(workflow) : null,
@@ -176,6 +215,10 @@ export function WorkflowEditorDialog({
     const askAiToggleId = `${sidePanelBaseId}-ask-ai-toggle`;
     const askAiInputId = `${sidePanelBaseId}-ask-ai-input`;
     const sidePanelId = `${sidePanelBaseId}-side-panel`;
+    // Each card carries a DOM id the index jumps to; its title is `${id}-title`. The prefix keeps a
+    // second editor (Chat's proposal dialog over a page, say) from sharing ids with this one.
+    const cardIdPrefix = `workflow-editor-${sidePanelBaseId.replace(/[^A-Za-z0-9_-]/g, '')}`;
+    const cardId = (section: WorkflowEditorSectionId) => `${cardIdPrefix}-${section}`;
     const scopeKey = workflowScopeKey(scope);
     const fieldDrafts = useMemo(() => ({
         store: history.session.fields,
@@ -384,7 +427,7 @@ export function WorkflowEditorDialog({
                 setJump({ change, retry: false, sequence: ++focusSequence.current });
                 return;
             }
-            const target = exact ?? changeSection(root, change.key);
+            const target = exact ?? changeSection(root, change.key, cardId);
             if (!target) return;
             for (let details = target.closest('details'); details; details = details.parentElement?.closest('details') ?? null) {
                 details.open = true;
@@ -490,6 +533,12 @@ export function WorkflowEditorDialog({
             authoring.cancel();
             return;
         }
+        if (presentation === 'page') {
+            // Leaving the page is a navigation, which the workspace's leave guard owns; asking here
+            // as well would ask twice.
+            onClose();
+            return;
+        }
         const pendingChanges = !sameWorkflowDefinition(baseline, current.draft) ||
             history.session.fields.summary(workflowDraftOwners(current.draft)).pending;
         if (pendingChanges && !readOnly) {
@@ -591,423 +640,631 @@ export function WorkflowEditorDialog({
         openAskAi();
     };
 
+    const sections = useMemo(() => workflowEditorSections(draft, {
+        options,
+        scopeType: scope.type,
+        groupFileSyncEnabled: groupScope && fileSyncSources.status === 'ready' ? fileSyncSources.fileSyncEnabled : null,
+        structuredSurface: surface,
+        scheduleTimezones: workflowScheduleTimezones(options),
+    }).filter((section) => section.id !== 'limits' || !unsupported),
+    [draft, options, scope.type, groupScope, fileSyncSources.status, fileSyncSources.fileSyncEnabled, surface, unsupported]);
+    const sectionFor = (id: WorkflowEditorSectionId) => sections.find((section) => section.id === id);
+    const cardFrame = (id: WorkflowEditorSectionId): WorkflowCardFrame => ({
+        id: cardId(id),
+        status: sectionFor(id)?.status ?? 'none',
+        meta: sectionFor(id)?.meta,
+        headingLevel: 3,
+    });
+    const sectionIcon = (id: WorkflowEditorSectionId) => id === 'tasks' && draft.definition_version === 3
+        ? GitBranch : WORKFLOW_EDITOR_SECTION_ICONS[id];
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const pageTitleRef = useRef<HTMLHeadingElement>(null);
+    const [pendingJump, setPendingJump] = useState<string | null>(null);
+    const page = presentation === 'page';
+    const showIndex = page && !accessLost && !panelOpen && sections.length > 1;
+
+    useEffect(() => {
+        // A routed editor names itself the way an index jump does, so a keyboard or screen reader
+        // user arriving here starts at the title rather than at the top of the document.
+        if (page) pageTitleRef.current?.focus({ preventScroll: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- on arrival only
+    }, []);
+
+    useEffect(() => {
+        if (!pendingJump) return;
+        const target = document.getElementById(pendingJump);
+        if (target) {
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+            document.getElementById(`${pendingJump}-title`)?.focus({ preventScroll: true });
+        }
+        setPendingJump(null);
+    }, [pendingJump]);
+
+    const indexEntries: SettingsIndexEntry[] = sections.map((section) => ({
+        sectionId: cardId(section.id),
+        label: section.label,
+        groupId: 'workflow',
+        groupLabel: 'Workflow',
+        Icon: sectionIcon(section.id),
+        status: section.status,
+    }));
+
+    const lockUndoWhileDrafting = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+        // Workflow undo and redo wait for Ask AI too.
+        const key = event.key.toLowerCase();
+        if (draftLocked && (event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) event.preventDefault();
+    };
+
+    const sidePanelToggles = (
+        <>
+            {askAiAvailable ? <WorkflowAskAiToggle id={askAiToggleId} open={panelOpen && panelTab === 'askai'}
+                controls={sidePanelId} labelAlwaysVisible={page}
+                onToggle={() => (panelOpen && panelTab === 'askai' ? closeChanges(false) : openAskAi())} /> : null}
+            {!readOnly ? <WorkflowChangesToggle id={changesToggleId} open={panelOpen && panelTab === 'changes'}
+                controls={sidePanelId} labelAlwaysVisible={page}
+                onToggle={() => (panelOpen && panelTab === 'changes' ? closeChanges(false) : openChanges('tab'))} /> : null}
+        </>
+    );
+    const closeAndSave = (
+        <div className="flex shrink-0 items-center gap-2">
+            <GlassButton type="button" onClick={close} disabled={saving}>
+                {readOnly ? 'Close' : 'Cancel'}
+            </GlassButton>
+            {!readOnly ? (
+                <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || draftLocked} onClick={() => void save()}>
+                    {saving ? 'Saving…' : 'Save workflow'}
+                </GlassButton>
+            ) : null}
+        </div>
+    );
+
+    const notices = (
+        <>
+            {unsupported ? (
+                <div role="alert" className="flex gap-2 rounded-xl border border-warn/40 bg-warn/5 p-3 text-sm text-text-2">
+                    <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-warn" />
+                    <p>
+                        This workflow uses definition version {draft.definition_version}. V2 can read
+                        it but cannot safely save it without downgrading fields from a newer editor.
+                        {unsupportedFlow ? ` ${unsupportedFlow}` : ''}
+                    </p>
+                </div>
+            ) : null}
+            {!options.can_manage ? (
+                <p role="status" className="flex items-start gap-2 rounded-xl border border-edge-strong bg-surface-2 p-3 text-sm text-text-2">
+                    <Lock size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-text-3" />
+                    You have read-only access to workflows in this scope.
+                </p>
+            ) : null}
+            {options.can_manage && draft.active_run_id ? (
+                <p role="status" className="flex items-start gap-2 rounded-xl border border-edge-strong bg-surface-2 p-3 text-sm text-text-2">
+                    <Lock size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-text-3" />
+                    This workflow has an active run. Cancel it or wait for it to finish before editing.
+                </p>
+            ) : null}
+            {error ? <p ref={errorRef} role="alert" tabIndex={-1} className="rounded-xl border border-danger/40 bg-danger/5 p-3 text-sm text-danger">{error}</p> : null}
+            {!error && allErrors.length ? (
+                <div role="status" className="flex gap-2 rounded-xl border border-warn/40 bg-warn/5 p-3 text-sm text-text-2">
+                    <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-warn" />
+                    <div>
+                        <p className="font-medium text-text-1">Resolve these validation issues before saving:</p>
+                        <ul className="mt-1 list-disc pl-5">
+                            {allErrors.map((message) => <li key={message}>{message}</li>)}
+                        </ul>
+                    </div>
+                </div>
+            ) : null}
+            {!accessLost && preserved.length ? (
+                <div className="rounded-xl border border-edge-strong bg-surface-2 p-3 text-sm text-text-2">
+                    <p className="font-medium text-text-1">Preserved settings</p>
+                    <p className="mt-1 text-xs text-text-3">
+                        V2 does not edit these legacy settings, but saves keep them intact:
+                        {' '}{preserved.join(', ')}.
+                    </p>
+                </div>
+            ) : null}
+        </>
+    );
+
+    // Undo, redo and the List/Flow switch act on the whole draft, so they sit above the cards and
+    // outside the fieldset that disables the cards while a confirmation or save is pending.
+    const editorToolbar = draft.definition_version === 3 && !readOnly ? (
+        <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Workflow edit history" data-workflow-history-controls>
+                    <GlassButton size="sm" variant="subtle" disabled={Boolean(historyBlockedReason)} aria-disabled={!history.undoLabel}
+                        className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                        aria-label="Undo workflow edit" title={historyBlockedReason || (history.undoLabel ? `Undo: ${history.undoLabel}` : 'No workflow edits to undo')}
+                        onClick={() => { if (history.undoLabel) history.session.request('undo'); }}><Undo2 size={14} /> Undo</GlassButton>
+                    <GlassButton size="sm" variant="subtle" disabled={Boolean(historyBlockedReason)} aria-disabled={!history.redoLabel}
+                        className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                        aria-label="Redo workflow edit" title={historyBlockedReason || (history.redoLabel ? `Redo: ${history.redoLabel}` : 'No workflow edits to redo')}
+                        onClick={() => { if (history.redoLabel) history.session.request('redo'); }}><Redo2 size={14} /> Redo</GlassButton>
+                    <span className="text-xs text-text-3">
+                        {history.undoLabel ? `Undo: ${history.undoLabel}. ` : 'No earlier retained edits. '}
+                        Text fields keep native undo.
+                    </span>
+                </div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Workflow authoring surface">
+                    <GlassButton size="sm" variant="subtle" aria-pressed={surface === 'list'}
+                        className="aria-pressed:bg-accent-soft aria-pressed:text-accent"
+                        disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
+                        onClick={() => switchSurface('list')}>List authoring</GlassButton>
+                    <GlassButton size="sm" variant="subtle" aria-pressed={surface === 'flow'}
+                        className="aria-pressed:bg-accent-soft aria-pressed:text-accent"
+                        disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
+                        onClick={() => switchSurface('flow')}>Flow authoring</GlassButton>
+                </div>
+            </div>
+            <p className="text-xs text-text-3">
+                Both surfaces edit one unsaved draft. Buttons change execution order and bindings; dragging changes temporary layout only.
+            </p>
+            {history.notice ? <p role="status" className="rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-text-2">{history.notice}</p> : null}
+        </div>
+    ) : null;
+
+    const runnerFields = (
+        <>
+            <WorkflowChangedField changeKey="runner_type">
+                <WorkflowField label="Runner type" htmlFor={`${cardIdPrefix}-runner-type`} width="standard">
+                    <select
+                        id={`${cardIdPrefix}-runner-type`}
+                        className={workflowFieldInputClass}
+                        aria-label="Runner type"
+                        value={draft.runner_type}
+                        onChange={(event) => setWorkflow((current) => ({
+                            ...current,
+                            runner_type: event.target.value as WorkflowDefinition['runner_type'],
+                        }))}
+                    >
+                        <option value="model">Model</option>
+                        <option value="agent">Agent</option>
+                    </select>
+                </WorkflowField>
+            </WorkflowChangedField>
+            <WorkflowFieldEmphasis emphasis="dependent">
+                <WorkflowFieldList>
+                    {draft.runner_type === 'agent' ? (
+                        <WorkflowChangedField changeKey="selected_agent">
+                            <WorkflowAgentPicker
+                                variant="field"
+                                value={draft.selected_agent}
+                                options={options}
+                                localOnly={localRunner}
+                                onChange={(selectedAgent) => setWorkflow((current) => ({ ...current, selected_agent: selectedAgent }))}
+                            />
+                        </WorkflowChangedField>
+                    ) : (
+                        <WorkflowChangedField changeKey="model">
+                            <WorkflowModelPicker
+                                variant="field"
+                                endpointId={draft.model_endpoint_id}
+                                modelId={draft.model_id}
+                                options={options}
+                                localOnly={localRunner}
+                                onChange={(endpointId, modelId) => setWorkflow((current) => ({
+                                    ...current,
+                                    model_endpoint_id: endpointId,
+                                    model_id: modelId,
+                                }))}
+                            />
+                        </WorkflowChangedField>
+                    )}
+                    <WorkflowReadout label="Effective runner">{workflowRunnerSummary(draft, options)}</WorkflowReadout>
+                </WorkflowFieldList>
+            </WorkflowFieldEmphasis>
+        </>
+    );
+
+    const cards = (
+        <>
+            <SectionCard id={cardId('basics')} ariaLabel="Workflow basics" headingLevel={3}
+                title={WORKFLOW_EDITOR_SECTION_LABELS.basics} icon={sectionIcon('basics')}
+                status={sectionFor('basics')?.status} meta={sectionFor('basics')?.meta}>
+                <WorkflowFieldList>
+                    <WorkflowChangedField changeKey="name">
+                        <WorkflowField label="Workflow name" required htmlFor={fieldId('workflow', 'name')} width="wide">
+                            <input
+                                id={fieldId('workflow', 'name')}
+                                className={workflowFieldInputClass}
+                                aria-label="Workflow name"
+                                value={draft.name}
+                                required
+                                onChange={(event) => setWorkflow((current) => ({ ...current, name: event.target.value }))}
+                            />
+                        </WorkflowField>
+                    </WorkflowChangedField>
+                    <WorkflowChangedField changeKey="description">
+                        <WorkflowField label="Description" htmlFor={`${cardIdPrefix}-description`} width="full">
+                            <textarea
+                                id={`${cardIdPrefix}-description`}
+                                className={`${workflowFieldInputClass} min-h-24`}
+                                aria-label="Description"
+                                value={draft.description}
+                                onChange={(event) => setWorkflow((current) => ({ ...current, description: event.target.value }))}
+                            />
+                        </WorkflowField>
+                    </WorkflowChangedField>
+                    <div className="min-w-0">{runnerFields}</div>
+                    <WorkflowChangedField changeKey="m365_run_as_user_id">
+                        <WorkflowMicrosoft365RunAs
+                            scope={scope}
+                            value={draft.m365_run_as_user_id ?? ''}
+                            disabled={readOnly || saving}
+                            canListAccounts={options.can_manage}
+                            onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
+                        />
+                    </WorkflowChangedField>
+                </WorkflowFieldList>
+            </SectionCard>
+
+            <SectionCard id={cardId('trigger')} headingLevel={3}
+                title={WORKFLOW_EDITOR_SECTION_LABELS.trigger} icon={sectionIcon('trigger')}
+                status={sectionFor('trigger')?.status} meta={sectionFor('trigger')?.meta}>
+                <WorkflowFieldEmphasis emphasis="primary">
+                    <WorkflowChangedField changeKey="is_enabled">
+                        <WorkflowSwitch
+                            label="Workflow enabled"
+                            checked={draft.is_enabled}
+                            onChange={(checked) => setWorkflow((current) => ({ ...current, is_enabled: checked }))}
+                            description="Disabled workflows can be edited but will not run automatically."
+                        />
+                    </WorkflowChangedField>
+                </WorkflowFieldEmphasis>
+                <WorkflowScheduleFields
+                    triggerField={(
+                        <WorkflowField label="Trigger" htmlFor={`${cardIdPrefix}-trigger`} width="standard">
+                            <select
+                                id={`${cardIdPrefix}-trigger`}
+                                className={workflowFieldInputClass}
+                                aria-label="Trigger"
+                                value={draft.trigger_type}
+                                onChange={(event) => {
+                                    const trigger = event.target.value as WorkflowDefinition['trigger_type'];
+                                    setWorkflow((current) => trigger === 'file_sync' ? {
+                                        ...current,
+                                        trigger_type: trigger,
+                                        file_sync: workflowMonitorFileSyncConfig(current.file_sync),
+                                    } : { ...current, trigger_type: trigger });
+                                }}
+                            >
+                                <option value="manual">Manual</option>
+                                <option value="interval">Schedule</option>
+                                {fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null}
+                            </select>
+                        </WorkflowField>
+                    )}
+                    schedule={draft.schedule}
+                    options={options}
+                    scheduled={scheduled}
+                    onChange={(update) => setWorkflow((current) => ({ ...current, schedule: update(current.schedule) }))}
+                />
+            </SectionCard>
+
+            <WorkflowFileSyncFields
+                scope={scope}
+                workflow={draft}
+                sourceList={fileSyncSources}
+                disabled={readOnly || saving}
+                card={cardFrame('file-sync')}
+                onChange={(update) => setWorkflow((current) => ({
+                    ...current,
+                    file_sync: update(workflowFileSyncConfig(current.file_sync)),
+                }))}
+            />
+
+            <SectionCard id={cardId('execution')} headingLevel={3}
+                title={WORKFLOW_EDITOR_SECTION_LABELS.execution} icon={sectionIcon('execution')}
+                status={sectionFor('execution')?.status} meta={sectionFor('execution')?.meta}>
+                <WorkflowChangedField changeKey="error_handling">
+                    <WorkflowFieldList>
+                        <WorkflowField label="Error handling" htmlFor={`${cardIdPrefix}-error-handling`} width="standard">
+                            <select
+                                id={`${cardIdPrefix}-error-handling`}
+                                className={workflowFieldInputClass}
+                                aria-label="Error handling"
+                                value={draft.error_handling.strategy}
+                                onChange={(event) => setWorkflow((current) => ({
+                                    ...current,
+                                    error_handling: {
+                                        ...current.error_handling,
+                                        strategy: event.target.value as WorkflowDefinition['error_handling']['strategy'],
+                                    },
+                                }))}
+                            >
+                                <option value="halt">Halt on failure</option>
+                                <option value="continue">Continue after failure</option>
+                            </select>
+                        </WorkflowField>
+                        <WorkflowField label="Retry count" htmlFor={`${cardIdPrefix}-retry-count`} width="compact"
+                            help="From 0 to 5.">
+                            <input
+                                id={`${cardIdPrefix}-retry-count`}
+                                className={workflowFieldInputClass}
+                                type="number"
+                                min={0}
+                                max={5}
+                                aria-label="Retry count"
+                                value={draft.error_handling.retry_count}
+                                onChange={(event) => setWorkflow((current) => ({
+                                    ...current,
+                                    error_handling: {
+                                        ...current.error_handling,
+                                        retry_count: Math.min(5, Math.max(0, Math.trunc(Number(event.target.value) || 0))),
+                                    },
+                                }))}
+                            />
+                        </WorkflowField>
+                    </WorkflowFieldList>
+                </WorkflowChangedField>
+                <div className="border-t border-edge-strong pt-1">
+                    <WorkflowSwitchGrid>
+                        <WorkflowChangedField changeKey="durable_execution">
+                            <WorkflowSwitch
+                                label="Durable execution"
+                                checked={draft.durable_execution === true}
+                                disabled={draft.definition_version === 3}
+                                onChange={(checked) => setWorkflow((current) => ({ ...current, durable_execution: checked }))}
+                                description={draft.definition_version === 3
+                                    ? 'Required for structured control flow. Saved decisions and exact execution checkpoints survive waits and restarts.'
+                                    : 'Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab.'}
+                            />
+                        </WorkflowChangedField>
+                        <WorkflowChangedField changeKey="chat_capabilities_enabled">
+                            <WorkflowSwitch
+                                label="Chat capabilities enabled"
+                                checked={draft.chat_capabilities_enabled}
+                                onChange={(checked) => setWorkflow((current) => ({ ...current, chat_capabilities_enabled: checked }))}
+                                description="Allow tasks to use configured chat capabilities when the runner supports them."
+                            />
+                        </WorkflowChangedField>
+                    </WorkflowSwitchGrid>
+                </div>
+            </SectionCard>
+
+            <SectionCard id={cardId('references')} ariaLabel="Workflow shared references" headingLevel={3}
+                title={WORKFLOW_EDITOR_SECTION_LABELS.references} icon={sectionIcon('references')}
+                status={sectionFor('references')?.status} meta={sectionFor('references')?.meta}>
+                <WorkflowDocumentPicker
+                    scope={scope}
+                    references={draft.reference_inputs}
+                    readOnly={readOnly || saving}
+                    hideTitle
+                    onChange={(referenceInputs) => setWorkflow((current) => ({ ...current, reference_inputs: referenceInputs }))}
+                />
+                <WorkflowReferenceChanges className="mt-3" />
+            </SectionCard>
+
+            {draft.definition_version === 3 && !unsupported ? (
+                <SectionCard id={cardId('limits')} headingLevel={3}
+                    title={WORKFLOW_EDITOR_SECTION_LABELS.limits} icon={sectionIcon('limits')}
+                    status={sectionFor('limits')?.status} meta={sectionFor('limits')?.meta}>
+                    <WorkflowChangedField changeKey="limits">
+                        <WorkflowFlowLimitFields workflow={draft} onEdit={authoring.execute} />
+                    </WorkflowChangedField>
+                </SectionCard>
+            ) : null}
+
+            <SectionCard id={cardId('tasks')} ariaLabel="Workflow tasks" headingLevel={3}
+                // Converting to structured control flow swaps this card's whole body, title and
+                // icon while Limits appears above it. Chromium can leave a card updated that way
+                // with its contents unrendered, so a conversion mounts the card afresh instead.
+                key={draft.definition_version === 3 ? 'tasks-structured' : 'tasks-ordered'}
+                title={sectionFor('tasks')?.label ?? WORKFLOW_EDITOR_SECTION_LABELS.tasks} icon={sectionIcon('tasks')}
+                status={sectionFor('tasks')?.status} meta={sectionFor('tasks')?.meta}
+                bodyClassName="space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <WorkflowCardHelp className="min-w-0 flex-1 basis-64">
+                        Task IDs stay stable while you edit, so explicit input bindings do not change meaning.
+                    </WorkflowCardHelp>
+                    {draft.definition_version !== 3 ? <div className="flex flex-wrap gap-2">
+                        {options.supported_definition_versions?.includes(3) && !unsupported ? (
+                            <GlassButton type="button" size="sm" variant="subtle" onClick={() => setConfirmStructured(true)}>
+                                Enable structured control flow
+                            </GlassButton>
+                        ) : null}
+                        <GlassButton
+                            type="button"
+                            size="sm"
+                            variant="primary"
+                            disabled={draft.tasks.length >= options.max_tasks}
+                            onClick={() => setWorkflow((current) => ({
+                                ...current,
+                                tasks: [...current.tasks, createWorkflowTask(current.tasks.length)],
+                            }))}
+                        >
+                            <Plus size={14} /> Add task
+                        </GlassButton>
+                    </div> : <Pill tone="accent">Definition v3</Pill>}
+                </div>
+                {draft.tasks.length >= options.max_tasks ? (
+                    <p role="status" className="text-xs text-warn">Maximum task count reached for this scope.</p>
+                ) : null}
+                {draft.definition_version === 3 ? (
+                    surface === 'flow' && !unsupported ? <>
+                        {flowPreview.error ? <p role="alert" className="text-sm text-danger">{flowPreview.error}</p> : null}
+                        <WorkflowFlowAuthoring workflow={draft} options={options} scope={scope}
+                            previewDefinition={flowPreview.definition} selectedId={authoring.selectedId}
+                            onSelect={(id) => {
+                                if (id !== authoring.selectedId) history.session.closeGroup();
+                                authoring.setSelectedId(id);
+                            }} onEdit={authoring.execute} renderTask={renderStructuredTask}
+                            positions={authoring.positions} setPositions={authoring.setPositions}
+                            collapsed={authoring.collapsed} setCollapsed={authoring.setCollapsed}
+                            focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || draftLocked} onAccessLost={onAccessLost} />
+                    </> : <WorkflowStructuredList workflow={draft} options={options} scope={scope}
+                        onEdit={authoring.execute} selectedId={authoring.selectedId}
+                        onSelect={(id) => {
+                            if (id !== authoring.selectedId) history.session.closeGroup();
+                            authoring.setSelectedId(id);
+                        }} renderTask={renderStructuredTask} />
+                ) : <div className="space-y-3">
+                    <WorkflowChangeNotice changeKey={WORKFLOW_TASK_ORDER_KEY} />
+                    <WorkflowRemovedItemRows list="task" placement={{ at: 'start' }} />
+                    {draft.tasks.map((task, index) => (
+                        <Fragment key={task.id}>
+                        <WorkflowTaskFields
+                            key={task.id}
+                            scope={scope}
+                            task={task}
+                            index={index}
+                            workflow={draft}
+                            options={options}
+                            onChange={(nextTask) => updateTask(task.id, () => nextTask)}
+                            onMove={(direction) => moveTask(task.id, direction)}
+                            onRemove={() => removeTask(task.id)}
+                            durableExecution={draft.durable_execution === true}
+                            onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
+                            onAskAi={askAiAvailable ? () => askAiAboutTask(task.id) : undefined}
+                            draftWithAi={askAiAvailable ? assist.draftWithAi(task.id) : undefined}
+                        />
+                        <WorkflowRemovedItemRows list="task" placement={{ at: 'after', id: task.id }} />
+                        </Fragment>
+                    ))}
+                    <WorkflowRemovedItemRows list="task"
+                        placement={{ at: 'end', siblings: draft.tasks.map((task) => task.id), root: true }} />
+                </div>}
+            </SectionCard>
+
+            {/* Rules watch tasks by ID, so alerts follow the tasks they can refer to. */}
+            {options.can_manage && !readOnly ? (
+                <WorkflowChangedField changeKey="alerts">
+                <WorkflowAlertEditor workflow={draft} scope={scope} card={cardFrame('alerts')}
+                    onChange={(update) => setWorkflow((current) => update(current))} />
+                </WorkflowChangedField>
+            ) : (
+                <WorkflowAlertSummary workflow={draft} card={cardFrame('alerts')} />
+            )}
+        </>
+    );
+
+    const editorContent = (
+        <>
+            {assist.pending ? <WorkflowAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : null}
+            <WorkflowHistoryBoundary session={history.session}>
+            <div className="space-y-4">
+                {notices}
+                {editorToolbar}
+                {!accessLost ? <div ref={authoringRef} className="min-w-0">
+                <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || draftLocked}
+                    aria-busy={draftLocked || undefined} className="min-w-0 space-y-4">
+                    {cards}
+                </fieldset>
+                </div> : null}
+            </div>
+            </WorkflowHistoryBoundary>
+        </>
+    );
+
+    const sidePanel = panelOpen ? (
+        <WorkflowEditorSidePanel id={sidePanelId}
+            className={page
+                ? 'w-full bg-surface-1 xl:w-96 xl:shrink-0 xl:border-l xl:border-edge'
+                : 'w-full xl:w-96 xl:shrink-0 xl:border-l xl:border-edge'}
+            selected={panelTab} onSelect={selectSideTab}
+            tabs={[{
+                id: 'changes', label: 'Changes',
+                content: <WorkflowChangesTab confirming={confirmingSave}
+                    disabled={saving || Boolean(authoring.pending) || Boolean(history.pending) || draftLocked}
+                    onConfirmSave={() => void save(true)}
+                    onKeepReviewing={() => {
+                        setConfirmingSave(false);
+                        setPanelFocus({ target: 'list', sequence: ++focusSequence.current });
+                    }}
+                    onJump={jumpToChange} confirmHeadingRef={confirmHeadingRef} listHeadingRef={changesHeadingRef} />,
+            }, ...(askAiAvailable ? [{
+                id: 'askai', label: 'Ask AI', panelClassName: 'flex flex-col overflow-hidden',
+                content: <WorkflowAskAiTab assist={assist} inputId={askAiInputId} onReload={original ? reloadSaved : undefined} />,
+            }] : [])]} />
+    ) : null;
+
+    // Outside the editor pane, which narrow screens hide while the side panel is open.
+    const announcements = (
+        <>
+            {!accessLost && authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}
+            {!accessLost && history.announcement ? <p role="status" className="sr-only">{history.announcement}</p> : null}
+        </>
+    );
+
+    const scopeLabel = pageScopeLabel ?? (scope.type === 'group' ? 'Group workspace' : 'Personal workspace');
+    const pageTitle = draft.name.trim() || (workflow ? 'Workflow details' : 'New workflow');
+    const pageStatus = readOnly ? 'Read only'
+        : saving ? 'Saving your changes.'
+            : dirty ? 'Unsaved changes' : 'No unsaved changes';
+
+    const frame = page ? (
+        <section aria-label={workflow ? 'Edit workflow' : 'Create workflow'} data-workflow-editor-page
+            className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <header className="shrink-0 border-b border-edge px-1 py-3 sm:px-4 lg:px-6">
+                <div className="mx-auto w-full max-w-[112rem] space-y-3">
+                    <GlassButton type="button" size="sm" onClick={close} disabled={saving}>
+                        <ArrowLeft size={15} aria-hidden="true" /> Back
+                    </GlassButton>
+                    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+                        <div className="min-w-0 flex-1 basis-64">
+                            {/* Focused on arrival, so it names the page for assistive technology; not a control, so no ring. */}
+                            <h2 ref={pageTitleRef} tabIndex={-1}
+                                className="text-xl leading-snug font-semibold break-words text-text-1 outline-none">
+                                {pageTitle}
+                            </h2>
+                            <p className="mt-1 text-xs text-text-3">
+                                {workflow ? (readOnly ? 'View workflow' : 'Edit workflow') : 'Create workflow'} · {scopeLabel}
+                                {' · '}<span role="status">{pageStatus}</span>
+                            </p>
+                        </div>
+                        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                            {sidePanelToggles}
+                            {closeAndSave}
+                        </div>
+                    </div>
+                </div>
+            </header>
+            <div className="flex min-h-0 flex-1">
+                <div ref={scrollRef} data-workflow-editor-scroll onKeyDownCapture={lockUndoWhileDrafting}
+                    className={`@container min-h-0 min-w-0 flex-1 overflow-y-auto px-1 py-4 sm:px-4 lg:px-6${panelOpen ? ' hidden xl:block' : ''}`}>
+                    <div className={`mx-auto grid w-full max-w-[112rem] items-start gap-6${showIndex ? ' @min-[76rem]:grid-cols-[minmax(0,1fr)_15rem]' : ''}`}>
+                        <div className="min-w-0 pb-8">{editorContent}</div>
+                        {showIndex ? (
+                            <SettingsIndex className="hidden @min-[76rem]:block" entries={indexEntries} grouped={false}
+                                scrollRoot={scrollRef} onJump={setPendingJump} />
+                        ) : null}
+                    </div>
+                </div>
+                {sidePanel}
+            </div>
+            {announcements}
+        </section>
+    ) : (
+        <Modal
+            title={workflow ? 'Edit workflow' : 'Create workflow'}
+            description={`Scope: ${workflowScopeKey(scope)}. ${readOnly ? 'This workflow is read-only.' : 'Changes are saved only when you choose Save workflow.'}`}
+            onClose={close}
+            size={panelOpen ? '2xl' : 'xl'}
+            tall
+            bodyClassName="flex min-h-0"
+            footer={
+                // A narrow screen can't fit the toggles, Cancel and Save on one line once Ask AI is
+                // offered, so Cancel and Save move together to a second line instead of wrapping a label.
+                <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+                    {sidePanelToggles}
+                    {closeAndSave}
+                </div>
+            }
+        >
+            <div ref={scrollRef} onKeyDownCapture={lockUndoWhileDrafting}
+                className={`min-w-0 flex-1 overflow-y-auto px-4 py-3${panelOpen ? ' hidden xl:block' : ''}`}>
+                <div className="p-1">{editorContent}</div>
+            </div>
+            {sidePanel}
+            {announcements}
+        </Modal>
+    );
+
     return (
         <WorkflowFieldDraftsProvider value={fieldDrafts.store}>
             <WorkflowChangeTrackingScope session={history.session} enabled={!readOnly}>
-            <Modal
-                title={workflow ? 'Edit workflow' : 'Create workflow'}
-                description={`Scope: ${workflowScopeKey(scope)}. ${readOnly ? 'This workflow is read-only.' : 'Changes are saved only when you choose Save workflow.'}`}
-                onClose={close}
-                size={panelOpen ? '2xl' : 'xl'}
-                tall
-                bodyClassName="flex min-h-0"
-                footer={
-                    // A narrow screen can't fit the toggles, Cancel and Save on one line once Ask AI is
-                    // offered, so Cancel and Save move together to a second line instead of wrapping a label.
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-                        {askAiAvailable ? <WorkflowAskAiToggle id={askAiToggleId} open={panelOpen && panelTab === 'askai'}
-                            controls={sidePanelId}
-                            onToggle={() => (panelOpen && panelTab === 'askai' ? closeChanges(false) : openAskAi())} /> : null}
-                        {!readOnly ? <WorkflowChangesToggle id={changesToggleId} open={panelOpen && panelTab === 'changes'}
-                            controls={sidePanelId}
-                            onToggle={() => (panelOpen && panelTab === 'changes' ? closeChanges(false) : openChanges('tab'))} /> : null}
-                        <div className="flex shrink-0 items-center gap-2">
-                            <GlassButton type="button" onClick={close} disabled={saving}>
-                                {readOnly ? 'Close' : 'Cancel'}
-                            </GlassButton>
-                            {!readOnly ? (
-                                <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || draftLocked} onClick={() => void save()}>
-                                    {saving ? 'Saving…' : 'Save workflow'}
-                                </GlassButton>
-                            ) : null}
-                        </div>
-                    </div>
-                }
-            >
-                <div className={`min-w-0 flex-1 overflow-y-auto px-4 py-3${panelOpen ? ' hidden xl:block' : ''}`}
-                    onKeyDownCapture={(event) => {
-                        // Workflow undo and redo wait for Ask AI too.
-                        const key = event.key.toLowerCase();
-                        if (draftLocked && (event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) event.preventDefault();
-                    }}>
-                {assist.pending ? <WorkflowAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : null}
-                <WorkflowHistoryBoundary session={history.session}>
-                <div className="space-y-5 p-1">
-                    {unsupported ? (
-                        <div role="alert" className="flex gap-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                            <p>
-                                This workflow uses definition version {draft.definition_version}. V2 can read
-                                it but cannot safely save it without downgrading fields from a newer editor.
-                                {unsupportedFlow ? ` ${unsupportedFlow}` : ''}
-                            </p>
-                        </div>
-                    ) : null}
-                    {!options.can_manage ? (
-                        <p role="status" className="rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                            You have read-only access to workflows in this scope.
-                        </p>
-                    ) : null}
-                    {error ? <p ref={errorRef} role="alert" tabIndex={-1} className="rounded-xl bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
-                    {!error && allErrors.length ? (
-                        <div role="status" className="rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                            <p className="font-medium">Resolve these validation issues before saving:</p>
-                            <ul className="mt-1 list-disc pl-5">
-                                {allErrors.map((message) => <li key={message}>{message}</li>)}
-                            </ul>
-                        </div>
-                    ) : null}
-                    {!accessLost && preserved.length ? (
-                        <div className="rounded-xl border border-edge p-3 text-sm text-text-2">
-                            <p className="font-medium text-text-1">Preserved settings</p>
-                            <p className="mt-1 text-xs text-text-3">
-                                V2 does not edit these legacy settings, but saves keep them intact:
-                                {' '}{preserved.join(', ')}.
-                            </p>
-                        </div>
-                    ) : null}
-                    {draft.definition_version === 3 && !readOnly ? <div className="space-y-2">
-                        <div className="flex flex-wrap gap-2" role="group" aria-label="Workflow edit history" data-workflow-history-controls>
-                            <GlassButton size="sm" disabled={Boolean(historyBlockedReason)} aria-disabled={!history.undoLabel}
-                                className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-                                aria-label="Undo workflow edit" title={historyBlockedReason || (history.undoLabel ? `Undo: ${history.undoLabel}` : 'No workflow edits to undo')}
-                                onClick={() => { if (history.undoLabel) history.session.request('undo'); }}><Undo2 size={14} /> Undo</GlassButton>
-                            <GlassButton size="sm" disabled={Boolean(historyBlockedReason)} aria-disabled={!history.redoLabel}
-                                className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-                                aria-label="Redo workflow edit" title={historyBlockedReason || (history.redoLabel ? `Redo: ${history.redoLabel}` : 'No workflow edits to redo')}
-                                onClick={() => { if (history.redoLabel) history.session.request('redo'); }}><Redo2 size={14} /> Redo</GlassButton>
-                            <span className="self-center text-xs text-text-3">
-                                {history.undoLabel ? `Undo: ${history.undoLabel}. ` : 'No earlier retained edits. '}
-                                Text fields keep native undo.
-                            </span>
-                        </div>
-                        {history.notice ? <p role="status" className="rounded-lg bg-warn-soft p-3 text-xs text-warn">{history.notice}</p> : null}
-                        <div className="flex flex-wrap gap-2" role="group" aria-label="Workflow authoring surface">
-                            <GlassButton size="sm" aria-pressed={surface === 'list'} disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
-                                onClick={() => switchSurface('list')}>List authoring</GlassButton>
-                            <GlassButton size="sm" aria-pressed={surface === 'flow'} disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
-                                onClick={() => switchSurface('flow')}>Flow authoring</GlassButton>
-                        </div>
-                        <p className="text-xs text-text-3">
-                            Both surfaces edit one unsaved draft. Buttons change execution order and bindings; dragging changes temporary layout only.
-                        </p>
-                    </div> : null}
-                    {!accessLost ? <div ref={authoringRef} className="min-w-0">
-                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || draftLocked}
-                        aria-busy={draftLocked || undefined} className="min-w-0 space-y-5">
-                        <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
-                            <div className="grid gap-3 md:grid-cols-2">
-                                <WorkflowChangedField changeKey="name">
-                                <label className="text-sm text-text-2">
-                                    {fieldLabel('Workflow name', true)}
-                                    <input
-                                        id={fieldId('workflow', 'name')}
-                                        className={`${inputClass} mt-1`}
-                                        aria-label="Workflow name"
-                                        value={draft.name}
-                                        required
-                                        onChange={(event) => setWorkflow((current) => ({ ...current, name: event.target.value }))}
-                                    />
-                                </label>
-                                </WorkflowChangedField>
-                                <WorkflowChangedField changeKey="runner_type">
-                                <label className="text-sm text-text-2">
-                                    Runner type
-                                    <select
-                                        className={`${inputClass} mt-1`}
-                                        aria-label="Runner type"
-                                        value={draft.runner_type}
-                                        onChange={(event) => setWorkflow((current) => ({
-                                            ...current,
-                                            runner_type: event.target.value as WorkflowDefinition['runner_type'],
-                                        }))}
-                                    >
-                                        <option value="model">Model</option>
-                                        <option value="agent">Agent</option>
-                                    </select>
-                                </label>
-                                </WorkflowChangedField>
-                            </div>
-                            <WorkflowChangedField changeKey="description">
-                            <label className="block text-sm text-text-2">
-                                Description
-                                <textarea
-                                    className={`${textareaClass} mt-1`}
-                                    aria-label="Description"
-                                    value={draft.description}
-                                    onChange={(event) => setWorkflow((current) => ({ ...current, description: event.target.value }))}
-                                />
-                            </label>
-                            </WorkflowChangedField>
-                            {draft.runner_type === 'agent' ? (
-                                <WorkflowChangedField changeKey="selected_agent">
-                                <WorkflowAgentPicker
-                                    value={draft.selected_agent}
-                                    options={options}
-                                    localOnly={localRunner}
-                                    onChange={(selectedAgent) => setWorkflow((current) => ({ ...current, selected_agent: selectedAgent }))}
-                                />
-                                </WorkflowChangedField>
-                            ) : (
-                                <WorkflowChangedField changeKey="model">
-                                <WorkflowModelPicker
-                                    endpointId={draft.model_endpoint_id}
-                                    modelId={draft.model_id}
-                                    options={options}
-                                    localOnly={localRunner}
-                                    onChange={(endpointId, modelId) => setWorkflow((current) => ({
-                                        ...current,
-                                        model_endpoint_id: endpointId,
-                                        model_id: modelId,
-                                    }))}
-                                />
-                                </WorkflowChangedField>
-                            )}
-                            <WorkflowChangedField changeKey="m365_run_as_user_id">
-                            <WorkflowMicrosoft365RunAs
-                                scope={scope}
-                                value={draft.m365_run_as_user_id ?? ''}
-                                disabled={readOnly || saving}
-                                canListAccounts={options.can_manage}
-                                onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
-                            />
-                            </WorkflowChangedField>
-                            <WorkflowScheduleFields
-                                triggerField={(
-                                    <label className="text-sm text-text-2">
-                                        Trigger
-                                        <select
-                                            className={`${inputClass} mt-1`}
-                                            aria-label="Trigger"
-                                            value={draft.trigger_type}
-                                            onChange={(event) => {
-                                                const trigger = event.target.value as WorkflowDefinition['trigger_type'];
-                                                setWorkflow((current) => trigger === 'file_sync' ? {
-                                                    ...current,
-                                                    trigger_type: trigger,
-                                                    file_sync: workflowMonitorFileSyncConfig(current.file_sync),
-                                                } : { ...current, trigger_type: trigger });
-                                            }}
-                                        >
-                                            <option value="manual">Manual</option>
-                                            <option value="interval">Schedule</option>
-                                            {fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null}
-                                        </select>
-                                    </label>
-                                )}
-                                schedule={draft.schedule}
-                                options={options}
-                                scheduled={scheduled}
-                                onChange={(update) => setWorkflow((current) => ({ ...current, schedule: update(current.schedule) }))}
-                            />
-                            <WorkflowChangedField changeKey="error_handling">
-                            <div className="grid gap-3 md:grid-cols-2">
-                                <label className="text-sm text-text-2">
-                                    Error handling
-                                    <select
-                                        className={`${inputClass} mt-1`}
-                                        aria-label="Error handling"
-                                        value={draft.error_handling.strategy}
-                                        onChange={(event) => setWorkflow((current) => ({
-                                            ...current,
-                                            error_handling: {
-                                                ...current.error_handling,
-                                                strategy: event.target.value as WorkflowDefinition['error_handling']['strategy'],
-                                            },
-                                        }))}
-                                    >
-                                        <option value="halt">Halt on failure</option>
-                                        <option value="continue">Continue after failure</option>
-                                    </select>
-                                </label>
-                                <label className="text-sm text-text-2">
-                                    Retry count
-                                    <input
-                                        className={`${inputClass} mt-1`}
-                                        type="number"
-                                        min={0}
-                                        max={5}
-                                        aria-label="Retry count"
-                                        value={draft.error_handling.retry_count}
-                                        onChange={(event) => setWorkflow((current) => ({
-                                            ...current,
-                                            error_handling: {
-                                                ...current.error_handling,
-                                                retry_count: Math.min(5, Math.max(0, Math.trunc(Number(event.target.value) || 0))),
-                                            },
-                                        }))}
-                                    />
-                                </label>
-                            </div>
-                            </WorkflowChangedField>
-                            <div className="grid gap-2 md:grid-cols-2">
-                                <WorkflowChangedField changeKey="is_enabled">
-                                <Toggle
-                                    label="Workflow enabled"
-                                    checked={draft.is_enabled}
-                                    onChange={(checked) => setWorkflow((current) => ({ ...current, is_enabled: checked }))}
-                                    description="Disabled workflows can be edited but will not run automatically."
-                                />
-                                </WorkflowChangedField>
-                                <WorkflowChangedField changeKey="durable_execution">
-                                <Toggle
-                                    label="Durable execution"
-                                    checked={draft.durable_execution === true}
-                                    disabled={draft.definition_version === 3}
-                                    onChange={(checked) => setWorkflow((current) => ({ ...current, durable_execution: checked }))}
-                                    description={draft.definition_version === 3
-                                        ? 'Required for structured control flow. Saved decisions and exact execution checkpoints survive waits and restarts.'
-                                        : 'Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab.'}
-                                />
-                                </WorkflowChangedField>
-                                <WorkflowChangedField changeKey="chat_capabilities_enabled">
-                                <Toggle
-                                    label="Chat capabilities enabled"
-                                    checked={draft.chat_capabilities_enabled}
-                                    onChange={(checked) => setWorkflow((current) => ({ ...current, chat_capabilities_enabled: checked }))}
-                                    description="Allow tasks to use configured chat capabilities when the runner supports them."
-                                />
-                                </WorkflowChangedField>
-                            </div>
-                            <p className="rounded-xl bg-surface-sunken p-3 text-xs text-text-3">
-                                Effective runner: {workflowRunnerSummary(draft, options)}
-                            </p>
-                        </section>
-                        <WorkflowFileSyncFields
-                            scope={scope}
-                            workflow={draft}
-                            sourceList={fileSyncSources}
-                            disabled={readOnly || saving}
-                            onChange={(update) => setWorkflow((current) => ({
-                                ...current,
-                                file_sync: update(workflowFileSyncConfig(current.file_sync)),
-                            }))}
-                        />
-                        <section className="rounded-2xl border border-edge p-4" aria-label="Workflow shared references">
-                            <WorkflowDocumentPicker
-                                scope={scope}
-                                references={draft.reference_inputs}
-                                readOnly={readOnly || saving}
-                                onChange={(referenceInputs) => setWorkflow((current) => ({ ...current, reference_inputs: referenceInputs }))}
-                            />
-                            <WorkflowReferenceChanges className="mt-3" />
-                        </section>
-                        {draft.definition_version === 3 && !unsupported ? <WorkflowChangedField changeKey="limits">
-                            <WorkflowFlowLimitFields workflow={draft} onEdit={authoring.execute} />
-                        </WorkflowChangedField> : null}
-                        <section className="space-y-3 rounded-2xl border border-edge p-4" aria-label="Workflow tasks">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div>
-                                    <h3 className="text-base font-semibold text-text-1">{draft.definition_version === 3
-                                        ? surface === 'flow' ? 'Structured Flow' : 'Structured List' : 'Tasks'}</h3>
-                                    <p className="text-xs text-text-3">
-                                        Task IDs stay stable while you edit, so explicit input bindings do not change meaning.
-                                    </p>
-                                </div>
-                                {draft.definition_version !== 3 ? <div className="flex flex-wrap gap-2">
-                                {options.supported_definition_versions?.includes(3) && !unsupported ? (
-                                    <GlassButton type="button" size="sm" onClick={() => setConfirmStructured(true)}>
-                                        Enable structured control flow
-                                    </GlassButton>
-                                ) : null}
-                                <GlassButton
-                                    type="button"
-                                    size="sm"
-                                    variant="primary"
-                                    disabled={draft.tasks.length >= options.max_tasks}
-                                    onClick={() => setWorkflow((current) => ({
-                                        ...current,
-                                        tasks: [...current.tasks, createWorkflowTask(current.tasks.length)],
-                                    }))}
-                                >
-                                    <Plus size={14} /> Add task
-                                </GlassButton>
-                                </div> : <Pill tone="accent">Definition v3</Pill>}
-                            </div>
-                            {draft.tasks.length >= options.max_tasks ? (
-                                <p role="status" className="text-xs text-warn">Maximum task count reached for this scope.</p>
-                            ) : null}
-                            {draft.definition_version === 3 ? (
-                                surface === 'flow' && !unsupported ? <>
-                                    {flowPreview.error ? <p role="alert" className="text-sm text-danger">{flowPreview.error}</p> : null}
-                                    <WorkflowFlowAuthoring workflow={draft} options={options} scope={scope}
-                                        previewDefinition={flowPreview.definition} selectedId={authoring.selectedId}
-                                        onSelect={(id) => {
-                                            if (id !== authoring.selectedId) history.session.closeGroup();
-                                            authoring.setSelectedId(id);
-                                        }} onEdit={authoring.execute} renderTask={renderStructuredTask}
-                                        positions={authoring.positions} setPositions={authoring.setPositions}
-                                        collapsed={authoring.collapsed} setCollapsed={authoring.setCollapsed}
-                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || draftLocked} onAccessLost={onAccessLost} />
-                                </> : <WorkflowStructuredList workflow={draft} options={options} scope={scope}
-                                    onEdit={authoring.execute} selectedId={authoring.selectedId}
-                                    onSelect={(id) => {
-                                        if (id !== authoring.selectedId) history.session.closeGroup();
-                                        authoring.setSelectedId(id);
-                                    }} renderTask={renderStructuredTask} />
-                            ) : <>
-                            <WorkflowChangeNotice changeKey={WORKFLOW_TASK_ORDER_KEY} />
-                            <WorkflowRemovedItemRows list="task" placement={{ at: 'start' }} />
-                            {draft.tasks.map((task, index) => (
-                                <Fragment key={task.id}>
-                                <WorkflowTaskFields
-                                    key={task.id}
-                                    scope={scope}
-                                    task={task}
-                                    index={index}
-                                    workflow={draft}
-                                    options={options}
-                                    onChange={(nextTask) => updateTask(task.id, () => nextTask)}
-                                    onMove={(direction) => moveTask(task.id, direction)}
-                                    onRemove={() => removeTask(task.id)}
-                                    durableExecution={draft.durable_execution === true}
-                                    onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
-                                    onAskAi={askAiAvailable ? () => askAiAboutTask(task.id) : undefined}
-                                    draftWithAi={askAiAvailable ? assist.draftWithAi(task.id) : undefined}
-                                />
-                                <WorkflowRemovedItemRows list="task" placement={{ at: 'after', id: task.id }} />
-                                </Fragment>
-                            ))}
-                            <WorkflowRemovedItemRows list="task"
-                                placement={{ at: 'end', siblings: draft.tasks.map((task) => task.id), root: true }} />
-                            </>}
-                        </section>
-                        {/* Rules watch tasks by ID, so alerts follow the tasks they can refer to. */}
-                        {options.can_manage && !readOnly ? (
-                            <WorkflowChangedField changeKey="alerts">
-                            <WorkflowAlertEditor workflow={draft} scope={scope}
-                                onChange={(update) => setWorkflow((current) => update(current))} />
-                            </WorkflowChangedField>
-                        ) : (
-                            <WorkflowAlertSummary workflow={draft} />
-                        )}
-                    </fieldset>
-                    </div> : null}
-                </div>
-                </WorkflowHistoryBoundary>
-                </div>
-                {panelOpen ? (
-                    <WorkflowEditorSidePanel id={sidePanelId} className="w-full xl:w-96 xl:shrink-0 xl:border-l xl:border-edge"
-                        selected={panelTab} onSelect={selectSideTab}
-                        tabs={[{
-                            id: 'changes', label: 'Changes',
-                            content: <WorkflowChangesTab confirming={confirmingSave}
-                                disabled={saving || Boolean(authoring.pending) || Boolean(history.pending) || draftLocked}
-                                onConfirmSave={() => void save(true)}
-                                onKeepReviewing={() => {
-                                    setConfirmingSave(false);
-                                    setPanelFocus({ target: 'list', sequence: ++focusSequence.current });
-                                }}
-                                onJump={jumpToChange} confirmHeadingRef={confirmHeadingRef} listHeadingRef={changesHeadingRef} />,
-                        }, ...(askAiAvailable ? [{
-                            id: 'askai', label: 'Ask AI', panelClassName: 'flex flex-col overflow-hidden',
-                            content: <WorkflowAskAiTab assist={assist} inputId={askAiInputId} onReload={original ? reloadSaved : undefined} />,
-                        }] : [])]} />
-                ) : null}
-                {/* Outside the editor pane, which narrow screens hide while the side panel is open. */}
-                {!accessLost && authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}
-                {!accessLost && history.announcement ? <p role="status" className="sr-only">{history.announcement}</p> : null}
-            </Modal>
+            {frame}
             {!accessLost && authoring.pending ? <ConfirmDialog
                 title={authoring.pending.command.type === 'remove' ? 'Remove this flow block?' : 'Move this flow block?'}
                 description={authoring.pending.message}
@@ -1045,6 +1302,9 @@ export function WorkflowEditorDialog({
                         try {
                             setWorkflow(convertToStructuredWorkflow(draft, `root-${createWorkflowTask(0).id}`));
                             setConfirmStructured(false);
+                            // The button that asked is gone with the ordered tasks, so focus moves
+                            // to the converted tasks rather than falling back to the page.
+                            setPendingJump(cardId('tasks'));
                         } catch (cause: unknown) {
                             setConfirmStructured(false);
                             setError(workflowErrorMessage(cause, 'This workflow cannot be converted safely. Choose explicit inputs first.'));
