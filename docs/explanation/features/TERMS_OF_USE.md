@@ -21,6 +21,7 @@ Terms of Use lets administrators require users to accept configurable terms, rul
 * **Redirect safety**: User-controlled return paths are local-only and stored server-side in the session. The decline destination is admin-configured and may be local or an HTTPS URL.
 * **Server-side enforcement**: Authenticated browser requests are redirected to the Terms of Use page until accepted. Authenticated API requests receive a `403` response with `terms_of_use_required`.
 * **Audit logging**: Accepted and declined events are written to activity logs when a user identity is known.
+* **V2 interface** (from **0.261.277**): A request under `/v2` is gated to `/v2/terms-of-use` instead of the classic page, so V2 users stay in the V2 experience. The V2 page reads and answers the terms through `GET /api/v2/terms-of-use`, `POST /api/v2/terms-of-use/accept` and `POST /api/v2/terms-of-use/decline`, which share the classic acceptance, versioning, redirect-safety and audit logic. See [V2 Terms of Use and Approval Requests](V2_TERMS_AND_APPROVALS.md).
 
 ## Usage Instructions
 
@@ -42,6 +43,7 @@ Users who decline are logged out locally and redirected to the configured cancel
 * Functional coverage: `functional_tests/test_terms_of_use.py`
 * Route policy coverage: `functional_tests/route_tests/`
 * UI template coverage: `ui_tests/test_terms_of_use_ui.py`
+* V2 coverage: `functional_tests/test_v2_terms_and_approvals.py`, `ui_tests/test_v2_approvals_and_terms_pages.py`
 
 ## Known Limitations
 

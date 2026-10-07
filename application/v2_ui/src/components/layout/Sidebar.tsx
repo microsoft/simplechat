@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
+    CheckCircle2,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
@@ -75,6 +76,7 @@ const NAV_ITEMS: NavItem[] = [
     },
     { to: '/groups', label: 'Group Workspaces', icon: Users },
     { to: '/public', label: DEFAULT_PUBLIC_WORKSPACE_LABELS.plural, icon: Globe2 },
+    { to: '/approvals', label: 'Approval requests', icon: CheckCircle2, hint: 'Approve or deny requests waiting on you' },
     { to: '/content-review', label: 'Content review', icon: ShieldCheck, hint: 'Review screened knowledge, including existing holds when new scanning is disabled' },
 ];
 

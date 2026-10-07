@@ -43,7 +43,7 @@ import threading
 import time
 from datetime import datetime
 from flask import Blueprint, g, make_response
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from route_frontend_authentication import *
 from route_frontend_profile import *
@@ -923,6 +923,10 @@ TERMS_OF_USE_EXEMPT_PATHS = {
     '/terms-of-use',
     '/terms-of-use/accept',
     '/terms-of-use/decline',
+    '/v2/terms-of-use',
+    '/api/v2/terms-of-use',
+    '/api/v2/terms-of-use/accept',
+    '/api/v2/terms-of-use/decline',
     '/robots933456.txt',
     '/favicon.ico',
     '/acceptable_use_policy.html',
@@ -943,6 +947,31 @@ def _is_terms_of_use_exempt(path):
     return any(path.startswith(prefix) for prefix in TERMS_OF_USE_EXEMPT_PREFIXES)
 
 
+V2_TERMS_OF_USE_PATH = '/v2/terms-of-use'
+
+
+def _is_v2_request_path(path):
+    """True for V2 SPA pages and V2 API calls, which get the V2 Terms of Use page."""
+    return path in ('/v2', '/api/v2') or path.startswith('/v2/') or path.startswith('/api/v2/')
+
+
+def build_terms_of_use_url(path, query_string):
+    """Return the Terms of Use page for a blocked request.
+
+    V2 pages and V2 API calls are sent to the V2 page so a V2 user never lands on the
+    classic interstitial. An API path is not a page to return to, so a blocked V2 API call
+    gets the bare V2 page and the SPA supplies its own location as ``next``.
+    """
+    if _is_v2_request_path(path):
+        if path.startswith('/api/'):
+            return V2_TERMS_OF_USE_PATH
+        return f"{V2_TERMS_OF_USE_PATH}?{urlencode({'next': normalize_path_with_query(path, query_string)})}"
+    return url_for(
+        'frontend_terms_of_use.terms_of_use',
+        next=normalize_path_with_query(path, query_string),
+    )
+
+
 @app.before_request
 def enforce_terms_of_use():
     """Block authenticated app usage until the current terms of use is accepted."""
@@ -956,10 +985,7 @@ def enforce_terms_of_use():
     if has_terms_of_use_acceptance(request_settings, user_id=user_id):
         return None
 
-    terms_url = url_for(
-        'frontend_terms_of_use.terms_of_use',
-        next=normalize_path_with_query(request.path, request.query_string),
-    )
+    terms_url = build_terms_of_use_url(request.path, request.query_string)
     is_api_request = (
         request.accept_mimetypes.accept_json
         and not request.accept_mimetypes.accept_html

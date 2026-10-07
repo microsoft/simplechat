@@ -1398,6 +1398,12 @@ ROUTE_LINKS = [
     ("n-v2", "/v2/workspace/prompts?tab=mine", {}, "/workspace/prompts?tab=mine"),
     # A chat link naming no conversation opens the chat page, which names the one it shows.
     ("n-chat-page", "/chats", {}, "/chat?conversationId=conv-a"),
+    # V2 has its own approvals page, so an approval notice stays in V2. The server names the
+    # approver as the approval's group, which is not a group at all, so no group is made active.
+    (
+        "n-m365-approval", "/approvals?m365_approval=appr-1", {"approval_id": "appr-1", "group_id": "user-1"},
+        "/approvals?m365_approval=appr-1",
+    ),
 ]
 
 
@@ -1426,12 +1432,6 @@ CLASSIC_LINKS = {
     "workflow-alert": (
         lambda: workflow_notice("n-classic", "The digest step timed out.", group_id="grp-9"),
         "/elsewhere", "/workflow-activity?workflowId=wf-1&runId=run-1", [{"groupId": "grp-9"}], 200,
-    ),
-    # The server names the approver as the approval's group, which is not a group at all. Classic
-    # asks for it anyway and ignores the refusal; so does V2, and the page still opens.
-    "m365-approval": (
-        lambda: m365_approval_notice("n-classic"),
-        "/elsewhere", "/approvals?m365_approval=appr-1", [{"groupId": "user-1"}], 404,
     ),
     # Only the classic chat page draws the pending-action card, so it is not opened in V2.
     "m365-pending-action": (
