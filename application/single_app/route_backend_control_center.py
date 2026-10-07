@@ -8,6 +8,7 @@ import time
 from io import StringIO
 
 from flask import Response, make_response, stream_with_context
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from config import *
 from functions_authentication import *
@@ -31,7 +32,20 @@ from functions_group import (
     GROUP_WRITE_CONFLICT_MESSAGE,
     GroupDocumentWriteConflict,
     delete_group,
+    get_user_role_in_group,
     update_group_document_with_etag_guard,
+)
+from functions_control_center_groups import (
+    GROUP_SNAPSHOT_TTL,
+    GroupRequestError,
+    filter_group_inventory,
+    group_members,
+    group_row,
+    load_group_inventory,
+    parse_group_filters,
+    select_group_bulk_ids,
+    validate_group_id,
+    validate_group_status_payload,
 )
 from functions_safety_remediation import (
     execute_safety_violation_action,
@@ -59,6 +73,21 @@ CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
 CONTROL_CENTER_DASHBOARD_CACHE_TTL_SECONDS = 90
 CONTROL_CENTER_DASHBOARD_CACHE_MAX_ENTRIES = 128
 _control_center_dashboard_cache = {}
+_control_center_group_snapshot_cache = {}
+
+
+def _control_center_group_inventory(force_refresh=False):
+    now = time.monotonic()
+    cached = _control_center_group_snapshot_cache.get("inventory")
+    if cached and not force_refresh and now < cached["expires_at"]:
+        return cached["payload"]
+    payload = load_group_inventory(
+        cosmos_groups_container, cosmos_group_documents_container, cosmos_activity_logs_container,
+    )
+    _control_center_group_snapshot_cache["inventory"] = {
+        "expires_at": now + GROUP_SNAPSHOT_TTL, "payload": payload,
+    }
+    return payload
 
 # The answers an approved ownership change gives when the group's current copy no
 # longer matches the request. Each is stored on the approval as its failure reason.
@@ -1609,7 +1638,7 @@ def _control_center_user_row(user, now=None):
 def _control_center_csv_safe_cell(value):
     """Prevent formula execution in spreadsheet applications for every CSV cell type."""
     serialized = "" if value is None else str(value)
-    if serialized.startswith(("=", "+", "-", "@")):
+    if serialized.lstrip().startswith(("=", "+", "-", "@")):
         return f"'{serialized}"
     return serialized
 
@@ -4053,6 +4082,163 @@ def register_route_backend_control_center(bp):
             return jsonify({"error": "Unable to export users."}), 500
 
     # Group Management APIs
+    @bp.route('/api/v2/control-center/groups', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups():
+        """Filter and sort the batched server inventory before paging."""
+        try:
+            filters = parse_group_filters(request.args)
+            page, per_page = parse_control_center_management_pagination(request.args)
+            inventory = _control_center_group_inventory(request.args.get("force_refresh") == "1")
+            rows = filter_group_inventory(inventory["rows"], filters)
+            total_pages = get_control_center_total_pages(len(rows), per_page)
+            page = clamp_control_center_page(page, total_pages)
+            return jsonify({
+                "groups": rows[(page - 1) * per_page:page * per_page],
+                "pagination": {
+                    "page": page, "per_page": per_page, "total_items": len(rows),
+                    "total_pages": total_pages, "has_prev": page > 1, "has_next": page < total_pages,
+                },
+                "metrics_freshness": {
+                    "calculated_at": inventory["calculated_at"],
+                    "ttl_seconds": GROUP_SNAPSHOT_TTL,
+                    "source": "batched group inventory, document metadata and activity logs",
+                },
+            }), 200
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group list failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve groups."}), 500
+
+    @bp.route('/api/v2/control-center/groups/<group_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_group_detail(group_id):
+        """Admin-authorized overview with a fresh membership/status read and bounded activity."""
+        try:
+            validate_group_id(group_id)
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            inventory = _control_center_group_inventory()
+            cached = next((row for row in inventory["rows"] if row["id"] == group_id), None)
+            if cached is None:
+                inventory = _control_center_group_inventory(force_refresh=True)
+                cached = next((row for row in inventory["rows"] if row["id"] == group_id), None)
+            if cached is None:
+                return jsonify({"error": "Group not found."}), 404
+            row = group_row(group, cached["documents"], cached["tokens"], cached["last_activity"])
+            activity = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, "
+                    "c.user_id, c.admin_user_id, c.admin_email, c.group, c.workspace_context, "
+                    "c.status_change, c.added_member, c.removed_member, c.member_email, "
+                    "c.member_name, c.member_role, c.document, c.usage, c.token_type "
+                    "FROM c WHERE c.group_id = @group_id OR c.group.group_id = @group_id "
+                    "OR c.workspace_context.group_id = @group_id ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@group_id", "value": group_id}],
+                enable_cross_partition_query=True,
+            ))
+            user = session.get("user") or {}
+            role = get_user_role_in_group(group, user.get("oid") or user.get("sub"))
+            settings = get_settings()
+            can_edit_members = role in ("Owner", "Admin") and bool(settings.get("enable_group_workspaces"))
+            return jsonify({
+                "group": row,
+                "members": group_members(group),
+                "status_history": group.get("statusHistory") or [],
+                "retention": {
+                    "conversation_retention_days": (group.get("retention_policy") or {}).get("conversation_retention_days", "default"),
+                    "document_retention_days": (group.get("retention_policy") or {}).get("document_retention_days", "default"),
+                    "enabled": bool(settings.get("enable_retention_policy_group")),
+                    "can_edit": can_edit_members and bool(settings.get("enable_retention_policy_group")),
+                },
+                "permissions": {"can_edit_members": can_edit_members, "current_role": role},
+                "documents_summary": {
+                    "count": row["documents"],
+                    "cached_metrics": (group.get("metrics") or {}).get("document_metrics") or {},
+                    "metrics_calculated_at": (group.get("metrics") or {}).get("calculated_at"),
+                },
+                "tokens": row["tokens"],
+                "activity": activity,
+                "activity_limit": 20,
+                "metrics_calculated_at": inventory["calculated_at"],
+            }), 200
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except CosmosResourceNotFoundError:
+            return jsonify({"error": "Group not found."}), 404
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group detail failed.",
+                      extra={"group_id": group_id, "error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve group details."}), 500
+
+    @bp.route('/api/v2/control-center/groups/bulk-status', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups_bulk_status():
+        """Apply the same guarded status writer to a validated, capped population."""
+        try:
+            data = request.get_json(silent=True)
+            status, reason = validate_group_status_payload(data)
+            ids = select_group_bulk_ids(data, lambda: _control_center_group_inventory(force_refresh=True))
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group selection failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to select groups."}), 500
+        failed = []
+        for group_id in ids:
+            response, code = _update_group_status(group_id, {"status": status, "reason": reason})
+            if code != 200:
+                failed.append({"id": group_id, "status": code, "error": response.get_json()["error"]})
+        return jsonify({
+            "success_count": len(ids) - len(failed), "failed_count": len(failed), "failed_groups": failed,
+        }), 200
+
+    @bp.route('/api/v2/control-center/groups/<group_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_group_status(group_id):
+        try:
+            validate_group_id(group_id)
+            status, reason = validate_group_status_payload(request.get_json(silent=True))
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        return _update_group_status(group_id, {"status": status, "reason": reason})
+
+    @bp.route('/api/v2/control-center/groups/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups_export():
+        try:
+            filters = parse_group_filters(request.args)
+            rows = filter_group_inventory(_control_center_group_inventory()["rows"], filters)
+            buffer = StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "name", "owner", "status", "members", "documents", "tokens", "last_activity"])
+            for row in rows:
+                writer.writerow(_control_center_csv_safe_cell(value) for value in (
+                    row["id"], row["name"], row["owner"]["email"], row["status"],
+                    row["members"], row["documents"], row["tokens"], row["last_activity"],
+                ))
+            return Response(buffer.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="control-center-groups.csv"'}), 200
+        except GroupRequestError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group export failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to export groups."}), 500
+
     @bp.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -4171,12 +4357,14 @@ def register_route_backend_control_center(bp):
     @login_required
     @control_center_required('admin')
     def api_update_group_status(group_id):
+        return _update_group_status(group_id, request.get_json(silent=True))
+
+    def _update_group_status(group_id, data):
         """
         Update group status (active, locked, upload_disabled, inactive)
         Tracks who made the change and when, logs to activity_logs
         """
         try:
-            data = request.get_json()
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
                 
@@ -4245,6 +4433,7 @@ def register_route_backend_control_center(bp):
                 return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
             if group is None:
                 return jsonify({'error': 'Group not found'}), 404
+            _control_center_group_snapshot_cache.clear()
             old_status = transition['old_status']
             
             # Log to activity_logs container for audit trail
@@ -4368,7 +4557,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating group deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request group deletion.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -4431,7 +4620,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating document deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request document deletion.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -4533,7 +4722,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating take ownership request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request group ownership.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -4616,7 +4805,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating transfer ownership request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request ownership transfer.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -4694,6 +4883,7 @@ def register_route_backend_control_center(bp):
                 return jsonify({'error': 'Group not found'}), 404
             
             # Determine the action source (single add vs bulk CSV)
+            _control_center_group_snapshot_cache.clear()
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
             action_type = 'add_member_directly' if source == 'single' else 'admin_add_member_csv'
             

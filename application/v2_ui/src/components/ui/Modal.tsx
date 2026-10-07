@@ -94,6 +94,7 @@ export function Modal({
     tall = false,
     banner,
     panelRef: externalPanelRef,
+    placement = 'center',
 }: {
     title: string;
     description?: string;
@@ -118,6 +119,7 @@ export function Modal({
     banner?: ReactNode;
     /** The dialog's panel, for a caller that animates it into place. */
     panelRef?: Ref<HTMLDivElement>;
+    placement?: 'center' | 'drawer';
 }) {
     // Read while rendering: by the time an effect runs, a field's autoFocus has already moved
     // focus into the dialog, and it is the control that opened it that focus must return to.
@@ -157,11 +159,12 @@ export function Modal({
 
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
+            const panel = panelRef.current;
+            if (!panel || openPanels[openPanels.length - 1] !== panel) return;
             if (event.key === 'Escape') {
                 onClose();
                 return;
             }
-            const panel = panelRef.current;
             const dialog = panel?.parentElement;
             if (event.key !== 'Tab' || event.defaultPrevented || !panel || !dialog
                 || openPanels[openPanels.length - 1] !== panel) return;
@@ -186,7 +189,8 @@ export function Modal({
 
     return createPortal(
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            className={clsx('fixed inset-0 z-50 flex bg-black/40',
+                placement === 'drawer' ? 'justify-end' : 'items-center justify-center p-4')}
             role="dialog"
             aria-modal="true"
             aria-label={title}
@@ -197,10 +201,10 @@ export function Modal({
                 tabIndex={-1}
                 onClick={(event) => event.stopPropagation()}
                 className={clsx(
-                    'glass-modal flex w-full flex-col rounded-2xl outline-none',
-                    size === 'full' ? 'max-h-[calc(100vh_-_2rem)]' : 'max-h-[85vh]',
-                    SIZE_CLASS[size],
-                    tall && 'h-[85vh]',
+                    'glass-modal flex w-full flex-col outline-none',
+                    placement === 'drawer' ? 'h-full max-w-xl border-l border-edge'
+                        : ['rounded-2xl', size === 'full' ? 'max-h-[calc(100vh_-_2rem)]' : 'max-h-[85vh]', SIZE_CLASS[size]],
+                    tall && placement !== 'drawer' && 'h-[85vh]',
                 )}
             >
                 {banner ?? (
