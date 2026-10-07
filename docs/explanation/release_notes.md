@@ -10,6 +10,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Shared MCP fingerprint metadata normalization now lives in a dependency-neutral module, avoiding cyclic imports during action loading and notification delivery.
     *   (Ref: `functions_mcp_fingerprint_metadata.py`, `functions_mcp_operations.py`, `functions_mcp_tool_pinning.py`)
 
+#### New Features
+
+*   **Feedback and Safety Review in V2**
+    *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
+    *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
+    *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](../guides/admin-review-feedback.md), [Safety Violation Review](../guides/admin-review-safety-violations.md))
+
 ### **(v0.261.278)**
 
 #### New Features
@@ -28,7 +35,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
     *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
     *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
-
 ### **(v0.261.276)**
 
 #### New Features
