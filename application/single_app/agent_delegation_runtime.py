@@ -1,9 +1,9 @@
 # agent_delegation_runtime.py
 """Isolated asynchronous agent calls.
 
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.093
-Optional step scope entered inside the agent's bridge in: 0.261.269
+Optional step scope entered inside the agent's bridge in: 0.261.270
 
 Provider and loader imports are deliberately lazy: plugin discovery imports the
 Call agent class before the application's Semantic Kernel loader is initialized.

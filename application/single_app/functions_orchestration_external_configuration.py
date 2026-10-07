@@ -1,14 +1,14 @@
 # functions_orchestration_external_configuration.py
 """Opaque invocation-configuration proof and capture-independent current reads.
 
-Version: 0.261.269
+Version: 0.261.270
 Research planner profile restriction removed in: 0.261.209
-Metadata refusals keep their own reason code in: 0.261.269
+Metadata refusals keep their own reason code in: 0.261.270
 
 The owning engines supply actual acquisition evidence. The application root
 supplies current metadata reads; this module discovers no settings or clients,
 invokes no model/tool, and never fetches source content. Agent and action steps
-no longer use these proofs: they trust the signed-in session (0.261.269).
+no longer use these proofs: they trust the signed-in session (0.261.270).
 """
 
 from dataclasses import dataclass

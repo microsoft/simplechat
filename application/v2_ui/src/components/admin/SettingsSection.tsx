@@ -33,7 +33,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
-import { AlertTriangle, ChevronRight, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BookOpen, ChevronRight, type LucideIcon } from 'lucide-react';
 import {
     asBoolean,
     groupFields,
@@ -121,6 +121,11 @@ export interface SettingsSectionProps {
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * An in-app guide the header offers, for settings that depend on work done outside
+     * SimpleChat. Declared per section by `ADMIN_SECTION_GUIDES`.
+     */
+    guide?: { label: string; onOpen: () => void };
     /**
      * Server-resolved runtime flags, such as whether Content Understanding is offered in
      * this cloud. A field gated on one has to be judged the way the page judged it;
@@ -322,6 +327,7 @@ export function SettingsSection({
     renderCapability,
     forceExpanded,
     appearance,
+    guide,
     runtimeFlags,
     children,
 }: SettingsSectionProps) {
@@ -505,18 +511,38 @@ export function SettingsSection({
                     </div>
                 </div>
 
-                {presentation ? (
-                    // Free to shrink once it has wrapped onto its own line, so a long
-                    // status at a large text size wraps inside the card instead of past it.
-                    <span
-                        className={clsx(
-                            'flex max-w-full min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
-                            presentation.className,
-                        )}
-                    >
-                        <presentation.Icon size={11} className="shrink-0" />
-                        {presentation.label}
-                    </span>
+                {guide || presentation ? (
+                    <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">
+                        {guide ? (
+                            <button
+                                type="button"
+                                aria-haspopup="dialog"
+                                onClick={guide.onOpen}
+                                className={clsx(
+                                    'inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-edge-strong',
+                                    'bg-surface-solid px-2.5 py-1 text-xs font-medium text-text-2 transition-colors',
+                                    'hover:bg-surface-sunken hover:text-text-1',
+                                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
+                                )}
+                            >
+                                <BookOpen size={13} aria-hidden="true" className="shrink-0" />
+                                {guide.label}
+                            </button>
+                        ) : null}
+                        {presentation ? (
+                            // Free to shrink once it has wrapped onto its own line, so a long
+                            // status at a large text size wraps inside the card instead of past it.
+                            <span
+                                className={clsx(
+                                    'flex max-w-full min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
+                                    presentation.className,
+                                )}
+                            >
+                                <presentation.Icon size={11} className="shrink-0" />
+                                {presentation.label}
+                            </span>
+                        ) : null}
+                    </div>
                 ) : null}
             </div>
 

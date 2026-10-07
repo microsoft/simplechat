@@ -2301,7 +2301,7 @@ def register_route_backend_conversations(bp):
         them identically.
 
         A personal record stored under a shared conversation's id is part of that shared
-        conversation: Orchestrate's backing record (0.261.269), or a private copy an earlier
+        conversation: Orchestrate's backing record (0.261.270), or a private copy an earlier
         version made there. The shared conversation is reported for anyone who can see it, so
         reopening it never turns it into a personal chat. A private copy stays reachable as
         personal only for an owner who can no longer see the shared conversation.

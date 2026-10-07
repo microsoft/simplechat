@@ -2,14 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 actions in chat orchestration.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.238
-Shared conversations read for their real audience, with the request as consent, in: 0.261.269
+Shared conversations read for their real audience, with the request as consent, in: 0.261.270
 
 An orchestration "Use an action" step runs in its own request context, the execution
 identity's bridge. Before 0.261.238 no Microsoft 365 execution context existed there, so
 every Microsoft 365 function refused the call with ``m365_context_required`` before reaching
-Microsoft Graph, and the step still reported completed. Before 0.261.269 a step in a shared
+Microsoft Graph, and the step still reported completed. Before 0.261.270 a step in a shared
 conversation was refused outright (microsoft/simplechat#1659).
 
 These tests run the real action runner, step scope, Microsoft 365 runtime, execution

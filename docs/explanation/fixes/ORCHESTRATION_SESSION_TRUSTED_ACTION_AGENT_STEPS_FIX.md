@@ -1,8 +1,8 @@
 # Orchestration Session-Trusted Action and Agent Steps Fix
 
-**Version: 0.261.269**
+**Version: 0.261.270**
 
-Fixed in version: **0.261.269**, recorded in
+Fixed in version: **0.261.270**, recorded in
 `application/single_app/config.py`.
 
 Fixes [#1660](https://github.com/microsoft/simplechat/issues/1660) and
@@ -25,7 +25,7 @@ Production telemetry showed every affected step failing with
 
 ## Root cause
 
-Before 0.261.269, agent and action steps were held to configuration attestation, the
+Before 0.261.270, agent and action steps were held to configuration attestation, the
 check that web search, linked-page reading and deep research use. A step captured
 the agent's or action's configuration when it ran, and the result was admitted and
 read back only while a fresh read of that configuration matched the capture.
@@ -104,7 +104,7 @@ Web search, linked-page reading and deep research keep configuration attestation
 | `functions_orchestration_external_configuration.py` | Specific refusal codes. |
 | `functions_orchestration_schema.py`, `functions_orchestration_executor.py` | `integration_unavailable` failure. |
 | `v2_ui/src/components/chat/Composer.tsx` | @agent and @model tags seed the plan. |
-| `config.py` | Version `0.261.269`. |
+| `config.py` | Version `0.261.270`. |
 
 ## Validation
 

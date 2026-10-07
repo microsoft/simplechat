@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for shared Orchestrate CodeQL alert remediation.
-Version: 0.261.269
-Implemented in: 0.261.269
+Version: 0.261.270
+Implemented in: 0.261.270
 
 This test ensures that the shared Orchestrate collaboration helpers keep the
 CodeQL fixes for tuple arity and a single collaboration import style, and that
@@ -55,7 +55,7 @@ def _return_tuple_lengths(function):
 
 
 def test_the_codeql_remediation_ships_in_this_version():
-    assert_app_version_at_least("0.261.269")
+    assert_app_version_at_least("0.261.270")
 
 
 def test_mirror_source_message_to_collaboration_returns_three_values():

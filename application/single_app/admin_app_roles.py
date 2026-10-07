@@ -69,12 +69,14 @@ APP_ROLE_REQUIREMENTS = [
         "role": "ControlCenterDashboardReader",
         "label": "Control Center dashboard, read only",
         "section_id": "control-center-overview-section",
+        # Independent of the ControlCenterAdmin requirement: control_center_required
+        # and the navigation both admit a reader whether or not that is enforced.
         "grants": (
-            "The Control Center dashboard without the management features. Only "
-            "takes effect while the ControlCenterAdmin requirement is enforced."
+            "The Control Center dashboard without the management features, whether "
+            "or not the ControlCenterAdmin requirement is enforced."
         ),
         "when_off": "There is no dashboard-only tier; access is all or nothing.",
-        "depends_on": "require_member_of_control_center_admin",
+        "depends_on": None,
     },
     {
         "key": "require_member_of_create_group",

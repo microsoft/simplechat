@@ -2,10 +2,10 @@
 # test_orchestration_visual_outputs.py
 """
 Functional test for charts, Mermaid diagrams, and image proposals in orchestrated answers.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.132
 Single orchestration contract updated in: 0.261.139
-Action steps run without an invocation capture in: 0.261.269
+Action steps run without an invocation capture in: 0.261.270
 
 This test ensures orchestration carries chart payloads safely, builds visual guidance
 only from planner-declared visual flags, preserves saved instruction memory precedence,

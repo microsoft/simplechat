@@ -1,8 +1,8 @@
 # Orchestration Shared Conversations Fix
 
-**Version: 0.261.269**
+**Version: 0.261.270**
 
-Fixed in version: **0.261.269**, recorded in
+Fixed in version: **0.261.270**, recorded in
 `application/single_app/config.py`.
 
 Fixes [#1659](https://github.com/microsoft/simplechat/issues/1659). This affects the
@@ -137,7 +137,7 @@ shared conversations and uses the shared conversation's real audience.
 | `functions_orchestration_artifacts.py` | `is_retained_orchestration_file()`, shared by both deletion paths. |
 | `functions_m365_context.py`, `functions_m365_approvals.py`, `functions_m365_runtime.py`, `functions_m365_pending_delivery.py` | Consent by request. |
 | `v2_ui/src/lib/mentions.ts`, `v2_ui/src/stores/chatStore.ts`, `v2_ui/src/components/chat/Composer.tsx` | The shared send rule, routing, and de-duplication. |
-| `config.py` | Version `0.261.269`. |
+| `config.py` | Version `0.261.270`. |
 
 ## Validation
 
@@ -161,7 +161,7 @@ shared conversations and uses the shared conversation's real audience.
   source, without the flag a shared request still needs an approval, private
   conversations are unchanged, only interactive shared requests can carry the flag,
   and it doesn't change the approval fingerprint. A reviewed delivery keeps the
-  consent, and one recorded before 0.261.269 still asks.
+  consent, and one recorded before 0.261.270 still asks.
 - `functional_tests/test_m365_provider_core.py` publishes file evidence captured by
   a shared request without an approval, end to end. With the earlier grant shape this
   failed with `KeyError: 'approval_id'`.

@@ -133,7 +133,7 @@ restrictions, capability settings, and agent or action governance. A role change
 Entra ID takes effect when the user's session is refreshed, for example at their next
 sign-in, as it does for classic chat.
 
-Since **0.261.269**, agent and action steps trust the signed-in session the way manual
+Since **0.261.270**, agent and action steps trust the signed-in session the way manual
 chat does. When the step runs, orchestration checks the user's current access to the
 conversation, the run and that exact agent or action, and then runs it as chat would.
 It no longer captures and compares the agent's or action's configuration. Editing an
@@ -373,7 +373,7 @@ knowledge or broader procedure. A user-selected agent is not silently replaced w
 actions, and the planner should not send the same work through both paths. **Call agent**
 actions remain on the existing agent path and are excluded from direct action selection.
 
-Since **0.261.269**, tagging an agent with @ in an Orchestrate message chooses that agent
+Since **0.261.270**, tagging an agent with @ in an Orchestrate message chooses that agent
 just as the agent picker does, and tagging a model with @ chooses that model. A chosen
 agent is always offered to the planner, even when the user turned agents off in the
 classic interface's settings. Local agents run as plan steps, including agents that use
@@ -407,7 +407,7 @@ and cancellation. No composer action picker is added.
 Since **0.261.238**, a **Use an action** step can run a Microsoft 365 Calendar, Email,
 OneDrive, SharePoint Online or legacy Microsoft Graph action. Earlier versions refused every
 Microsoft 365 call in a plan with `m365_context_required`, before reaching Microsoft Graph,
-and still reported the step as completed. From 0.261.238 until **0.261.269**, these steps
+and still reported the step as completed. From 0.261.238 until **0.261.270**, these steps
 failed with "A required retained result is unavailable or changed", because the step's
 configuration check couldn't see the action's Microsoft 365 selection. See
 [Retained external-source authorization](#retained-external-source-authorization).
@@ -425,7 +425,7 @@ limits:
 - **Read only.** Send mail, calendar invitations and mark-as-read are removed from a plan
   step, even when the action enables them. An action that enables only those functions
   stops with "Plans can only read Microsoft 365 data".
-- **In a shared conversation, asking is consent.** Since **0.261.269**, a step in a shared
+- **In a shared conversation, asking is consent.** Since **0.261.270**, a step in a shared
   conversation reads for that conversation's participants. The user's own request counts
   as consent to share what the step reads with them, so no source-sharing approval waits.
   Each request and source is recorded as a `shared_by_request` audit event. Workflow Run
@@ -440,13 +440,13 @@ A refused Microsoft 365 call stops the step instead of becoming findings that th
 reports as data. Ordinary Microsoft Graph outcomes, such as nothing found or throttling,
 are still findings. An answer that used Microsoft 365 keeps the tool calls in its sources,
 so sharing the conversation later asks the user to approve Microsoft 365 history, as it
-does for a chat answer. Since **0.261.269**, an **Ask an agent** step whose agent uses
+does for a chat answer. Since **0.261.270**, an **Ask an agent** step whose agent uses
 Microsoft 365 actions gets a step request for that agent's own Microsoft 365 actions, with
 the same limits. An agent without Microsoft 365 actions gets none.
 
 ### Shared conversations
 
-Since **0.261.269**, Orchestrate applies the same rule in a shared conversation that a
+Since **0.261.270**, Orchestrate applies the same rule in a shared conversation that a
 manual send does:
 
 - A message that addresses only people, such as "@Ada can you check this?", is posted to
@@ -481,7 +481,7 @@ Current limits:
 - The planner reads earlier planned turns of the conversation, not messages that
   participants exchanged or that the classic assistant answered.
 
-Before 0.261.269, Orchestrate planned every message in a shared conversation, including
+Before 0.261.270, Orchestrate planned every message in a shared conversation, including
 ones that addressed only people, and kept the question and answer in a private copy that
 other participants never saw. Those private copies no longer appear in conversation lists.
 The copy that belongs to the person who started the conversation becomes its hidden plan
@@ -709,11 +709,11 @@ then report a rejected proposal.
 | Before 0.261.238, a Microsoft 365 action step showed completed, but the answer said it couldn't read mail, calendar or files | The plan step had no Microsoft 365 request, so every call was refused with `m365_context_required` before reaching Microsoft Graph. `[MS_GRAPH_PLUGIN]` failure events show it as `sc_error_code_length` 21. | Upgrade to 0.261.238 or later. See [Microsoft 365 actions in plans](#microsoft-365-actions-in-plans). |
 | A Microsoft 365 step says Microsoft 365 needs the user to sign in or grant access | The user hasn't connected that source for chat, or their sign-in expired or Microsoft Graph rejected it. | The user selects **Connect Microsoft 365** in the run details, or connects in Profile, then **Retry from failed step**. `[ORCHESTRATION_M365] A Microsoft 365 step stopped.` logs the reason as `sc_authority_reason`. |
 | A Microsoft 365 step says plans can only read Microsoft 365 data | The action enables only send, invitation or mark-as-read functions, which plans never run. | Enable a read function on the action, or use it from chat without a plan. |
-| Before 0.261.269, a Microsoft 365 step said plans can't use Microsoft 365 in a shared conversation | Earlier versions refused Microsoft 365 steps in shared conversations. | Upgrade to 0.261.269 or later. The user's own request now counts as consent to share what the step reads. See [Microsoft 365 actions in plans](#microsoft-365-actions-in-plans). |
-| Before 0.261.269, every action or agent step failed with "A required retained result is unavailable or changed", while the same request worked with Orchestrate off | The step's configuration check refused it. For Microsoft 365 actions, the check couldn't see the action's Microsoft 365 selection. Local agents were refused outright. Failure events log `sc_authority_reason=external_configuration_unavailable` for `action_invoke` or `agent_invoke`. | Upgrade to 0.261.269 or later. Agent and action steps now trust the signed-in session, as manual chat does. See [Retained external-source authorization](#retained-external-source-authorization). |
-| Before 0.261.269, an @mention of a person in a shared conversation was sent to the model when Orchestrate was on | Orchestrate planned every message without applying the shared conversation's send rule. | Upgrade to 0.261.269 or later. See [Shared conversations](#shared-conversations). |
+| Before 0.261.270, a Microsoft 365 step said plans can't use Microsoft 365 in a shared conversation | Earlier versions refused Microsoft 365 steps in shared conversations. | Upgrade to 0.261.270 or later. The user's own request now counts as consent to share what the step reads. See [Microsoft 365 actions in plans](#microsoft-365-actions-in-plans). |
+| Before 0.261.270, every action or agent step failed with "A required retained result is unavailable or changed", while the same request worked with Orchestrate off | The step's configuration check refused it. For Microsoft 365 actions, the check couldn't see the action's Microsoft 365 selection. Local agents were refused outright. Failure events log `sc_authority_reason=external_configuration_unavailable` for `action_invoke` or `agent_invoke`. | Upgrade to 0.261.270 or later. Agent and action steps now trust the signed-in session, as manual chat does. See [Retained external-source authorization](#retained-external-source-authorization). |
+| Before 0.261.270, an @mention of a person in a shared conversation was sent to the model when Orchestrate was on | Orchestrate planned every message without applying the shared conversation's send rule. | Upgrade to 0.261.270 or later. See [Shared conversations](#shared-conversations). |
 | A participant sees "Only the person who started this shared conversation can use Orchestrate here" | A request reached the planner from someone other than the person who started the shared conversation. The V2 composer normally answers their requests the classic way instead. | Turn off Orchestrate for that request, or ask the person who started the conversation to ask it. |
-| The person who started a shared conversation sees "Orchestrate can't be used in this shared conversation because an earlier version kept another participant's private copy of it" | Before 0.261.269, Orchestrate saved a private copy for whoever used it first, under the shared conversation's ID. Only one record can have that ID. | Turn off Orchestrate to ask the assistant. To restore Orchestrate, remove that participant's record from the conversations container: its ID is the shared conversation's ID. The `[ORCHESTRATION]` warning logs `sc_reason=shared_conversation_stale_copy`. |
+| The person who started a shared conversation sees "Orchestrate can't be used in this shared conversation because an earlier version kept another participant's private copy of it" | Before 0.261.270, Orchestrate saved a private copy for whoever used it first, under the shared conversation's ID. Only one record can have that ID. | Turn off Orchestrate to ask the assistant. To restore Orchestrate, remove that participant's record from the conversations container: its ID is the shared conversation's ID. The `[ORCHESTRATION]` warning logs `sc_reason=shared_conversation_stale_copy`. |
 | A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
 | Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |

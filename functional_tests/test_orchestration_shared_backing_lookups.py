@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for lookups by a shared conversation's id while Orchestrate's backing exists.
-Version: 0.261.269
-Implemented in: 0.261.269
+Version: 0.261.270
+Implemented in: 0.261.270
 
 Orchestrate keeps a shared conversation's plans in a hidden personal record stored under the
 shared conversation's own id (microsoft/simplechat#1659). Code that looks a conversation id up
@@ -89,7 +89,7 @@ def kind(runtime, user_id, conversation_id=SHARED_ID):
 
 
 def test_version_includes_shared_backing_lookups():
-    assert_app_version_at_least("0.261.269")
+    assert_app_version_at_least("0.261.270")
 
 
 def test_reopening_a_shared_conversation_never_turns_it_into_a_personal_chat(conversation_routes):

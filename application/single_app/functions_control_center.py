@@ -4,146 +4,15 @@ Functions for Control Center operations including scheduled auto-refresh.
 Version: 0.250.102
 """
 
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import datetime, timezone
 
 from config import cosmos_user_settings_container, cosmos_groups_container
 from functions_debug import debug_print
 from functions_settings import get_settings, update_settings
 from functions_appinsights import log_event
-
-
-CONTROL_CENTER_DEFAULT_AUTO_REFRESH_HOUR = 2
-CONTROL_CENTER_DEFAULT_AUTO_REFRESH_MINUTE = 0
-CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIME = '02:00'
-CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE = 'America/New_York'
-
-
-def normalize_control_center_auto_refresh_time(
-    schedule_time=None,
-    schedule_hour=None,
-    schedule_minute=None,
-    schedule_timezone=None,
-):
-    """Return a normalized daily refresh rule with an IANA timezone."""
-    normalized_hour = CONTROL_CENTER_DEFAULT_AUTO_REFRESH_HOUR
-    normalized_minute = CONTROL_CENTER_DEFAULT_AUTO_REFRESH_MINUTE
-
-    if isinstance(schedule_time, str) and schedule_time.strip():
-        time_parts = schedule_time.strip().split(':')
-        if len(time_parts) >= 2:
-            try:
-                parsed_hour = int(time_parts[0])
-                parsed_minute = int(time_parts[1])
-                if 0 <= parsed_hour <= 23 and 0 <= parsed_minute <= 59:
-                    normalized_hour = parsed_hour
-                    normalized_minute = parsed_minute
-            except (TypeError, ValueError):
-                pass
-    else:
-        try:
-            parsed_hour = int(schedule_hour)
-            if 0 <= parsed_hour <= 23:
-                normalized_hour = parsed_hour
-        except (TypeError, ValueError):
-            pass
-
-        try:
-            parsed_minute = int(schedule_minute)
-            if 0 <= parsed_minute <= 59:
-                normalized_minute = parsed_minute
-        except (TypeError, ValueError):
-            pass
-
-    normalized_timezone = (
-        schedule_timezone.strip()
-        if isinstance(schedule_timezone, str) and schedule_timezone.strip()
-        else CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE
-    )
-    try:
-        ZoneInfo(normalized_timezone)
-    except (ZoneInfoNotFoundError, ValueError):
-        normalized_timezone = CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE
-
-    return {
-        'hour': normalized_hour,
-        'minute': normalized_minute,
-        'time': f"{normalized_hour:02d}:{normalized_minute:02d}",
-        'timezone': normalized_timezone,
-    }
-
-
-def get_control_center_auto_refresh_schedule(settings=None):
-    """Normalize schedule fields from app settings."""
-    settings = settings or {}
-    return normalize_control_center_auto_refresh_time(
-        settings.get('control_center_auto_refresh_time'),
-        settings.get('control_center_auto_refresh_hour'),
-        settings.get('control_center_auto_refresh_minute'),
-        settings.get('control_center_auto_refresh_timezone'),
-    )
-
-
-def calculate_next_control_center_auto_refresh_run(settings=None, current_time=None):
-    """Calculate the next daily Control Center refresh as a UTC datetime."""
-    current_time = current_time or datetime.now(timezone.utc)
-    if current_time.tzinfo is None:
-        current_time = current_time.replace(tzinfo=timezone.utc)
-    else:
-        current_time = current_time.astimezone(timezone.utc)
-
-    schedule = get_control_center_auto_refresh_schedule(settings)
-    schedule_timezone = ZoneInfo(schedule['timezone'])
-    local_current_time = current_time.astimezone(schedule_timezone)
-    next_run_local = local_current_time.replace(
-        hour=schedule['hour'],
-        minute=schedule['minute'],
-        second=0,
-        microsecond=0,
-    )
-    if next_run_local <= local_current_time:
-        next_run_local += timedelta(days=1)
-
-    return next_run_local.astimezone(timezone.utc)
-
-
-def parse_control_center_auto_refresh_datetime(timestamp_value):
-    """Parse an ISO timestamp as a timezone-aware UTC datetime."""
-    if not timestamp_value:
-        return None
-
-    try:
-        if isinstance(timestamp_value, datetime):
-            parsed_datetime = timestamp_value
-        else:
-            normalized_value = timestamp_value.replace('Z', '+00:00') if isinstance(timestamp_value, str) else timestamp_value
-            parsed_datetime = datetime.fromisoformat(normalized_value)
-        if parsed_datetime.tzinfo is None:
-            parsed_datetime = parsed_datetime.replace(tzinfo=timezone.utc)
-        return parsed_datetime.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
-
-
-def is_control_center_auto_refresh_due(settings=None, current_time=None):
-    """Return whether an enabled schedule has reached its saved UTC next run."""
-    settings = settings or {}
-    if not settings.get('control_center_auto_refresh_enabled', True):
-        return False
-
-    next_run = parse_control_center_auto_refresh_datetime(
-        settings.get('control_center_auto_refresh_next_run')
-    )
-    if not next_run:
-        return False
-
-    current_time = current_time or datetime.now(timezone.utc)
-    if current_time.tzinfo is None:
-        current_time = current_time.replace(tzinfo=timezone.utc)
-    else:
-        current_time = current_time.astimezone(timezone.utc)
-
-    return current_time >= next_run
+# The schedule rules are pure and live in functions_control_center_schedule, so the
+# admin settings normalizer can share them without importing config.
+from functions_control_center_schedule import calculate_next_control_center_auto_refresh_run
 
 
 def execute_control_center_refresh(manual_execution=False):

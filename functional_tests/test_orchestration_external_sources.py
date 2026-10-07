@@ -1,10 +1,10 @@
 # test_orchestration_external_sources.py
 """
 Functional coverage for retained external Gather source admission and access.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-Agent and action sources trust the signed-in session in: 0.261.269
+Agent and action sources trust the signed-in session in: 0.261.270
 
 Real result contracts/store/readers, capability gates, scoped integration
 resolvers and memory authorization run with identity, configuration and storage

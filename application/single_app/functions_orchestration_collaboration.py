@@ -1,8 +1,8 @@
 # functions_orchestration_collaboration.py
 """Orchestrate in a shared conversation.
 
-Version: 0.261.269
-Implemented in: 0.261.269
+Version: 0.261.270
+Implemented in: 0.261.270
 
 A shared conversation's plans run in a hidden backing conversation that reuses the shared
 conversation's id and belongs to the person who started it, so every plan, run, result and

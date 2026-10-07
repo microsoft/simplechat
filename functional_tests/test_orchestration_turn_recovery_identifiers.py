@@ -2,10 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.099
 Chat content-check metadata binding included in: 0.261.131
-Shared conversation question posting included in: 0.261.269
+Shared conversation question posting included in: 0.261.270
 
 A run is only recoverable if its question can be found in the thread. The live card stamps
 ``orchestration_turn_id`` on its optimistic user bubble, but the server saved the same message

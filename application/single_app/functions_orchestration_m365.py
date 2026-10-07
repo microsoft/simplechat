@@ -10,9 +10,9 @@ completed. ``action_step_scope`` installs a context for one approved action step
 actions. The helpers here turn Microsoft 365 sign-in, approval and policy refusals into
 application-owned step failures, instead of findings the model reports as data.
 
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.238
-Agent steps get their own Microsoft 365 scope in: 0.261.269
+Agent steps get their own Microsoft 365 scope in: 0.261.270
 """
 
 import hashlib

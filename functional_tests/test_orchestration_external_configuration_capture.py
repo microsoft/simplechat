@@ -1,12 +1,12 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
 Pre-acquisition provider failure classification updated in: 0.261.134
 Single orchestration contract updated in: 0.261.139
-Agent and action steps trust the signed-in session, without attestation, in: 0.261.269
+Agent and action steps trust the signed-in session, without attestation, in: 0.261.270
 
 Real adapters, web search and source review run with provider/page I/O doubled.
 No live provider, remote configuration or user artifact is accessed. Web search, URL

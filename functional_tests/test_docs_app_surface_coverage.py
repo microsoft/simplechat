@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for documentation coverage of the application surface.
-Version: 0.261.266
+Version: 0.261.269
 Implemented in: 0.250.230
+Document Access Index diagnostics documented rather than exempted: 0.261.269
 
 This test ensures that every user-facing capability of SimpleChat has
 documentation on the docs site. It is the mechanism that keeps documentation
@@ -56,7 +57,6 @@ DOC_GLOBS = (
 CAPABILITY_EXEMPTIONS = {
     "enable_analysis_deliverable_contract_telemetry": "Internal telemetry switch for deliverable contract diagnostics.",
     "enable_tabular_parity_contract_telemetry": "Internal telemetry switch for tabular parity diagnostics.",
-    "enable_dai_debug": "Internal Document Intelligence debug switch.",
     "enable_tabular_generation_balanced_batches": "Internal tabular batching tuning flag.",
     "enable_tabular_completion_driven_checkpointing": "Internal tabular checkpointing tuning flag.",
     "enable_tabular_independent_batch_retries": "Internal tabular retry tuning flag.",

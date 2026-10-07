@@ -1,8 +1,8 @@
 # test_v2_shared_orchestration_routing.py
 """
 UI test for Orchestrate in V2 shared conversations.
-Version: 0.261.269
-Implemented in: 0.261.269 (Refs #1659)
+Version: 0.261.270
+Implemented in: 0.261.270 (Refs #1659)
 
 With Orchestrate on, a shared conversation used to send every message to the planner, so a remark
 addressed only to another person was answered by the model. The composer now applies the shared
@@ -37,7 +37,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 pytestmark = pytest.mark.ui
 
-IMPLEMENTED_IN = "0.261.269"
+IMPLEMENTED_IN = "0.261.270"
 CONVERSATION = "shared-1"
 OWNER = {"user_id": "owner", "display_name": "Owner Person", "email": "owner@example.test"}
 ADA = {"user_id": "ada", "display_name": "Ada Lovelace", "email": "ada@example.test"}

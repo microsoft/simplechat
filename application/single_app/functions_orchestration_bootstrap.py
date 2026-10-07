@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.269
+Version: 0.261.270
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
@@ -10,7 +10,7 @@ External-source identity trusts the signed-in session's app roles, like classic
 chat, and makes no Microsoft Graph calls (0.261.209). Merged documents are rendered
 from their own original files through a screening-aware reader (0.261.245). Agent
 and action steps are session-trusted: their access is rechecked on every capture,
-but their configuration is not attested (0.261.269).
+but their configuration is not attested (0.261.270).
 """
 
 import hashlib

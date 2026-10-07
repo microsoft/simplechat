@@ -2,10 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for Orchestrate in shared conversations.
-Version: 0.261.269
-Implemented in: 0.261.269
+Version: 0.261.270
+Implemented in: 0.261.270
 
-Before 0.261.269 an orchestrated request in a shared conversation created a private
+Before 0.261.270 an orchestrated request in a shared conversation created a private
 personal conversation under the shared conversation's id, so the question and answer were
 never posted to the shared thread (microsoft/simplechat#1659). These tests drive the
 production orchestration Blueprint over HTTP, with the real collaboration storage functions
@@ -129,7 +129,7 @@ def shared_thread(runtime):
 
 
 def test_version_includes_shared_orchestration():
-    assert_app_version_at_least("0.261.269")
+    assert_app_version_at_least("0.261.270")
 
 
 def test_owner_plan_and_answer_are_posted_to_the_shared_thread(shared):

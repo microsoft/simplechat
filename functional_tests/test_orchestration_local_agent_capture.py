@@ -1,13 +1,13 @@
 # test_orchestration_local_agent_capture.py
 """Actual local-agent loader bindings through the private acquisition contract.
 
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.127
-Local agent results trust the signed-in session in: 0.261.269
+Local agent results trust the signed-in session in: 0.261.270
 
 Uses the real resolver, SDK construction, prepared manifests and strict attestor.
 External storage/model I/O is doubled; no live model or user artifact is created.
-Since 0.261.269 a saved agent result is reread on current access to the agent, not
+Since 0.261.270 a saved agent result is reread on current access to the agent, not
 on its configuration (microsoft/simplechat#1661).
 """
 

@@ -1,9 +1,9 @@
 # test_orchestration_external_capture_integration.py
 """
 Real external acquisition hooks through preflight, capture, admission and restart.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.127
-Action results admitted on the signed-in session's current access in: 0.261.269
+Action results admitted on the signed-in session's current access in: 0.261.270
 
 Reuse the engine owner's provider/page I/O doubles, not a capture callback double.
 Adapters, configuration attestation, authorization, central retention and result

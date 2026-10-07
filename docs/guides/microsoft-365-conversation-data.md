@@ -43,11 +43,11 @@ The **Settings** tab on Profile keeps independent sharing preferences for
 Calendar, Email, OneDrive, and SPO. They apply across personal, group, and global
 actions rather than being tied to one agent you might not be able to edit.
 
-Since **0.261.269**, asking for your own Microsoft 365 data in a shared
+Since **0.261.270**, asking for your own Microsoft 365 data in a shared
 conversation is your consent to share what that request reads with the
 conversation's participants, with or without **Orchestrate**. You aren't
 prompted, and each request and source is recorded in your audit history as
-shared by your request. Before 0.261.269 these requests waited for a sharing
+shared by your request. Before 0.261.270 these requests waited for a sharing
 approval, and plans refused them.
 
 Sharing a private conversation that already used Microsoft 365 data, and a
@@ -83,7 +83,7 @@ fresh source sign-in.
 ## Use Microsoft 365 in a plan
 
 Implemented in version: **0.261.238** (`application/single_app/config.py`).
-Agent steps and shared conversations: **0.261.269**.
+Agent steps and shared conversations: **0.261.270**.
 
 With **Orchestrate** on in V2 chat, a plan can include a **Use an action** step
 that runs one of your Calendar, Email, OneDrive, or SharePoint Online actions.

@@ -1,11 +1,11 @@
 # test_orchestration_external_bootstrap.py
 """
 Functional test for application-owned session identity and acquisition wiring on retained results.
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.209
-Session-trusted agent and action steps implemented in: 0.261.269
+Session-trusted agent and action steps implemented in: 0.261.270
 
 Runs the real bootstrap, session capture, current-access reader, retention and
 result store with only Cosmos storage doubled and networking blocked. Roles come

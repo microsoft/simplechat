@@ -1,10 +1,10 @@
 # test_orchestration_catalog_auto_execution.py
 """Exercise catalog-selected agent/action execution and Auto routing.
 
-Version: 0.261.269
+Version: 0.261.270
 Implemented in: 0.261.126
 Single orchestration contract updated in: 0.261.139
-Agent and action engines run without an invocation capture in: 0.261.269
+Agent and action engines run without an invocation capture in: 0.261.270
 
 Uses production adapters, model routing, and dependency-plan validation with offline
 provider responses and explicitly authorized candidate inventories.

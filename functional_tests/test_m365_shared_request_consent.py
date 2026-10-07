@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 consent by request in shared conversations.
-Version: 0.261.269
-Implemented in: 0.261.269
+Version: 0.261.270
+Implemented in: 0.261.270
 
 In a shared conversation, an interactive request by the owner of the Microsoft 365 data is
 their consent to share the sources it reads with that conversation (microsoft/simplechat#1659).
@@ -68,7 +68,7 @@ def records(service, **match):
 
 
 def test_version_includes_consent_by_request():
-    assert_app_version_at_least("0.261.269")
+    assert_app_version_at_least("0.261.270")
 
 
 def test_a_shared_request_is_its_own_consent_without_an_approval(service):
@@ -152,7 +152,7 @@ def test_a_reviewed_delivery_keeps_its_requests_consent(service, monkeypatch):
 
     assert captured["kind"] == "chat" and restored.shared_by_request is True
     assert service.authorize_sources(restored, {"email": "always"})["email"]["shared_by_request"] is True
-    # A delivery recorded before 0.261.269 has no flag and still asks, as it did then.
+    # A delivery recorded before 0.261.270 has no flag and still asks, as it did then.
     legacy = {key: value for key, value in captured["context"].items() if key != "shared_by_request"}
     with pytest.raises(approvals.M365ApprovalRequired):
         service.authorize_sources(execution.M365ExecutionContext(**legacy), {"email": "always"})

@@ -1,8 +1,8 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.269
-Session-trusted agent and action sources in: 0.261.269
+Version: 0.261.270
+Session-trusted agent and action sources in: 0.261.270
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page

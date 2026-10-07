@@ -26,9 +26,9 @@ restored or continued. Every by-id route answers it with HTTP 409 and the one st
 
 In a shared conversation the person who started it plans in a hidden backing conversation
 with the shared conversation's id; the question and each final answer are mirrored into the
-shared thread for every participant (0.261.269).
+shared thread for every participant (0.261.270).
 
-Version: 0.261.269
+Version: 0.261.270
 """
 
 import hashlib

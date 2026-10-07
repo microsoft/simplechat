@@ -5,8 +5,8 @@ Dependencies are resolved at operation time, not while config is bootstrapping.
 The approval container keeps its /group_id partition; that field is a physical
 partition only and never confers group or administrator authorization.
 
-Version: 0.261.269
-Shared by your own request in: 0.261.269. In a shared conversation, an interactive
+Version: 0.261.270
+Shared by your own request in: 0.261.270. In a shared conversation, an interactive
 request by the data owner (a context with ``shared_by_request``) is their consent to share
 the sources it reads with that conversation; it is audited as ``shared_by_request`` and
 needs no pending approval. Workflow Run as and history publication approvals are unchanged.

@@ -2,8 +2,8 @@
 # test_orchestration_session_trusted_sources.py
 """
 Functional test for session-trusted agent and action orchestration steps.
-Version: 0.261.269
-Implemented in: 0.261.269
+Version: 0.261.270
+Implemented in: 0.261.270
 
 Agent and action steps trust the signed-in session the way classic chat does. Their
 admission and retained reads recheck the user's current access to the conversation, the
@@ -52,7 +52,7 @@ def read(world, provider, reference):
 
 
 def test_version_includes_session_trusted_sources():
-    assert_app_version_at_least("0.261.269")
+    assert_app_version_at_least("0.261.270")
 
 
 @pytest.mark.parametrize("capability", INTEGRATIONS)
