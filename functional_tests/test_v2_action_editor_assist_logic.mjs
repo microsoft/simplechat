@@ -68,7 +68,8 @@ function testSecretsHidden() {
     const view = buildActionAssistView(draft, { ...context, isNew: false, secretPaths: ['/additionalFields/server'] });
     const paths = allPaths(view);
     assert.ok(!paths.includes('/additionalFields/server'));
-    assert.ok(!paths.some((item) => /password|secret|connection_string|key$/i.test(item)));
+    assert.ok(!paths.some((item) => /password|secret|connection_string/i.test(item)));
+    assert.ok(!paths.some((item) => item.toLowerCase().endsWith('key')));
     assert.ok(!Object.values(view.values).includes(EDITOR_SECRET_MASK));
 }
 
