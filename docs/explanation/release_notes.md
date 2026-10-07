@@ -12,7 +12,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Preserves existing approval semantics and native membership permissions; public retention cannot reset custom values to defaults through its existing save API.
     *   (Ref: `PublicWorkspacesSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_public_workspaces.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
 
-### **(v0.261.281)**
+### **(v0.261.282)**
 
 #### New Features
 
@@ -30,6 +30,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Adds filtered, sortable user administration with cached usage metrics, account detail and activity, cross-page bulk access/upload updates, and server-side CSV export.
     *   Document deletion requests require a reason and are submitted for approval; dashboard drill-through filters and selected-user links are preserved.
     *   (Ref: `UsersSection.tsx`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+#### Bug Fixes
+
+*   **Dashboard Date-Range Error Safety**
+    *   Dashboard summary and insights APIs now return a generic validation message for invalid date ranges instead of returning exception text.
+    *   (Ref: `route_backend_control_center.py`, `DASHBOARD_INVALID_RANGE_ERROR`)
 
 ### **(v0.261.279)**
 
@@ -40,6 +45,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Aggregates use activity-log and workspace data with a 90-second cache. Metrics without retained historical snapshots are identified as current state instead of presenting misleading period deltas.
     *   Dashboard readers can access the dashboard APIs without receiving management capabilities.
     *   (Ref: `route_backend_control_center.py`, `DashboardSection.tsx`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
+*   **Feedback and Safety Review in V2**
+    *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
+    *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
+    *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](../guides/admin-review-feedback.md), [Safety Violation Review](../guides/admin-review-safety-violations.md))
 
 ### **(v0.261.278)**
 
@@ -59,7 +69,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
     *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
     *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
-
 ### **(v0.261.276)**
 
 #### New Features

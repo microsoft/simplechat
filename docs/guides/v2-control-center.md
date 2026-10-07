@@ -30,7 +30,7 @@ The login heatmap reports UTC hours with Monday as weekday zero. Charts include 
 
 ## Manage groups
 
-Group management was implemented in **0.261.281**. Open **Groups** to locate shared workspaces by name, description, owner, status, member-count range, document presence, creation date or last activity. Sort by name, owner, members, documents, tokens or activity to prioritize a review. Counts and all-time tokens use a server snapshot, timestamped in the list and cached for 90 seconds. **Refresh groups** rebuilds that snapshot. Export downloads all matching groups, not just the visible page.
+Group management was implemented in **0.261.282**. Open **Groups** to locate shared workspaces by name, description, owner, status, member-count range, document presence, creation date or last activity. Sort by name, owner, members, documents, tokens or activity to prioritize a review. Counts and all-time tokens use a server snapshot, timestamped in the list and cached for 90 seconds. **Refresh groups** rebuilds that snapshot. Export downloads all matching groups, not just the visible page.
 
 Select a group to inspect its Overview, Members, Ownership, Status, Retention, Activity and Documents tabs. Owner/member links open the corresponding user details. Activity shows the most recent 20 records, offers their raw JSON and a CSV of that subset, and links to the future Activity Logs view with the group scope.
 

@@ -1,8 +1,8 @@
 # test_v2_control_center_groups.py
 """
 Browser workflows for V2 Control Center Groups.
-Version: 0.261.281
-Implemented in: 0.261.281
+Version: 0.261.282
+Implemented in: 0.261.282
 
 Uses the built local bundle with intercepted APIs. Shared Azure Playwright
 connection support uses DefaultAzureCredential when a workspace is configured.
@@ -208,7 +208,9 @@ def test_detail_tabs_status_history_raw_json_and_approval(groups_ui, mobile):
     page.get_by_role("button", name="Submit approval request").click()
     expect(page.get_by_text("Request approval-42 submitted for approval.", exact=False)).to_be_visible()
     assert groups_ui.mutations[-1][1].endswith("/delete-documents")
-    expect(page.get_by_role("link", name="View approval requests")).to_have_attribute("href", "/v2/approvals/all/approval-42?group_id=group-1")
+    expect(page.get_by_role("link", name="View approval requests")).to_have_attribute(
+        "href", "/v2/approvals/all/approval-42?group_id=group-1",
+    )
 
 
 def test_members_add_csv_role_remove_and_retention(groups_ui):

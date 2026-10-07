@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { Download, Search } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Modal } from '../ui/Modal';
 import { GlassButton, GlassPanel } from '../ui/primitives';
@@ -271,12 +272,15 @@ export function ReasonConfirmDialog({
     );
 }
 
-export const APPROVALS_URL = '/v2/approvals';
+export const APPROVALS_URL = '/approvals';
 
-export function ApprovalSubmittedNotice({ children, approvalId, groupId }: { children: ReactNode; approvalId?: string; groupId?: string }) {
+export function ApprovalSubmittedNotice({ children, approvalId, groupId }: {
+    children: ReactNode; approvalId?: string; groupId?: string;
+}) {
+    const path = approvalId ? `${APPROVALS_URL}/all/${encodeURIComponent(approvalId)}` : APPROVALS_URL;
+    const query = groupId ? `?${new URLSearchParams({ group_id: groupId })}` : '';
     return <GlassPanel role="status" className="border border-warn/30 bg-warn-soft p-4 text-sm text-text-1">
-        <p>{children}</p><a className="mt-2 inline-block text-accent underline"
-            href={approvalId ? `/v2/approvals/all/${encodeURIComponent(approvalId)}${groupId ? `?group_id=${encodeURIComponent(groupId)}` : ''}` : '/v2/approvals'}>View approval requests</a>
+        <p>{children}</p><Link className="mt-2 inline-block text-accent underline" to={`${path}${query}`}>View approval requests</Link>
     </GlassPanel>;
 }
 
