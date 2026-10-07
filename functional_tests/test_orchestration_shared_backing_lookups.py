@@ -117,8 +117,10 @@ def test_an_earlier_private_copy_opens_as_the_shared_conversation(conversation_r
 
 def test_personal_conversations_are_unchanged(conversation_routes):
     conversation_routes.harness.conversations.create_item({"id": "personal-1", "user_id": "owner", "title": "Mine"})
-    assert kind(conversation_routes, "owner", "personal-1") == (200, {"conversation_id": "personal-1", "kind": "personal"})
-    assert kind(conversation_routes, "guest", "personal-1")[0] == 404
+    owner_result = kind(conversation_routes, "owner", "personal-1")
+    guest_status, _guest_body = kind(conversation_routes, "guest", "personal-1")
+    assert owner_result == (200, {"conversation_id": "personal-1", "kind": "personal"})
+    assert guest_status == 404
 
 
 def test_personal_routes_treat_the_backing_as_part_of_the_shared_conversation(conversation_routes):
@@ -189,9 +191,11 @@ def test_microsoft_365_cards_keep_resolving_to_the_classic_source(backed, monkey
     monkeypatch.setattr(runtime, "cosmos_conversations_container", backed.harness.conversations)
     monkeypatch.setattr(runtime, "assert_user_can_participate_in_collaboration_conversation", view)
     for user_id in ("owner", "guest"):
-        assert runtime.resolve_m365_audit_conversation_id(user_id, SHARED_ID) == CLASSIC_SOURCE_ID
+        resolved_conversation_id = runtime.resolve_m365_audit_conversation_id(user_id, SHARED_ID)
+        assert resolved_conversation_id == CLASSIC_SOURCE_ID
     backed.harness.conversations.create_item({"id": "personal-2", "user_id": "owner"})
-    assert runtime.resolve_m365_audit_conversation_id("owner", "personal-2") == "personal-2"
+    resolved_personal_id = runtime.resolve_m365_audit_conversation_id("owner", "personal-2")
+    assert resolved_personal_id == "personal-2"
 
 
 def _function_source(path, name):

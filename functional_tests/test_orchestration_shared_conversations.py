@@ -232,7 +232,8 @@ def test_another_users_private_copy_is_never_adopted(shared):
     mirror = importlib.import_module("functions_orchestration_collaboration")
     # The person who started the conversation learns why, and how to continue.
     assert planning[-1].get("error") == mirror.SHARED_ORCHESTRATION_STALE_COPY
-    assert shared.harness.conversations.read_item(SHARED_ID, SHARED_ID)["user_id"] == "guest"
+    guest_backing = shared.harness.conversations.read_item(SHARED_ID, SHARED_ID)
+    assert guest_backing["user_id"] == "guest"
     assert shared_thread(shared) == []
 
 
@@ -305,7 +306,8 @@ def test_deleting_the_shared_conversation_deletes_its_backing(shared):
     # A co-owner who didn't start the conversation leaves its creator's plans alone.
     guest_delete = delete(expected_user_id="guest")
     assert guest_delete is None
-    assert shared.harness.conversations.read_item(SHARED_ID, SHARED_ID)
+    remaining_backing = shared.harness.conversations.read_item(SHARED_ID, SHARED_ID)
+    assert remaining_backing
 
     deleted = delete(expected_user_id="owner")
     assert deleted["id"] == SHARED_ID

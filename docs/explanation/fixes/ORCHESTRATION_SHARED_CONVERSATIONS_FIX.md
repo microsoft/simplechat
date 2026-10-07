@@ -168,6 +168,12 @@ shared conversations and uses the shared conversation's real audience.
 - `functional_tests/test_orchestration_m365_actions.py` replaces the shared
   conversation refusal with a step that reads mail for the shared audience, and a
   step that stops once the user is no longer a participant.
+- `functional_tests/test_orchestration_collaboration_codeql_alerts.py` imports the
+  real collaboration modules cold in fresh processes, in both orders, in normal and
+  optimized Python, with network access blocked. The orchestration module imports
+  collaboration storage lazily, so importing it never initializes Cosmos clients.
+  It also checks that every return path of the collaboration mirror helper returns
+  three values.
 - `functional_tests/test_v2_shared_orchestration_routing.mjs` executes the shared
   send rule and the de-duplication, and checks the composer routing.
 - `ui_tests/test_v2_shared_orchestration_routing.py` drives the real Composer in
