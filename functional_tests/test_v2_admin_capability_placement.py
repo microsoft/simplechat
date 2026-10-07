@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.266
+Version: 0.261.269
 Implemented in: 0.261.047
+Operations described in full: 0.261.269
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -27,10 +28,10 @@ without opening the page:
 Declaring a field is what takes a key out of that scan. This test holds five
 invariants so the misfiling cannot come back:
 
-  1. The Appearance, Chat, Security, Agents & Actions and Workspaces groups are fully
-     described by the schema, so they must receive *no* guessed rows at all. A new
-     undeclared key that lands in any of them fails here, and the fix is to declare
-     it in its real section.
+  1. The Appearance, Chat, Security, Agents & Actions, Workspaces and Operations
+     groups are fully described by the schema, so they must receive *no* guessed
+     rows at all. A new undeclared key that lands in any of them fails here, and
+     the fix is to declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
@@ -105,6 +106,7 @@ FULLY_DESCRIBED_GROUP_IDS = (
     "security",
     "agents-actions",
     "workspaces",
+    "operations",
 )
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
@@ -193,6 +195,9 @@ FORCED_TABULAR_PARITY_DEFAULTS = "TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAUL
 RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD = {
     "enable_app_maintenance": "cosmos-maintenance-section",
     "enable_startup_app_maintenance": "cosmos-maintenance-section",
+    # Drawn by the fallback scan as an unexplained "Dai debug" switch under Debug
+    # Logging. V1 only reads it, so it stays there, declared and explained.
+    "enable_dai_debug": "debug-logging-section",
     # Guessed into Web Search, which wins the tie on "search" by navigation order.
     "enable_search_result_caching": "azure-ai-search-section",
 }

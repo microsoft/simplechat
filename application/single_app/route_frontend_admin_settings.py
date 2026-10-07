@@ -54,10 +54,12 @@ from functions_mcp_server_config import (
 from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
-from functions_control_center import (
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
+    resolve_control_center_auto_refresh_settings,
 )
+from functions_logging_timers import resolve_logging_timer_settings
 from functions_cosmos_throughput import (
     get_cached_cosmos_throughput_status,
     get_cosmos_resource_config,
@@ -1344,35 +1346,22 @@ def register_route_frontend_admin_settings(bp):
                 'control_center_auto_refresh_timezone',
                 settings.get('control_center_auto_refresh_timezone', 'America/New_York'),
             )
-            control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
-                'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
-                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 2),
-                'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
-                'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
-            })
-            existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
-            existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
-            existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
-            control_center_auto_refresh_schedule_changed = (
-                control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
-                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time'] or
-                control_center_auto_refresh_schedule['timezone'] != existing_control_center_auto_refresh_schedule['timezone']
+            # Shared with the V2 settings PATCH, so both surfaces decide the same way
+            # whether a save moves the next scheduled refresh.
+            control_center_auto_refresh_settings = resolve_control_center_auto_refresh_settings(
+                {
+                    'control_center_auto_refresh_enabled': control_center_auto_refresh_enabled,
+                    'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
+                    'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
+                },
+                settings,
             )
-            if control_center_auto_refresh_enabled:
-                if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
-                    control_center_auto_refresh_next_run = calculate_next_control_center_auto_refresh_run(
-                        {
-                            'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
-                            'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
-                            'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
-                            'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
-                        },
-                        current_time=datetime.now(timezone.utc),
-                    ).isoformat()
-                else:
-                    control_center_auto_refresh_next_run = existing_control_center_auto_refresh_next_run
-            else:
-                control_center_auto_refresh_next_run = None
+            control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(
+                control_center_auto_refresh_settings
+            )
+            control_center_auto_refresh_next_run = control_center_auto_refresh_settings[
+                'control_center_auto_refresh_next_run'
+            ]
 
             web_search_consent_message = (
                 "When you use Grounding with Bing Search, your customer data is transferred "
@@ -2038,124 +2027,39 @@ def register_route_frontend_admin_settings(bp):
             enable_debug_logging = form_data.get('enable_debug_logging') == 'on'
             
             # --- Debug Logging Timer Settings ---
-            debug_logging_timer_enabled = form_data.get('enable_debug_logging_timer') == 'on'
-            debug_timer_value = int(form_data.get('debug_timer_value', 1))
-            debug_timer_unit = form_data.get('debug_timer_unit', 'hours')
-            debug_logging_turnoff_time = None
-            
-            # Validate debug timer values
-            timer_limits = {
-                'minutes': (1, 120),
-                'hours': (1, 24),
-                'days': (1, 7),
-                'weeks': (1, 52)
-            }
-            
-            if debug_timer_unit in timer_limits:
-                min_val, max_val = timer_limits[debug_timer_unit]
-                if debug_timer_value < min_val or debug_timer_value > max_val:
-                    debug_timer_value = min(max(debug_timer_value, min_val), max_val)
-            
-            # Get existing timer settings to check if they've changed
-            existing_debug_timer_enabled = settings.get('debug_logging_timer_enabled', False)
-            existing_debug_timer_value = settings.get('debug_timer_value', 1)
-            existing_debug_timer_unit = settings.get('debug_timer_unit', 'hours')
-            existing_debug_logging_enabled = settings.get('enable_debug_logging', False)
-            existing_debug_turnoff_time = settings.get('debug_logging_turnoff_time')
-            
-            # Determine if timer settings have changed
-            timer_settings_changed = (
-                debug_logging_timer_enabled != existing_debug_timer_enabled or
-                debug_timer_value != existing_debug_timer_value or
-                debug_timer_unit != existing_debug_timer_unit
+            # The turnoff rules are shared with the V2 settings PATCH and the background
+            # checker, so a timer behaves the same whichever surface saved it.
+            debug_logging_timer = resolve_logging_timer_settings(
+                'debug',
+                {
+                    'enable_debug_logging': enable_debug_logging,
+                    'debug_logging_timer_enabled': form_data.get('enable_debug_logging_timer') == 'on',
+                    'debug_timer_value': form_data.get('debug_timer_value', 1),
+                    'debug_timer_unit': form_data.get('debug_timer_unit', 'hours'),
+                },
+                settings,
             )
-            debug_logging_newly_enabled = enable_debug_logging and not existing_debug_logging_enabled
-            
-            # Calculate debug logging turnoff time if timer is enabled and debug logging is on
-            if enable_debug_logging and debug_logging_timer_enabled:
-                # Only recalculate turnoff time if:
-                # 1. Timer settings have changed (value, unit, or enabled state), OR
-                # 2. Debug logging was just enabled, OR
-                # 3. No existing turnoff time exists
-                if timer_settings_changed or debug_logging_newly_enabled or not existing_debug_turnoff_time:
-                    now = datetime.now()
-                    
-                    if debug_timer_unit == 'minutes':
-                        delta = timedelta(minutes=debug_timer_value)
-                    elif debug_timer_unit == 'hours':
-                        delta = timedelta(hours=debug_timer_value)
-                    elif debug_timer_unit == 'days':
-                        delta = timedelta(days=debug_timer_value)
-                    elif debug_timer_unit == 'weeks':
-                        delta = timedelta(weeks=debug_timer_value)
-                    else:
-                        delta = timedelta(hours=1)  # default fallback
-                    
-                    debug_logging_turnoff_time = now + delta
-                    # Convert to ISO string for JSON serialization
-                    debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
-                else:
-                    # Preserve existing turnoff time
-                    debug_logging_turnoff_time_str = existing_debug_turnoff_time
-            else:
-                debug_logging_turnoff_time_str = None
+            debug_logging_timer_enabled = debug_logging_timer['debug_logging_timer_enabled']
+            debug_timer_value = debug_logging_timer['debug_timer_value']
+            debug_timer_unit = debug_logging_timer['debug_timer_unit']
+            debug_logging_turnoff_time_str = debug_logging_timer['debug_logging_turnoff_time']
 
             # --- File Processing Logs Timer Settings ---
-            file_processing_logs_timer_enabled = form_data.get('enable_file_processing_logs_timer') == 'on'
-            file_timer_value = int(form_data.get('file_timer_value', 1))
-            file_timer_unit = form_data.get('file_timer_unit', 'hours')
-            file_processing_logs_turnoff_time = None
             enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
-            
-            # Validate file timer values
-            if file_timer_unit in timer_limits:
-                min_val, max_val = timer_limits[file_timer_unit]
-                if file_timer_value < min_val or file_timer_value > max_val:
-                    file_timer_value = min(max(file_timer_value, min_val), max_val)
-            
-            # Get existing file timer settings to check if they've changed
-            existing_file_timer_enabled = settings.get('file_processing_logs_timer_enabled', False)
-            existing_file_timer_value = settings.get('file_timer_value', 1)
-            existing_file_timer_unit = settings.get('file_timer_unit', 'hours')
-            existing_file_processing_logs_enabled = settings.get('enable_file_processing_logs', False)
-            existing_file_turnoff_time = settings.get('file_processing_logs_turnoff_time')
-            
-            # Determine if timer settings have changed
-            file_timer_settings_changed = (
-                file_processing_logs_timer_enabled != existing_file_timer_enabled or
-                file_timer_value != existing_file_timer_value or
-                file_timer_unit != existing_file_timer_unit
+            file_processing_logs_timer = resolve_logging_timer_settings(
+                'file',
+                {
+                    'enable_file_processing_logs': enable_file_processing_logs,
+                    'file_processing_logs_timer_enabled': form_data.get('enable_file_processing_logs_timer') == 'on',
+                    'file_timer_value': form_data.get('file_timer_value', 1),
+                    'file_timer_unit': form_data.get('file_timer_unit', 'hours'),
+                },
+                settings,
             )
-            file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
-            
-            # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            if enable_file_processing_logs and file_processing_logs_timer_enabled:
-                # Only recalculate turnoff time if:
-                # 1. Timer settings have changed (value, unit, or enabled state), OR
-                # 2. File processing logs was just enabled, OR
-                # 3. No existing turnoff time exists
-                if file_timer_settings_changed or file_processing_logs_newly_enabled or not existing_file_turnoff_time:
-                    now = datetime.now()
-                    
-                    if file_timer_unit == 'minutes':
-                        delta = timedelta(minutes=file_timer_value)
-                    elif file_timer_unit == 'hours':
-                        delta = timedelta(hours=file_timer_value)
-                    elif file_timer_unit == 'days':
-                        delta = timedelta(days=file_timer_value)
-                    elif file_timer_unit == 'weeks':
-                        delta = timedelta(weeks=file_timer_value)
-                    else:
-                        delta = timedelta(hours=1)  # default fallback
-                    
-                    file_processing_logs_turnoff_time = now + delta
-                    # Convert to ISO string for JSON serialization
-                    file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
-                else:
-                    # Preserve existing turnoff time
-                    file_processing_logs_turnoff_time_str = existing_file_turnoff_time
-            else:
-                file_processing_logs_turnoff_time_str = None
+            file_processing_logs_timer_enabled = file_processing_logs_timer['file_processing_logs_timer_enabled']
+            file_timer_value = file_processing_logs_timer['file_timer_value']
+            file_timer_unit = file_processing_logs_timer['file_timer_unit']
+            file_processing_logs_turnoff_time_str = file_processing_logs_timer['file_processing_logs_turnoff_time']
 
             # --- Retention Policy Settings ---
             enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
