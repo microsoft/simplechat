@@ -1781,6 +1781,10 @@ FAILURE_MESSAGES = {
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
     'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
     'result_partial': 'Required work produced only an explicitly limited partial result.',
+    'visual_not_delivered': (
+        'A chart or diagram you asked for could not be created or shown. Retry runs the steps that '
+        'make it again.'
+    ),
     'input_partial_not_accepted': (
         'An earlier step returned only a partial result, and this step requires complete results, so it did not run.'
     ),

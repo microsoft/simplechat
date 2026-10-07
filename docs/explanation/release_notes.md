@@ -21,6 +21,33 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The Run view labels the step **Hand off large work** and puts what it prepares in words: the workflow's name, what it reviews, such as "3 named documents" or "a search of 2 workspaces, the 50 best matches", and its task titles. The tasks' instructions, the document and workspace references, the content filter and the tags aren't shown.
     *   (Ref: `OrchestrationWorkflowHandoffNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`)
 
+### **(v0.261.293)**
+
+#### Bug Fixes
+
+*   **Orchestrated Charts From an Action Are Shown Again**
+    *   With Orchestrate on, a request such as "Plot BatteryVoltage1 over the last 15 minutes" could be planned as a single Gather step that ran the action, with no Reason step to write the answer. The action drew the chart, but only an answer step places charts, so the chart was dropped. The reply said only "The requested content is prepared. No downloadable files were created.", the plan panel listed the chart as delivered, and Retry wasn't offered.
+    *   A chart an action or agent step draws is now always shown, where the answer places it or after the answer, the same way generated images are.
+    *   The answer step now receives such a chart as its placement token instead of a second copy of the chart's data. The retrieved rows are still sent in full.
+    *   (Ref: `functions_orchestration_deliverables.py` `gathered_charts`, `show_gathered_charts`, `functions_orchestration_execution.py` `_finalize`, `functions_orchestration_composition.py` `_model_inputs`, [Orchestration Action Chart Not Delivered Fix](fixes/ORCHESTRATION_ACTION_CHART_NOT_DELIVERED_FIX.md))
+
+*   **Gathered Results Are Always Read by a Reason Step**
+    *   Before 0.261.139 every plan ended with an Answer step, so everything a plan gathered was written up. Since then the planner adds an answer step only when it chooses to, and it was told an action could deliver a chart on its own.
+    *   While planning, every Gather step except a `workflow_run` step (**Run workflows**) must now feed the answer, a file or a generated image, and every planned chart or diagram must reach the answer or a file. A plan that breaks either rule gets the planner's one correction round with the server's explanation. Plans saved before this version still open and run.
+    *   A saved plan that gathered without answering now says so and asks the user to ask again, instead of "The requested content is prepared."
+    *   (Ref: `functions_orchestration_deliverables.py` `_require_shown_work`, `functions_orchestration_planner.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Undelivered Charts Are Reported and Can Be Retried**
+    *   A chart or diagram the user asked for that the answer doesn't show is now listed as not delivered, with the reason, and the run is partial with the new `visual_not_delivered` failure.
+    *   **Retry from failed step** runs the step that draws the chart again, along with every step computed from it. Rerunning an action or agent step repeats its calls, so that retry asks for confirmation first.
+    *   The V2 plan panel uses the server's check of each chart and diagram after a run, instead of the status of the step that makes it.
+    *   (Ref: `functions_orchestration_deliverables.py` `visual_delivery`, `functions_orchestration_recovery.py` `redraw_step_ids`, `deliverable_states`, `OrchestrationDeliverables.tsx`, `orchestrationPlan.ts`)
+
+*   **Faster Saving of Large Gathered Results**
+    *   A structured step result was saved as one record per JSON token. The reported 202 KB action result took 258 storage pages and about 200 of the step's 231 seconds.
+    *   Results are now saved in 16,384-character records, so the same result takes a few pages. Results saved before this version still read.
+    *   (Ref: `functions_orchestration_results.py` `_value_records`)
+
 ### **(v0.261.292)**
 
 #### Bug Fixes

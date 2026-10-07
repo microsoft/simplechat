@@ -5,13 +5,15 @@
 // server checks each one against what it can actually produce. This section shows that list
 // before the steps: which step produces each deliverable, and, for one that cannot be produced
 // here, the server's reason in a warning tone. During and after a run the same rows follow their
-// steps, so a file or image that did not arrive is never shown as delivered.
+// steps, so a file or image that did not arrive is never shown as delivered. After a run, the
+// server's own check decides a chart or diagram, because its step can finish without the answer
+// showing it.
 //
 // Every value is rendered as React text. Descriptions and titles are model-authored plan data.
 
 import { clsx } from 'clsx';
 import { Ban, CheckCircle2, CircleAlert, Loader2, TriangleAlert, XCircle } from 'lucide-react';
-import type { OrchestrationPlan, PlanEdits, StepStatus } from '../../lib/orchestration';
+import type { OrchestrationDeliverableCheck, OrchestrationPlan, PlanEdits, StepStatus } from '../../lib/orchestration';
 import { deliverableRows, type DeliverableRow, type DeliverableState } from '../../lib/orchestrationPlan';
 
 const STATE_TONE: Record<DeliverableState, string> = {
@@ -75,16 +77,19 @@ export function OrchestrationDeliverables({
     plan,
     statusOf,
     edits,
+    checks,
     compact = false,
 }: {
     plan: OrchestrationPlan;
     /** A step's live status, when the run view knows it. */
     statusOf?: (stepId: string) => StepStatus | undefined;
     edits?: PlanEdits;
+    /** The server's checks, after a run, of the charts and diagrams the user asked for. */
+    checks?: OrchestrationDeliverableCheck[];
     /** The approval card lists only what the user asked for, without step names. */
     compact?: boolean;
 }) {
-    const rows = deliverableRows(plan, statusOf ?? (() => undefined), edits);
+    const rows = deliverableRows(plan, statusOf ?? (() => undefined), edits, checks);
     const asked = rows.filter((row) => row.deliverable.requested === 'explicit');
     const added = compact ? [] : rows.filter((row) => row.deliverable.requested !== 'explicit');
     if (!asked.length && !added.length) return null;

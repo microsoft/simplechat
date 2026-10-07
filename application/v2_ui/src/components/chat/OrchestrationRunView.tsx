@@ -677,6 +677,7 @@ export function OrchestrationRunView({
             <OrchestrationDeliverables
                 plan={plan} edits={edits}
                 statusOf={(stepId) => stepRuntime[stepId]?.status}
+                checks={savedRun?.deliverable_states}
             />
 
             {plan.final_response !== undefined ? (
