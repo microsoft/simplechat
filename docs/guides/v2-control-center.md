@@ -10,7 +10,15 @@ audience: admin
 
 The V2 Control Center is a separate administration pane for users assigned Control Center access. It is kept out of the primary workspace navigation and appears in **Account → Control Center** when at least one Control Center capability is available to you.
 
-The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. User and group management, public workspaces, and activity logs are being delivered in phases; open the classic Control Center from those sections' placeholders.
+The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users and Groups have native V2 management; Public Workspaces still links to the classic Control Center while that V2 section is delivered.
+
+## Manage users
+
+Open **Users** to find accounts by email or display name, filter by access, upload permission, recent login, or document ownership, and sort usage columns. Filters and sorting are reflected in the URL, so a filtered view can be bookmarked or opened from a Dashboard drill-through. The list reports when its cached usage metrics were calculated and how many accounts on the current page have not yet received a metrics refresh.
+
+Select rows to allow or deny access or uploads. Selection can include all users matching the current filters across pages, with an option to exclude individual accounts. Restrictions may have an optional expiry. Open a user to review the account, recent activity, group and public-workspace memberships, and ownership. Changes reconcile against the server and report failures rather than leaving the list in an optimistic-only state.
+
+Deleting all documents for a user requires a reason and submits an approval request; it does not perform deletion immediately. **Export CSV** downloads the full filtered result set rather than only the current page. The Activity tab links to Activity Logs with the selected `user_id`.
 
 ## Review dashboard activity
 
@@ -19,6 +27,20 @@ Choose a 7-, 30-, or 90-day period, or set an inclusive custom UTC date range of
 The charts use recorded logins, conversation creation, document creation by workspace type, token usage type, token models, and workspace activity. Select chart points or KPI cards to open the related section with query filters. Use **Export** to download trend data as CSV, or **Chat with these trends** to start a conversation containing the selected trend data. Token filters apply to token totals and token charts; they do not change login, conversation, or upload counts.
 
 The login heatmap reports UTC hours with Monday as weekday zero. Charts include data tables for screen-reader and text-based access. Dashboard summaries are cached for 90 seconds; choose **Refresh** to bypass the cache.
+
+## Manage groups
+
+Group management was implemented in **0.261.281**. Open **Groups** to locate shared workspaces by name, description, owner, status, member-count range, document presence, creation date or last activity. Sort by name, owner, members, documents, tokens or activity to prioritize a review. Counts and all-time tokens use a server snapshot, timestamped in the list and cached for 90 seconds. **Refresh groups** rebuilds that snapshot. Export downloads all matching groups, not just the visible page.
+
+Select a group to inspect its Overview, Members, Ownership, Status, Retention, Activity and Documents tabs. Owner/member links open the corresponding user details. Activity shows the most recent 20 records, offers their raw JSON and a CSV of that subset, and links to the future Activity Logs view with the group scope.
+
+Select rows, then optionally select all matches across pages, to apply a bulk status. Bulk updates are limited to 500 groups. Locked and inactive changes require a reason and record each actual transition in the status history. Locked groups keep document viewing and chat but disallow document changes; upload-disabled groups prohibit uploads; inactive groups are unavailable. Individual failures remain visible after the list refreshes.
+
+Use **Add member** to search the directory, or **Import CSV** to add up to 1,000 people using `userId,displayName,email,role`. Confirm the CSV identities before importing: the Control Center admin flow uses the supplied ID, name and email. The import reports added, already-member and failed rows, and lets you retry failures.
+
+Changing member roles, removing members and saving retention still require group Owner/Admin membership; full Control Center access alone is not enough. The UI explains unavailable controls. Retention additionally requires enabled group retention and accepts organization defaults, no automatic deletion, or a permitted day count.
+
+Requesting group deletion, deleting all group documents, taking ownership, or transferring ownership to a member requires a reason and creates an approval request. Nothing is deleted and ownership remains unchanged at submission. Follow **View approval requests** in the result notice to the approvals page.
 
 ## Check activity-log data health
 

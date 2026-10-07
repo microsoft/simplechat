@@ -2,8 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.282)**
+
+#### New Features
+
+*   **V2 Control Center Group Management**
+    *   Adds server-filtered group inventory, sortable usage and activity, cross-page bulk status updates with required reasons for locking/inactivation, and filtered CSV export.
+    *   Group drawers include membership search/CSV import, supported member controls, ownership requests, status history, retention, recent activity with JSON/export, and document summaries.
+    *   Deletion and ownership changes remain approval-gated. Existing group membership requirements for role changes, removal and retention are preserved.
+    *   (Ref: `GroupsSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_groups.py`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
 ### **(v0.261.280)**
 
+#### New Features
+
+*   **V2 Control Center User Management**
+    *   Adds filtered, sortable user administration with cached usage metrics, account detail and activity, cross-page bulk access/upload updates, and server-side CSV export.
+    *   Document deletion requests require a reason and are submitted for approval; dashboard drill-through filters and selected-user links are preserved.
+    *   (Ref: `UsersSection.tsx`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
 #### Bug Fixes
 
 *   **Dashboard Date-Range Error Safety**
