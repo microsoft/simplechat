@@ -9,6 +9,13 @@ roles of the signed-in session, as classic chat does, instead of reading
 Microsoft Graph on every call. Deep research can use its query and link planners
 again. See the [session identity fix](../fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md).
 
+**Updated in version: 0.261.279.** An agent the user picked for a run is checked
+against a catalog narrowed to that agent, and the user's `enable_agents`
+preference no longer blocks it. Before this, an Ask an agent step for a picked
+agent failed while the preference was off, even though planning and execution
+accepted it. See the
+[selected agent with agents turned off fix](../fixes/ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX.md).
+
 ## Purpose and scope
 
 An external Gather result is the content an authorized adapter actually returned,
@@ -46,6 +53,14 @@ The provider requires these owner-supplied callbacks:
 Catalog callbacks default to `resolve_agent_catalog` and `resolve_action_catalog`
 from `functions_orchestration_context.py`. They must return current authorized
 catalogs, not the list saved on a run context. Catalogs are bounded to 4,096 entries.
+For an agent step in a run with a picked agent (`run["seeds"]["agent"]`, a
+dictionary with a non-blank string `name`), the provider passes the pick to the
+agent catalog reader as `seeds={"agent": ...}`, so the catalog is narrowed to that
+agent exactly as it was for planning and execution. A pick that no longer resolves
+is refused as `result_external_source_unavailable`, and a narrowed catalog with
+more than one agent is refused. The pick only selects a record from the current
+catalog; its own name, scope and ID fields are never proof of access. Action steps
+never receive the pick.
 Membership in a catalog alone is insufficient: the provider also calls
 `resolve_delegation_agent` or `resolve_action_manifest` for the exact stored
 integration. These existing APIs recheck scope membership, governance, enablement,
@@ -299,7 +314,10 @@ timezone-aware `datetime_to_allow` has elapsed. Expiration permits access withou
 changing the stored restriction. Unknown statuses and malformed restrictions fail
 closed. Only `Admin` bypasses this restriction, matching `user_required`; it
 doesn't bypass the need for a current settings record. The `enable_agents`
-preference remains effective even for admins. Its enabled default applies only
+preference remains effective even for admins, except for an agent the user picked
+for the run: a pick counts as permission for that agent only, because the catalog
+is already narrowed to it, as classic chat, planning and execution treat a pick.
+Its enabled default applies only
 to a valid current document where that optional preference is absent, never to
 a failed read.
 
@@ -323,7 +341,10 @@ only the refusal's stable code in `authority_reason`. `access_failure` in
 `functions_orchestration_schema.py` reads that code, or the refusal's own `code`,
 and follows at most three `__cause__` links. Only
 `external_identity_session_unavailable` becomes the `external_session_required`
-failure; every other refusal stays `result_unavailable`. Exception text is never
+failure. Any other refusal of an agent or action step (`agent_invoke` or
+`action_invoke`) becomes `integration_unavailable`, "This step's agent or action
+isn't available to you right now", because those steps take no retained inputs.
+Every other refusal stays `result_unavailable`. Exception text is never
 read, and the reason code is never shown to the user. Step, saved-wait,
 finalization and composition failure events log it as `sc_authority_reason`.
 
@@ -1015,6 +1036,14 @@ Fresh normal and optimized Python processes import the real module without
 settings, authentication, route or credential modules. No test contacts a tenant.
 `functional_tests/test_orchestration_external_bootstrap.py` checks that the root
 captures session roles only inside a request context and makes no Graph calls.
+
+`functional_tests/test_orchestration_seeded_agent_preference_fix.py` runs the real
+provider and the real `resolve_agent_catalog` for runs with a picked agent. It
+covers a picked personal or group agent with the `enable_agents` preference off,
+catalog narrowing on every read, revocation of membership, governance, scope
+settings and the agent's enabled state, a pick that doesn't lift the preference
+for a different agent, picks that no longer resolve, catalog outages, and
+malformed picks.
 
 `functional_tests/test_orchestration_external_configuration.py` covers actual URL
 policy normalization, source-specific projections, keyed opaque revisions,
