@@ -69,13 +69,15 @@ function SectionIcon({ icon: Icon = FileText }: { icon?: LucideIcon }) {
  * because an editor saves one record as a whole.
  */
 export function WorkspaceEditorFrame({
-    title, description, icon: TitleIcon, backTo, sections, dirty, saving, readOnly = false, error,
+    title, description, icon: TitleIcon, iconNode, backTo, sections, dirty, saving, readOnly = false, error,
     onSave, onDiscard, saveLabel = 'Save changes', actions, saveDisabled = false, initialSection,
 }: {
     title: string;
     description?: string;
     /** The kind of record being edited, shown beside the title. */
     icon?: LucideIcon;
+    /** The record's own icon, such as an agent's uploaded image; shown in place of `icon` when given. */
+    iconNode?: ReactNode;
     backTo: string;
     sections: WorkspaceEditorSection[];
     dirty: boolean;
@@ -250,10 +252,10 @@ export function WorkspaceEditorFrame({
                 </GlassButton>
                 <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 flex-[1_1_20rem] items-start gap-3">
-                        {TitleIcon ? (
+                        {iconNode || TitleIcon ? (
                             <span aria-hidden="true"
-                                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-edge-strong bg-surface-solid text-text-2">
-                                <TitleIcon size={20} />
+                                className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-edge-strong bg-surface-solid text-text-2">
+                                {iconNode ?? (TitleIcon ? <TitleIcon size={20} /> : null)}
                             </span>
                         ) : null}
                         <div className="min-w-0 flex-1">

@@ -165,9 +165,8 @@ export function AgentIdentityFields({
             </EditorFieldset>
             <EditorGroup summary="Internal identity">
                 <AgentTextField label="Internal name" value={draft.name} pattern="[A-Za-z0-9_\-]+" required
-                    help="Derived from the display name only for a new agent. Changing a saved display name does not rename this value or change its stable ID."
+                    help="Derived from the display name only for a new agent. Changing a saved display name does not rename this value."
                     onChange={(value) => setDraft((current) => ({ ...current, name: value }))} />
-                <p className="break-all pb-1 text-xs text-text-3">Stable ID: {draft.id || 'Allocated when this agent is first saved.'}</p>
             </EditorGroup>
         </div>
     );

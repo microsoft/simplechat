@@ -6,7 +6,7 @@ import { BookOpen, Cpu, IdCard, LayoutTemplate, Plug, ScrollText, SlidersHorizon
 import { GlassButton } from '../../components/ui/primitives';
 import { WorkspaceEditorFrame } from '../../components/workspace/WorkspaceEditorFrame';
 import { SectionSkeleton } from '../../components/workspace/primitives';
-import { AgentIdentityFields } from '../../components/workspaceAgents/AgentIdentityFields';
+import { AgentIcon, AgentIdentityFields } from '../../components/workspaceAgents/AgentIdentityFields';
 import { AgentModelFields } from '../../components/workspaceAgents/AgentModelFields';
 import { AgentActionPicker } from '../../components/workspaceAgents/AgentActionPicker';
 import { AgentKnowledgeFields } from '../../components/workspaceAgents/AgentKnowledgeFields';
@@ -201,7 +201,8 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     return (
         <WorkspaceEditorFrame
             title={isNew ? 'New agent' : draft.display_name || draft.name || 'Agent details'} icon={Sparkles}
-            description={isNew ? 'Configure a reusable assistant. Changes are saved only when you choose Save agent.' : `Stable ID: ${draft.id}`}
+            iconNode={draft.icon ? <AgentIcon icon={draft.icon} /> : undefined}
+            description={isNew ? 'Configure a reusable assistant. Changes are saved only when you choose Save agent.' : draft.description || undefined}
             backTo={adapter.basePath} dirty={dirty || iconBusy} saving={saving} readOnly={readOnly} error={arraySecretError || saveError}
             onSave={() => void save()} onDiscard={clear} saveLabel="Save agent" saveDisabled={Boolean(advancedError) || iconBusy}
             initialSection={new URLSearchParams(location.search).get('templates') === '1' ? 'templates' : undefined}
