@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.140
+Version: 0.261.293
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
@@ -9,6 +9,8 @@ never replaces the original publication failure with a missing-reply read.
 A retry that runs a failed producer again also runs the steps that completed without it.
 A retry renders its own files: it never reuses a render step or inherits the parent's
 file admissions, because preparing the retry supersedes the parent's files.
+A retry runs again a step that finished without the chart or diagram the plan asked of it,
+and asks for confirmation when that step can have external effects (0.261.293).
 A retry that could only resend requests a service declined is not offered.
 A run from the removed legacy contract is never retried, resumed or continued; only
 conversation deletion still reads it, to remove its saved data.
@@ -69,6 +71,15 @@ def _retained_statuses(record):
     return {'completed', 'partial'}
 
 
+def _redraw_step_ids(record):
+    """Steps that finished without the chart or diagram the plan asked of them.
+
+    Finalization records them; see ``functions_orchestration_deliverables.visual_delivery``.
+    """
+    values = record.get('redraw_step_ids')
+    return {value for value in values if isinstance(value, str)} if isinstance(values, list) else set()
+
+
 def _retained_producer_steps(record):
     """Steps whose saved results a conversation deletion must remove.
 
@@ -100,6 +111,10 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
     step computed from it. The attempt reads the stored result as it is now, under the
     access checks of now, instead of reusing text an earlier attempt read.
 
+    In a new attempt a step that finished without the chart or diagram the plan asked of it
+    runs again too, with every step computed from it, so the attempt can make what the earlier
+    one did not.
+
     Callers refuse a run from the removed legacy contract before asking.
     """
     retained = set(retained)
@@ -113,8 +128,9 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
         step['step_id'] for step in record['plan'].get('steps') or []
         if new_attempt and step['step_id'] in retained and step.get('capability_id') == CAPABILITY_WORKFLOW_RESULTS
     }
+    redraws = {step_id for step_id in _redraw_step_ids(record) if new_attempt and step_id in retained}
     rerun = {step['step_id'] for step in steps} - retained
-    if not rerun and not reads:
+    if not rerun and not reads and not redraws:
         # Run listings project recovery for every run; one with nothing to run again,
         # such as any completed run, needs no input parsing.
         return renders
@@ -122,7 +138,7 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
         step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
         for step in steps if step['step_id'] in retained
     }
-    invalidated = renders | reads
+    invalidated = renders | reads | redraws
     while True:
         added = {
             step_id for step_id, producers in consumed.items()
@@ -448,6 +464,11 @@ def recovery_projection(record):
     uncertain = any(
         step.get('capability_id') in EFFECT_CAPABILITIES and step.get('effects_uncertain')
         for step in steps
+    ) or any(
+        # A step run again to draw a missing chart repeats what it did the first time.
+        step.get('capability_id') in EFFECT_CAPABILITIES and step['step_id'] in retry
+        and step['step_id'] in _redraw_step_ids(record)
+        for step in record.get('plan', {}).get('steps') or []
     )
     reason, message = None, None
     current = record.get('latest_attempt_run_id')
@@ -546,6 +567,21 @@ def reconcile_checkpoints(record, authorize, *, result_service=None, _defer_inhe
     return updated
 
 
+def _public_deliverable_states(value):
+    """The server's check of each chart and diagram the user asked for, for the plan panel."""
+    states = []
+    for entry in value if isinstance(value, list) else ():
+        if (
+            isinstance(entry, dict) and isinstance(entry.get('id'), str)
+            and entry.get('state') in ('delivered', 'not_delivered')
+        ):
+            states.append({
+                'id': entry['id'], 'state': entry['state'],
+                **({'message': entry['message']} if isinstance(entry.get('message'), str) else {}),
+            })
+    return states
+
+
 def public_execution_fields(record):
     fields = {
         'attempt_index': record.get('attempt_index') or 1,
@@ -554,6 +590,9 @@ def public_execution_fields(record):
         'failures': [safe_failure(value) for value in record.get('failures') or []],
         'recovery': recovery_projection(record),
     }
+    deliverable_states = _public_deliverable_states(record.get('deliverable_states'))
+    if deliverable_states:
+        fields['deliverable_states'] = deliverable_states
     if record.get('outcome') in ('completed', 'partial', 'failed', 'cancelled', 'waiting'):
         fields['outcome'] = record['outcome']
     if record.get('latest_attempt_run_id'):
@@ -1225,7 +1264,7 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
     # and cleanup.
     for key in (
         'execution_deadline_at', 'pending_results', 'task_results', 'outputs', 'result_outputs',
-        'message', 'summary', 'final_response', 'delivery_facts', 'render_output_ids',
+        'message', 'summary', 'final_response', 'delivery_facts', 'render_output_ids', 'deliverable_states',
     ):
         child.pop(key, None)
     child.update({

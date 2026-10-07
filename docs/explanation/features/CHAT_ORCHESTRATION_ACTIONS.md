@@ -82,6 +82,16 @@ The step summary reports the result, for example "Used Simulation (3 function ca
 created 1 chart." The chart travels in the step's tool citations, untruncated, and the answer
 places it from the planned visual binding.
 
+Since **0.261.293**, the plan must bind the step's `prepared` output to the compose step
+that writes the answer, because only a Reason step reads what a gather step found. A plan
+with only the action step is refused while planning, and the planner corrects it. The
+answer step receives each chart as its `[[chart:<id>]]` token rather than a second copy of
+its data, and the server places the chart at that token. A chart the step drew is still
+shown when no answer step placed it, for example in a plan saved before this version. A
+chart that couldn't be drawn is reported as not delivered, and a retry runs the action
+again after confirmation. See the
+[action chart not delivered fix](../fixes/ORCHESTRATION_ACTION_CHART_NOT_DELIVERED_FIX.md).
+
 The existing `/api/v2/orchestration/plan` and `/api/v2/orchestration/run` endpoints and
 plan approval/editing flow remain the entry points. There is no second action allowlist,
 read/write classification or new approval system.

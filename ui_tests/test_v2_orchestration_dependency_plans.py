@@ -1,8 +1,9 @@
 # test_v2_orchestration_dependency_plans.py
 """
 Real-component tests for version-aware orchestration plans and durable waiting.
-Version: 0.261.139
+Version: 0.261.293
 Implemented in: 0.261.127
+Server chart and diagram checks in the plan panel added in: 0.261.293
 Refs: microsoft/simplechat#1509
 
 Uses the existing local/Azure Playwright fixture, real React components, production
@@ -307,6 +308,36 @@ def test_deliverable_states_follow_their_steps(editor_ui):
     expect(section.locator("[data-deliverable-id='portrait']")).to_have_attribute(
         "data-deliverable-state", "not_delivered",
     )
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_the_servers_chart_check_wins_over_its_steps_status(editor_ui, width):
+    """Version 0.261.293: a chart its step finished without showing is listed as not delivered."""
+    page, api = editor_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    plan = _deliverables_plan()
+    plan["deliverables"][3]["requested"] = "explicit"
+    plan["steps"][3]["status"] = "completed"
+    view = mount_run_view(page, api, plan)
+    section = view.get_by_test_id("orchestration-deliverables")
+    chart = section.locator("[data-deliverable-id='findings_chart']")
+    # Its step finished, so step status alone reads as delivered.
+    expect(chart).to_have_attribute("data-deliverable-state", "delivered")
+
+    page.evaluate(
+        """(runId) => window.OrchHarness.stores.orchestration.useOrchestrationStore.getState()
+            .updateRunRecovery(runId, { deliverable_states: [
+                { id: 'findings_chart', state: 'not_delivered',
+                  message: 'The chart could not be created from the retrieved data.' },
+                { id: 'answer', state: 'delivered' },
+            ] })""",
+        plan["run_id"],
+    )
+    expect(chart).to_have_attribute("data-deliverable-state", "not_delivered")
+    expect(chart).to_contain_text("Not delivered: The chart could not be created from the retrieved data.")
+    expect(section.locator("[data-deliverable-id='answer']")).to_have_attribute("data-deliverable-state", "delivered")
+    overflow = page.evaluate("() => document.documentElement.scrollWidth > window.innerWidth")
+    assert not overflow
 
 
 def test_approval_card_shows_only_what_the_user_asked_for(editor_ui):

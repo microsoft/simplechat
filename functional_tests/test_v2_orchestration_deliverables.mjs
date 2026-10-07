@@ -1,6 +1,7 @@
 // test_v2_orchestration_deliverables.mjs
-// Version: 0.261.139
+// Version: 0.261.293
 // Implemented in: 0.261.135
+// Server chart and diagram checks after a run added in: 0.261.293
 // Executes the shared plan normalization for deliverables: what a plan says the user asked
 // for, how each deliverable's state follows its producing steps, and the image helpers.
 // Also reads a terminal frame shaped as the harness publishes it through the real run
@@ -21,7 +22,9 @@ const {
     bindsGeneratedImage, deliverableKindLabel, deliverableRows, doneFrameHasGeneratedImages, hasGeneratedImages,
     normalizeDeliverables, normalizePlan,
 } = await import('../application/v2_ui/src/lib/orchestrationPlan.ts');
-const { runOrchestration } = await import('../application/v2_ui/src/lib/orchestration.ts');
+const { normalizeDeliverableChecks, normalizeOrchestrationAttempt, runOrchestration } = await import(
+    '../application/v2_ui/src/lib/orchestration.ts'
+);
 const {
     answerGeneratedImages, groupProposalImages, parseImageProposal, plannedImageRef, resultForCard,
 } = await import('../application/v2_ui/src/lib/imageProposalSpec.ts');
@@ -97,6 +100,61 @@ test('each deliverable follows the state of the steps that produce it', () => {
 
     const edits = { disabled_step_ids: ['word'], removed_document_ids: {} };
     assert.equal(deliverableRows(plan, () => undefined, edits)[1].state, 'turned_off');
+});
+
+test("after a run, the server's chart check wins over the state of its step", () => {
+    const plan = normalizePlan({
+        planner_contract_version: 2,
+        deliverables: [
+            { id: 'battery_chart', kind: 'chart', requested: 'explicit', status: 'planned',
+              description: 'A plot of BatteryVoltage1' },
+            { id: 'flow', kind: 'diagram', requested: 'explicit', status: 'planned', description: 'A diagram' },
+        ],
+        steps: [
+            { step_id: 'retrieve', capability_id: 'action_invoke', role: 'gather', title: 'Retrieve telemetry',
+              outputs: [{ name: 'prepared', kind: 'structured-v1' }], delivers: ['battery_chart'] },
+            { step_id: 'answer', capability_id: 'compose', role: 'reason', title: 'Write the answer',
+              inputs: { telemetry: { binding: binding('retrieve', 'prepared') } },
+              outputs: [{ name: 'answer', kind: 'markdown-v1' }], delivers: ['flow'] },
+        ],
+    });
+    const completed = () => 'completed';
+    // A step can finish without the answer showing its chart, so step status alone says delivered.
+    assert.deepEqual(deliverableRows(plan, completed).map((row) => row.state), ['delivered', 'delivered']);
+
+    const checks = normalizeDeliverableChecks([
+        { id: 'battery_chart', state: 'not_delivered',
+          message: 'The chart could not be created from the retrieved data.' },
+        { id: 'flow', state: 'delivered' },
+        { id: 'unknown', state: 'not_delivered', message: 'Ignored.' },
+    ]);
+    const rows = deliverableRows(plan, completed, undefined, checks);
+    assert.deepEqual(rows.map((row) => [row.state, row.stateLabel]), [
+        ['not_delivered', 'Not delivered'], ['delivered', 'Delivered'],
+    ]);
+    assert.equal(rows[0].reason, 'The chart could not be created from the retrieved data.');
+    assert.equal(rows[1].reason, undefined);
+    // A step the user turned off still reads as turned off.
+    const edits = { disabled_step_ids: ['retrieve'], removed_document_ids: {} };
+    assert.equal(deliverableRows(plan, completed, edits, checks)[0].state, 'turned_off');
+});
+
+test('deliverable checks arrive with the run attempt and malformed entries are dropped', () => {
+    const attempt = normalizeOrchestrationAttempt({
+        metadata: { orchestration: { run_id: 'run-1', deliverable_states: [
+            { id: 'battery_chart', state: 'not_delivered', message: 'The answer did not include it.' },
+            { id: 'flow', state: 'delivered', message: 7 },
+            { id: 'bad', state: 'shown' },
+            'not a check',
+            { state: 'delivered' },
+        ] } },
+    });
+    assert.deepEqual(attempt.deliverable_states, [
+        { id: 'battery_chart', state: 'not_delivered', message: 'The answer did not include it.' },
+        { id: 'flow', state: 'delivered' },
+    ]);
+    assert.equal(Object.hasOwn(normalizeOrchestrationAttempt({ run_id: 'run-2' }), 'deliverable_states'), false);
+    assert.equal(normalizeDeliverableChecks('not a list'), undefined);
 });
 
 test('the implicit answer of plans that declared nothing is not listed', () => {

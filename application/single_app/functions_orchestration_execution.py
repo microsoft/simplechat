@@ -1,9 +1,10 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.270
+Version: 0.261.293
 Implemented in: 0.261.127
 Shared conversation answers mirrored into the shared thread in: 0.261.270
+Charts gather steps drew are shown, and chart and diagram delivery is checked, in: 0.261.293
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
 legacy contract is refused before any preparation. The ``Harness*`` names below are the
@@ -120,7 +121,8 @@ from functions_orchestration_context import (
     validate_conversation_snapshot,
 )
 from functions_orchestration_deliverables import (
-    delivery_notes, generated_image_assets, project_generated_images,
+    UNREAD_GATHER_MESSAGE, delivery_notes, gathered_charts, generated_image_assets, project_generated_images,
+    show_gathered_charts, unread_gather_steps, visual_delivery,
 )
 from functions_orchestration_events import (
     build_content_event,
@@ -1164,6 +1166,13 @@ class HarnessExecution:
         reader.recheck()
         return value
 
+    def _read_gathered_value(self, reference):
+        """A gather step's retained value, reauthorized for the current owner, to show its charts."""
+        reader = self.services.results.open_result(reference, allow_partial=True, require_current_sources=True)
+        value = read_complete_input(reader)
+        reader.recheck()
+        return value
+
     def _validate_citations(self, citations):
         document_ids = sorted({
             citation["document_id"] for citation in citations
@@ -1280,7 +1289,7 @@ class HarnessExecution:
         if status not in {"completed", "waiting", "failed", "cancelled"}:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
-        assets, workflow_result_contexts = {}, []
+        assets, charts, workflow_result_contexts = {}, {}, []
         if error is None:
             try:
                 self._revalidate_context()
@@ -1303,20 +1312,23 @@ class HarnessExecution:
                     workflow_result_contexts = self._workflow_result_lineage(current)
                 if self.context is not None and not current.get("cancellation_requested_at"):
                     assets = generated_image_assets(self.context.task_results, self._read_image_asset)
+                    charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
-                error, prepared, citations, assets, workflow_result_contexts = exc, "", [], {}, []
+                error, prepared, citations, assets, charts, workflow_result_contexts = exc, "", [], {}, {}, []
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
             failures.append(failure)
         if status == "cancelled" or current.get("cancellation_requested_at") or current.get("status") == "cancelled":
-            status, prepared, citations, assets = "cancelled", "", [], {}
+            status, prepared, citations, assets, charts = "cancelled", "", [], {}, {}
             if not any(value["code"] == "user_cancelled" for value in failures):
                 failures.append(build_failure("user_cancelled"))
         # Generated images appear in the answer where its content placed them.
         prepared = project_generated_images(prepared, assets)
+        # A chart a gather step drew from its exact rows appears even when no answer step placed it.
+        prepared = show_gathered_charts(prepared, charts)
 
         outputs, artifacts = self._file_state()
         delivered = {artifact["output_id"] for artifact in artifacts}
@@ -1339,6 +1351,15 @@ class HarnessExecution:
         ):
             status = "failed"
             failures.append(build_failure("result_unavailable"))
+        statuses = {step.get("step_id"): step.get("status") for step in current.get("execution_steps") or []}
+        # Deterministic, model-free: whether the answer shows each chart and diagram the user asked for.
+        visual_states, redraw = (
+            visual_delivery(self.record["plan"], statuses, prepared, charts)
+            if error is None and status not in {"waiting", "cancelled"} else ([], [])
+        )
+        if status == "completed" and any(state["state"] == "not_delivered" for state in visual_states):
+            status = "failed"
+            failures.append(build_failure("visual_not_delivered"))
         outcome = status if status in {"waiting", "cancelled", "completed"} else (
             "partial" if ready or prepared or result.get("outcome") == "partial" else "failed"
         )
@@ -1351,9 +1372,9 @@ class HarnessExecution:
         if status not in {"waiting", "cancelled"}:
             # Deterministic, model-free: what the user asked for and did not receive.
             notes = delivery_notes(
-                self.record["plan"],
-                {step.get("step_id"): step.get("status") for step in current.get("execution_steps") or []},
+                self.record["plan"], statuses,
                 file_steps_with_outputs={output["step_id"] for output in outputs},
+                visual_states=visual_states,
             )
             if notes:
                 content.append(notes)
@@ -1395,7 +1416,11 @@ class HarnessExecution:
         elif status in {"failed", "cancelled"}:
             content.append(failure_explanation(failures, partial=outcome == "partial", cancelled=status == "cancelled"))
         elif not content:
-            content.append("The requested content is prepared. No downloadable files were created.")
+            # A plan saved before every gather step needed a reader can gather without answering.
+            content.append(
+                UNREAD_GATHER_MESSAGE if unread_gather_steps(self.record["plan"])
+                else "The requested content is prepared. No downloadable files were created."
+            )
         answer = "\n\n".join(content)
         # Durable orchestration replies use chat's output checkpoint before persistence.
         from functions_chat_content_checks import (
@@ -1443,6 +1468,9 @@ class HarnessExecution:
                 if has_execution_state else deepcopy(current.get("task_results") or {})
             ),
             "outputs": outputs, "artifacts": artifacts, "citations": deepcopy(citations),
+            # Whether the answer shows each chart and diagram the user asked for, and the steps a
+            # retry runs again to make one it does not show.
+            "deliverable_states": visual_states, "redraw_step_ids": redraw,
             "token_usage": combined_usage,
             "harness_prompt_token_usage": _usage(self.prompt_token_usage),
             "reasoning_adjustments": reasoning["reasoning_adjustments"],
