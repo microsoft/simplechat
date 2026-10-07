@@ -226,7 +226,8 @@ def _read_agent(reference):
 
 
 def _canonical_agent(record, scope_type, scope_id):
-    result = deepcopy(record)
+    # A Cosmos point read returns CosmosDict, a dict subclass that deepcopy keeps.
+    result = deepcopy(dict(record))
     if scope_type == "personal" and result.get("user_id") != scope_id:
         raise PermissionError(UNAVAILABLE_MESSAGE)
     if scope_type == "group" and result.get("group_id") != scope_id:

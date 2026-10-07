@@ -2,11 +2,12 @@
 # test_v2_control_center_foundation.py
 """
 Functional test for the V2 Control Center foundation.
-Version: 0.261.278
+Version: 0.261.292
 Implemented in: 0.261.278
 
-This test covers the shared access capability contract, bootstrap wiring, migration
-deduplication, removal of the legacy automatic migration check, and route/pane structure.
+This test covers the shared access capability contract, bootstrap wiring, stable
+activity-log IDs, removal of the legacy automatic migration check, removal of the
+V2 Data health section and its backfill APIs (0.261.292), and route/pane structure.
 """
 
 import ast
@@ -94,66 +95,47 @@ def test_bootstrap_publishes_control_center_capabilities():
     assert '"control_center": get_control_center_capabilities(session_user, settings)' in source
 
 
-def test_migration_is_manual_and_legacy_controls_are_removed():
-    """The classic UI no longer checks or offers the migration automatically."""
+def test_activity_log_backfill_is_removed_from_both_control_centers():
+    """Neither Control Center offers the legacy backfill, and its APIs no longer exist."""
     js = _source(LEGACY_JS)
     html = _source(LEGACY_HTML)
     page = _source(PAGE)
+    route = _source(BACKFILL)
     assert "/api/admin/control-center/migrate/status" not in js
     assert "checkMigrationStatus" not in js
     assert "migrationBanner" not in html
     assert "migrationConfirmModal" not in html
-    assert "Check activity-log status" in page
-    assert "Run backfill" in page
-    assert "useEffect" not in page, "Data health must not check status during page load."
+    for removed in ("data-health", "Data health", "MigrationDataHealth", "/control-center/migrate", "Run backfill"):
+        assert removed not in page, f"V2 Control Center still references {removed!r}."
+    for removed in ("/api/admin/control-center/migrate/", "api_get_migration_status", "api_migrate_to_activity_logs"):
+        assert removed not in route, f"The removed backfill API is still registered: {removed!r}."
 
 
-def test_backfill_checks_existing_resource_logs_and_uses_stable_ids():
-    """Existing records are skipped and reruns converge on deterministic record IDs."""
+def test_activity_log_ids_are_stable_and_backfill_lookup_is_removed():
+    """Idempotent writers keep deterministic IDs; the backfill-only lookup helper is gone."""
     activity = _source(ACTIVITY)
-    route = _source(BACKFILL)
     helper_tree = ast.parse(activity)
+    helper_names = {node.name for node in helper_tree.body if isinstance(node, ast.FunctionDef)}
+    assert "has_activity_log_for_resource" not in helper_names
     helper_nodes = [
         node for node in helper_tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name in {"build_activity_log_id", "has_activity_log_for_resource"}
+        if isinstance(node, ast.FunctionDef) and node.name == "build_activity_log_id"
     ]
-
-    class ActivityContainer:
-        def __init__(self, found):
-            self.found = found
-            self.calls = []
-
-        def query_items(self, **kwargs):
-            self.calls.append(kwargs)
-            return iter(["existing-id"] if self.found else [])
 
     import uuid
 
-    for found in (False, True):
-        container = ActivityContainer(found)
-        namespace = {
-            "uuid": uuid,
-            "cosmos_activity_logs_container": container,
-        }
-        exec(compile(ast.Module(body=helper_nodes, type_ignores=[]), str(ACTIVITY), "exec"), namespace)
-        exists = namespace["has_activity_log_for_resource"](
-            "user-1", "document_creation", "doc-1", "group"
-        )
-        assert exists is found
-        assert container.calls[0]["partition_key"] == "user-1"
-        assert "@workspace_type" in container.calls[0]["query"]
-        assert container.calls[0]["parameters"][-1]["value"] == "group"
-
+    namespace = {"uuid": uuid}
+    exec(compile(ast.Module(body=helper_nodes, type_ignores=[]), str(ACTIVITY), "exec"), namespace)
     stable_id = namespace["build_activity_log_id"](
         "document_creation", "user-1", "backfill:group:doc-1"
     )
     assert stable_id == namespace["build_activity_log_id"](
         "document_creation", "user-1", "backfill:group:doc-1"
     )
-    assert "has_activity_log_for_resource" in route
-    assert "build_activity_log_id" in route
-    assert "total_skipped_existing" in route
+    assert stable_id != namespace["build_activity_log_id"](
+        "document_creation", "user-2", "backfill:group:doc-1"
+    )
+    assert "build_activity_log_id(" in activity.split("def _create_activity_record", 1)[1]
 
 
 def test_pane_has_section_routes_and_capability_gating():
@@ -165,7 +147,7 @@ def test_pane_has_section_routes_and_capability_gating():
         assert route in app
     for capability in (
         "can_view_dashboard", "can_manage_users", "can_manage_groups",
-        "can_manage_workspaces", "can_view_activity_logs", "can_run_maintenance",
+        "can_manage_workspaces", "can_view_activity_logs",
     ):
         assert capability in page
     assert "canOpenControlCenter" in sidebar
@@ -173,14 +155,14 @@ def test_pane_has_section_routes_and_capability_gating():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.278")
+    assert_app_version_at_least("0.261.292")
 
 
 TESTS = [
     test_capability_helper_matches_legacy_access_rules,
     test_bootstrap_publishes_control_center_capabilities,
-    test_migration_is_manual_and_legacy_controls_are_removed,
-    test_backfill_checks_existing_resource_logs_and_uses_stable_ids,
+    test_activity_log_backfill_is_removed_from_both_control_centers,
+    test_activity_log_ids_are_stable_and_backfill_lookup_is_removed,
     test_pane_has_section_routes_and_capability_gating,
     test_version_is_at_least_the_implementing_release,
 ]

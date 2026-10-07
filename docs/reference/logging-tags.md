@@ -183,6 +183,7 @@ Last inventoried: 2026-08-10
 - `[ORCHESTRATION_ADAPTERS]`
 - `[ORCHESTRATION_CONTEXT]`
 - `[ORCHESTRATION_EXECUTOR]`
+- `[ORCHESTRATION_EXTERNAL_SOURCES]`
 - `[ORCHESTRATION_M365]`
 - `[ORCHESTRATION_PLANNER]`
 - `[ORCHESTRATION_REGISTRY]`
@@ -307,21 +308,24 @@ events were added in version **0.261.141**.
 The `[ORCHESTRATION_CONTEXT]`, `[ORCHESTRATION_PLANNER]`, `[ORCHESTRATION_RUNS]`, `[ORCHESTRATION]`,
 `[ORCHESTRATION_EXECUTOR]`, and `[ORCHESTRATION_ADAPTERS]` failure events distinguish
 planning validation, execution admission, step execution, saved-status projection, and
-scheduler recovery. `[CONTENT_SCREENING]` events record why a source's current authority
+scheduler recovery. Since **0.261.291**, `[ORCHESTRATION_EXTERNAL_SOURCES]` events name
+the check that refused a step's web, linked-page, deep research, agent, action or
+memory source. `[CONTENT_SCREENING]` events record why a source's current authority
 could not be verified. Their safe properties appear in Application
 Insights `customDimensions` or Log Analytics `AppTraces.Properties`.
 
 | Property | Meaning |
 | --- | --- |
 | `sc_conversation_id_hash`, `sc_turn_id_hash`, `sc_run_id_hash`, `sc_step_id_hash` | SHA-256 of the exact workflow identifier encoded as UTF-8. Only applicable identifiers are present; these hashes do not grant access to the underlying records. Step IDs repeat across runs, so narrow by the run hash before the step hash. |
-| `sc_stage` | The failing boundary, such as `plan_normalization`, `claim_validation`, `settings`, `context`, `identity`, `result_binding`, `model_binding`, `run_detail`, or `scheduler_item`. |
+| `sc_stage` | The failing boundary, such as `plan_normalization`, `claim_validation`, `settings`, `context`, `identity`, `result_binding`, `model_binding`, `run_detail`, or `scheduler_item`. On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events, `external_source_preflight` (before or during the step's acquisition), `external_source_admission` (saving the step's result), or `external_source_read` (reading a saved result again). |
 | `sc_validation_code` | Validation category, including `deliverables_invalid`, `source_kind_invalid`, or `source_binding_required`. |
 | `sc_validation_rule` | Specific application-owned rejection, such as `invalid_quantity`, `non_file_format`, `answer_producer_mismatch`, `missing_final_response`, `file_format_mismatch`, `narrative_source_required`, or `document_sources_required`. |
 | `sc_response_failure` | A missing, incomplete, or refused planner completion, when applicable. |
 | `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single correction. Present on deliverables correction/failure events. |
 | `sc_execution_code`, `sc_output_code` | Safe execution or output-store failure category, where available. |
 | `sc_failure_code` | On step and adapter events, a step failure category, such as `step_timeout`, `run_timeout`, or `context_unavailable`. On `[CONTENT_SCREENING]` events, the source-authority code, such as `source_authority_unverified`, `source_authority_unavailable`, or `screening_revision_conflict`. |
-| `sc_authority_reason` | Which check failed for a source. With `source_authority_unverified`, the check that could not verify the source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. With `screening_revision_conflict`, what saved evidence no longer matches in the current document: `source_revision_changed` (the document was re-versioned), `screening_generation_changed` (it was re-screened or remediated), `source_scope_changed` (its id or workspace differs), `provenance_shape_invalid` (the saved provenance has a different set of fields), `screened_record_changed` (a saved copy of the screened record differs), `source_version_changed` (a legacy reference without provenance), or `cached_evidence_unproven` (cached evidence from before screening enrollment). On `[ORCHESTRATION_EXECUTOR]` step, saved-wait, finalization and content-preparation failure events (since 0.261.209), the stable code of a refused external source, such as `external_identity_session_unavailable` (the step ran in a background continuation with no signed-in session), `external_identity_role_required`, `external_identity_access_restricted`, `external_identity_conversation_unavailable`, `external_identity_settings_unavailable`, or `external_configuration_changed`. |
+| `sc_authority_reason` | Which check failed for a source. With `source_authority_unverified`, the check that could not verify the source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. With `screening_revision_conflict`, what saved evidence no longer matches in the current document: `source_revision_changed` (the document was re-versioned), `screening_generation_changed` (it was re-screened or remediated), `source_scope_changed` (its id or workspace differs), `provenance_shape_invalid` (the saved provenance has a different set of fields), `screened_record_changed` (a saved copy of the screened record differs), `source_version_changed` (a legacy reference without provenance), or `cached_evidence_unproven` (cached evidence from before screening enrollment). On `[ORCHESTRATION_EXECUTOR]` step, saved-wait, finalization and content-preparation failure events (since 0.261.209), the stable code of a refused external source, such as `external_identity_session_unavailable` (the step ran in a background continuation with no signed-in session), `external_identity_role_required`, `external_identity_access_restricted`, `external_identity_conversation_unavailable`, `external_identity_settings_unavailable`, or `external_configuration_changed`. On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events (since 0.261.291), the same refusal code, such as `result_external_source_unavailable` or `result_external_capability_unavailable`, with the check that failed in `sc_reason`. |
+| `sc_reason` | On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events (since 0.261.291), the check that failed, when the refusal code covers more than one: `selected_agent_unavailable` or `selected_agent_ambiguous` (the agent picked for the run), `selection_not_in_catalog` or `selection_ambiguous` (the step's agent or action in the user's current catalog), `reference_not_in_catalog` or `reference_ambiguous` (a saved result's agent or action), `integration_not_mapping`, `integration_reference_mismatch` or `integration_origin_mismatch` (the resolved agent or action isn't the one selected), `integration_access_denied` (scope off, not the owner or a group member, or governance), `integration_not_found` (missing or disabled), `reference_binding_mismatch` or `reference_identity_changed` (a saved reference), `required_setting_off`, `capability_allowlist_invalid`, `capability_not_available`, or `url_access_not_permitted`. Other events use `sc_reason` for their own codes. |
 | `sc_capability_id` | The capability the step ran, such as `compose`, `render_file`, `generate_image`, or `document_compare`. |
 | `sc_output_format` | The file format of a render attempt, such as `csv`, `xlsx`, or `docx`. |
 | `sc_error_type`, `sc_response_type` | Exception class and, on runner admission/preparation failures, the record's Python type. |
@@ -386,17 +390,40 @@ file names, file content, prompts, or model responses.
 | `[ORCHESTRATION_EXECUTOR] A step finished after its time budget; its finished result was kept.` | Warning | `sc_failure_code` (`step_timeout` or `run_timeout`), `sc_elapsed_ms`, `sc_step_timeout_seconds`. |
 | `[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.` | Information | `sc_reason` (`compose_output_retry`), `sc_error_type`, and `sc_execution_code` when the mismatch has one. |
 | `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, and `sc_authority_reason` when a retained source was refused. |
+| `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.` | Warning; Information at `external_source_read` | Since **0.261.291**. `sc_stage`, `sc_authority_reason`, `sc_reason` (the check that failed), `sc_capability_id`, and the run, conversation and step hashes of the step that produced the source. Logged once per refusal, ahead of the step's failure event when there is one. Reads are Information because saved results are rechecked whenever they're opened. |
 | `[ORCHESTRATION] Retrying the answer model without a JSON response format.` | Information | `sc_reason` (`json_format_retry`), `sc_stage`, `sc_error_type`. Content preparation asks the endpoint for a JSON object; an endpoint that refuses that option is asked again without it. |
 | `[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.` | Warning | `sc_stage`, `sc_failure_code`, `sc_execution_code`, such as `native_compute_source_identity_mismatch` when a saved spreadsheet location now points at a different revision. |
 | `[CONTENT_SCREENING] Current source authority could not be verified.` | Warning | `sc_failure_code`, `sc_authority_reason`, `sc_error_type`. |
 | `[ORCHESTRATION_M365] A Microsoft 365 step stopped.` | Warning | Since **0.261.238**. `sc_failure_code` (`m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation`, `m365_read_only` or `external_session_required`), `sc_authority_reason` (the Microsoft 365 refusal code, such as `interactive_auth_required`, `authentication_required`, `m365_action_not_authorized` or `m365_shared_conversation_unsupported`), `sc_capability_id`, and `sc_source_count`. |
 | `[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.` | Warning | `sc_operation`. Since **0.261.238**, also `sc_failure_code`, the refusal code (for example `m365_context_required`), and `sc_resource`, the source (`email`, `calendar`, `onedrive` or `spo`). Earlier versions logged only the code's length, `sc_error_code_length`. |
 
-Every `[ORCHESTRATION_EXECUTOR]` and `[ORCHESTRATION_ADAPTERS]` event in this table
-carries `sc_run_id_hash`, `sc_conversation_id_hash`, and `sc_step_id_hash`; the
-executor events also carry `sc_capability_id`. The `[ORCHESTRATION]` and
+Every `[ORCHESTRATION_EXECUTOR]`, `[ORCHESTRATION_ADAPTERS]` and
+`[ORCHESTRATION_EXTERNAL_SOURCES]` event in this table carries `sc_run_id_hash`,
+`sc_conversation_id_hash`, and `sc_step_id_hash`; the executor and external-source
+events also carry `sc_capability_id`. The `[ORCHESTRATION]` and
 `[CONTENT_SCREENING]` events in this table have no workflow hashes, so match them by
 time to the step event that follows them.
+
+To find which check refused a step, read the step's failure event together with its
+refusal event:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| extend message = tostring(Properties.sc_message)
+| where message contains "A dependency-bound step could not complete"
+    or message contains "A step's source was refused"
+| project TimeGenerated, message,
+    stepHash = tostring(Properties.sc_step_id_hash),
+    capability = tostring(Properties.sc_capability_id),
+    stage = tostring(Properties.sc_stage),
+    authorityReason = tostring(Properties.sc_authority_reason),
+    check = tostring(Properties.sc_reason),
+    failureCode = tostring(Properties.sc_failure_code)
+| order by TimeGenerated asc
+```
 
 A render attempt records how its time was spent:
 
@@ -464,7 +491,7 @@ findings, caveats, notes, prompts, file names, or model responses.
 | Event message | Severity | Properties |
 | --- | --- | --- |
 | `[DOCUMENT_ANALYSIS] Final findings validated` | Information when the result is `valid`; otherwise Warning | `sc_validation_code`, the record, window and evidence counts described below, and one `sc_issue_<code>_count` per validation issue code. |
-| `[ORCHESTRATION_EXECUTOR] A dependency-bound step could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, and, when the step refused a partial input, the `sc_producer_*` fields described below. |
+| `[ORCHESTRATION_EXECUTOR] A dependency-bound step could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, `sc_authority_reason` when an access check refused the step (its `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal event names the check), and, when the step refused a partial input, the `sc_producer_*` fields described below. |
 
 Analyze writes its event each time it validates newly assembled final findings. A
 step that resumes from an already saved final result does not write it again. The

@@ -1,9 +1,10 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.289
+Version: 0.261.291
 Session-trusted agent and action sources in: 0.261.270
 Hand-selected agent honoured while the agent preference is off in: 0.261.289
+Stored agents accepted as any dictionary, and refusals logged by check, in: 0.261.291 (#1699)
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page
@@ -17,15 +18,22 @@ An agent the user picked by hand for the run is itself the permission to use it,
 planning, execution and classic chat already treat it, so it is honoured while the
 user's general agent preference is off. Only that agent is: the catalog is narrowed to
 the run's selection, and current scope, membership and governance are still rechecked.
+
+A resolved agent is accepted as any dictionary, because a Cosmos point read returns a
+dict subclass; its exact scoped reference is what has to match. Each refusal is logged
+once, naming the check that failed, with hashed identifiers only.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
+import logging
 import re
 
 from functions_action_catalog import resolve_action_manifest
 from functions_action_manifest import get_action_origin
 from functions_agent_delegation import agent_reference, resolve_delegation_agent
+from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_context import (
     CatalogResolutionError,
     build_capability_request_context,
@@ -81,6 +89,48 @@ SESSION_TRUSTED_CAPABILITIES = frozenset(
     if source_type in SESSION_TRUSTED_SOURCE_TYPES
 )
 _SESSION_TRUSTED_VERSION = "orchestration-session-trusted-source-v1"
+_STAGE_PREFLIGHT = "external_source_preflight"
+_STAGE_ADMISSION = "external_source_admission"
+_STAGE_READ = "external_source_read"
+
+
+def _refusal(code, check):
+    """A refusal that also names the check that failed, for diagnostics only.
+
+    The check is never shown to the user, and the invocation capture keeps only ``code``.
+    """
+    error = ResultUnavailableError(code)
+    error.refusal_check = check
+    return error
+
+
+@contextmanager
+def _logged_refusals(producer, stage):
+    """Log a refusal once, with its check and hashed identifiers only, then re-raise it."""
+    try:
+        yield
+    except ResultUnavailableError as error:
+        correlation = {}
+        if type(producer) is ProducerIdentity:
+            correlation = {
+                **workflow_log_context(
+                    conversation_id=producer.conversation_id, run_id=producer.run_id,
+                    step_id=producer.step_id,
+                ),
+                "capability_id": producer.capability_id,
+            }
+        check = getattr(error, "refusal_check", None)
+        log_event(
+            "[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.",
+            # Saved results are rechecked whenever they're opened, so a read refusal can follow
+            # any later access change.
+            level=logging.INFO if stage == _STAGE_READ else logging.WARNING,
+            extra={
+                **correlation, "stage": stage, "authority_reason": error.code,
+                **({"reason": check} if type(check) is str else {}),
+            },
+        )
+        raise
 
 
 @dataclass(frozen=True)
@@ -269,14 +319,14 @@ class OrchestrationExternalSourceProvider:
             except CatalogResolutionError as exc:
                 if exc.code != "selected_agent_unavailable":
                     raise
-                raise ResultUnavailableError("result_external_source_unavailable") from exc
+                raise _refusal("result_external_source_unavailable", "selected_agent_unavailable") from exc
         if (
             type(catalog) is not list or len(catalog) > MAX_CATALOG_ITEMS
             or any(type(item) is not dict for item in catalog)
         ):
             raise ResultUnavailableError("result_external_catalog_invalid")
         if seeded_agent is not None and len(catalog) > 1:
-            raise ResultUnavailableError("result_external_source_unavailable")
+            raise _refusal("result_external_source_unavailable", "selected_agent_ambiguous")
         return catalog
 
     def _capability(
@@ -284,7 +334,7 @@ class OrchestrationExternalSourceProvider:
         seeded_agent=None, invocation_user_urls=None,
     ):
         if any(settings.get(key) is not True for key in _REQUIRED_SETTINGS[source_type]):
-            raise ResultUnavailableError("result_external_capability_unavailable")
+            raise _refusal("result_external_capability_unavailable", "required_setting_off")
         if source_type == "fact_memory":
             return
         if source_type != _GATHER_SOURCES.get(producer.capability_id):
@@ -293,7 +343,7 @@ class OrchestrationExternalSourceProvider:
         if allowed is not None and (
             type(allowed) is not list or any(type(item) is not str for item in allowed)
         ):
-            raise ResultUnavailableError("result_external_capability_unavailable")
+            raise _refusal("result_external_capability_unavailable", "capability_allowlist_invalid")
         context = build_capability_request_context(
             identity.user_id,
             {
@@ -315,13 +365,13 @@ class OrchestrationExternalSourceProvider:
             candidate_ids=(producer.capability_id,), include_runtime_bindings=False,
         )
         if producer.capability_id not in available:
-            raise ResultUnavailableError("result_external_capability_unavailable")
+            raise _refusal("result_external_capability_unavailable", "capability_not_available")
         if source_type == "url":
             # Source-review parsing/client dependencies are only needed for URL authorization.
             from functions_source_review import is_url_access_enabled_for_user
 
             if not is_url_access_enabled_for_user(settings, user_roles=identity.roles):
-                raise ResultUnavailableError("result_external_capability_unavailable")
+                raise _refusal("result_external_capability_unavailable", "url_access_not_permitted")
 
     def _configuration(self, source_type, producer, settings, source, *, selector=None, for_admission=False):
         if self.read_configuration is None:
@@ -353,8 +403,12 @@ class OrchestrationExternalSourceProvider:
                     raise ResultUnavailableError("result_external_resolver_required")
                 expected = agent_reference(selected, identity.user_id)
                 resolved = self.agent_resolver(expected, user_id=identity.user_id, settings=settings)
-                if type(resolved) is not dict or agent_reference(resolved, identity.user_id) != expected:
-                    raise ResultUnavailableError("result_external_source_unavailable")
+                # A stored agent can arrive as the SDK's dict subclass; only its reference proves identity.
+                if not isinstance(resolved, dict):
+                    raise _refusal("result_external_source_unavailable", "integration_not_mapping")
+                resolved = dict(resolved)
+                if agent_reference(resolved, identity.user_id) != expected:
+                    raise _refusal("result_external_source_unavailable", "integration_reference_mismatch")
             else:
                 if self.action_resolver is None:
                     raise ResultUnavailableError("result_external_resolver_required")
@@ -362,17 +416,21 @@ class OrchestrationExternalSourceProvider:
                     identity.user_id, selected["action_ref"], settings=settings,
                 )
                 origin = get_action_origin(resolved)
-                if not isinstance(resolved, dict) or origin is None or any(
+                if not isinstance(resolved, dict):
+                    raise _refusal("result_external_source_unavailable", "integration_not_mapping")
+                if origin is None or any(
                     resolved.get(key) != selected.get(key)
                     for key in ("action_ref", "id", "scope_type", "scope_id")
                 ) or (
                     origin.action_id, origin.scope_type, origin.scope_id
                 ) != (selected.get("id"), selected.get("scope_type"), selected.get("scope_id")):
-                    raise ResultUnavailableError("result_external_source_unavailable")
+                    raise _refusal("result_external_source_unavailable", "integration_origin_mismatch")
         except ResultUnavailableError:
             raise
-        except (PermissionError, LookupError) as exc:
-            raise ResultUnavailableError("result_external_source_unavailable") from exc
+        except PermissionError as exc:
+            raise _refusal("result_external_source_unavailable", "integration_access_denied") from exc
+        except LookupError as exc:
+            raise _refusal("result_external_source_unavailable", "integration_not_found") from exc
         return resolved
 
     @staticmethod
@@ -439,7 +497,8 @@ class OrchestrationExternalSourceProvider:
         user-URL approval, transport safety, and execution/budget guards. Success
         is not a URL grant, configuration attestation, or retained-result alias.
         """
-        self._gather_invocation_state(producer, selector)
+        with _logged_refusals(producer, _STAGE_PREFLIGHT):
+            self._gather_invocation_state(producer, selector)
 
     def preflight_gather_acquisition(self, source_type, *, producer, settings, source=None, selector=None):
         """Check current authority/support and actual configuration before effects.
@@ -453,13 +512,14 @@ class OrchestrationExternalSourceProvider:
             or _GATHER_SOURCES.get(producer.capability_id) != source_type
         ):
             raise ResultContractError("result_external_producer_invalid")
-        if self.acquisition_validator is None:
-            raise ResultUnavailableError("result_external_acquisition_validator_required")
-        _, current_settings, current_source = self._gather_invocation_state(producer, selector)
-        validated = self.acquisition_validator(
-            source_type, producer=producer, settings=settings, source=source, selector=selector,
-            current_settings=current_settings, current_source=current_source,
-        )
+        with _logged_refusals(producer, _STAGE_PREFLIGHT):
+            if self.acquisition_validator is None:
+                raise ResultUnavailableError("result_external_acquisition_validator_required")
+            _, current_settings, current_source = self._gather_invocation_state(producer, selector)
+            validated = self.acquisition_validator(
+                source_type, producer=producer, settings=settings, source=source, selector=selector,
+                current_settings=current_settings, current_source=current_source,
+            )
         if validated is not None:
             raise ResultContractError("result_external_acquisition_validation_invalid")
 
@@ -475,7 +535,8 @@ class OrchestrationExternalSourceProvider:
             or _GATHER_SOURCES.get(producer.capability_id) != source_type
         ):
             raise ResultContractError("result_external_producer_invalid")
-        self._gather_invocation_state(producer, selector)
+        with _logged_refusals(producer, _STAGE_PREFLIGHT):
+            self._gather_invocation_state(producer, selector)
 
     def _gather_invocation_state(self, producer, selector):
         if type(producer) is not ProducerIdentity or producer.capability_id not in _GATHER_SOURCES:
@@ -502,7 +563,10 @@ class OrchestrationExternalSourceProvider:
                 if type(entry.get(key)) is str and entry[key] and entry[key] == selector
             ]
             if len(selected) != 1:
-                raise ResultUnavailableError("result_external_source_unavailable")
+                raise _refusal(
+                    "result_external_source_unavailable",
+                    "selection_ambiguous" if selected else "selection_not_in_catalog",
+                )
             self._check_integration_selection(source_type, producer, run, selected[0], selector)
             resolved = self._resolve_integration(source_type, selected[0], identity, settings)
         elif selector is not None:
@@ -549,7 +613,11 @@ class OrchestrationExternalSourceProvider:
                 )
             ]
             if len(matches) != 1:
-                raise ResultUnavailableError("result_external_source_unavailable")
+                if previous is None:
+                    check = "selection_ambiguous" if matches else "selection_not_in_catalog"
+                else:
+                    check = "reference_ambiguous" if matches else "reference_not_in_catalog"
+                raise _refusal("result_external_source_unavailable", check)
             selected = matches[0]
             selector = selected[key]
             if previous is None:
@@ -603,34 +671,37 @@ class OrchestrationExternalSourceProvider:
             or prepared.get("capability_id") != producer.capability_id
         ):
             raise ResultContractError("result_external_content_invalid")
-        reference = self._reference(
-            producer=producer, source_type=_GATHER_SOURCES[producer.capability_id],
-            content_sha256=_content_digest(prepared),
-            state=self._current(producer, for_write=True), selector=selector,
-        )
+        with _logged_refusals(producer, _STAGE_ADMISSION):
+            reference = self._reference(
+                producer=producer, source_type=_GATHER_SOURCES[producer.capability_id],
+                content_sha256=_content_digest(prepared),
+                state=self._current(producer, for_write=True), selector=selector,
+            )
         return {"external_" + canonical_digest(reference.to_dict())[:48]: reference}
 
     def admit_memory_result(self, *, producer, prepared):
         """Attest explicit retained memory use; never search or refresh saved facts."""
-        reference = self._reference(
-            producer=producer, source_type="fact_memory",
-            content_sha256=_content_digest(prepared), state=self._current(producer, for_write=True),
-        )
+        with _logged_refusals(producer, _STAGE_ADMISSION):
+            reference = self._reference(
+                producer=producer, source_type="fact_memory",
+                content_sha256=_content_digest(prepared), state=self._current(producer, for_write=True),
+            )
         return {"external_" + canonical_digest(reference.to_dict())[:48]: reference}
 
     def authorize(self, reference, *, producer, user_id, conversation_id):
         """Return current exact identity from a trusted committed binding, not a catalog."""
-        if (
-            type(reference) is not ExternalSourceRef or type(producer) is not ProducerIdentity
-            or user_id != self.access.user_id or conversation_id != self.access.conversation_id
-            or reference.capability_id != producer.capability_id or reference.content_sha256 is None
-        ):
-            raise ResultUnavailableError("result_external_source_unavailable")
-        current = self._reference(
-            producer=producer, source_type=reference.source_type,
-            content_sha256=reference.content_sha256,
-            state=self._current(producer, for_write=False), previous=reference,
-        )
-        if current.identity() != reference.identity():
-            raise ResultUnavailableError("result_external_source_unavailable")
+        with _logged_refusals(producer, _STAGE_READ):
+            if (
+                type(reference) is not ExternalSourceRef or type(producer) is not ProducerIdentity
+                or user_id != self.access.user_id or conversation_id != self.access.conversation_id
+                or reference.capability_id != producer.capability_id or reference.content_sha256 is None
+            ):
+                raise _refusal("result_external_source_unavailable", "reference_binding_mismatch")
+            current = self._reference(
+                producer=producer, source_type=reference.source_type,
+                content_sha256=reference.content_sha256,
+                state=self._current(producer, for_write=False), previous=reference,
+            )
+            if current.identity() != reference.identity():
+                raise _refusal("result_external_source_unavailable", "reference_identity_changed")
         return current

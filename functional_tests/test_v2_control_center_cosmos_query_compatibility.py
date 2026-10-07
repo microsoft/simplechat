@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+# test_v2_control_center_cosmos_query_compatibility.py
+"""
+Functional test for V2 Control Center Cosmos query compatibility.
+Version: 0.261.292
+Implemented in: 0.261.292
+
+The Dashboard, Users and Groups sections returned HTTP 500 because Cosmos DB rejected
+their queries with HTTP 400. The azure-cosmos Python SDK cannot run cross-partition
+GROUP BY or COUNT over DISTINCT values, and a two-property ORDER BY needs a composite
+index that user_settings does not have. This test scans every SQL string in the V2
+Control Center code paths and fails if one of those query shapes returns.
+"""
+
+import ast
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT / "application" / "single_app"
+ROUTE = APP / "route_backend_control_center.py"
+CONFIG = APP / "config.py"
+sys.path.insert(0, str(ROOT / "functional_tests"))
+
+from test_support.cosmos_query_guard import assert_cosmos_query_supported, cosmos_query_problems
+from test_support.versioning import assert_app_version_at_least
+
+
+SQL_PATTERN = re.compile(r"\b(SELECT|ORDER\s+BY|GROUP\s+BY)\b", re.IGNORECASE)
+V2_ROUTE_PREFIXES = ("api_v2_control_center_", "_dashboard_", "_control_center_")
+SHARED_ROUTE_HELPERS = {"build_token_usage_query_context", "append_token_usage_filters"}
+
+
+def _activity_log_composite_indexes():
+    """Read the composite index that config.py declares for the activity_logs container."""
+    tree = ast.parse(CONFIG.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "ACTIVITY_LOGS_INDEXING_POLICY"
+                        for target in node.targets)):
+            policy = ast.literal_eval(node.value)
+            return [
+                [(entry["path"], entry["order"]) for entry in index]
+                for index in policy["compositeIndexes"]
+            ]
+    raise AssertionError("ACTIVITY_LOGS_INDEXING_POLICY is missing from config.py.")
+
+
+def _docstring_ids(tree):
+    """Return the AST node IDs of docstrings, which describe queries rather than run them."""
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                ids.add(id(first.value))
+    return ids
+
+
+def _sql_strings(node, skipped_ids):
+    """Yield SQL-bearing string literals and f-strings, with f-string values as placeholders."""
+    for child in ast.walk(node):
+        if id(child) in skipped_ids:
+            continue
+        if isinstance(child, ast.Constant) and isinstance(child.value, str):
+            text = child.value
+        elif isinstance(child, ast.JoinedStr):
+            text = "".join(
+                part.value if isinstance(part, ast.Constant) else "{expr}" for part in child.values
+            )
+        else:
+            continue
+        if SQL_PATTERN.search(text):
+            yield child.lineno, text
+
+
+def _scanned_sql():
+    """Return (location, sql, composite indexes) for every V2 Control Center query string."""
+    found = []
+    route_tree = ast.parse(ROUTE.read_text(encoding="utf-8"))
+    route_docstrings = _docstring_ids(route_tree)
+    for node in ast.walk(route_tree):
+        if isinstance(node, ast.FunctionDef) and (
+            node.name.startswith(V2_ROUTE_PREFIXES) or node.name in SHARED_ROUTE_HELPERS
+        ):
+            found.extend(
+                (f"{ROUTE.name}:{line} ({node.name})", text, ())
+                for line, text in _sql_strings(node, route_docstrings)
+            )
+    for module, indexes in (
+        (APP / "functions_control_center_groups.py", ()),
+        (APP / "functions_control_center_public_workspaces.py", ()),
+        (APP / "functions_control_center_activity.py", _activity_log_composite_indexes()),
+    ):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        found.extend(
+            (f"{module.name}:{line}", text, indexes)
+            for line, text in _sql_strings(tree, _docstring_ids(tree))
+        )
+    return found
+
+
+def test_guard_rejects_query_shapes_the_python_sdk_cannot_run():
+    for query in (
+        "SELECT c.group_id, COUNT(1) AS total FROM c WHERE c.type = 'document_metadata' GROUP BY c.group_id",
+        "SELECT VALUE COUNT(1) FROM ( SELECT DISTINCT c.user_id FROM c WHERE c.activity_type = 'user_login' )",
+        "SELECT VALUE COUNT(DISTINCT c.user_id) FROM c",
+        "SELECT c.id FROM c WHERE 1=1 ORDER BY c.display_name ASC, c.id ASC OFFSET @offset LIMIT @limit",
+        "SELECT c.id FROM c ORDER BY {expr} {expr}, c.id ASC",
+    ):
+        assert cosmos_query_problems(query), f"Guard accepted an unsupported query: {query}"
+
+
+def test_guard_allows_supported_query_shapes():
+    activity_indexes = _activity_log_composite_indexes()
+    for query in (
+        "SELECT DISTINCT VALUE c.user_id FROM c WHERE c.activity_type = 'user_login'",
+        "SELECT VALUE COUNT(1) FROM c WHERE c.workspace_type = @workspace_type",
+        "SELECT VALUE c.status FROM c WHERE IS_DEFINED(c.status)",
+        "SELECT c.id FROM c WHERE (1=1) AND (IS_DEFINED(c.email)) ORDER BY c.email DESC OFFSET @offset LIMIT @limit",
+        "SELECT TOP 20 c.id FROM c WHERE c.group_id = @group_id ORDER BY c.timestamp DESC",
+    ):
+        assert_cosmos_query_supported(query)
+    assert_cosmos_query_supported(
+        "SELECT * FROM c ORDER BY c.timestamp DESC, c.id DESC, c.user_id DESC", activity_indexes,
+    )
+    assert cosmos_query_problems("SELECT * FROM c ORDER BY c.timestamp DESC, c.id DESC, c.user_id DESC")
+
+
+def test_every_v2_control_center_query_is_supported_by_the_python_sdk():
+    scanned = _scanned_sql()
+    assert len(scanned) >= 25, f"Expected to scan the V2 Control Center queries, found {len(scanned)}."
+    failures = [
+        f"{location}: {'; '.join(problems)}"
+        for location, text, indexes in scanned
+        for problems in [cosmos_query_problems(text, indexes)]
+        if problems
+    ]
+    assert not failures, "Unsupported Cosmos query shapes:\n" + "\n".join(failures)
+
+
+def test_scan_covers_the_previously_failing_sections():
+    locations = " ".join(location for location, _, _ in _scanned_sql())
+    for expected in (
+        "_dashboard_count_active_users", "_dashboard_document_upload_counts", "_dashboard_status_rows",
+        "_dashboard_token_insights", "_dashboard_activity_insights", "_control_center_query_user_page",
+        "_control_center_iter_users", "functions_control_center_groups.py",
+    ):
+        assert expected in locations, f"The compatibility scan no longer reaches {expected}."
+
+
+def test_version_is_at_least_the_implementation_version():
+    assert_app_version_at_least("0.261.292")
+
+
+TESTS = [
+    test_guard_rejects_query_shapes_the_python_sdk_cannot_run,
+    test_guard_allows_supported_query_shapes,
+    test_every_v2_control_center_query_is_supported_by_the_python_sdk,
+    test_scan_covers_the_previously_failing_sections,
+    test_version_is_at_least_the_implementation_version,
+]
+
+
+if __name__ == "__main__":
+    for test in TESTS:
+        test()
+        print(f"PASS {test.__name__}")
+    print(f"{len(TESTS)}/{len(TESTS)} Cosmos query compatibility checks passed")
