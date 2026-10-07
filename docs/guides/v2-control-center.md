@@ -1,7 +1,7 @@
 ---
 layout: page
 title: "Use the V2 Control Center"
-description: "Open the permission-aware Control Center pane and check activity-log data only when needed."
+description: "Review usage trends in the V2 Control Center and check activity-log data only when needed."
 section: "Guides"
 audience: admin
 ---
@@ -10,7 +10,15 @@ audience: admin
 
 The V2 Control Center is a separate administration pane for users assigned Control Center access. It is kept out of the primary workspace navigation and appears in **Account → Control Center** when at least one Control Center capability is available to you.
 
-The section rail is filtered to your permissions. Dashboard, user and group management, public workspaces, and activity logs are being delivered in phases. Until a section is available in V2, open the classic Control Center from its placeholder.
+The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. User and group management, public workspaces, and activity logs are being delivered in phases; open the classic Control Center from those sections' placeholders.
+
+## Review dashboard activity
+
+Choose a 7-, 30-, or 90-day period, or set an inclusive custom UTC date range of up to 366 days. Summary cards show user and workspace counts, period activity, token usage, and pending approvals when that count is available. Counts that have no historical snapshots are labeled as current status instead of showing a misleading period delta.
+
+The charts use recorded logins, conversation creation, document creation by workspace type, token usage type, token models, and workspace activity. Select chart points or KPI cards to open the related section with query filters. Use **Export** to download trend data as CSV, or **Chat with these trends** to start a conversation containing the selected trend data. Token filters apply to token totals and token charts; they do not change login, conversation, or upload counts.
+
+The login heatmap reports UTC hours with Monday as weekday zero. Charts include data tables for screen-reader and text-based access. Dashboard summaries are cached for 90 seconds; choose **Refresh** to bypass the cache.
 
 ## Check activity-log data health
 
