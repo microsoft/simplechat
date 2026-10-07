@@ -3,7 +3,7 @@
 """
 Functional test for editing a workflow hand-off in the V2 workflow editor before accepting it.
 Version: 0.261.253
-Implemented in: 0.261.291
+Implemented in: 0.261.293
 
 The hand-off card's Edit opens the draft route's workflow in the V2 workflow editor, and Save sends
 an edited accept, ``{conversation_id, mode: 'edited', workflow}``, with the editor's payload. The

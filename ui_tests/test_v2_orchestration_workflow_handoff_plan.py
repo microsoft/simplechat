@@ -2,7 +2,7 @@
 """
 Real-component browser tests for plans that hand work off to a one-time workflow.
 Version: 0.261.253
-Implemented in: 0.261.291
+Implemented in: 0.261.293
 Refs: microsoft/simplechat#1549, microsoft/simplechat#1543
 
 The production OrchestrationPlanCard, OrchestrationRunView and orchestration controller run in
