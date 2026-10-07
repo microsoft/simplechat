@@ -1,7 +1,7 @@
 # test_v2_control_center_activity_logs.py
 """
 Browser coverage for V2 Activity Logs.
-Version: 0.261.284
+Version: 0.261.285
 Implemented in: 0.261.284
 
 Uses local built assets and intercepted APIs, with the shared Azure Playwright

@@ -1,7 +1,7 @@
 # test_v2_control_center_activity_logs_routes.py
 """
 Functional tests for the Activity Logs HTTP and capability contracts.
-Version: 0.261.284
+Version: 0.261.285
 Implemented in: 0.261.284
 
 Registers the actual new handlers with real authentication/capability decorators,
