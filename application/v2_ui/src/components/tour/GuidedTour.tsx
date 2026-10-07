@@ -37,7 +37,8 @@ const CARD_WIDTH = 320;
 const GAP = 12;
 
 function findTarget(step: TourStep): HTMLElement | null {
-    const element = document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`);
+    const element = Array.from(document.querySelectorAll<HTMLElement>('[data-tour]'))
+        .find((candidate) => candidate.dataset.tour === step.target) ?? null;
     if (!element) {
         return null;
     }

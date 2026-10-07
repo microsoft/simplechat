@@ -9,6 +9,7 @@ import {
     groupWorkspaceSections, navigableSections,
     type ResolvedWorkspaceSection, type WorkspaceSectionDescriptor,
 } from '../../lib/workspaceSections';
+import { normalizeWorkspaceUrl } from '../../lib/workspaceContext';
 
 export interface WorkspaceNavigationSection extends WorkspaceSectionDescriptor {
     label: string;
@@ -55,7 +56,7 @@ export function WorkspaceShell({
                             <><PanelLeftClose size={15} /><span className="hidden md:inline">Collapse</span></>
                         )}
                     </button>
-                    <NavLink to={basePath} end className={linkClass} title={railCollapsed ? 'Overview' : undefined}
+                    <NavLink to={normalizeWorkspaceUrl(basePath, window.location.origin)} end className={linkClass} title={railCollapsed ? 'Overview' : undefined}
                         data-tour="workspace-overview">
                         <LayoutGrid size={15} className="shrink-0" />
                         <span className={railCollapsed ? 'sr-only' : 'sr-only md:not-sr-only md:truncate'}>Overview</span>
@@ -68,7 +69,10 @@ export function WorkspaceShell({
                             {entries.map(({ section }) => {
                                 const Icon = section.icon;
                                 return (
-                                    <NavLink key={section.id} to={`${basePath}/${section.id}`} className={linkClass}
+                                    <NavLink key={section.id} to={normalizeWorkspaceUrl(
+                                        `${basePath}/${encodeURIComponent(section.id)}`,
+                                        window.location.origin,
+                                    )} className={linkClass}
                                         title={railCollapsed ? `${group.label}: ${section.label}` : undefined}>
                                         <Icon size={15} className="shrink-0" />
                                         <span className={railCollapsed ? 'sr-only' : 'sr-only md:not-sr-only md:truncate'}>{section.label}</span>

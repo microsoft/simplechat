@@ -2,8 +2,9 @@
 # test_v2_user_settings_memory_m365.py
 """
 Functional test for V2 User Settings fact memory and Microsoft 365 parity.
-Version: 0.261.279
+Version: 0.261.281
 Implemented in: 0.261.279
+Authorization URL validation updated in: 0.261.281
 
 V2 Preferences now carries the classic profile page's Fact Memory section, as a workbench
 for adding, searching, editing and deleting memories, and its Microsoft 365 sharing and
@@ -61,7 +62,7 @@ def _route_functions(path):
 
 
 def test_version_is_at_least_the_implementation():
-    assert_app_version_at_least("0.261.279")
+    assert_app_version_at_least("0.261.281")
 
 
 def test_preferences_groups_memory_and_connected_accounts():
@@ -182,9 +183,9 @@ def test_m365_revocations_are_confirmed_and_redirects_validated():
     assert "<ConfirmDialog" in source
     assert "Answers and evidence already published to conversations are not removed." in source
     # Workflow connect navigates only to a validated HTTPS sign-in URL.
-    assert "window.location.assign(authorizationUrl(result.authorization_url))" in source
+    assert "window.location.assign(normalizeAuthorizationUrl(result.authorization_url))" in source
     connect_source = _read(M365_CONNECT_TS)
-    assert "export function authorizationUrl(value: unknown): string" in connect_source
+    assert "export function normalizeAuthorizationUrl(value: unknown): string" in connect_source
     assert "target.protocol !== 'https:'" in connect_source
     # Chat reconnect reuses the popup flow rather than navigating away.
     assert "await connectMicrosoft365(selected)" in source

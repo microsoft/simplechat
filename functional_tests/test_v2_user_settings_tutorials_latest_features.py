@@ -2,8 +2,9 @@
 # test_v2_user_settings_tutorials_latest_features.py
 """
 Functional test for V2 guided tours and the Latest Features shortcut.
-Version: 0.261.280
+Version: 0.261.281
 Implemented in: 0.261.280
+URL sink hardening updated in: 0.261.281
 
 The V2 interface now has guided tours for chat and the workspace, with a master switch
 shared with the classic tutorial buttons plus a per-tour choice, and a Latest Features
@@ -100,6 +101,16 @@ def test_tours_are_launchable_and_configurable():
 
     for path in (GUIDANCE_TSX, V2_SRC / "components" / "tour" / "GuidedTour.tsx"):
         assert "display:none" not in _read(path).replace(" ", "")
+
+    # Navigation URLs crossing from API data into the browser have an explicit safe boundary.
+    latest_link = _read(V2_SRC / "components" / "layout" / "LatestFeaturesLink.tsx")
+    guided_tour = _read(V2_SRC / "components" / "tour" / "GuidedTour.tsx")
+    message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
+    workspace_shell = _read(V2_SRC / "components" / "workspace" / "WorkspaceShell.tsx")
+    assert 'href="/support/latest-features"' in latest_link
+    assert "candidate.dataset.tour === step.target" in guided_tour
+    assert "href={safeStreamAuthUrl}" in message_list
+    assert "normalizeWorkspaceUrl(" in workspace_shell
 
 
 def test_bootstrap_exposes_latest_features_nav():

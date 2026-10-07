@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { ApiError, request } from '../../lib/apiClient';
 import {
-    authorizationUrl,
+    normalizeAuthorizationUrl,
     connectMicrosoft365,
     m365Sources,
     M365_APPROVALS_HREF,
@@ -585,7 +585,7 @@ function WorkflowConnectionCard({
                 body: { sources: selected },
             });
             // The sign-in returns to the classic Profile page, which confirms the saved connection.
-            window.location.assign(authorizationUrl(result.authorization_url));
+            window.location.assign(normalizeAuthorizationUrl(result.authorization_url));
         } catch (error) {
             toast.error(errorText(error, 'The workflow connection could not start.'));
             setConnecting(false);

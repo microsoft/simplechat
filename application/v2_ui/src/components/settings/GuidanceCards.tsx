@@ -73,7 +73,7 @@ export function LatestFeaturesCard({
             </div>
             {nav?.available && state.status !== 'development' && (
                 <a
-                    href={nav.url}
+                    href="/support/latest-features"
                     className="mt-3 inline-block text-xs font-medium text-accent hover:underline"
                 >
                     Open Latest Features

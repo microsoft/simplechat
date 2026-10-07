@@ -31,7 +31,7 @@ export function LatestFeaturesLink({ collapsed }: { collapsed: boolean }) {
 
     const link = (
         <a
-            href={nav.url}
+            href="/support/latest-features"
             title={collapsed ? 'Latest Features' : undefined}
             aria-label={collapsed ? 'Latest Features' : undefined}
             className={clsx(
