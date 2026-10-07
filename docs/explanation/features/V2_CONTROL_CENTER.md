@@ -1,6 +1,6 @@
 # V2 Control Center
 
-The V2 Control Center is a permission-aware administration pane for managing SimpleChat. It provides a usage dashboard, user/group/public-workspace management, activity investigations, and an explicitly invoked activity-log data-health tool.
+The V2 Control Center is a permission-aware administration pane for managing SimpleChat. It provides a usage dashboard, user/group/public-workspace management, and activity investigations.
 
 **Dashboard implemented in version:** 0.261.279
 **Foundation implemented in version:** 0.261.278
@@ -8,7 +8,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Groups implemented in version:** 0.261.282
 **Activity Logs implemented in version:** 0.261.284
 **Public Workspaces implemented in version:** 0.261.283
-**Current version:** 0.261.286 (Public Workspace validation-safety fixes above the integrated management phases)
+**Current version:** 0.261.290 (Dashboard, Users and Groups query fixes for the Python Cosmos SDK; Data health removed)
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 
@@ -16,13 +16,15 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 
 The Control Center is a distinct React route (`/control-center` and `/control-center/<section>`), reached from the account menu when the signed-in user has at least one Control Center capability. It is not a primary workspace-navigation item. The internal section rail has a separate per-user collapsed-state preference.
 
-`get_control_center_capabilities()` in `functions_authentication.py` is the shared permission decision for both `control_center_required()` and the `/api/v2/bootstrap` response. When the ControlCenterAdmin role requirement is enabled, that role grants all capabilities; otherwise the regular Admin role grants them. The optional ControlCenterDashboardReader role grants dashboard viewing only when its setting is enabled. The bootstrap payload exposes `can_view_dashboard`, `can_manage_users`, `can_manage_groups`, `can_manage_workspaces`, `can_view_activity_logs`, and `can_run_maintenance`.
+`get_control_center_capabilities()` in `functions_authentication.py` is the shared permission decision for both `control_center_required()` and the `/api/v2/bootstrap` response. When the ControlCenterAdmin role requirement is enabled, that role grants all capabilities; otherwise the regular Admin role grants them. The optional ControlCenterDashboardReader role grants dashboard viewing only when its setting is enabled. The bootstrap payload exposes `can_view_dashboard`, `can_manage_users`, `can_manage_groups`, `can_manage_workspaces`, `can_view_activity_logs`, and `can_run_maintenance`. Since Data health was removed in 0.261.290, no V2 section uses `can_run_maintenance`; it remains part of the shared capability contract.
 
 ## Dashboard
 
 Users, Groups and Public Workspaces management are available with `can_manage_users`, `can_manage_groups` and `can_manage_workspaces`, respectively.
 
 The Dashboard is available to users with `can_view_dashboard`, including users assigned the configured ControlCenterDashboardReader role. `GET /api/v2/control-center/dashboard/summary` returns counts and period comparisons; `GET /api/v2/control-center/dashboard/insights` returns grouped chart data. Both use a 90-second in-process cache keyed by the date range and token filters. Pass `force_refresh=1` to bypass it.
+
+Neither endpoint runs cross-partition `GROUP BY` or `COUNT` over `DISTINCT` values: the azure-cosmos Python SDK cannot run either, and Cosmos rejects such a query with HTTP 400. Active-user, DAU, WAU and MAU counts count the results of `SELECT DISTINCT VALUE c.user_id`. Uploads by workspace type subtract the `group` and `public` counts from the period total; any other or missing type is personal. Group and public-workspace status counts tally a `SELECT VALUE c.status` projection. Insights stream two narrow projections, the filtered token records and the activity window, and aggregate them in the application. Each login heatmap cell totals one UTC weekday and hour across the whole period, and rankings with equal totals are ordered by ID. See [V2 Control Center Cosmos Query Compatibility Fix](../fixes/V2_CONTROL_CENTER_COSMOS_QUERY_COMPATIBILITY_FIX.md).
 
 The date presets are 7, 30, and 90 UTC calendar days. Custom ranges use `start_date` and `end_date` in `YYYY-MM-DD` format and are limited to 366 days. The trend charts reuse the existing activity-trends and token-filter APIs, CSV export, and “Chat with these trends” endpoint. Chart data is grouped from the fields written by `functions_activity_logging.py`: `user_login.timestamp`, creation activity types and `workspace_type`, and `token_usage.usage.model`, `usage.total_tokens`, `token_type`, `user_id`, and `workspace_context` IDs. The login heatmap uses UTC and Monday=0.
 
@@ -49,13 +51,11 @@ The Users section supports server-side search by email or display name, access a
 
 `GET /api/v2/control-center/users` returns cached login, conversation, document, and token metrics with their calculation timestamps. Its response includes the oldest and newest metric timestamps and the count of users on the current page without a cached metric snapshot so administrators can judge freshness. `GET /api/v2/control-center/users/<user_id>` returns the profile and current access/upload restrictions, usage summary, the most recent activity records, and group/public-workspace memberships and ownership.
 
+Each Users query orders a single property, because a two-property `ORDER BY` needs a composite index that `user_settings` does not have. Users with a recorded value for the sort column come first, in the chosen direction. Users without one follow in ID order, so missing values are listed last in either direction, and a page can continue from one population into the other. Equal recorded values have no guaranteed secondary order. The automatic index serves both queries, so existing deployments need no index change.
+
 Administrators can change access or upload restrictions for one user, or select explicit users and users matching the current filters across pages. Filter-based bulk selection supports exclusions and is capped at 500 accounts. Bulk changes use the existing user settings update path so established activity and audit behavior remains in effect. Deleting a user's documents creates an approval request; it does not directly delete the documents.
 
-`GET /api/v2/control-center/users/export.csv` exports all users matching the current filters. CSV cells beginning with `=`, `+`, `-`, or `@` are prefixed to prevent spreadsheet formula execution. The Activity tab's link carries `user_id` into the Activity Logs section.
-
-## Data health
-
-Data health is available to users with `can_run_maintenance`. Its Check button calls `GET /api/admin/control-center/migrate/status` only when requested. Run backfill requires confirmation and calls `POST /api/admin/control-center/migrate/all`. The legacy-flag counts do not prove that activity logs are missing: normal application writers already record activity, so the backfill is normally unnecessary. The backfill checks for a matching resource creation record in the user's activity-log partition and uses stable per-resource IDs to avoid duplicate writes on repeated or concurrent runs.
+`GET /api/v2/control-center/users/export.csv` exports all users matching the current filters, in the list's order. It runs its first query before streaming, so a storage failure returns an error rather than a header-only file. CSV cells beginning with `=`, `+`, `-`, or `@` are prefixed to prevent spreadsheet formula execution. The Activity tab's link carries `user_id` into the Activity Logs section.
 
 ## Groups
 
@@ -80,9 +80,9 @@ The Groups section helps administrators find shared workspaces that need attenti
 | `page`, `per_page` | Server paging, default 25 and maximum 250 rows |
 | `force_refresh=1` | Rebuild the server inventory instead of using its 90-second cache |
 
-`functions_control_center_groups.py` builds an inventory with four batched Cosmos queries: projected groups, document metadata counts, all-time token totals, and latest activity timestamps. Activity includes the top-level `group_id`, nested `group.group_id`, and `workspace_context.group_id` writer shapes. Filtering, sorting and paging occur on the server after aggregation; neither the browser nor per-row enrichment performs filtering or counting. This deliberately avoids N+1 queries and Cosmos ordering on undefined/computed fields. Tied sort values use stable ID ordering and missing activity sorts last in either direction. Failed aggregates fail the request rather than silently reporting zero.
+`functions_control_center_groups.py` builds an inventory with four batched Cosmos queries. One projects the groups. The other three stream narrow projections that the application aggregates into document counts, all-time token totals and latest activity timestamps: document metadata group IDs, group token records, and a coalesced group ID with timestamp. The Python Cosmos SDK cannot run cross-partition `GROUP BY`. Activity includes the top-level `group_id`, nested `group.group_id`, and `workspace_context.group_id` writer shapes. Filtering, sorting and paging occur on the server after aggregation; neither the browser nor per-row enrichment performs filtering or counting. This deliberately avoids N+1 queries and Cosmos ordering on undefined/computed fields. Tied sort values use stable ID ordering and missing activity sorts last in either direction. Failed aggregates fail the request rather than silently reporting zero.
 
-The response includes `groups`, `pagination`, and `metrics_freshness` with the snapshot's `calculated_at`, source and TTL. List/CSV totals can lag external writes by up to 90 seconds; **Refresh groups** bypasses the cache. Memory and rebuild cost scale with the group inventory and activity aggregates; this is not continuation-token pagination. Legacy storage-size estimates retain their own older refresh timestamp and are not represented as current counts.
+The response includes `groups`, `pagination`, and `metrics_freshness` with the snapshot's `calculated_at`, source and TTL. List/CSV totals can lag external writes by up to 90 seconds; **Refresh groups** bypasses the cache. Rebuild cost scales with the number of group documents and all-time group token and activity records, while memory holds only per-group totals. This is not continuation-token pagination. Legacy storage-size estimates retain their own older refresh timestamp and are not represented as current counts.
 
 `POST /api/v2/control-center/groups/bulk-status` accepts either `group_ids` or a `filter` object, plus `status` and `reason`. Filter selection accepts the same filter fields, supports `exclude_ids`, and resolves against a fresh server inventory. The full population is capped at 500 before any writes occur. Locked/inactive status requires a nonblank reason (maximum 2,000 characters). `PUT /api/v2/control-center/groups/<id>/status` has the same reason rule. Both call the classic single-status writer, preserving etag conflict handling, status history, activity logging and App Insights audit events. Partial results report `success_count`, `failed_count`, and individual `failed_groups`; unchanged groups succeed without duplicate audit records. The classic status route keeps its existing optional-reason behavior.
 
@@ -172,12 +172,12 @@ An existing executor limitation remains: document deletion catches individual do
 
 ## Usage
 
-Open **Account → Control Center**, then select a section in its internal rail. A bookmarked section URL opens that section directly. On the Dashboard, select a date range and optional token filters; charts include accessible data tables, and chart selections link to the corresponding filtered activity view. Export downloads the trend data as CSV. “Chat with these trends” creates a conversation containing the selected trend data. The Data health page is intended for explicit diagnosis or a known recovery scenario; check first, and run the backfill only when the result and operational context justify it.
+Open **Account → Control Center**, then select a section in its internal rail. A bookmarked section URL opens that section directly; an unknown section, such as a bookmark to the removed Data health page, opens the Dashboard. On the Dashboard, select a date range and optional token filters; charts include accessible data tables, and chart selections link to the corresponding filtered activity view. Export downloads the trend data as CSV. “Chat with these trends” creates a conversation containing the selected trend data.
 
 ## Testing and limitations
 
-Functional checks cover dashboard status normalization, period deltas, cache expiry and refresh, dashboard-reader access, capability parity, bootstrap exposure, manual-only migration checks, and route wiring. Playwright coverage verifies the Data health interaction and capability visibility. Top activity and token rankings are limited to entities present in the recorded `user_id` and workspace-context fields; unlogged historical status snapshots and model/provider details are not inferred.
+Functional checks cover dashboard status normalization, period deltas, cache expiry and refresh, dashboard-reader access, capability parity, bootstrap exposure, and route wiring. Route-level tests run the real Dashboard and Users handlers, and the Groups inventory, against fake containers that reject query shapes the Python Cosmos SDK cannot run. `functional_tests/test_v2_control_center_cosmos_query_compatibility.py` scans every V2 Control Center SQL string for cross-partition `GROUP BY`, `COUNT` over `DISTINCT` values, and multi-property `ORDER BY` without a declared composite index. Playwright coverage verifies capability-based section visibility and that the removed Data health section stays absent, including for its old URL. Top activity and token rankings are limited to entities present in the recorded `user_id` and workspace-context fields; unlogged historical status snapshots and model/provider details are not inferred.
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.282**, public workspace management in **0.261.283**, and Activity Logs in **0.261.284**.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.282**, public workspace management in **0.261.283**, and Activity Logs in **0.261.284**. In **0.261.290**, the Dashboard, Users and Groups queries were made compatible with the Python Cosmos SDK. The same release removed the Data health section and its `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all` backfill APIs; the classic Control Center had already stopped using them.

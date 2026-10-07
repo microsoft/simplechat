@@ -2,18 +2,29 @@
 # test_v2_control_center_users.py
 """
 Functional test for V2 Control Center user management.
-Version: 0.261.280
+Version: 0.261.290
 Implemented in: 0.261.280
 
 This test validates Users filtering, sorting, paging, detail data boundaries,
 bulk-action limits, admin-only authorization, cached metric freshness and CSV safety.
+Since 0.261.290 the list and export order one property per query, because the
+user_settings container has no composite index for a two-property ORDER BY.
 """
 
 import ast
+import copy
+import csv
+import logging
 import re
 import sys
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import version as package_version
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
+
+import werkzeug
+from flask import Blueprint, Flask, Response, jsonify, request, stream_with_context
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "application" / "single_app"
@@ -21,6 +32,7 @@ ROUTE = APP / "route_backend_control_center.py"
 AUTH = APP / "functions_authentication.py"
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
+from test_support.cosmos_query_guard import assert_cosmos_query_supported
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -28,22 +40,46 @@ HELPERS = {
     "_control_center_validate_user_id",
     "_control_center_parse_user_filters",
     "_control_center_user_where",
+    "_control_center_user_populations",
+    "_control_center_count_users",
+    "_control_center_query_user_page",
+    "_control_center_iter_users",
     "_control_center_effective_restriction",
     "_control_center_user_row",
     "_control_center_csv_safe_cell",
+    "parse_control_center_management_pagination",
+    "get_control_center_total_pages",
+    "clamp_control_center_page",
 }
+ASSIGNMENTS = {
+    "CONTROL_CENTER_USER_ID_PATTERN",
+    "CONTROL_CENTER_USER_SORTS",
+    "CONTROL_CENTER_USER_FIELDS",
+    "CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE",
+    "CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE",
+}
+USER_ROUTES = {"api_v2_control_center_users", "api_v2_control_center_users_export"}
+POPULATION = re.compile(r"(NOT )?\(IS_DEFINED\((c\.[\w.]+)\) AND NOT IS_NULL\(\2\)\)")
+ORDER = re.compile(r"ORDER BY (c\.[\w.]+) (ASC|DESC)")
+USERS = [
+    {"id": "u-carol", "email": "carol@example.test", "display_name": "Carol",
+     "settings": {"metrics": {"token_metrics": {"total_tokens": 30}}}},
+    {"id": "u-alice", "email": "alice@example.test", "display_name": "Alice",
+     "settings": {"metrics": {"token_metrics": {"total_tokens": 10}}}},
+    {"id": "u-bob", "email": "bob@example.test", "display_name": "Bob", "settings": {}},
+    {"id": "u-zed", "email": "zed@example.test",
+     "settings": {"metrics": {"token_metrics": {"total_tokens": None}}}},
+    {"id": "u-amy", "email": "=amy@example.test", "display_name": None,
+     "settings": {"metrics": {"token_metrics": {"total_tokens": 20}}}},
+]
 
 
-def _route_helpers():
+def _route_helpers(extra=None):
     tree = ast.parse(ROUTE.read_text(encoding="utf-8"))
     assignments = [
         node for node in tree.body
         if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and target.id in {"CONTROL_CENTER_USER_ID_PATTERN", "CONTROL_CENTER_USER_SORTS"}
-            for target in node.targets
-        )
+        and any(isinstance(target, ast.Name) and target.id in ASSIGNMENTS for target in node.targets)
     ]
     functions = [
         node for node in tree.body
@@ -55,6 +91,7 @@ def _route_helpers():
         "datetime": datetime,
         "timedelta": timedelta,
         "timezone": timezone,
+        **(extra or {}),
     }
     exec(compile(ast.Module(body=assignments + functions, type_ignores=[]), str(ROUTE), "exec"), namespace)
     return namespace
@@ -67,6 +104,70 @@ def _route_functions(path):
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef)
     }
+
+
+def _field_value(row, path):
+    value = row
+    for key in path.removeprefix("c.").split("."):
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+class UserSettingsContainer:
+    """Serve the Users query shapes as Cosmos would, after the SDK query guard accepts them."""
+
+    def __init__(self, users, fail=False):
+        self.users = users
+        self.fail = fail
+        self.queries = []
+
+    def query_items(self, query, parameters=None, **kwargs):
+        assert_cosmos_query_supported(query)
+        assert kwargs.get("enable_cross_partition_query") is True
+        self.queries.append(query)
+        if self.fail:
+            raise RuntimeError("secret-storage-detail")
+        values = {item["name"]: item["value"] for item in parameters or []}
+        rows = [copy.deepcopy(row) for row in self.users]
+        population = POPULATION.search(query)
+        if population:
+            recorded = population.group(1) is None
+            rows = [row for row in rows if (_field_value(row, population.group(2)) is not None) == recorded]
+        if "SELECT VALUE COUNT(1)" in query:
+            return iter([len(rows)])
+        path, direction = ORDER.search(query).groups()
+        rows.sort(key=lambda row: _field_value(row, path), reverse=direction == "DESC")
+        if "OFFSET @offset LIMIT @limit" in query:
+            rows = rows[values["@offset"]:values["@offset"] + values["@limit"]]
+        return iter(rows)
+
+
+def _users_client(container):
+    """Register the real Users list and export routes against a fake user_settings container."""
+    tree = ast.parse(ROUTE.read_text(encoding="utf-8"))
+    routes = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in USER_ROUTES]
+    assert {node.name for node in routes} == USER_ROUTES
+    blueprint = Blueprint("v2_users_test", __name__)
+    events = []
+
+    def passthrough(*_args, **_kwargs):
+        return lambda function: function
+
+    namespace = _route_helpers({
+        "csv": csv, "StringIO": StringIO, "Response": Response, "stream_with_context": stream_with_context,
+        "jsonify": jsonify, "request": request, "logging": logging, "bp": blueprint,
+        "swagger_route": passthrough, "get_auth_security": lambda: None,
+        "login_required": lambda function: function, "control_center_required": passthrough,
+        "log_event": lambda *args, **kwargs: events.append((args, kwargs)),
+        "cosmos_user_settings_container": container,
+    })
+    exec(compile(ast.Module(body=routes, type_ignores=[]), str(ROUTE), "exec"), namespace)
+    app = Flask("v2_users_test")
+    app.config.update(TESTING=True)
+    app.register_blueprint(blueprint)
+    # Flask 2.x test clients read werkzeug.__version__, which Werkzeug 3 no longer defines.
+    with patch.object(werkzeug, "__version__", package_version("werkzeug"), create=True):
+        return app.test_client(), events
 
 
 def test_filter_contract_is_parameterized_and_supports_dashboard_drillthrough():
@@ -99,6 +200,80 @@ def test_filter_contract_is_parameterized_and_supports_dashboard_drillthrough():
     assert '"total_items": total' in route
     assert '"metrics_freshness"' in route
     assert "CONTROL_CENTER_USER_SORTS[filters[\"sort\"]]" in route
+
+
+def test_each_population_orders_one_property_without_a_composite_index():
+    helpers = _route_helpers()
+    for sort, field in helpers["CONTROL_CENTER_USER_SORTS"].items():
+        for direction in ("asc", "desc"):
+            filters = helpers["_control_center_parse_user_filters"]({"sort": sort, "direction": direction})
+            (recorded, recorded_order), (missing, missing_order) = (
+                helpers["_control_center_user_populations"](filters)
+            )
+            assert recorded == f"(IS_DEFINED({field}) AND NOT IS_NULL({field}))"
+            assert missing == f"NOT {recorded}"
+            assert recorded_order == f"ORDER BY {field} {direction.upper()}"
+            assert missing_order == "ORDER BY c.id ASC"
+            for clause, order in ((recorded, recorded_order), (missing, missing_order)):
+                assert_cosmos_query_supported(f"SELECT c.id FROM c WHERE (1=1) AND {clause} {order}")
+
+
+def test_list_pages_cross_from_recorded_to_missing_sort_values():
+    container = UserSettingsContainer(USERS)
+    client, events = _users_client(container)
+    pages = []
+    for page in (1, 2, 3):
+        response = client.get(f"/api/v2/control-center/users?sort=name&direction=asc&per_page=2&page={page}")
+        assert response.status_code == 200, events
+        payload = response.get_json()
+        assert payload["pagination"]["total_items"] == 5
+        assert payload["pagination"]["total_pages"] == 3
+        pages.append([user["id"] for user in payload["users"]])
+    assert pages == [["u-alice", "u-bob"], ["u-carol", "u-amy"], ["u-zed"]]
+
+    descending = client.get("/api/v2/control-center/users?sort=name&direction=desc&per_page=2&page=2")
+    assert [user["id"] for user in descending.get_json()["users"]] == ["u-alice", "u-amy"]
+
+    tokens = client.get("/api/v2/control-center/users?sort=tokens&direction=desc&per_page=10")
+    assert [user["id"] for user in tokens.get_json()["users"]] == ["u-carol", "u-amy", "u-alice", "u-bob", "u-zed"]
+    assert [user["tokens"] for user in tokens.get_json()["users"]] == [30, 20, 10, None, None]
+
+    clamped = client.get("/api/v2/control-center/users?sort=name&per_page=2&page=9").get_json()
+    assert clamped["pagination"]["page"] == 3
+    assert [user["id"] for user in clamped["users"]] == ["u-zed"]
+    assert all("ORDER BY c.display_name ASC, c.id" not in query for query in container.queries)
+
+
+def test_empty_user_list_returns_one_empty_page():
+    client, _ = _users_client(UserSettingsContainer([]))
+    payload = client.get("/api/v2/control-center/users").get_json()
+    assert payload["users"] == []
+    assert payload["pagination"] == {
+        "page": 1, "per_page": 25, "total_items": 0, "total_pages": 1, "has_prev": False, "has_next": False,
+    }
+
+
+def test_export_streams_recorded_values_then_missing_values():
+    client, events = _users_client(UserSettingsContainer(USERS))
+    response = client.get("/api/v2/control-center/users/export.csv?sort=tokens&direction=asc")
+    assert response.status_code == 200, events
+    rows = list(csv.reader(StringIO(response.get_data(as_text=True))))
+    assert rows[0][:3] == ["id", "display_name", "email"]
+    assert [row[0] for row in rows[1:]] == ["u-alice", "u-amy", "u-carol", "u-bob", "u-zed"]
+    assert rows[2][2] == "'=amy@example.test"
+
+
+def test_list_and_export_failures_are_safe_and_happen_before_streaming():
+    client, events = _users_client(UserSettingsContainer(USERS, fail=True))
+    for path in ("/api/v2/control-center/users", "/api/v2/control-center/users/export.csv"):
+        response = client.get(path)
+        assert response.status_code == 500
+        assert response.mimetype == "application/json"
+        assert "secret-storage-detail" not in response.get_data(as_text=True)
+    assert {args[0] for args, _ in events} == {
+        "[CONTROL_CENTER] V2 user list query failed.",
+        "[CONTROL_CENTER] V2 user export query failed.",
+    }
 
 
 def test_filter_validation_rejects_unbounded_or_unknown_fields():
@@ -209,7 +384,7 @@ def test_csv_cells_neutralize_all_formula_prefixes_and_export_is_streamed():
         _route_functions(ROUTE)["api_v2_control_center_users_export"],
     )
     assert "stream_with_context(stream_csv())" in route_source
-    assert "_control_center_user_where(filters)" in route_source
+    assert "_control_center_iter_users(" in route_source
     assert "_control_center_csv_safe_cell(value)" in route_source
 
 
@@ -243,11 +418,16 @@ def test_routes_require_full_control_center_admin_not_dashboard_reader():
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.280")
+    assert_app_version_at_least("0.261.290")
 
 
 TESTS = [
     test_filter_contract_is_parameterized_and_supports_dashboard_drillthrough,
+    test_each_population_orders_one_property_without_a_composite_index,
+    test_list_pages_cross_from_recorded_to_missing_sort_values,
+    test_empty_user_list_returns_one_empty_page,
+    test_export_streams_recorded_values_then_missing_values,
+    test_list_and_export_failures_are_safe_and_happen_before_streaming,
     test_filter_validation_rejects_unbounded_or_unknown_fields,
     test_user_ids_expiry_and_cached_row_projection_are_validated,
     test_allow_filters_exclude_active_denials_with_null_or_future_expiry,

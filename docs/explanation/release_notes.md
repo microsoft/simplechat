@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.290)**
+
+#### Bug Fixes
+
+*   **V2 Control Center Dashboard, Users and Groups Load Again**
+    *   The Dashboard showed "Failed to retrieve dashboard insights.", and Users and Groups showed "Unable to retrieve users." and "Unable to retrieve groups." Cosmos DB rejected their queries with HTTP 400. The azure-cosmos Python SDK cannot run cross-partition `GROUP BY` or `COUNT` over `DISTINCT` values, and the Users sort used a two-property `ORDER BY` that needs a composite index the `user_settings` container does not have.
+    *   The affected queries now use shapes the SDK supports. Distinct values and counts are aggregated in the application, the Groups inventory streams narrow projections, and Users orders by one property at a time, listing accounts without a recorded sort value last. Existing deployments need no index change or App Maintenance step.
+    *   The login heatmap now totals each UTC weekday and hour across the whole period instead of showing a single date's count. The Users CSV export now reports a storage failure as an error instead of returning a file with only the header row.
+    *   A compatibility test scans every V2 Control Center query so these shapes cannot return.
+    *   (Ref: `route_backend_control_center.py`, `functions_control_center_groups.py`, `test_v2_control_center_cosmos_query_compatibility.py`, [V2 Control Center Cosmos Query Compatibility Fix](fixes/V2_CONTROL_CENTER_COSMOS_QUERY_COMPATIBILITY_FIX.md))
+
+#### Breaking Changes
+
+*   **V2 Control Center Data Health Removed**
+    *   The Data health section has been removed, together with the activity-log backfill APIs that only it used: `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all`. The classic Control Center had already stopped calling them, and normal application workflows record activity themselves.
+    *   **Migration**: None required. A bookmark to the old Data health page now opens the Dashboard.
+    *   (Ref: `ControlCenterPage.tsx`, `route_backend_control_center.py`, `functions_activity_logging.py`, [Activity Log Migration Prompt Fix](fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
 ### **(v0.261.288)**
 
 #### New Features

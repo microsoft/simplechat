@@ -1,12 +1,14 @@
 # test_v2_control_center_groups.py
 """
 Functional tests for V2 Control Center Groups.
-Version: 0.261.283
+Version: 0.261.290
 Implemented in: 0.261.282
 
 Run real filters and routes over isolated Cosmos services and the real guarded
 group writer. Cover selection caps before writes, audit parity, detail projections,
 admin-only access, snapshot expiry, safe exports and approval-only actions.
+Since 0.261.290 the inventory fakes reject GROUP BY, because the Python Cosmos SDK
+cannot run it across partitions; the inventory aggregates streamed projections.
 """
 
 import ast
@@ -22,6 +24,7 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import Blueprint, Flask, Response
 
 from test_support.control_center_group_harness import control_center_group_environment
+from test_support.cosmos_query_guard import assert_cosmos_query_supported
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -44,6 +47,7 @@ class InventoryGroups:
         self.queries = []
 
     def query_items(self, query, **kwargs):
+        assert_cosmos_query_supported(query)
         self.queries.append(query)
         assert "SELECT c.id, c.name" in query and "FROM c" in query
         fields = ("id", "name", "description", "owner", "users", "admins", "documentManagers",
@@ -60,10 +64,11 @@ class InventoryDocuments:
         self.queries = []
 
     def query_items(self, query, **kwargs):
+        assert_cosmos_query_supported(query)
         self.queries.append(query)
         assert "c.type = 'document_metadata'" in query
-        assert "COUNT(1)" in query and "GROUP BY c.group_id" in query
-        return [{"group_id": "group-1", "total": 2}]
+        assert "SELECT VALUE c.group_id" in query
+        return iter(["group-1", "group-1"])
 
 
 class InventoryActivity:
@@ -71,14 +76,18 @@ class InventoryActivity:
         self.queries = []
 
     def query_items(self, query, **kwargs):
+        assert_cosmos_query_supported(query)
         self.queries.append(query)
-        if "SUM(c.usage.total_tokens)" in query:
-            assert "GROUP BY c.workspace_context.group_id" in query
-            return [{"group_id": "group-1", "total": 120}]
-        if "MAX(c.timestamp)" in query:
+        if "c.usage.total_tokens AS tokens" in query:
+            assert "c.activity_type = 'token_usage'" in query
+            return iter([{"group_id": "group-1", "tokens": 100}, {"group_id": "group-1", "tokens": 20}])
+        if "IIF(" in query:
             assert "IS_STRING(c.group_id) AND c.group_id != ''" in query
             assert "IS_STRING(c.group.group_id) AND c.group.group_id != ''" in query
-            return [{"group_id": "group-1", "last_activity": "2026-10-06T00:00:00Z"}]
+            return iter([
+                {"group_id": "group-1", "timestamp": "2026-10-06T00:00:00Z"},
+                {"group_id": "group-1", "timestamp": "2026-10-01T00:00:00Z"},
+            ])
         if "TOP 20" in query:
             assert "c.group_id = @group_id" in query and "c.workspace_context.group_id = @group_id" in query
             return [{"id": "event-1", "activity_type": "group_status_change", "timestamp": "2026-10-06T00:00:00Z"}]
@@ -184,6 +193,55 @@ def test_inventory_failures_are_safe_not_validation_messages(routes, monkeypatch
     response = client.get(path)
     assert response.status_code == 500
     assert "secret-storage-credential" not in response.get_data(as_text=True)
+
+
+class ProjectionContainer:
+    def __init__(self, responses):
+        self.responses = responses
+        self.queries = []
+
+    def query_items(self, query, **kwargs):
+        assert_cosmos_query_supported(query)
+        assert kwargs.get("enable_cross_partition_query") is True
+        self.queries.append(query)
+        for marker, rows in self.responses:
+            if marker in query:
+                return iter(rows)
+        raise AssertionError(f"Unexpected inventory query: {query}")
+
+
+def test_inventory_aggregates_projections_without_group_by():
+    groups = ProjectionContainer([("SELECT c.id, c.name", [
+        {"id": "alpha", "name": "Alpha", "owner": {"id": "o1"}, "users": []},
+        {"id": "beta", "name": "Beta", "owner": {"id": "o2"}, "users": []},
+        {"id": "idle", "name": "Idle", "owner": {"id": "o3"}, "users": []},
+    ])])
+    documents = ProjectionContainer([("SELECT VALUE c.group_id", ["alpha", "beta", "alpha", "orphan"])])
+    activity = ProjectionContainer([
+        ("c.usage.total_tokens AS tokens", [
+            {"group_id": "alpha", "tokens": 100}, {"group_id": "alpha", "tokens": 2.5},
+            {"group_id": "beta", "tokens": 7}, {"group_id": "orphan", "tokens": 50},
+        ]),
+        ("IIF(", [
+            {"group_id": "alpha", "timestamp": "2026-10-01T08:00:00Z"},
+            {"group_id": "alpha", "timestamp": "2026-10-06T09:00:00Z"},
+            {"group_id": "beta", "timestamp": "2026-09-30T23:59:59Z"},
+            {"group_id": "alpha", "timestamp": "2026-10-03T00:00:00Z"},
+        ]),
+    ])
+    inventory = inventory_module.load_group_inventory(groups, documents, activity)
+    rows = {row["id"]: row for row in inventory["rows"]}
+    assert set(rows) == {"alpha", "beta", "idle"}
+    assert (rows["alpha"]["documents"], rows["alpha"]["tokens"], rows["alpha"]["last_activity"]) == (
+        2, 102, "2026-10-06T09:00:00Z",
+    )
+    assert (rows["beta"]["documents"], rows["beta"]["tokens"], rows["beta"]["last_activity"]) == (
+        1, 7, "2026-09-30T23:59:59Z",
+    )
+    assert (rows["idle"]["documents"], rows["idle"]["tokens"], rows["idle"]["last_activity"]) == (0, 0, None)
+    assert isinstance(rows["alpha"]["tokens"], int)
+    assert len(groups.queries) + len(documents.queries) + len(activity.queries) == 4
+    assert inventory["calculated_at"]
 
 
 def test_missing_status_and_dates_and_all_sorts_are_consistent():
@@ -331,7 +389,7 @@ def test_routes_have_explicit_admin_and_swagger_decorators():
             decorators = [ast.unparse(decorator) for decorator in node.decorator_list]
             assert "login_required" in decorators and "control_center_required('admin')" in decorators
             assert "swagger_route(security=get_auth_security())" in decorators
-    assert_app_version_at_least("0.261.282")
+    assert_app_version_at_least("0.261.290")
 
 
 if __name__ == "__main__":
