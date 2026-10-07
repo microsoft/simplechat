@@ -21,6 +21,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Microsoft 365 sharing, chat connection, workflow connection, and workflow authorizations match the classic page, including CSRF-protected writes and confirmed revocations.
     *   (Ref: `FactMemoryBench.tsx`, `M365Cards.tsx`, `PreferencesTab.tsx`)
 
+*   **Feedback and Safety Review in V2**
+    *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
+    *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
+    *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](../guides/admin-review-feedback.md), [Safety Violation Review](../guides/admin-review-safety-violations.md))
+
 ### **(v0.261.278)**
 
 #### New Features
@@ -28,6 +33,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Voice, Audio and Retention in V2 User Settings**
     *   Completion sounds with preview and mute, spoken reply voice, speed, and auto-play, microphone permission status, and personal retention for conversations and documents.
     *   (Ref: `PreferencesTab.tsx`, `lib/speechPlayback.ts`, `/api/retention-policy/user`)
+
+*   **V2 Control Center Foundation**
+    *   Adds the permission-aware V2 Control Center pane, reusable management primitives, and a manually invoked activity-log data-health check and backfill.
+    *   The classic page no longer scans for migration status on every visit; the retained backfill skips existing activity events and uses stable IDs for reruns.
+    *   (Ref: `ControlCenterPage.tsx`, `functions_authentication.py`, `route_backend_v2.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md), [Activity Log Migration Prompt Fix](fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
 
 #### Bug Fixes
 
@@ -42,6 +52,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **V2 User Settings Follows the Admin Settings Design**
     *   A collapsible section rail remembered per user, full-width settings cards, and an **On this page** index on every tab. Preferences are grouped instead of listed, and the Violations tab is always listed.
     *   (Ref: `SettingsPage.tsx`, `SettingsCard.tsx`, `v2UserSettingsRailCollapsed`)
+
+*   **Agent Editor No Longer Shows GUIDs**
+    *   The agent editor for personal, group and global agents no longer shows internal identifiers. The header shows the agent's own icon, such as the Microsoft 365 logo, and its description instead of a stable ID.
+    *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
+    *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
+    *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
 
 #### Bug Fixes
 

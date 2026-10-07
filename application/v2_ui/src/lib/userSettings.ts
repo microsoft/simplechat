@@ -87,6 +87,9 @@ export interface UserSettings {
      */
     v2AdminRailCollapsed?: boolean;
 
+    /** Whether the V2 Control Center section rail is collapsed to icons. */
+    v2ControlCenterRailCollapsed?: boolean;
+
     /**
      * Whether the User Settings sections rail shows icons only. Its own key for the same
      * reason the admin and workspace rails have theirs.
@@ -236,6 +239,8 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2AdminRailCollapsed',
     // Whether the User Settings sections rail is showing icons only.
     'v2UserSettingsRailCollapsed',
+    // Separate from the shell and Admin Settings rails so each keeps its own layout.
+    'v2ControlCenterRailCollapsed',
     // Workspace documents explorer: how the list is presented, and the saved filter
     // combinations pinned in its navigation rail.
     'v2DocumentsPrefs',

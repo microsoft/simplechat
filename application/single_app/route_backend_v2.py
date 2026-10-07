@@ -78,6 +78,7 @@ from functions_branding_urls import (
 )
 from functions_authentication import (
     admin_required,
+    get_control_center_capabilities,
     get_current_user_id,
     get_current_user_info,
     login_required,
@@ -908,6 +909,7 @@ def register_route_backend_v2(bp):
                 "navigation": _build_navigation(settings, current_user_roles),
                 "features": _build_feature_flags(public_settings, per_user_overrides),
                 "capabilities": _build_capabilities(settings),
+                "control_center": get_control_center_capabilities(session_user, settings),
                 "orchestration": _build_orchestration(settings, public_settings),
                 "catalogs": {
                     "models": models,
