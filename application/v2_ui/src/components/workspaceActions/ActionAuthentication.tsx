@@ -1,6 +1,8 @@
 // ActionAuthentication.tsx
 
 import { useId } from 'react';
+import { EditorDependents, EditorPanelFieldset, EditorSwitch } from '../workspace/EditorLayout';
+import { ActionConnectionCheck } from './ActionConnectionCheck';
 import { ActionField, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
 import {
     actionAuthMethod, actionAuthModes, actionFieldError, actionText, actionValueAt,
@@ -20,6 +22,8 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
     const identityTypes = native.identityTypes ?? ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
     const identities = props.identities.filter((identity) => identityTypes.includes(identity.auth_type));
     const identity = identities.find((candidate) => candidate.id === draft.identity_id);
+    const proxyIdentities = props.identities.filter((candidate) => candidate.auth_type === 'username_password');
+    const proxyIdentityId = actionText(actionValueAt(draft, '/additionalFields/basic_auth_identity_id'));
     const identityMissing = Boolean(draft.identity_id && !identity);
     const groupScoped = Boolean(props.groupScope);
     // A group member cannot list identities (403): the list is unresolvable, so a bound identity is
@@ -41,6 +45,33 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
             disabled={readOnly} error={actionFieldError(props.errors, path)}
             onChange={(value) => onChange((current) => changeActionField(current, path, value))} />
     );
+    const yamcsProxyAuth = draft.type === 'yamcs' ? (
+        <EditorPanelFieldset legend="Reverse proxy authentication"
+            description="Use this only when an HTTP Basic reverse proxy sits in front of Yamcs. It is separate from the primary Yamcs authentication method above.">
+            <EditorSwitch lead checked={actionValueAt(draft, '/additionalFields/enable_basic_auth') === true}
+                disabled={readOnly} label="Send Basic auth to a reverse proxy"
+                description="Stores the same Yamcs basic-auth keys the backend expects; it does not change the Yamcs API auth method."
+                onChange={(value) => onChange((current) => changeActionField(current, '/additionalFields/enable_basic_auth', value))} />
+            {actionValueAt(draft, '/additionalFields/enable_basic_auth') === true ? <EditorDependents>
+                {textField('/additionalFields/basic_auth_username', 'Proxy username', 'Username sent to the reverse proxy. A selected reusable identity can supply this value at runtime.', !proxyIdentityId)}
+                <ActionField id={`${id}-proxy-identity`} label="Proxy reusable identity" width="standard"
+                    help="Optional username/password identity for the reverse proxy credential."
+                    error={actionFieldError(props.errors, '/additionalFields/basic_auth_identity_id')}>
+                    <select id={`${id}-proxy-identity`} className={ACTION_INPUT_CLASS} value={proxyIdentityId}
+                        disabled={readOnly || props.identitiesLoading}
+                        onChange={(event) => onChange((current) => changeActionField(current, '/additionalFields/basic_auth_identity_id', event.target.value || undefined))}>
+                        <option value="">Use the proxy password below</option>
+                        {proxyIdentityId && !proxyIdentities.some((candidate) => candidate.id === proxyIdentityId)
+                            ? <option value={proxyIdentityId} disabled>Unavailable identity — {proxyIdentityId}</option> : null}
+                        {proxyIdentities.map((candidate) => <option key={candidate.id} value={candidate.id}>
+                            {candidate.name} · {candidate.scope_type || 'personal'} · {candidate.id}
+                        </option>)}
+                    </select>
+                </ActionField>
+                {!proxyIdentityId ? secretField('/additionalFields/basic_auth_password', 'Proxy password', 'Password sent to the reverse proxy. Stored in Key Vault.') : null}
+            </EditorDependents> : null}
+        </EditorPanelFieldset>
+    ) : null;
 
     if (native.internal) return (
         <p className="text-sm text-text-2">
@@ -151,10 +182,12 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                 ? textField('/additionalFields/pat_name', 'Personal access token name', 'The reusable identity contains the PAT secret; its token name is configured on this action.', true) : null}
             {draft.identity_id && draft.type === 'snowflake' && method === 'key_pair'
                 ? secretField('/additionalFields/private_key_passphrase', 'Private key passphrase', 'Only needed for an encrypted private key.') : null}
+            {yamcsProxyAuth}
             <p className="border-t border-edge pt-3 text-xs leading-relaxed text-text-3">
                 Stored secrets are never returned to this form. Keep their masked state, enter a replacement, or choose Clear.
                 Changing another field does not replace credentials or erase hidden configuration.
             </p>
+            <ActionConnectionCheck props={props} definition={definition} />
         </div>
     );
 }

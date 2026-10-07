@@ -1,10 +1,10 @@
 // ActionAdvancedFields.tsx
 
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { EditorDependents, EditorPanelFieldset, EditorRow, EditorSwitch } from '../workspace/EditorLayout';
 import { ActionField, ActionJsonInput, ACTION_INPUT_CLASS } from './ActionFields';
 import { ActionSchemaFields } from './ActionSchemaFields';
-import { isRecord, type ActionTypeDefinition } from '../../lib/workspaceAuthoring';
+import { editorName, isRecord, type ActionTypeDefinition } from '../../lib/workspaceAuthoring';
 import { actionFieldError, actionHasStoredArraySecrets, actionText, actionValueAt, changeActionField } from '../../lib/workspaceActionLogic';
 import type { ActionEditorHints } from '../../lib/workspaceActionServices';
 import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
@@ -18,6 +18,7 @@ export function ActionAdvancedFields(props: ActionConnectorProps & {
 }) {
     const { draft, onChange, readOnly, definition, hints, hintsError } = props;
     const id = useId();
+    const [editMachineName, setEditMachineName] = useState(false);
     const rawReminder = actionValueAt(draft, reminderPath);
     const reminder = isRecord(rawReminder) ? rawReminder : {};
     const enabled = reminder.enabled === true;
@@ -28,11 +29,17 @@ export function ActionAdvancedFields(props: ActionConnectorProps & {
         <div className="min-w-0 space-y-6">
             <div className="min-w-0">
                 <ActionField id={`${id}-machine-name`} label="Machine name" required width="standard"
-                    help="Letters, numbers, underscores, and dashes only. Renaming does not change the action ID."
+                    help="Internal identifier the model sees for this tool or plugin. Agents reference the action by ID. Letters, numbers, underscores, and dashes only."
                     error={actionFieldError(props.errors, '/name')}>
-                    <input id={`${id}-machine-name`} className={ACTION_INPUT_CLASS} value={draft.name} required
-                        pattern="[A-Za-z0-9_\-]+" disabled={readOnly}
-                        onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))} />
+                    <div className="flex flex-wrap items-center gap-2">
+                        <input id={`${id}-machine-name`} className={ACTION_INPUT_CLASS} value={draft.name || editorName(draft.displayName || '', 'action')} required
+                            pattern="[A-Za-z0-9_\-]+" disabled={readOnly || !editMachineName}
+                            onChange={(event) => onChange((current) => ({ ...current, name: event.target.value }))} />
+                        {!readOnly ? <button type="button" className="text-xs font-medium text-accent hover:underline"
+                            onClick={() => setEditMachineName((value) => !value)}>
+                            {editMachineName ? 'Done' : 'Edit'}
+                        </button> : null}
+                    </div>
                 </ActionField>
                 <EditorRow heading="Action ID" help="The ID, not the display name, identifies this action in agent assignments.">
                     <p className="break-all font-mono text-xs text-text-2">{draft.id || 'Assigned when the action is saved.'}</p>

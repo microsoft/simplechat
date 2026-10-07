@@ -9,7 +9,7 @@ import { errorMessage, useSectionResource } from '../../components/workspace/use
 import { AgentIcon } from '../../components/workspaceAgents/AgentIdentityFields';
 import { AgentNotice } from '../../components/workspaceAgents/AgentFields';
 import { chatHrefForAgent } from '../../lib/conversationUrl';
-import type { AgentConfiguration } from '../../lib/workspaceAuthoring';
+import type { ActionConfiguration, AgentConfiguration } from '../../lib/workspaceAuthoring';
 import { PERSONAL_AGENT_WORKBENCH, type AgentWorkbenchAdapter } from '../../lib/agentWorkbench';
 import { AGENT_INPUT_CLASS, AGENT_TYPE_LABELS, agentText } from '../../lib/workspaceAgentAuthoring';
 import { readAgentKnowledge } from '../../lib/workspaceAgentKnowledge';
@@ -31,6 +31,7 @@ export function AgentsSection({ actionsEnabled, adapter = PERSONAL_AGENT_WORKBEN
         if (collectionState.owner !== owner) collectionState = { owner, query: '', type: '', scope: '', view: 'list', scrollTop: 0 };
         return { ...collectionState };
     });
+    const [actions, setActions] = useState<ActionConfiguration[]>([]);
     const [busyId, setBusyId] = useState<string | null>(null);
     useEffect(() => {
         if (filters.owner !== owner) {
@@ -46,6 +47,17 @@ export function AgentsSection({ actionsEnabled, adapter = PERSONAL_AGENT_WORKBEN
             scrollRestored.current = true;
         }
     }, [loading, error, items.length]);
+    useEffect(() => {
+        const controller = new AbortController();
+        void adapter.fetchActions(controller.signal).then(setActions).catch(() => {
+            if (!controller.signal.aborted) setActions([]);
+        });
+        return () => controller.abort();
+    }, [adapter]);
+    const driftActionIds = useMemo(() => new Set(actions.filter((action) =>
+        action.type === 'mcp' && action.additionalFields && typeof action.additionalFields.mcp_tool_drift === 'object' &&
+        action.additionalFields.mcp_tool_drift !== null).flatMap((action) => [action.id, action.name].filter((value): value is string => typeof value === 'string' && Boolean(value)))),
+    [actions]);
     const visible = useMemo(() => items.filter((agent) => {
         const label = AGENT_TYPE_LABELS[agent.agent_type] ?? agent.agent_type;
         return `${agent.display_name} ${agent.name} ${agent.description} ${agent.agent_type} ${label}`.toLowerCase().includes(filters.query.trim().toLowerCase()) &&
@@ -112,6 +124,7 @@ export function AgentsSection({ actionsEnabled, adapter = PERSONAL_AGENT_WORKBEN
                         const label = agent.display_name || agent.name || 'Untitled agent';
                         const path = `${adapter.basePath}/${encodeURIComponent(agent.id)}${provided ? '?scope=global' : ''}`;
                         const knowledge = readAgentKnowledge(agent);
+                        const hasToolDrift = agent.actions_to_load?.some((reference) => driftActionIds.has(reference)) === true;
                         return (
                             <li key={`${provided ? 'global' : 'personal'}:${agent.id}`} className="min-w-0">
                                 <GlassPanel elevation="flat" className={`h-full p-4 ${filters.view === 'cards' ? 'space-y-3' : 'flex flex-wrap items-start gap-3'}`}>
@@ -125,6 +138,7 @@ export function AgentsSection({ actionsEnabled, adapter = PERSONAL_AGENT_WORKBEN
                                             <div className="mt-2 flex flex-wrap items-center gap-2">
                                                 <Pill>{AGENT_TYPE_LABELS[agent.agent_type] || agent.agent_type}</Pill>
                                                 <Pill tone={provided ? 'accent' : 'neutral'}>{provided ? 'Provided · read only' : isGroup ? 'Group' : 'Personal'}</Pill>
+                                                {hasToolDrift ? <Pill tone="warn">Tools changed — review</Pill> : null}
                                                 {agent.is_enabled === false ? <Pill tone="warn">Disabled</Pill> : null}
                                             </div>
                                             <p className="mt-2 break-words text-xs text-text-3">

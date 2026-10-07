@@ -127,6 +127,15 @@ Automatic invitation mode retains its immediate behavior, without a second
 Send button. Older unbound pending invitations remain visible and cancellable,
 but need to be prepared again for safe confirmation.
 
+
+## V2 action configuration
+
+The V2 editor registers this as a native Microsoft 365 action instead of relying on the legacy Microsoft Graph action. Capability switches come from the action catalogue and are stored under `additionalFields.m365_capabilities`, so owners can expose only the calendar, email, file, or site operations this action needs.
+
+The Microsoft Graph endpoint is read-only and derived from the deployment cloud: commercial deployments use `graph.microsoft.com`, and US Government deployments use `graph.microsoft.us`. Custom cloud endpoint behavior follows the deployment's configured Microsoft 365 runtime instead of being edited per action.
+
+Connection testing appears in **Authentication**, after the delegated or workflow identity choice. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
+
 ## Related
 
 - [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})

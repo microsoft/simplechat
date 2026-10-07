@@ -94,6 +94,8 @@ export function ActionsSection({ agentsEnabled, adapter = PERSONAL_ACTION_WORKBE
     }, [loading, error, items.length]);
 
     const labels = useMemo(() => new Map(catalogue.map((type) => [type.type, type.display])), [catalogue]);
+    const hasMcpToolDrift = (action: ActionConfiguration) =>
+        action.type === 'mcp' && action.additionalFields && typeof action.additionalFields.mcp_tool_drift === 'object' && action.additionalFields.mcp_tool_drift !== null;
     const types = useMemo(() => [...new Set([...catalogue.map(({ type }) => type), ...items.map(({ type }) => type)])]
         .sort((left, right) => (labels.get(left) || actionTypeLabel(left)).localeCompare(labels.get(right) || actionTypeLabel(right))),
     [catalogue, items, labels]);
@@ -201,6 +203,7 @@ export function ActionsSection({ agentsEnabled, adapter = PERSONAL_ACTION_WORKBE
                                         <div className="flex flex-wrap items-center gap-2">
                                             <Pill>{labels.get(action.type) || actionTypeLabel(action.type)}</Pill>
                                             <Pill tone={provided ? 'accent' : 'neutral'}>{provided ? <span className="inline-flex items-center gap-1"><Shield size={11} />Provided · Read only</span> : isGroup ? 'Group' : 'Personal'}</Pill>
+                                            {hasMcpToolDrift(action) ? <Pill tone="warn">Tools changed — review</Pill> : null}
                                             {!provided && !editable ? <Pill>Read only</Pill> : null}
                                         </div>
                                         <div className="flex items-center justify-end gap-2">

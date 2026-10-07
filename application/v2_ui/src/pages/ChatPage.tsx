@@ -41,6 +41,7 @@ import { ConversationBadges } from '../components/chat/ConversationBadges';
 import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
 import { InviteBanner } from '../components/chat/InviteBanner';
 import { FileApprovals } from '../components/chat/FileApprovals';
+import { TourLauncher } from '../components/tour/TourLauncher';
 import { panelTargetForConversation, canShareConversation } from '../lib/sharing';
 import {
     readWorkspaceAgentLaunch, workspaceAgentForLaunch, workspaceAgentLaunchUnavailableMessage,
@@ -253,7 +254,10 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
         setDrawerMode(drawerMode === mode ? null : mode);
 
     return (
-        <header className="glass glass-edge flex h-14 shrink-0 items-center gap-3 rounded-none border-t-0 border-r-0 px-5">
+        <header
+            data-tour="chat-header"
+            className="glass glass-edge flex h-14 shrink-0 items-center gap-3 rounded-none border-t-0 border-r-0 px-5"
+        >
             <h1 className="truncate text-[15px] font-semibold text-text-1">
                 {active?.title || 'New chat'}
             </h1>
@@ -393,6 +397,9 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                     )}
                 </div>
             )}
+
+            {/* Pushed right on its own when there is no conversation and so no tool row. */}
+            <TourLauncher tourId="chat" className={clsx(!activeConversationId && 'ml-auto')} />
         </header>
     );
 }
