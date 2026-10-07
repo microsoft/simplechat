@@ -217,8 +217,12 @@ def mirror_orchestration_answer(conversation, answer, *, user_message_id=None, o
 def _refresh_mirrored_answer(collaboration, existing, answer, owner):
     """Bring an existing shared copy up to date with a republished answer, and announce it."""
     from azure.core import MatchConditions
-    import functions_collaboration as collaboration_store
     from collaboration_models import build_collaboration_message_doc_from_legacy, utc_now_iso
+    from functions_collaboration import (
+        cosmos_collaboration_messages_container,
+        publish_collaboration_event,
+        serialize_collaboration_message,
+    )
     from functions_workflow_result_masking import (
         message_uses_workflow_result,
         withhold_workflow_result_message,
@@ -248,15 +252,15 @@ def _refresh_mirrored_answer(collaboration, existing, answer, owner):
 
     if visible(refreshed) == visible(existing):
         return existing
-    saved = collaboration_store.cosmos_collaboration_messages_container.replace_item(
+    saved = cosmos_collaboration_messages_container.replace_item(
         item=existing['id'], body=refreshed, etag=existing.get('_etag'),
         match_condition=MatchConditions.IfNotModified,
     )
-    collaboration_store.publish_collaboration_event(collaboration['id'], {
+    publish_collaboration_event(collaboration['id'], {
         'conversation_id': collaboration['id'],
         'event_type': 'collaboration.message.updated',
         'occurred_at': utc_now_iso(),
-        'payload': {'message': collaboration_store.serialize_collaboration_message(saved)},
+        'payload': {'message': serialize_collaboration_message(saved)},
     })
     return saved
 
@@ -341,6 +345,7 @@ def delete_orchestration_backing(
         try:
             message_container.delete_item(message['id'], partition_key=conversation_id)
         except not_found_error:
+            # Another deletion path may have removed it between the query and delete.
             pass
     if archiving_enabled:
         archive_thoughts_for_conversation(conversation_id, owner)

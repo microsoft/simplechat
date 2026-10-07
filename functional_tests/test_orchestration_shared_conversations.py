@@ -303,7 +303,8 @@ def test_deleting_the_shared_conversation_deletes_its_backing(shared):
         )
 
     # A co-owner who didn't start the conversation leaves its creator's plans alone.
-    assert delete(expected_user_id="guest") is None
+    guest_delete = delete(expected_user_id="guest")
+    assert guest_delete is None
     assert shared.harness.conversations.read_item(SHARED_ID, SHARED_ID)
 
     deleted = delete(expected_user_id="owner")
@@ -316,7 +317,8 @@ def test_deleting_the_shared_conversation_deletes_its_backing(shared):
     run = shared.harness.runs.read_item(planned["run_id"], SHARED_ID)
     assert run["checkpoints_deleted"] is True and run["execution_lease"] is None
     # Nothing is left to delete the second time.
-    assert delete() is None
+    second_delete = delete()
+    assert second_delete is None
 
 
 def test_shared_conversation_deletion_removes_the_backing_first():

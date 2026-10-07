@@ -2452,23 +2452,10 @@ def register_route_backend_conversations(bp):
         is_collaboration_summary = False
 
         try:
-            personal_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
-        except CosmosResourceNotFoundError:
-            personal_item = None
-        except Exception as e:
-            debug_print(f"Error reading conversation for summary: {e}")
-            return jsonify({'error': 'Failed to read conversation'}), 500
-
-        # Orchestrate's backing record shares its shared conversation's id; the summary is the
-        # shared conversation's.
-        if personal_item is not None and not is_shared_conversation_backing(personal_item):
-            if personal_item.get('user_id') != user_id:
-                return jsonify({'error': 'Forbidden'}), 403
-            conversation_item = personal_item
-        else:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+        except LookupError:
+            # Orchestrate's backing record shares its shared conversation's id; the summary is
+            # the shared conversation's.
             try:
                 conversation_item = get_collaboration_conversation(conversation_id)
                 assert_user_can_view_collaboration_conversation(
@@ -2484,6 +2471,11 @@ def register_route_backend_conversations(bp):
             except Exception as e:
                 debug_print(f"Error reading collaborative conversation for summary: {e}")
                 return jsonify({'error': 'Failed to read conversation'}), 500
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except Exception as e:
+            debug_print(f"Error reading conversation for summary: {e}")
+            return jsonify({'error': 'Failed to read conversation'}), 500
 
         body = request.get_json(silent=True) or {}
         model_deployment = body.get('model_deployment', '')

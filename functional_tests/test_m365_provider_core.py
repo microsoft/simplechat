@@ -1282,7 +1282,7 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
     execution, memory_runtime, real_content_helpers, monkeypatch,
 ):
     from dataclasses import replace
-    import functions_m365_approvals as approval_module
+    from functions_m365_approvals import M365ApprovalService
     import functions_m365_execution as execution_module
     from test_m365_runtime_adapters import load_module, module_stub
     from test_support.m365 import CosmosContainer, Notifications
@@ -1300,7 +1300,7 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
         shared=True, audience_version="audience-1", action_configs={actions.action_id: manifest},
     )
     container = CosmosContainer()
-    service = approval_module.M365ApprovalService(
+    service = M365ApprovalService(
         container_factory=lambda: container, notification_sender=Notifications(),
         decision_validator=lambda approval: True,
     )
@@ -1314,7 +1314,7 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
         "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
     })
     monkeypatch.setattr(memory_runtime.store, "authorize_publish", runtime._authorize_memory_publication)
-    monkeypatch.setattr(approval_module, "_service", service)
+    monkeypatch.setattr("functions_m365_approvals._service", service)
     monkeypatch.setattr(execution_module, "_action_config_resolver", lambda *args: manifest)
     monkeypatch.setattr(execution_module, "_action_selection_resolver", lambda context: [actions.action_id])
     for module in (retrieval, transport_module):
@@ -1345,7 +1345,7 @@ def test_shared_request_consent_publishes_a_capture_without_an_approval(
 ):
     """Asking for your own file in a shared conversation shares it there; no approval waits (#1659)."""
     from dataclasses import replace
-    import functions_m365_approvals as approval_module
+    from functions_m365_approvals import M365ApprovalService
     import functions_m365_execution as execution_module
     from test_m365_runtime_adapters import load_module, module_stub
     from test_support.m365 import CosmosContainer, Notifications
@@ -1365,7 +1365,7 @@ def test_shared_request_consent_publishes_a_capture_without_an_approval(
     )
     container = CosmosContainer()
     notifications = Notifications()
-    service = approval_module.M365ApprovalService(
+    service = M365ApprovalService(
         container_factory=lambda: container, notification_sender=notifications,
         decision_validator=lambda approval: True,
     )
@@ -1379,7 +1379,7 @@ def test_shared_request_consent_publishes_a_capture_without_an_approval(
         "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
     })
     monkeypatch.setattr(memory_runtime.store, "authorize_publish", runtime._authorize_memory_publication)
-    monkeypatch.setattr(approval_module, "_service", service)
+    monkeypatch.setattr("functions_m365_approvals._service", service)
     monkeypatch.setattr(execution_module, "_action_config_resolver", lambda *args: manifest)
     monkeypatch.setattr(execution_module, "_action_selection_resolver", lambda context: [actions.action_id])
     for module in (retrieval, transport_module):

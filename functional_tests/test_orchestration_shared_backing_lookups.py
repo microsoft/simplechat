@@ -31,7 +31,7 @@ sys.path.insert(0, str(APP))
 sys.path.insert(0, str(TESTS))
 
 from test_orchestration_harness_routes import login, modules, real_http_harness  # noqa: E402,F401
-from test_orchestration_shared_conversations import GUEST, OWNER, SHARED_ID, shared  # noqa: E402,F401
+from test_orchestration_shared_conversations import SHARED_ID, shared  # noqa: E402,F401
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 CLASSIC_SOURCE_ID = "classic-source-1"
@@ -208,7 +208,8 @@ def _function_source(path, name):
     ("route_frontend_conversations.py", "get_agent_citation_artifact"),
 ])
 def test_other_personal_first_lookups_recognize_the_backing(module, function):
-    assert "is_shared_conversation_backing(" in _function_source(APP / module, function)
+    source = _function_source(APP / module, function)
+    assert "is_shared_conversation_backing(" in source or "_authorize_personal_conversation_read(" in source
 
 
 if __name__ == "__main__":

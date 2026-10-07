@@ -2239,7 +2239,11 @@ def mirror_source_message_to_collaboration(
     if source_role == 'image':
         message_metadata['last_message_preview'] = '[Uploaded image]' if bool(source_metadata.get('is_user_upload')) else '[Generated image]'
 
-    return (*_save_collaboration_message_doc(conversation_doc, collaboration_message), True)
+    saved_message, saved_conversation = _save_collaboration_message_doc(
+        conversation_doc,
+        collaboration_message,
+    )
+    return saved_message, saved_conversation, True
 
 
 def _refresh_collaboration_conversation_message_summary(conversation_doc):
