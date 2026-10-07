@@ -127,6 +127,7 @@ const GUIDE_CONTENT: Record<GuideId, { intro: string; sections: GuideSection[] }
                     'Data copy permissions prove the identity can create, read, and delete probe records in destination Cosmos containers.',
                     'RU Boost permissions prove the identity can read and write Cosmos throughput settings through Azure Resource Manager.',
                     'Management-plane permission is needed separately from data access.',
+                    'Use Test RU Boost before a cutover window; it validates capacity permissions separately from migration data access.',
                     'Destination RU Boost also needs the destination subscription ID and resource group because those values are not part of the data-plane endpoint.',
                 ],
             },

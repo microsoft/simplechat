@@ -731,9 +731,9 @@ export function listMigrationCatalog(
     search: string,
     token: string,
     signal?: AbortSignal,
+    pageSize = MIGRATION_CATALOG_PAGE_SIZE,
 ): Promise<CatalogPage> {
-    const params = new URLSearchParams({ search, page_size: String(MIGRATION_CATALOG_PAGE_SIZE) });
-    if (token) params.set('continuation_token', token);
+    const params = new URLSearchParams({ search, page_size: String(pageSize), continuation_token: token });
     return api
         .get<Partial<CatalogPage>>(
             `${DM_API}/migration/catalog/${encodeURIComponent(targetType)}?${params.toString()}`,

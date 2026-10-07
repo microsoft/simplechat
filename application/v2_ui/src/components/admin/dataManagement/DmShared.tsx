@@ -470,6 +470,12 @@ export function DmDateFilter({
     );
 }
 
+/** Whether a workbench detail pane is below the list rather than beside it. */
+export function isStacked(list: HTMLElement | null, detail: HTMLElement | null): boolean {
+    if (!list || !detail) return false;
+    return Math.abs(list.getBoundingClientRect().top - detail.getBoundingClientRect().top) > 16;
+}
+
 /**
  * The list-beside-detail layout the Model Catalog uses.
  *

@@ -46,6 +46,7 @@ import {
     DmNotice,
     DmPhraseField,
     DmWorkbench,
+    isStacked,
     type DmCardProps,
 } from './DmShared';
 
@@ -224,7 +225,6 @@ export function DataManagementCosmosEditor({ help, disabled }: DmCardProps) {
             setNotice(
                 'Cosmos DB editor unlocked for this page session. The acknowledgement was recorded in activity logs.',
             );
-            toast.info('Cosmos DB editor unlocked.');
             await loadContainers();
         } catch (failure) {
             if (!isCurrentEpoch(token)) return;
@@ -341,7 +341,13 @@ export function DataManagementCosmosEditor({ help, disabled }: DmCardProps) {
                 useDataManagementStore
                     .getState()
                     .updateCosmos({ document: documentFromResult(result, null) });
-                window.setTimeout(() => detailRef.current?.focus({ preventScroll: true }), 0);
+                window.setTimeout(() => {
+                    if (isStacked(listRef.current, detailRef.current)) {
+                        detailRef.current?.scrollIntoView({ block: 'start' });
+                    } else {
+                        detailRef.current?.focus({ preventScroll: true });
+                    }
+                }, 0);
             } catch (failure) {
                 if (!isCurrentEpoch(token)) return;
                 setError(errorMessage(failure, 'Cosmos DB document could not be opened.'));
@@ -630,12 +636,10 @@ export function DataManagementCosmosEditor({ help, disabled }: DmCardProps) {
                                     placeholder="Leave empty to browse the first 100 documents. Custom queries must start with SELECT."
                                     value={cosmos.query}
                                     onChange={(event) =>
-                                        useDataManagementStore
-                                            .getState()
-                                            .updateCosmos({
-                                                query: event.target.value,
-                                                continuationToken: null,
-                                            })
+                                        useDataManagementStore.getState().updateCosmos({
+                                            query: event.target.value,
+                                            continuationToken: null,
+                                        })
                                     }
                                 />
                                 <p
@@ -850,14 +854,12 @@ export function DataManagementCosmosEditor({ help, disabled }: DmCardProps) {
                                                     const document =
                                                         useDataManagementStore.getState().cosmos.document;
                                                     if (!document) return;
-                                                    useDataManagementStore
-                                                        .getState()
-                                                        .updateCosmos({
-                                                            document: {
-                                                                ...document,
-                                                                text: event.target.value,
-                                                            },
-                                                        });
+                                                    useDataManagementStore.getState().updateCosmos({
+                                                        document: {
+                                                            ...document,
+                                                            text: event.target.value,
+                                                        },
+                                                    });
                                                     setSaveError(null);
                                                     setLastSaveSummary(null);
                                                 }}

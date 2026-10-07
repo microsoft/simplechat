@@ -57,6 +57,7 @@ import {
     DmPager,
     DmStatusPill,
     DmWorkbench,
+    isStacked,
     useVisibleOnce,
     type DmCardProps,
 } from './DmShared';
@@ -110,11 +111,6 @@ function canRestore(backup: BackupRow | null): boolean {
         backup.manifest_path &&
         (backup.status === 'completed' || backup.status === 'completed_with_warnings'),
     );
-}
-
-function isStacked(list: HTMLElement | null, detail: HTMLElement | null): boolean {
-    if (!list || !detail) return false;
-    return Math.abs(list.getBoundingClientRect().top - detail.getBoundingClientRect().top) > 16;
 }
 
 function cleanupResultMessage(result: RetentionCleanupResult): string {
@@ -189,6 +185,7 @@ export function DataManagementBackupInventory({ help, onNavigate, disabled }: Dm
     const [deleteError, setDeleteError] = useState<string | null>(null);
     const [restoreTarget, setRestoreTarget] = useState<BackupRow | null>(null);
     const generation = useRef(0);
+    const emptyPageFallbackUsed = useRef(false);
 
     const dateRangeError = validateHistoryDateRange(
         inventory.filters.createdFrom,
@@ -199,6 +196,7 @@ export function DataManagementBackupInventory({ help, onNavigate, disabled }: Dm
     const hasNext = Boolean(page.pagination.has_more && inventory.pager.next);
 
     const setFilters = (update: Partial<typeof inventory.filters>) => {
+        emptyPageFallbackUsed.current = false;
         updateInventory((state) => ({
             ...state,
             filters: { ...state.filters, ...update },
@@ -250,6 +248,24 @@ export function DataManagementBackupInventory({ help, onNavigate, disabled }: Dm
         listBackups(filters, token, controller.signal)
             .then((nextPage) => {
                 if (controller.signal.aborted || generation.current !== requestGeneration) return;
+                if (
+                    !emptyPageFallbackUsed.current &&
+                    token !== null &&
+                    inventory.pager.previous.length > 0 &&
+                    nextPage.backups.length === 0 &&
+                    !nextPage.pagination.next_token
+                ) {
+                    emptyPageFallbackUsed.current = true;
+                    updateInventory((state) =>
+                        state.pager.current === token
+                            ? { ...state, pager: pagerBack(state.pager), selectedId: null }
+                            : state,
+                    );
+                    return;
+                }
+                if (token === null || nextPage.backups.length || nextPage.pagination.next_token) {
+                    emptyPageFallbackUsed.current = false;
+                }
                 setPage(nextPage);
                 updateInventory((state) => ({
                     ...state,
@@ -343,8 +359,12 @@ export function DataManagementBackupInventory({ help, onNavigate, disabled }: Dm
             toast.success(
                 `Deleted ${formatBackupType(deleteTarget.backup_type)} backup and ${formatNumber(result.deleted_blob_count)} stored artifact${count(result.deleted_blob_count) === 1 ? '' : 's'}.`,
             );
-            useDataManagementStore.getState().notifyBackupsChanged();
-            useDataManagementStore.getState().notifyJobsChanged();
+            const state = useDataManagementStore.getState();
+            state.notifyBackupsChanged();
+            state.notifyJobsChanged();
+            if (state.jobs.selectedId === deleteTarget.id) {
+                state.updateJobs({ selectedId: null });
+            }
             updateInventory({ selectedId: null });
             setDeleteTarget(null);
         } catch (error) {
@@ -682,20 +702,22 @@ export function DataManagementBackupInventory({ help, onNavigate, disabled }: Dm
                 hasNext={hasNext}
                 loading={loading}
                 status={`Page ${pagerPageNumber(inventory.pager)} · ${formatNumber(page.pagination.returned_count ?? page.backups.length)} backups returned`}
-                onPrevious={() =>
+                onPrevious={() => {
+                    emptyPageFallbackUsed.current = false;
                     updateInventory((state) => ({
                         ...state,
                         pager: pagerBack(state.pager),
                         selectedId: null,
-                    }))
-                }
-                onNext={() =>
+                    }));
+                }}
+                onNext={() => {
+                    emptyPageFallbackUsed.current = false;
                     updateInventory((state) => ({
                         ...state,
                         pager: pagerForward(state.pager),
                         selectedId: null,
-                    }))
-                }
+                    }));
+                }}
             />
 
             {cleanupConfirm ? (
@@ -713,7 +735,10 @@ export function DataManagementBackupInventory({ help, onNavigate, disabled }: Dm
                 >
                     <ul className="list-disc space-y-1 pl-4 text-xs leading-relaxed text-text-2">
                         <li>Only finished backups are eligible; queued or running jobs are skipped.</li>
-                        <li>The newest successful full backup is kept, even when it is past the cutoff.</li>
+                        <li>
+                            The newest successful full backup is kept by default, even when it is past the
+                            cutoff.
+                        </li>
                         <li>Each run deletes at most 25 backups, so large cleanups may need several runs.</li>
                         <li>
                             While scheduled backups are on, cleanup also runs on its own. Finding nothing to

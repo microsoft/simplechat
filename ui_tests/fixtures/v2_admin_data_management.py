@@ -8,8 +8,10 @@ Serves the real built SPA through ``AdminSettingsFixture`` and answers every
 ``/api/admin/data-management/*`` call from memory, so the Backup & Recovery cards can be
 exercised end to end with no application server, no Azure services and no live writes.
 Every request is recorded in order, which is what lets a test prove that settings were
-saved *before* a job was queued. Anything the stub does not recognise fails the test
-through the base fixture's unexpected-request list.
+saved *before* a job was queued. History endpoints implement the same continuation-token, page-size, count-query and
+date-filter contracts as the real API, and the review knobs accept server-shaped
+check payloads so tests can cover blocking restore and migration evidence. Anything the
+stub does not recognise fails the test through the base fixture's unexpected-request list.
 """
 
 import copy
@@ -119,7 +121,7 @@ def default_settings():
         "target_ai_search_endpoint": "https://destination.search.windows.net",
         "target_ai_search_key": "",
         "target_enhanced_citations_storage_authentication_type": "managed_identity",
-        "target_enhanced_citations_storage_blob_endpoint": "",
+        "target_enhanced_citations_storage_blob_endpoint": "https://destination-citations.blob.core.windows.net",
         "target_enhanced_citations_storage_connection_string": "",
         "migration_max_parallel_operations": 8,
         "migration_retry_count": 5,
@@ -181,6 +183,7 @@ class DataManagementFixture(AdminSettingsFixture):
         self.progress_polls = {}
         self.restore_review = {"ready": True, "blocker_count": 0, "warning_count": 0}
         self.migration_review = {"ready": True, "blocker_count": 0, "warning_count": 0}
+        self.catalog_count_failures = 0
         self.queue_status = 202
         self.queue_error = None
         self.catalog = {
@@ -222,7 +225,7 @@ class DataManagementFixture(AdminSettingsFixture):
         entry = {
             "method": request.method,
             "path": parsed.path[len(API):],
-            "query": parse_qs(parsed.query),
+            "query": parse_qs(parsed.query, keep_blank_values=True),
             "body": body,
         }
         self.dm_requests.append(entry)
@@ -275,7 +278,12 @@ class DataManagementFixture(AdminSettingsFixture):
         if path == "/restore/review" and method == "POST":
             review = copy.deepcopy(self.restore_review)
             review.update({
-                "checks": [{"id": "manifest_integrity", "label": "Backup manifest integrity", "status": "pass", "message": "Restore-safe."}],
+                "checks": review.get("checks") or [{
+                    "id": "manifest_integrity",
+                    "label": "Backup manifest integrity",
+                    "status": "pass",
+                    "message": "Restore-safe.",
+                }],
                 "review_fingerprint": "restore-fingerprint",
                 "summary": {"artifact_count": 12, "service_counts": {"cosmos": 10, "ai_search": 2, "source_blobs": 0}, "warnings": 0, "failed_resource_names": []},
             })
@@ -284,17 +292,41 @@ class DataManagementFixture(AdminSettingsFixture):
             return route.fulfill(json={"success": True, "review": review})
         if path == "/migration/review" and method == "POST":
             review = copy.deepcopy(self.migration_review)
+            summary = self._migration_summary(entry["body"]["migration_plan"])
             review.update({
                 "review_fingerprint": "migration-fingerprint",
-                "summary": {"users": {"mode": "selected", "count": 1, "document_count": 1, "include_documents": True}, "migration_mode": entry["body"]["migration_plan"]["migration_mode"]},
-                "preview": {"estimated_outcomes": {"create_count": 3, "update_count": 0, "delete_count": 0, "conflict_count": 0}},
-                "checks": review.get("checks") or [{"id": "scope", "label": "Migration scope", "workflow_step": "scope", "status": "pass", "summary": "1 principal scope is included."}],
+                "summary": summary,
+                "preview": {"estimated_outcomes": {
+                    "create_count": 3,
+                    "update_count": 2,
+                    "delete_count": 1,
+                    "conflict_count": 4,
+                }},
+                "checks": review.get("checks") or [{
+                    "id": "scope",
+                    "label": "Migration scope",
+                    "workflow_step": "scope",
+                    "status": "pass",
+                    "summary": f"{sum(summary[target_type]['count'] for target_type in self.catalog)} principal scopes are included.",
+                    "details": {
+                        target_type: {
+                            "mode": summary[target_type]["mode"],
+                            "count": summary[target_type]["count"],
+                            "document_count": summary[target_type]["document_count"],
+                            "include_documents": summary[target_type]["include_documents"],
+                        }
+                        for target_type in self.catalog
+                    },
+                }],
             })
             if review.get("ready"):
                 review.update({"authorization_token": "migration-token", "authorization_expires_at": "2099-01-01T00:00:00+00:00"})
             return route.fulfill(json={"success": True, "review": review})
         match = re.fullmatch(r"/migration/catalog/([a-z_]+)", path)
         if match and method == "GET":
+            if (entry["query"].get("page_size") or [""])[0] == "1" and self.catalog_count_failures:
+                self.catalog_count_failures -= 1
+                return route.fulfill(status=503, json={"success": False, "error": "Catalog count unavailable."})
             return route.fulfill(json=self._catalog_page(match.group(1), entry["query"]))
         if path == "/jobs" and method == "POST":
             return self._queue_job(route, entry["body"])
@@ -348,14 +380,21 @@ class DataManagementFixture(AdminSettingsFixture):
     def _backup_page(self, query):
         status = (query.get("status") or [""])[0]
         backup_type = (query.get("backup_type") or [""])[0]
+        scheduled = (query.get("scheduled") or ["all"])[0]
+        created_from = (query.get("created_from") or [""])[0]
+        created_to = (query.get("created_to") or [""])[0]
         rows = [
             backup for backup in self.backups
             if (not backup_type or backup["backup_type"] == backup_type)
             and (not status or (status == "available" and backup["status"] in ("completed", "completed_with_warnings")) or backup["status"] == status)
+            and (scheduled == "all" or (scheduled == "scheduled") == bool(backup.get("scheduled")))
+            and (not created_from or (backup.get("created_at") or "")[:10] >= created_from)
+            and (not created_to or (backup.get("created_at") or "")[:10] <= created_to)
         ]
         available = [backup for backup in self.backups if backup["status"] in ("completed", "completed_with_warnings")]
         latest_full = next((backup for backup in available if backup["backup_type"] == "full"), None)
         latest_partial = next((backup for backup in available if backup["backup_type"] == "partial"), None)
+        page, pagination = self._paginate(rows, query)
         return {
             "success": True,
             "summary": {
@@ -366,22 +405,62 @@ class DataManagementFixture(AdminSettingsFixture):
                 "latest_full": latest_full,
                 "latest_partial": latest_partial,
             },
-            "backups": rows,
-            "pagination": {"page_size": 25, "returned_count": len(rows), "has_more": False, "next_token": None},
-            "filters": {},
+            "backups": page,
+            "pagination": pagination,
+            "filters": {
+                "status": status,
+                "backup_type": backup_type,
+                "scheduled": scheduled,
+                "created_from": created_from,
+                "created_to": created_to,
+            },
         }
 
     def _catalog_page(self, target_type, query):
         search = (query.get("search") or [""])[0].lower()
         token = (query.get("continuation_token") or [""])[0]
+        page_size = int((query.get("page_size") or ["25"])[0])
         items = [item for item in self.catalog.get(target_type, []) if search in f"{item['label']} {item['description']}".lower()]
         start = int(token or 0)
-        page = items[start : start + 25]
-        has_more = start + 25 < len(items)
+        page = items[start : start + page_size]
+        has_more = start + page_size < len(items)
         return {
-            "type": target_type, "items": page, "total_count": len(items), "page_size": 25,
-            "has_more": has_more, "continuation_token": str(start + 25) if has_more else "",
+            "type": target_type, "items": page, "total_count": len(items), "page_size": page_size,
+            "has_more": has_more, "continuation_token": str(start + page_size) if has_more else "",
         }
+
+    def _migration_summary(self, migration_plan):
+        summary = {}
+        for target_type, items in self.catalog.items():
+            entry = migration_plan.get(target_type) or {}
+            mode = entry.get("mode") or "none"
+            ids = entry.get("ids") if isinstance(entry.get("ids"), list) else []
+            if mode == "all":
+                count = len(items)
+                scoped_items = items
+            elif mode == "selected":
+                id_set = set(ids)
+                scoped_items = [item for item in items if item["id"] in id_set]
+                count = len(ids)
+            else:
+                scoped_items = []
+                count = 0
+            include_documents = bool(entry.get("include_documents"))
+            summary[target_type] = {
+                "mode": mode,
+                "count": count,
+                "document_count": sum(item.get("document_count") or 0 for item in scoped_items) if include_documents else 0,
+                "include_documents": include_documents,
+                "ids": ids[:50],
+                "ids_truncated": len(ids) > 50,
+            }
+        summary["include_ai_search"] = bool(migration_plan.get("include_ai_search"))
+        summary["include_source_blobs"] = bool(migration_plan.get("include_source_blobs"))
+        summary["target_ai_search_writes_frozen"] = bool(migration_plan.get("target_ai_search_writes_frozen"))
+        summary["migration_mode"] = migration_plan.get("migration_mode")
+        summary["baseline_job_id"] = migration_plan.get("baseline_job_id")
+        summary["mirror_deletions_confirmed"] = bool(migration_plan.get("mirror_deletions_confirmed"))
+        return summary
 
     def _queue_job(self, route, body):
         if self.queue_error:
@@ -414,11 +493,30 @@ class DataManagementFixture(AdminSettingsFixture):
     def _job_page(self, query):
         operation = (query.get("operation") or [""])[0]
         status = (query.get("status") or [""])[0]
+        scheduled = (query.get("scheduled") or ["all"])[0]
+        created_from = (query.get("created_from") or [""])[0]
+        created_to = (query.get("created_to") or [""])[0]
         jobs = [
             self._public_job(job) for job in reversed(list(self.jobs.values()))
-            if (not operation or job["operation"] == operation) and (not status or job["status"] == status)
+            if (not operation or job["operation"] == operation)
+            and (not status or job["status"] == status)
+            and (scheduled == "all" or (scheduled == "scheduled") == bool(job.get("scheduled")))
+            and (not created_from or (job.get("created_at") or "")[:10] >= created_from)
+            and (not created_to or (job.get("created_at") or "")[:10] <= created_to)
         ]
-        return {"success": True, "jobs": jobs, "pagination": {"page_size": 25, "returned_count": len(jobs), "has_more": False, "next_token": None}, "filters": {}}
+        page, pagination = self._paginate(jobs, query)
+        return {
+            "success": True,
+            "jobs": page,
+            "pagination": pagination,
+            "filters": {
+                "operation": operation,
+                "status": status,
+                "scheduled": scheduled,
+                "created_from": created_from,
+                "created_to": created_to,
+            },
+        }
 
     def _job_action(self, route, job_id, action, method):
         job = self.jobs.get(job_id)
@@ -458,6 +556,19 @@ class DataManagementFixture(AdminSettingsFixture):
         })
 
     # -- helpers ---------------------------------------------------------------------
+
+    def _paginate(self, rows, query):
+        page_size = int((query.get("page_size") or ["25"])[0])
+        start = int((query.get("continuation_token") or ["0"])[0] or 0)
+        page = rows[start:start + page_size]
+        next_start = start + page_size
+        has_more = next_start < len(rows)
+        return page, {
+            "page_size": page_size,
+            "returned_count": len(page),
+            "has_more": has_more,
+            "next_token": str(next_start) if has_more else None,
+        }
 
     def add_job(self, job_id, **extra):
         """Seed one job into history, as a finished or failed run would leave it."""

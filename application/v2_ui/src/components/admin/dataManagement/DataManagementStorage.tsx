@@ -97,7 +97,8 @@ export function DataManagementStorage({ help, disabled }: DmCardProps) {
                                 <p className="text-sm font-semibold text-text-1">Test storage</p>
                                 <p className="mt-0.5 text-xs leading-relaxed text-text-3">
                                     Sends the current values without saving. The test creates the container if
-                                    it is missing.
+                                    it is missing, and the dedicated-storage check compares against the saved
+                                    Enhanced Citations settings.
                                 </p>
                             </div>
                             <GlassButton

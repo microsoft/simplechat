@@ -26,10 +26,10 @@ import {
     formatDateTime,
     formatNumber,
     initialRestoreDraft,
-    isDestinationConfigured,
     normalizeReviewChecks,
     readDmValues,
     restoreReviewKey,
+    restoreDestinationGaps,
     restoreSurfaceSelected,
     reviewHeadline,
     secondsUntil,
@@ -57,6 +57,12 @@ function storageDestinationLabel(values: ReturnType<typeof useDmValues>): string
     const auth = text(values.target_enhanced_citations_storage_authentication_type, 'managed_identity');
     if (auth === 'connection_string') return 'connection string';
     return endpointHost(values.target_enhanced_citations_storage_blob_endpoint) || 'Not set';
+}
+
+function formatGapList(labels: string[]): string {
+    if (labels.length <= 1) return labels[0] ?? 'the selected surface';
+    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+    return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
 }
 
 function surfaceCheckboxId(surface: string): string {
@@ -145,7 +151,10 @@ export function DataManagementRestoreDialog({
         setForcedStale(false);
     }, [backup.id]);
 
-    const destinationReady = isDestinationConfigured(values);
+    const destinationGaps = useMemo(() => restoreDestinationGaps(draft, values), [draft, values]);
+    const destinationReady = destinationGaps.length === 0;
+    const destinationGapLabels = destinationGaps.map((gap) => gap.label);
+    const missingDestinationText = formatGapList(destinationGapLabels);
     const currentReviewKey = useMemo(
         () => restoreReviewKey(backup.id, draft, values),
         [backup.id, draft, values],
@@ -176,8 +185,10 @@ export function DataManagementRestoreDialog({
     };
 
     const runReview = async () => {
-        if (!destinationReady) {
-            setMessage('Set up the destination before running a restore review.');
+        if (destinationGaps.length) {
+            setMessage(
+                `Set up the destination for ${missingDestinationText} before running a restore review.`,
+            );
             return;
         }
         if (!restoreSurfaceSelected(draft)) {
@@ -188,6 +199,13 @@ export function DataManagementRestoreDialog({
 
         const state = useDataManagementStore.getState();
         const freshValues = readDmValues(state.settings, state.draft);
+        const freshGaps = restoreDestinationGaps(draft, freshValues);
+        if (freshGaps.length) {
+            setMessage(
+                `Set up the destination for ${formatGapList(freshGaps.map((gap) => gap.label))} before running a restore review.`,
+            );
+            return;
+        }
         const plan = buildRestorePlan(backup.id, draft);
         const key = restoreReviewKey(backup.id, draft, freshValues);
         const generation = requestGeneration.current + 1;
@@ -222,6 +240,13 @@ export function DataManagementRestoreDialog({
 
         const state = useDataManagementStore.getState();
         const freshValues = readDmValues(state.settings, state.draft);
+        const freshGaps = restoreDestinationGaps(draft, freshValues);
+        if (freshGaps.length) {
+            setMessage(
+                `Set up the destination for ${formatGapList(freshGaps.map((gap) => gap.label))} before queueing a restore.`,
+            );
+            return;
+        }
         const freshKey = restoreReviewKey(backup.id, draft, freshValues);
         if (freshKey !== reviewKey) {
             setForcedStale(true);
@@ -307,8 +332,10 @@ export function DataManagementRestoreDialog({
             <div className="@container space-y-4">
                 <DmNotice tone="warning">
                     Restore writes into the destination environment configured in Migration. Create only
-                    never replaces data that is already there; Overwrite existing can, after a review and
-                    the typed confirmation.
+                    blocks the review when destination Cosmos DB containers or AI Search indexes already hold
+                    data. During the run, newly-created Cosmos DB items and existing source files are skipped
+                    as collisions. Overwrite existing can replace destination data after the review and typed
+                    confirmation.
                 </DmNotice>
 
                 <DmMetricGrid
@@ -339,7 +366,7 @@ export function DataManagementRestoreDialog({
                                 Restore uses the target settings from the Migration card.
                             </p>
                         </div>
-                        {!destinationReady ? (
+                        {destinationGaps.length ? (
                             <GlassButton type="button" variant="primary" size="sm" onClick={setUpDestination}>
                                 Set up the destination
                                 <ArrowRight size={14} aria-hidden="true" />
@@ -353,8 +380,9 @@ export function DataManagementRestoreDialog({
                                 Cosmos DB
                             </p>
                             <p className="mt-1 text-xs text-text-3">
-                                {endpointHost(values.target_cosmos_endpoint) || 'Not set'} ·{' '}
-                                {authLabel(values.target_cosmos_authentication_type, 'account key')}
+                                {draft.includeCosmos
+                                    ? `${endpointHost(values.target_cosmos_endpoint) || 'Not set'} · ${authLabel(values.target_cosmos_authentication_type, 'account key')}`
+                                    : 'Not selected for this restore'}
                             </p>
                         </div>
                         <div className="rounded-lg border border-edge bg-surface-1 px-3 py-2">
@@ -363,7 +391,9 @@ export function DataManagementRestoreDialog({
                                 AI Search
                             </p>
                             <p className="mt-1 text-xs text-text-3">
-                                {endpointHost(values.target_ai_search_endpoint) || 'Not set'}
+                                {draft.includeAiSearch
+                                    ? endpointHost(values.target_ai_search_endpoint) || 'Not set'
+                                    : 'Not selected for this restore'}
                             </p>
                         </div>
                         <div className="rounded-lg border border-edge bg-surface-1 px-3 py-2">
@@ -371,13 +401,17 @@ export function DataManagementRestoreDialog({
                                 <HardDrive size={13} aria-hidden="true" />
                                 Enhanced Citation storage
                             </p>
-                            <p className="mt-1 text-xs text-text-3">{storageDestinationLabel(values)}</p>
+                            <p className="mt-1 text-xs text-text-3">
+                                {draft.includeSourceBlobs
+                                    ? storageDestinationLabel(values)
+                                    : 'Not selected for this restore'}
+                            </p>
                         </div>
                     </div>
-                    {!destinationReady ? (
+                    {destinationGaps.length ? (
                         <DmNotice tone="warning" className="mt-3">
-                            The destination is not configured. Set it up before reviewing or queueing a
-                            restore.
+                            {missingDestinationText} {destinationGaps.length === 1 ? 'is' : 'are'} missing a
+                            destination. Set up the destination before reviewing or queueing a restore.
                         </DmNotice>
                     ) : null}
                 </section>
@@ -393,7 +427,7 @@ export function DataManagementRestoreDialog({
                                 value: 'create_only',
                                 title: 'Create only',
                                 description:
-                                    'Recommended. Non-destructive: items that already exist in the destination are skipped and reported as collisions.',
+                                    'Recommended. Non-destructive: review blocks if destination Cosmos DB or AI Search already has data; run-time races and existing source files are reported as collisions.',
                             },
                             {
                                 value: 'overwrite_existing',

@@ -86,8 +86,8 @@ The data-management settings are their own document, saved with
 
 | Workflow | Contract |
 | --- | --- |
-| Restore | The review is keyed to the backup, policy, surfaces, and destination endpoints and sign-in modes. Changing any of them makes it stale. Queueing needs a passing, current review, its authorization token (15 minutes), an acknowledgement, and `RESTORE WITH OVERWRITE` for the overwrite policy. Each opening of the dialog starts from a clean draft. |
-| Migration | The review is keyed to the plan and the destination and migration settings. The mirror phrase `MAKE DESTINATION MATCH SOURCE` is entered after the review and is not part of the key, matching the server's fingerprint. A typed destination secret is masked when settings are saved; the review stays current because it was run against exactly what was saved, and the server still compares its own fingerprint. A `409` or a `workflow_step` of `review` returns to the Review step with the server's reason. |
+| Restore | The review is keyed to the backup, policy, selected surfaces, and the matching destination endpoints and sign-in modes. Only selected surfaces require destinations: Cosmos DB needs the target Cosmos DB endpoint, AI Search needs the target AI Search endpoint, and source files need the target Enhanced Citation storage Blob endpoint or connection string for the selected storage sign-in mode. Queueing needs a passing, current review, its authorization token (15 minutes), an acknowledgement, and `RESTORE WITH OVERWRITE` for the overwrite policy. Each opening of the dialog starts from a clean draft. |
+| Migration | The review is keyed to the plan and the destination and migration settings. Choosing All for a principal type requests a server count; a failed count offers **Retry count** and does not block the step, because the server review counts the records itself. When all included types are counted and total 0, the Scope step blocks review. The Confirm step displays the server-normalized review summary for principal scopes, included documents, synchronization mode, creates and updates, deletes, and conflicts. The mirror phrase `MAKE DESTINATION MATCH SOURCE` is entered after the review and is not part of the key, matching the server's fingerprint. A typed destination secret is masked when settings are saved; the review stays current because it was run against exactly what was saved, and the server still compares its own fingerprint. A `409` or a `workflow_step` of `review` returns to the Review step with the server's reason. |
 | Cosmos Editor | Unlocking records an acknowledgement. Saves send the opened ETag, `confirmation_accepted`, and `I understand this can damage system data`; a `409` offers a reload. Editing the query or page size drops the previous continuation token. A failed or empty container list waits for **Load containers** rather than retrying on its own. |
 | Jobs | Detail and progress requests are applied only while the same job is selected. A running job is polled every 2 seconds until it finishes. Retry, Resume, and Cancel follow the server's `can_retry` and `can_cancel`. |
 
@@ -156,7 +156,7 @@ The full administrator reference is `docs/admin/backup-recovery.md`.
   defaults, and number bounds with the server.
 - `functional_tests/test_v2_admin_capability_placement.py` and
   `test_v2_admin_field_renderer_coverage.py` include the new group.
-- `ui_tests/test_v2_admin_backup_recovery.py` runs 26 browser tests against an in-memory
+- `ui_tests/test_v2_admin_backup_recovery.py` runs the V2 browser coverage against an in-memory
   copy of the data-management API (`ui_tests/fixtures/v2_admin_data_management.py`): every
   card in light and dark themes; the Save bar, discard, and a rejected save; save-first
   ordering for backups, retention cleanup, restore, and migration; retry never saving;

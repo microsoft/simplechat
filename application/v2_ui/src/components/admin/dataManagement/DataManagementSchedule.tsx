@@ -61,7 +61,7 @@ const retentionField: AdminField = {
     key: 'data_management_retention_value',
     type: 'number',
     label: 'Keep backups for',
-    help: 'Retention cleanup deletes backups older than this window. The newest successful full backup is kept as a safety baseline.',
+    help: 'Retention cleanup deletes backups older than this window. The newest successful full backup is kept by default as a safety baseline.',
     default: 30,
 };
 

@@ -107,6 +107,7 @@ export function DataManagementReadiness({ help, onNavigate, disabled }: DmCardPr
                                         type="button"
                                         variant="subtle"
                                         size="sm"
+                                        aria-label={`Open ${item.label}`}
                                         disabled={disabled}
                                         onClick={() => onNavigate(item.sectionId)}
                                     >

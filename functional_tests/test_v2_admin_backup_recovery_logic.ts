@@ -50,6 +50,7 @@ import {
     jobArtifacts,
     jobWarnings,
     migrationLiveMetrics,
+    migrationPrincipalCount,
     migrationReviewKey,
     migrationStepIssue,
     normalizeReviewChecks,
@@ -59,6 +60,7 @@ import {
     pagerPageNumber,
     progressPercent,
     readDmValues,
+    restoreDestinationGaps,
     restoreReviewKey,
     retentionMaxValue,
     retryLabel,
@@ -318,6 +320,53 @@ check('a restore queues only with a current, ready, unexpired review and every c
     assert.equal(canQueueRestore({ ...ready, draft: { ...draft, policy: 'overwrite_existing', overwritePhrase: RESTORE_OVERWRITE_PHRASE } }), true);
 });
 
+check('restore destination gaps only include selected restore surfaces', () => {
+    const allSelected = initialRestoreDraft();
+    const empty = readDmValues(SAVED, {
+        target_cosmos_endpoint: '',
+        target_ai_search_endpoint: '',
+        target_enhanced_citations_storage_blob_endpoint: '',
+    });
+    assert.deepEqual(
+        restoreDestinationGaps(allSelected, empty).map((gap) => gap.label),
+        ['Cosmos DB', 'AI Search', 'Enhanced Citation files'],
+    );
+    assert.deepEqual(
+        restoreDestinationGaps({ ...allSelected, includeCosmos: false, includeSourceBlobs: false }, empty).map((gap) => gap.label),
+        ['AI Search'],
+    );
+    assert.deepEqual(
+        restoreDestinationGaps(
+            { ...allSelected, includeCosmos: false, includeAiSearch: true, includeSourceBlobs: false },
+            readDmValues(SAVED, {
+                target_cosmos_endpoint: '',
+                target_ai_search_endpoint: 'https://destination.search.windows.net',
+            }),
+        ),
+        [],
+        'an AI Search-only restore does not require a Cosmos DB endpoint',
+    );
+});
+
+check('restore destination storage accepts the credential for the selected target storage auth', () => {
+    const draft = { ...initialRestoreDraft(), includeCosmos: false, includeAiSearch: false };
+    const connectionStringValues = readDmValues(SAVED, {
+        target_enhanced_citations_storage_authentication_type: 'connection_string',
+        target_enhanced_citations_storage_blob_endpoint: '',
+        target_enhanced_citations_storage_connection_string: DM_REDACTED,
+    });
+    assert.deepEqual(restoreDestinationGaps(draft, connectionStringValues), []);
+    const missingConnectionString = readDmValues(SAVED, {
+        target_enhanced_citations_storage_authentication_type: 'connection_string',
+        target_enhanced_citations_storage_blob_endpoint: 'https://ignored.blob.core.windows.net',
+        target_enhanced_citations_storage_connection_string: '',
+    });
+    assert.deepEqual(
+        restoreDestinationGaps(draft, missingConnectionString).map((gap) => gap.label),
+        ['Enhanced Citation files'],
+    );
+});
+
 // ---------------------------------------------------------------------------------------
 // Migration
 // ---------------------------------------------------------------------------------------
@@ -338,6 +387,27 @@ check('the migration plan is built as the classic page builds it', () => {
     const mirror = buildMigrationPlan({ ...state, mode: 'mirror_with_deletions', mirrorPhrase: MIRROR_CONFIRMATION_PHRASE });
     assert.equal(mirror.mirror_confirmation, MIRROR_CONFIRMATION_PHRASE);
     assert.equal(mirror.baseline_job_id, '1b4e28ba-2fa1-11d2-883f-0016d3cca427');
+});
+
+check('migration principal counts use selected ids and server totals for All', () => {
+    const state = migrationState();
+    state.scopes.groups = { mode: 'all', selected: [], includeDocuments: true, serverCount: 8, serverCountStatus: 'ready' };
+    state.scopes.public_workspaces = { mode: 'none', selected: [{ id: 'ignored' }], includeDocuments: true };
+    assert.deepEqual(migrationPrincipalCount(state), { total: 10, includedKnown: true, includedTypeCount: 2 });
+
+    const loading = migrationState();
+    loading.scopes.users = { mode: 'all', selected: [], includeDocuments: false, serverCount: null, serverCountStatus: 'loading' };
+    assert.deepEqual(migrationPrincipalCount(loading), { total: 0, includedKnown: false, includedTypeCount: 1 });
+});
+
+check('a known empty All scope is blocked with the server review reason', () => {
+    const values = readDmValues(SAVED, {});
+    const state = initialMigrationState();
+    state.scopes.users = { mode: 'all', selected: [], includeDocuments: true, serverCount: 0, serverCountStatus: 'ready' };
+    assert.equal(
+        migrationStepIssue('scope', state, values),
+        'Choose at least one user, group, or public workspace before review.',
+    );
 });
 
 check('the mirror phrase does not stale a review, but destination and scope edits do', () => {

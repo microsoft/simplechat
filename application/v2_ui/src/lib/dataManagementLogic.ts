@@ -626,7 +626,15 @@ export function buildRestorePlan(backupId: string, draft: RestoreDraft): Restore
     };
 }
 
-/** Destination settings the restore review fingerprint binds to. */
+/**
+ * Destination settings a restore review is bound to.
+ *
+ * The first six are what the server's restore fingerprint binds. The storage connection
+ * string is added here: under connection-string sign-in the Blob endpoint is cleared, so it
+ * is the only setting that tells one destination account from another. Reviews always run
+ * after a save, so the value compared is the saved, masked one, and only a new edit to it
+ * makes the review stale.
+ */
 export const RESTORE_FINGERPRINT_SETTINGS: readonly DmEditableKey[] = [
     'target_cosmos_authentication_type',
     'target_cosmos_endpoint',
@@ -634,7 +642,41 @@ export const RESTORE_FINGERPRINT_SETTINGS: readonly DmEditableKey[] = [
     'target_ai_search_endpoint',
     'target_enhanced_citations_storage_authentication_type',
     'target_enhanced_citations_storage_blob_endpoint',
+    'target_enhanced_citations_storage_connection_string',
 ];
+
+export interface RestoreDestinationGap {
+    id: 'cosmos' | 'ai_search' | 'source_blobs';
+    label: string;
+}
+
+/** Destination requirements that apply only to the surfaces selected for this restore. */
+export function restoreDestinationGaps(
+    draft: RestoreDraft,
+    values: DmValues,
+): RestoreDestinationGap[] {
+    const gaps: RestoreDestinationGap[] = [];
+    if (draft.includeCosmos && !asText(values.target_cosmos_endpoint).trim()) {
+        gaps.push({ id: 'cosmos', label: 'Cosmos DB' });
+    }
+    if (draft.includeAiSearch && !asText(values.target_ai_search_endpoint).trim()) {
+        gaps.push({ id: 'ai_search', label: 'AI Search' });
+    }
+    if (draft.includeSourceBlobs) {
+        const auth = asText(
+            values.target_enhanced_citations_storage_authentication_type,
+            'managed_identity',
+        );
+        const storageReady =
+            auth === 'connection_string'
+                ? isSecretSet(values.target_enhanced_citations_storage_connection_string)
+                : Boolean(asText(values.target_enhanced_citations_storage_blob_endpoint).trim());
+        if (!storageReady) {
+            gaps.push({ id: 'source_blobs', label: 'Enhanced Citation files' });
+        }
+    }
+    return gaps;
+}
 
 /**
  * What a restore review was run against.
@@ -715,6 +757,9 @@ export interface MigrationScopeState {
     /** Chosen records, kept with their labels so the selection reads back across pages. */
     selected: CatalogItem[];
     includeDocuments: boolean;
+    /** Server count for All mode; it is display evidence only and is not part of the plan. */
+    serverCount?: number | null;
+    serverCountStatus?: 'idle' | 'loading' | 'ready' | 'error';
 }
 
 export type SubmissionState = 'idle' | 'submitting' | 'accepted' | 'uncertain';
@@ -831,6 +876,35 @@ export function selectedScopeCount(state: MigrationWizardState): number {
     }).length;
 }
 
+export function migrationPrincipalCount(state: MigrationWizardState): {
+    total: number;
+    includedKnown: boolean;
+    includedTypeCount: number;
+} {
+    return MIGRATION_TARGET_TYPES.reduce<{
+        total: number;
+        includedKnown: boolean;
+        includedTypeCount: number;
+    }>(
+        (summary, type) => {
+            const scope = state.scopes[type];
+            if (scope.mode === 'none') return summary;
+            summary.includedTypeCount += 1;
+            if (scope.mode === 'selected') {
+                summary.total += scope.selected.length;
+                return summary;
+            }
+            if (scope.serverCountStatus === 'ready' && typeof scope.serverCount === 'number') {
+                summary.total += Math.max(0, scope.serverCount);
+                return summary;
+            }
+            summary.includedKnown = false;
+            return summary;
+        },
+        { total: 0, includedKnown: true, includedTypeCount: 0 },
+    );
+}
+
 /**
  * Why the wizard cannot move past a step, or null when it can.
  *
@@ -851,6 +925,14 @@ export function migrationStepIssue(
             if (state.scopes[type].selected.length > MIGRATION_MAX_SELECTED_IDS) {
                 return `Choose at most ${MIGRATION_MAX_SELECTED_IDS.toLocaleString()} ${MIGRATION_TARGET_LABELS[type].plural.toLowerCase()}, or choose All.`;
             }
+        }
+        const principalCount = migrationPrincipalCount(state);
+        if (
+            principalCount.includedTypeCount > 0 &&
+            principalCount.includedKnown &&
+            principalCount.total === 0
+        ) {
+            return 'Choose at least one user, group, or public workspace before review.';
         }
         return selectedScopeCount(state) > 0 ? null : 'Choose at least one user, group, or public workspace.';
     }

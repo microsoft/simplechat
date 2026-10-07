@@ -27,6 +27,7 @@ import {
     type DataManagementJob,
     type JsonRecord,
     type MigrationMode,
+    type MigrationReview,
     type MigrationTargetType,
 } from '../../../lib/dataManagement';
 import {
@@ -46,6 +47,7 @@ import {
     isMigrationReviewCurrent,
     isTerminalJob,
     isValidGuid,
+    migrationPrincipalCount,
     migrationLiveMetrics,
     migrationReviewKey,
     migrationStepIssue,
@@ -59,7 +61,6 @@ import {
     retryLabel,
     reviewHeadline,
     secondsUntil,
-    selectedScopeCount,
     type DmValues,
     type MigrationScopeState,
     type MigrationStep,
@@ -334,6 +335,7 @@ interface CatalogState {
     total: number;
     pager: PagerState;
     loading: boolean;
+    loaded: boolean;
     error: string | null;
     limitMessage: string | null;
 }
@@ -345,6 +347,7 @@ const initialCatalog = (): CatalogState => ({
     total: 0,
     pager: FIRST_PAGE,
     loading: false,
+    loaded: false,
     error: null,
     limitMessage: null,
 });
@@ -355,6 +358,13 @@ function updateScope(type: MigrationTargetType, patch: Partial<MigrationScopeSta
         reviewKey: null,
         acknowledged: false,
         mirrorPhrase: '',
+        scopes: { ...state.scopes, [type]: { ...state.scopes[type], ...patch } },
+    }));
+}
+
+function updateScopeCount(type: MigrationTargetType, patch: Partial<MigrationScopeState>) {
+    useDataManagementStore.getState().updateMigration((state) => ({
+        ...state,
         scopes: { ...state.scopes, [type]: { ...state.scopes[type], ...patch } },
     }));
 }
@@ -376,7 +386,13 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
         groups: 0,
         public_workspaces: 0,
     });
-    const selectedTotal = selectedScopeCount(state);
+    const countRequests = useRef<Record<MigrationTargetType, number>>({
+        users: 0,
+        groups: 0,
+        public_workspaces: 0,
+    });
+    const mounted = useRef(true);
+    const principalCount = migrationPrincipalCount(state);
     const scope = state.scopes[active];
     const currentCatalog = catalog[active];
     const selectedIds = useMemo(() => new Set(scope.selected.map((item) => item.id)), [scope.selected]);
@@ -386,10 +402,18 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
         // Only the newest search for a type may land; an older, slower one is dropped.
         const request = catalogRequests.current[type] + 1;
         catalogRequests.current[type] = request;
-        const latest = () => isCurrentEpoch(token) && catalogRequests.current[type] === request;
+        const latest = () =>
+            mounted.current && isCurrentEpoch(token) && catalogRequests.current[type] === request;
         setCatalog((current) => ({
             ...current,
-            [type]: { ...current[type], loading: true, error: null, appliedSearch: search, pager },
+            [type]: {
+                ...current[type],
+                loading: true,
+                loaded: false,
+                error: null,
+                appliedSearch: search,
+                pager,
+            },
         }));
         try {
             const page = await listMigrationCatalog(type, search, pager.current ?? '');
@@ -399,6 +423,7 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                 [type]: {
                     ...current[type],
                     loading: false,
+                    loaded: true,
                     items: page.items,
                     total: page.total_count,
                     pager: pagerAfterLoad(pager, page.continuation_token),
@@ -412,12 +437,50 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                 [type]: {
                     ...current[type],
                     loading: false,
+                    loaded: false,
                     items: [],
                     error: errorMessage(error, 'Catalog could not be loaded.'),
                 },
             }));
         }
     };
+
+    const loadScopeCount = async (type: MigrationTargetType) => {
+        const token = currentEpoch();
+        const request = countRequests.current[type] + 1;
+        countRequests.current[type] = request;
+        // The count is kept in the store, not this step, so it may land after the step is
+        // left; only a newer count for the same type or leaving the page discards it.
+        const latest = () => isCurrentEpoch(token) && countRequests.current[type] === request;
+        updateScopeCount(type, { serverCountStatus: 'loading', serverCount: null });
+        try {
+            const page = await listMigrationCatalog(type, '', '', undefined, 1);
+            if (!latest()) return;
+            updateScopeCount(type, { serverCountStatus: 'ready', serverCount: page.total_count });
+        } catch {
+            if (!latest()) return;
+            updateScopeCount(type, { serverCountStatus: 'error', serverCount: null });
+        }
+    };
+
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
+
+    // Counts only what has never been counted. A failed count waits for Retry, so an
+    // unavailable catalog is not asked again on every change to the scope.
+    useEffect(() => {
+        for (const type of TARGET_TYPES) {
+            const targetScope = state.scopes[type];
+            const status = targetScope.serverCountStatus ?? 'idle';
+            if (targetScope.mode === 'all' && status === 'idle') {
+                void loadScopeCount(type);
+            }
+        }
+    }, [state.scopes]);
 
     const onTabKey = (event: KeyboardEvent<HTMLButtonElement>, type: MigrationTargetType) => {
         const index = TARGET_TYPES.indexOf(type);
@@ -459,6 +522,33 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
         updateScope(active, { selected });
     };
 
+    const badgeText = (type: MigrationTargetType) => {
+        const targetScope = state.scopes[type];
+        if (targetScope.mode === 'none') return '0';
+        if (targetScope.mode === 'selected') return formatNumber(targetScope.selected.length);
+        if (targetScope.serverCountStatus === 'loading') return 'Counting';
+        if (targetScope.serverCountStatus === 'error') return 'Unavailable';
+        if (targetScope.serverCountStatus === 'ready') return formatNumber(targetScope.serverCount ?? 0);
+        return 'Not counted';
+    };
+
+    const allScopeStatus = () => {
+        if (scope.mode !== 'all') return null;
+        const label = MIGRATION_TARGET_LABELS[active].plural.toLowerCase();
+        if (scope.serverCountStatus === 'loading') return `Counting ${label}…`;
+        if (scope.serverCountStatus === 'error') {
+            return `The ${label} count could not be loaded. The server review still counts them.`;
+        }
+        if (scope.serverCountStatus === 'ready') {
+            return `${formatNumber(scope.serverCount ?? 0)} ${label} included.`;
+        }
+        return `Counting ${label}…`;
+    };
+
+    const countFailed = TARGET_TYPES.some(
+        (type) => state.scopes[type].mode === 'all' && state.scopes[type].serverCountStatus === 'error',
+    );
+
     return (
         <div>
             {sectionHeading(
@@ -468,7 +558,11 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                     className="rounded-full border border-edge bg-surface-2 px-3 py-1 text-xs text-text-2"
                     aria-live="polite"
                 >
-                    {formatNumber(selectedTotal)} principal scopes selected
+                    {principalCount.includedKnown
+                        ? `${formatNumber(principalCount.total)} principal scopes selected`
+                        : countFailed
+                          ? 'Some counts are unavailable'
+                          : 'Counting principal scopes'}
                 </div>,
             )}
             <div
@@ -496,7 +590,7 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                     >
                         {MIGRATION_TARGET_LABELS[type].plural}
                         <span className="ml-2 rounded-full border border-edge bg-surface-solid px-1.5 py-0.5 text-xs">
-                            {formatNumber(state.scopes[type].selected.length)}
+                            {badgeText(type)}
                         </span>
                     </button>
                 ))}
@@ -525,13 +619,18 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                                     name={`migration-${active}-mode`}
                                     value={mode}
                                     checked={scope.mode === mode}
-                                    onChange={() =>
+                                    onChange={() => {
+                                        // Choosing All counts afresh, as the classic page does;
+                                        // the scope effect above sends the one request.
                                         updateScope(active, {
                                             mode,
                                             includeDocuments:
                                                 mode === 'none' ? false : scope.includeDocuments,
-                                        })
-                                    }
+                                            ...(mode === 'all'
+                                                ? { serverCount: null, serverCountStatus: 'idle' as const }
+                                                : {}),
+                                        });
+                                    }}
                                 />
                                 <span>
                                     <span className="block font-semibold">{humanizeToken(mode)}</span>
@@ -553,6 +652,31 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                         label="Include their documents"
                         description="When off, only the selected principal records move."
                     />
+                    {scope.mode === 'all' ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <p
+                                role={scope.serverCountStatus === 'error' ? 'alert' : 'status'}
+                                aria-live="polite"
+                                className={clsx(
+                                    'text-xs',
+                                    scope.serverCountStatus === 'error' ? 'text-warn' : 'text-text-3',
+                                )}
+                            >
+                                {allScopeStatus()}
+                            </p>
+                            {scope.serverCountStatus === 'error' ? (
+                                <GlassButton
+                                    type="button"
+                                    variant="subtle"
+                                    size="sm"
+                                    disabled={disabled}
+                                    onClick={() => void loadScopeCount(active)}
+                                >
+                                    Retry count
+                                </GlassButton>
+                            ) : null}
+                        </div>
+                    ) : null}
                 </fieldset>
                 {scope.mode === 'selected' ? (
                     <div className="mt-4 grid min-w-0 gap-4 @4xl:grid-cols-[minmax(0,1fr)_minmax(15rem,22rem)]">
@@ -601,7 +725,11 @@ function ScopeStep({ state, disabled }: Pick<PanelProps, 'state' | 'disabled'>) 
                                     <div className="p-3 text-sm text-text-3">Loading catalog…</div>
                                 ) : null}
                                 {!currentCatalog.loading && !currentCatalog.items.length ? (
-                                    <div className="p-3 text-sm text-text-3">Search the server catalog.</div>
+                                    <div className="p-3 text-sm text-text-3">
+                                        {currentCatalog.loaded
+                                            ? 'No matches found.'
+                                            : 'Search the server catalog.'}
+                                    </div>
                                 ) : null}
                                 {currentCatalog.items.map((item) => (
                                     <label
@@ -910,11 +1038,41 @@ function OptionsStep({
     );
 }
 
-function scopeSummary(state: MigrationWizardState) {
+function reviewScopeCount(review: MigrationReview | null | undefined, type: MigrationTargetType) {
+    const count = review?.summary?.[type]?.count;
+    return typeof count === 'number' ? Math.max(0, count) : null;
+}
+
+function reviewDocumentCount(review: MigrationReview | null | undefined, type: MigrationTargetType) {
+    const count = review?.summary?.[type]?.document_count;
+    return typeof count === 'number' ? Math.max(0, count) : 0;
+}
+
+function reviewPrincipalTotal(review: MigrationReview | null | undefined) {
+    if (!review?.summary) return null;
+    return TARGET_TYPES.reduce((total, type) => total + (reviewScopeCount(review, type) ?? 0), 0);
+}
+
+function reviewIncludedDocumentTotal(review: MigrationReview | null | undefined) {
+    if (!review?.summary) return null;
+    return TARGET_TYPES.reduce((total, type) => total + reviewDocumentCount(review, type), 0);
+}
+
+function scopeSummary(state: MigrationWizardState, review?: MigrationReview | null) {
     return TARGET_TYPES.map((type) => {
         const scope = state.scopes[type];
-        const count = scope.mode === 'all' ? 'All' : formatNumber(scope.selected.length);
-        return `${MIGRATION_TARGET_LABELS[type].plural}: ${humanizeToken(scope.mode)} (${count}, ${scope.includeDocuments ? 'documents included' : 'documents skipped'})`;
+        const reviewed = review?.summary?.[type];
+        const mode = reviewed?.mode ?? scope.mode;
+        const reviewedCount = reviewScopeCount(review, type);
+        const count =
+            reviewedCount !== null
+                ? formatNumber(reviewedCount)
+                : mode === 'all'
+                  ? 'All'
+                  : formatNumber(scope.selected.length);
+        const includeDocuments = reviewed?.include_documents ?? scope.includeDocuments;
+        const documents = reviewed ? `, ${formatNumber(reviewDocumentCount(review, type))} documents` : '';
+        return `${MIGRATION_TARGET_LABELS[type].plural}: ${humanizeToken(mode)} (${count}${documents}, ${includeDocuments ? 'documents included' : 'documents skipped'})`;
     });
 }
 
@@ -940,12 +1098,15 @@ function ReviewStep({
             const result = await testTargetCosmos(current.payload, buildMigrationPlan(current.state));
             setCosmosOutcome({
                 tone: 'success',
-                message: `Connected to database ${result.database_name || TARGET_COSMOS_DATABASE_NAME}. ${formatNumber(result.migration_access?.container_count ?? 0)} planned containers verified.`,
+                message: `Cosmos data-copy access is ready. ${formatNumber(result.migration_access?.container_count ?? 0)} planned Cosmos containers can be read and written. RU Boost permissions are tested separately.`,
             });
         } catch (error) {
             setCosmosOutcome({
                 tone: 'danger',
-                message: errorMessage(error, 'Destination Cosmos access could not be validated.'),
+                message: errorMessage(
+                    error,
+                    'Cosmos data-copy access could not be validated. Confirm source and destination read/write access. RU Boost permissions are tested separately.',
+                ),
             });
         } finally {
             setBusy(null);
@@ -1053,7 +1214,7 @@ function ReviewStep({
                         <div className="rounded-xl border border-edge bg-surface-1 p-3">
                             <h4 className="text-sm font-semibold text-text-1">Scope summary</h4>
                             <ul className="mt-2 space-y-1 text-sm text-text-2">
-                                {scopeSummary(state).map((line) => (
+                                {scopeSummary(state, review).map((line) => (
                                     <li key={line}>{line}</li>
                                 ))}
                             </ul>
@@ -1122,6 +1283,16 @@ function ConfirmStep({
     const executable = canExecuteMigration(state, values, now) && !disabled;
     const review = state.review;
     const outcomes = review?.preview?.estimated_outcomes ?? {};
+    const principalTotal = reviewPrincipalTotal(review) ?? migrationPrincipalCount(state).total;
+    const documentTotal =
+        reviewIncludedDocumentTotal(review) ??
+        TARGET_TYPES.reduce(
+            (total, type) =>
+                total + (state.scopes[type].includeDocuments ? state.scopes[type].selected.length : 0),
+            0,
+        );
+    const serverMode = review?.summary?.migration_mode ?? state.mode;
+    const reviewReady = review?.ready === true;
     const [message, setMessage] = useState<string | null>(null);
 
     const execute = async () => {
@@ -1193,18 +1364,20 @@ function ConfirmStep({
             )}
             <div className="grid gap-3 @3xl:grid-cols-2">
                 <div className="rounded-xl border border-edge bg-surface-1 p-3">
-                    <h4 className="text-sm font-semibold text-text-1">Server-normalized plan</h4>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-text-1">Server-normalized plan</h4>
+                        {review ? (
+                            <DmChip tone={reviewReady ? 'ok' : 'danger'}>
+                                {reviewReady ? 'Ready' : 'Blocked'}
+                            </DmChip>
+                        ) : null}
+                    </div>
                     <DmMetricGrid
                         className="mt-2"
                         items={[
-                            { label: 'Principal scopes', value: formatNumber(selectedScopeCount(state)) },
-                            {
-                                label: 'Document handling',
-                                value: TARGET_TYPES.some((type) => state.scopes[type].includeDocuments)
-                                    ? 'Included'
-                                    : 'Skipped',
-                            },
-                            { label: 'Mode', value: MIGRATION_MODE_LABELS[state.mode] },
+                            { label: 'Principal scopes', value: formatNumber(principalTotal) },
+                            { label: 'Included documents', value: formatNumber(documentTotal) },
+                            { label: 'Synchronization mode', value: MIGRATION_MODE_LABELS[serverMode] },
                             {
                                 label: 'Creates / updates',
                                 value: `${formatNumber(outcomes.create_count)} / ${formatNumber(outcomes.update_count)}`,

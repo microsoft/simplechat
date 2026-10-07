@@ -37,6 +37,7 @@ import {
     DmPager,
     DmStatusPill,
     DmWorkbench,
+    isStacked,
     useVisibleOnce,
 } from './DmShared';
 import { DataManagementJobDetail } from './DataManagementJobDetail';
@@ -103,6 +104,7 @@ function errorNotice(failure: HistoryFailure, retry: () => void) {
 
 export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
     const rootRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
     const detailRef = useRef<HTMLDivElement>(null);
     const visible = useVisibleOnce(rootRef);
     const filters = useDataManagementStore((state) => state.jobs.filters);
@@ -119,6 +121,7 @@ export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
     const [refreshVersion, setRefreshVersion] = useState(0);
     const controllerRef = useRef<AbortController | null>(null);
     const requestRef = useRef(0);
+    const emptyPageFallbackUsed = useRef(false);
 
     const dateError = useMemo(
         () => validateHistoryDateRange(filters.createdFrom || '', filters.createdTo || ''),
@@ -173,6 +176,24 @@ export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
             .then((page) => {
                 if (controller.signal.aborted || requestRef.current !== request || !isCurrentEpoch(epoch))
                     return;
+                if (
+                    !emptyPageFallbackUsed.current &&
+                    pager.current !== null &&
+                    pager.previous.length > 0 &&
+                    !page.jobs.length &&
+                    !page.pagination.next_token
+                ) {
+                    emptyPageFallbackUsed.current = true;
+                    updateJobs((state) =>
+                        state.pager.current === pager.current
+                            ? { ...state, pager: pagerBack(state.pager), selectedId: null }
+                            : state,
+                    );
+                    return;
+                }
+                if (pager.current === null || page.jobs.length || page.pagination.next_token) {
+                    emptyPageFallbackUsed.current = false;
+                }
                 setRows(page.jobs);
                 setPagination(page.pagination);
                 updateJobs((state) => {
@@ -195,6 +216,7 @@ export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
     }, [dateError, filters, jobsRevision, pager.current, refreshVersion, updateJobs, visible]);
 
     const setFilter = <K extends keyof JobFilters>(key: K, value: JobFilters[K]) => {
+        emptyPageFallbackUsed.current = false;
         updateJobs((state) => ({
             ...state,
             filters: { ...state.filters, [key]: value },
@@ -205,6 +227,11 @@ export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
 
     const selectJob = (jobId: string) => {
         updateJobs({ selectedId: jobId });
+        requestAnimationFrame(() => {
+            if (isStacked(listRef.current, detailRef.current)) {
+                detailRef.current?.scrollIntoView({ block: 'start' });
+            }
+        });
     };
 
     const moveFocus = (index: number) => {
@@ -315,7 +342,7 @@ export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
                 listLabel="Job list"
                 detailRef={detailRef}
                 list={
-                    <div className="min-w-0">
+                    <div ref={listRef} className="min-w-0">
                         {loading && !rows.length ? (
                             <p className="p-4 text-sm text-text-3">Loading jobs…</p>
                         ) : null}
@@ -378,12 +405,14 @@ export function DataManagementJobs({ help, disabled = false }: DmCardProps) {
                             hasNext={Boolean(pager.next)}
                             loading={loading}
                             status={pageStatus}
-                            onPrevious={() =>
-                                updateJobs((state) => ({ ...state, pager: pagerBack(state.pager) }))
-                            }
-                            onNext={() =>
-                                updateJobs((state) => ({ ...state, pager: pagerForward(state.pager) }))
-                            }
+                            onPrevious={() => {
+                                emptyPageFallbackUsed.current = false;
+                                updateJobs((state) => ({ ...state, pager: pagerBack(state.pager) }));
+                            }}
+                            onNext={() => {
+                                emptyPageFallbackUsed.current = false;
+                                updateJobs((state) => ({ ...state, pager: pagerForward(state.pager) }));
+                            }}
                         />
                     </div>
                 }
