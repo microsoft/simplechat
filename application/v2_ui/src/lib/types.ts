@@ -922,6 +922,12 @@ export interface AdminNavTab {
     label: string;
     icon?: string;
     sections: AdminNavSection[];
+    /**
+     * Names a tab drawn from something other than its sections. `latest_features` is
+     * the Admin Latest Features tab, whose content is generated from the release
+     * catalogue, so it declares no sections at all.
+     */
+    render?: string;
 }
 
 export interface AdminNavGroup {
