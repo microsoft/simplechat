@@ -45,6 +45,7 @@ import { classicChatHref } from '../../lib/conversationUrl';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
+import { LatestFeaturesLink } from './LatestFeaturesLink';
 import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
 import { useWorkflowAlertCalloutShown, WorkflowAlertRowSlot } from '../notifications/WorkflowAlertNotice';
@@ -279,6 +280,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                 onClick={() => setOpen((isOpen) => !isOpen)}
                 aria-expanded={open}
                 aria-controls={panelId}
+                data-tour="user-menu"
                 // Collapsed, the avatar is the only content and carries no text of its own
                 // once a profile photo replaces the initials, so the button needs a name.
                 aria-label={collapsed ? 'Account' : undefined}
@@ -456,6 +458,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                             if (mobile) setMobileNavOpen(false);
                         }}
                         title="Start a new chat"
+                        data-tour="new-chat"
                         className={clsx(
                             'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
                             'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
@@ -511,6 +514,9 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 {/* Custom pages and external links an administrator configured. Renders
                     nothing when neither is enabled, which is the default. */}
                 <NavExtras collapsed={collapsed} />
+
+                {/* The Support menu's Latest Features shortcut, until the user hides it. */}
+                <LatestFeaturesLink collapsed={collapsed} />
 
                 {/* The conversation list only belongs in the rail while the chat page is open,
                     so other pages get the full rail height for their own navigation. */}

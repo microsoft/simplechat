@@ -63,11 +63,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
         feature: 'enable_user_feedback',
         Component: FeedbackTab,
     },
-    {
-        id: 'violations',
-        label: 'Violations',
-        icon: ShieldAlert,
-        feature: 'enable_content_safety',
-        Component: ViolationsTab,
-    },
+    // Always listed, as on the classic profile page. The tab explains itself when neither
+    // content safety nor content screening is on, rather than disappearing.
+    { id: 'violations', label: 'Violations', icon: ShieldAlert, Component: ViolationsTab },
 ];
