@@ -44,7 +44,7 @@ import {
 
 type Tone = 'info' | 'warn' | 'danger' | 'ok';
 
-function safeWebLink(value: unknown): string {
+function safeWebLinkUrl(value: unknown): string {
     if (typeof value !== 'string' || !value) return '';
     try {
         const url = new URL(value);
@@ -52,6 +52,12 @@ function safeWebLink(value: unknown): string {
     } catch {
         return '';
     }
+}
+
+function safeApprovalDecisionHref(value: unknown): string {
+    return typeof value === 'string' && value
+        ? `/approvals/m365/${encodeURIComponent(value)}`
+        : '/approvals/m365';
 }
 
 function countdownText(action: PendingAction): string {
@@ -300,12 +306,12 @@ function PendingActionDetail({
     const route = pendingActionSendRoute(action);
     const actionable = ACTIONABLE_PENDING_STATUSES.has(action.status);
     const canChange = !busy && !loading && !needsRefresh && !denied && canChangePendingAction(action);
-    const webLink = safeWebLink(action.web_link);
-    const approvalTarget = (() => {
+    const webLink = safeWebLinkUrl(action.web_link);
+    const approvalId = (() => {
         const approvals = approvalRequired?.approvals;
         const first = Array.isArray(approvals) ? (approvals[0] as { id?: unknown } | undefined)?.id : undefined;
         const id = typeof first === 'string' ? first : approvalRequired?.approval_id;
-        return typeof id === 'string' && id ? `/approvals/m365/${encodeURIComponent(id)}` : '/approvals/m365';
+        return typeof id === 'string' ? id : '';
     })();
 
     const reviewFull = async () => {
@@ -510,7 +516,7 @@ function PendingActionDetail({
                 ) : null}
                 {approvalRequired && actionable ? (
                     <Link
-                        to={approvalTarget}
+                        to={safeApprovalDecisionHref(approvalId)}
                         className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm text-accent hover:bg-accent-soft"
                     >
                         Review sharing decision
@@ -539,7 +545,7 @@ function PendingActionDetail({
                 </GlassButton>
                 {webLink ? (
                     <a
-                        href={webLink}
+                        href={safeWebLinkUrl(action.web_link)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm text-accent hover:bg-accent-soft"

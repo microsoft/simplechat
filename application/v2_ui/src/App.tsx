@@ -33,6 +33,12 @@ import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 
+function safeBrandingAssetUrl(value: unknown): string {
+    return typeof value === 'string' && /^\/static\/images\/[A-Za-z0-9_.-]+(?:\?v=\d+)?$/.test(value)
+        ? value
+        : '';
+}
+
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
 // import.meta.env.DEV, which a production build replaces with false, so production never
 // references the module or emits a chunk for it, whatever the lab's files come to contain.
@@ -176,7 +182,7 @@ export function App() {
      * again.
      */
     useEffect(() => {
-        const faviconUrl = data?.branding?.favicon_url;
+        const faviconUrl = safeBrandingAssetUrl(data?.branding?.favicon_url);
         if (!faviconUrl) {
             return;
         }

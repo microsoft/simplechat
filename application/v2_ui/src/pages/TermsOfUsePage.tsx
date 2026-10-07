@@ -16,6 +16,7 @@ import {
     fetchTermsOfUse,
     type TermsOfUsePayload,
 } from '../lib/termsOfUse';
+import { safeSameOriginUrl } from '../lib/apiClient';
 
 type Pending = 'accept' | 'decline' | null;
 
@@ -42,7 +43,7 @@ export function TermsOfUsePage() {
                 // Nothing to accept -- terms are off or already accepted -- so carry on to
                 // where the user was going rather than showing an empty interstitial.
                 if (!payload.enabled || !payload.required) {
-                    window.location.replace(payload.return_path || '/v2');
+                    window.location.replace(safeSameOriginUrl(payload.return_path, '/v2'));
                     return;
                 }
                 setTerms(payload);
@@ -71,7 +72,9 @@ export function TermsOfUsePage() {
         try {
             const result =
                 decision === 'accept' ? await acceptTermsOfUse() : await declineTermsOfUse();
-            window.location.assign(result.redirect_url || (decision === 'accept' ? '/v2' : '/'));
+            window.location.assign(
+                safeSameOriginUrl(result.redirect_url, decision === 'accept' ? '/v2' : '/'),
+            );
         } catch (error) {
             setPending(null);
             setActionError(

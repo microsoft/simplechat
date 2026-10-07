@@ -80,6 +80,10 @@ const NAV_ITEMS: NavItem[] = [
     { to: '/content-review', label: 'Content review', icon: ShieldCheck, hint: 'Review screened knowledge, including existing holds when new scanning is disabled' },
 ];
 
+function safeNavHref(value: string): string {
+    return NAV_ITEMS.some((item) => item.to === value) ? value : '/chat';
+}
+
 function BrandMark({ collapsed }: { collapsed: boolean }) {
     const branding = useBootstrapStore((state) => state.data?.branding);
     const theme = useUiStore((state) => state.theme);
@@ -459,7 +463,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                                 const label = item.to === '/public' ? publicLabels.plural : item.label;
                                 return (
                             <NavLink
-                                to={item.to}
+                                to={safeNavHref(item.to)}
                                 onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                                 title={collapsed ? label : item.hint}
                                 className={({ isActive }) =>

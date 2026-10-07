@@ -411,7 +411,7 @@ def _build_navigation(raw_settings, user_roles):
             # Re-checked on the way out, not just on the way in. The V2 settings PATCH
             # is the only write path that applies the scheme rule, so a link stored
             # through the server-rendered admin form, or already in the document, could
-            # otherwise put a javascript: URL into every user's navigation.
+            # otherwise put a script-scheme URL into every user's navigation.
             if not is_safe_external_link_url(url):
                 log_event(
                     "[V2_BOOTSTRAP] Dropped an external link with an unsupported URL "

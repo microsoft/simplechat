@@ -50,6 +50,19 @@ export function apiUrl(path: string): string {
     return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+export function safeSameOriginUrl(value: unknown, fallback: string): string {
+    const candidate = typeof value === 'string' ? value.trim() : '';
+    if (
+        candidate.startsWith('/') &&
+        !candidate.startsWith('//') &&
+        !candidate.includes('\\') &&
+        !/[\u0000-\u001f\u007f]/.test(candidate)
+    ) {
+        return candidate;
+    }
+    return fallback;
+}
+
 interface RequestOptions {
     method?: string;
     body?: unknown;
@@ -74,8 +87,8 @@ export function isTermsOfUseRequired(status: number, payload: unknown): boolean 
 }
 
 /** The V2 Terms of Use page, set to return to `next` once accepted. */
-export function termsOfUseHref(next: string): string {
-    return `${V2_TERMS_OF_USE_PATH}?${new URLSearchParams({ next }).toString()}`;
+export function safeTermsOfUseUrl(next: unknown): string {
+    return `${V2_TERMS_OF_USE_PATH}?${new URLSearchParams({ next: safeSameOriginUrl(next, '/v2') }).toString()}`;
 }
 
 /**
@@ -93,7 +106,7 @@ export function redirectToTermsOfUse(): boolean {
     if (pathname === V2_TERMS_OF_USE_PATH) {
         return false;
     }
-    window.location.assign(termsOfUseHref(`${pathname}${search}${hash}`));
+    window.location.assign(safeTermsOfUseUrl(`${pathname}${search}${hash}`));
     return true;
 }
 
