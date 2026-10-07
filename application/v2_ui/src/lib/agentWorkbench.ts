@@ -46,7 +46,9 @@ import {
 } from './agentDelegation';
 import type { AgentLinkScope } from './conversationUrl';
 import type { EditorWorkspaceScope } from './workspaceEditorDrafts';
-import { fetchGlobalActions, type ActionWorkbenchAdapter } from './actionWorkbench';
+import {
+    fetchGlobalActions, GLOBAL_ACTION_WORKBENCH, PERSONAL_ACTION_WORKBENCH, type ActionWorkbenchAdapter,
+} from './actionWorkbench';
 import { requireWorkspaceId, workspaceBasePath } from './workspaceContext';
 
 export type AgentWorkbenchScope =
@@ -73,6 +75,8 @@ export interface AgentWorkbenchAdapter {
     actionsBasePath: string;
     /** Whether "New action" is offered. Personal reads this from bootstrap; group precomputes it here. */
     canCreateActions: boolean;
+    /** The matching action workbench, so Ask AI's drafted actions save into the same scope. */
+    actionWorkbench: ActionWorkbenchAdapter | null;
     supported: ReadonlySet<AgentOperation>;
     allows: (operation: AgentOperation, agent?: AgentConfiguration) => boolean;
     /** Whether this agent may be launched into chat: a per-agent server hint in group scope. */
@@ -169,6 +173,7 @@ export const PERSONAL_AGENT_WORKBENCH: AgentWorkbenchAdapter = {
     // Personal action-creation eligibility comes from the bootstrap store in the editor; this
     // value is unused in personal scope and never gates the group editor.
     canCreateActions: false,
+    actionWorkbench: PERSONAL_ACTION_WORKBENCH,
     supported: new Set(AGENT_OPERATIONS),
     allows: () => true,
     canUseInChat: (agent) => agent.is_enabled !== false,
@@ -282,6 +287,7 @@ export function createGroupAgentWorkbench(
         // candidates route dark and offers no creation, never falling back to a personal action.
         actionsBasePath: actionAdapter ? actionAdapter.basePath : `${workspaceBasePath(scope)}/actions`,
         canCreateActions: actionAdapter ? actionAdapter.allows('create') : false,
+        actionWorkbench: actionAdapter,
         supported,
         allows,
         canUseInChat: (agent) => Array.isArray(agent.agent_actions) && agent.agent_actions.includes('chat'),
@@ -395,6 +401,7 @@ export const GLOBAL_AGENT_WORKBENCH: AgentWorkbenchAdapter = {
     delegationScope: GLOBAL_DELEGATION_SCOPE,
     actionsBasePath: GLOBAL_ACTIONS_BASE_PATH,
     canCreateActions: true,
+    actionWorkbench: GLOBAL_ACTION_WORKBENCH,
     supported: new Set(AGENT_OPERATIONS),
     allows: () => true,
     // Whether people can reach a global agent depends on Workspace Mode and the merge setting, so

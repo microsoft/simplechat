@@ -4827,6 +4827,32 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_semantic_kernel", "equals": True},
         },
         {
+            "key": "enable_agent_ai_assistant",
+            "type": "switch",
+            "label": "Enable Ask AI in the Agent Editor",
+            "help": (
+                "People can describe the agent they want in plain language and the "
+                "assistant fills in their unsaved draft in the V2 agent editor, "
+                "highlighting each change with an undo. It only picks actions and "
+                "knowledge the person can already use, and it never saves an agent."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "enable_action_ai_assistant",
+            "type": "switch",
+            "label": "Enable Ask AI in the Action Editor",
+            "help": (
+                "The same assistant for the V2 action editor. It can choose an action "
+                "type and fill in its configuration, but it never reads or writes "
+                "credentials, never contacts the action's endpoint and never saves "
+                "an action."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
             "key": "merge_global_semantic_kernel_with_workspace",
             "type": "switch",
             "label": "Add Global Agents and Actions to Workspaces",

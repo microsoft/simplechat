@@ -34,6 +34,22 @@ See [Build agents and actions in My Workspace]({{ '/guides/workspace-agents-and-
 for the native experience, implemented in **0.261.096** in
 `application/single_app/config.py`.
 
+### Set up the action with Ask AI
+
+Select **Ask AI** in the editor's header and describe the connector, for example
+"an MCP server at
+https://example.com/mcp that only exposes the search tool". The assistant can
+choose the action type and fill in its name, description, configuration and
+sign-in method, highlighting each field it changed. Each turn lists its changes,
+with **Undo this change** to take the whole turn back.
+
+The assistant never sees or enters keys, secrets or other credentials; enter
+those yourself in **Authentication**. It also doesn't upload or fetch OpenAPI
+specifications. Nothing is saved until you choose **Save action**.
+
+Administrators can turn the panel off with **Enable Ask AI in the Action Editor**
+in [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
+
 ## Classic interface steps
 
 1. Open **Personal Workspace** or the target **Group Workspace**.

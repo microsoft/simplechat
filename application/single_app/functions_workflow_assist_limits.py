@@ -52,10 +52,14 @@ class AssistLimitConflict(Exception):
     """A compare-and-swap write lost a race with another request."""
 
 
-def assist_limit_document_id(user_id):
-    """The user's limit document ID; the user ID itself is never stored."""
+def assist_limit_document_id(user_id, document_type=ASSIST_LIMIT_DOCUMENT_TYPE):
+    """The user's limit document ID; the user ID itself is never stored.
+
+    ``document_type`` keeps separate assistants (workflows, the agent and action editors) on
+    separate counters.
+    """
     digest = hashlib.sha256(str(user_id).encode('utf-8')).hexdigest()
-    return f'{ASSIST_LIMIT_DOCUMENT_TYPE}:{digest}'
+    return f'{document_type}:{digest}'
 
 
 def _utc_now_iso():
@@ -120,8 +124,10 @@ class WorkflowAssistLimiter:
     """The per-user limits over a store with ``read``, ``create`` and ``replace`` (see ``CosmosAssistLimitStore``)."""
 
     def __init__(self, store, *, clock=time.time, max_requests=ASSIST_LIMIT_REQUESTS,
-                 window_seconds=ASSIST_LIMIT_WINDOW_SECONDS, lease_seconds=ASSIST_LEASE_SECONDS):
+                 window_seconds=ASSIST_LIMIT_WINDOW_SECONDS, lease_seconds=ASSIST_LEASE_SECONDS,
+                 document_type=ASSIST_LIMIT_DOCUMENT_TYPE):
         self._store = store
+        self._document_type = document_type
         self._clock = clock
         self._max_requests = max_requests
         self._window_seconds = window_seconds
@@ -139,7 +145,7 @@ class WorkflowAssistLimiter:
 
     def acquire(self, user_id):
         """Count one request and set its lease, or raise ``WorkflowAssistError`` (429 or 503)."""
-        document_id = assist_limit_document_id(user_id)
+        document_id = assist_limit_document_id(user_id, self._document_type)
         for _attempt in range(ASSIST_LIMIT_WRITE_ATTEMPTS):
             now = int(self._clock())
             try:
@@ -156,7 +162,7 @@ class WorkflowAssistLimiter:
             lease_id = uuid.uuid4().hex
             document = {
                 'id': document_id,
-                'type': ASSIST_LIMIT_DOCUMENT_TYPE,
+                'type': self._document_type,
                 'window_start_epoch': window_start,
                 'window_seconds': self._window_seconds,
                 'count': count + 1,
