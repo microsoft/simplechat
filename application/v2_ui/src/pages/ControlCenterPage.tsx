@@ -13,6 +13,7 @@ import { api } from '../lib/apiClient';
 import { PageHeader } from '../components/layout/PageHeader';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { GlassButton, GlassPanel } from '../components/ui/primitives';
+import { DashboardSection } from '../components/controlCenter/DashboardSection';
 import type { ControlCenterCapabilities } from '../lib/types';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -223,7 +224,9 @@ export function ControlCenterPage() {
                             <h2 className="font-semibold text-text-1">Access unavailable</h2>
                             <p className="mt-2 text-sm text-text-2">Your Control Center permissions do not include this section.</p>
                         </GlassPanel>
-                    ) : section === 'data-health' ? <MigrationDataHealth /> : <SectionPlaceholder label={current.label} />}
+                    ) : section === 'dashboard' ? <DashboardSection />
+                        : section === 'data-health' ? <MigrationDataHealth />
+                            : <SectionPlaceholder label={current.label} />}
                 </main>
             </div>
         </div>
