@@ -8,7 +8,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Groups implemented in version:** 0.261.282
 **Activity Logs implemented in version:** 0.261.284
 **Public Workspaces implemented in version:** 0.261.283
-**Current version:** 0.261.290 (Dashboard, Users and Groups query fixes for the Python Cosmos SDK; Data health removed)
+**Current version:** 0.261.291 (Dashboard, Users and Groups query fixes for the Python Cosmos SDK; Data health removed)
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 
@@ -16,7 +16,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 
 The Control Center is a distinct React route (`/control-center` and `/control-center/<section>`), reached from the account menu when the signed-in user has at least one Control Center capability. It is not a primary workspace-navigation item. The internal section rail has a separate per-user collapsed-state preference.
 
-`get_control_center_capabilities()` in `functions_authentication.py` is the shared permission decision for both `control_center_required()` and the `/api/v2/bootstrap` response. When the ControlCenterAdmin role requirement is enabled, that role grants all capabilities; otherwise the regular Admin role grants them. The optional ControlCenterDashboardReader role grants dashboard viewing only when its setting is enabled. The bootstrap payload exposes `can_view_dashboard`, `can_manage_users`, `can_manage_groups`, `can_manage_workspaces`, `can_view_activity_logs`, and `can_run_maintenance`. Since Data health was removed in 0.261.290, no V2 section uses `can_run_maintenance`; it remains part of the shared capability contract.
+`get_control_center_capabilities()` in `functions_authentication.py` is the shared permission decision for both `control_center_required()` and the `/api/v2/bootstrap` response. When the ControlCenterAdmin role requirement is enabled, that role grants all capabilities; otherwise the regular Admin role grants them. The optional ControlCenterDashboardReader role grants dashboard viewing only when its setting is enabled. The bootstrap payload exposes `can_view_dashboard`, `can_manage_users`, `can_manage_groups`, `can_manage_workspaces`, `can_view_activity_logs`, and `can_run_maintenance`. Since Data health was removed in 0.261.291, no V2 section uses `can_run_maintenance`; it remains part of the shared capability contract.
 
 ## Dashboard
 
@@ -180,4 +180,4 @@ Functional checks cover dashboard status normalization, period deltas, cache exp
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.282**, public workspace management in **0.261.283**, and Activity Logs in **0.261.284**. In **0.261.290**, the Dashboard, Users and Groups queries were made compatible with the Python Cosmos SDK. The same release removed the Data health section and its `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all` backfill APIs; the classic Control Center had already stopped using them.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, group management in **0.261.282**, public workspace management in **0.261.283**, and Activity Logs in **0.261.284**. In **0.261.291**, the Dashboard, Users and Groups queries were made compatible with the Python Cosmos SDK. The same release removed the Data health section and its `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all` backfill APIs; the classic Control Center had already stopped using them.

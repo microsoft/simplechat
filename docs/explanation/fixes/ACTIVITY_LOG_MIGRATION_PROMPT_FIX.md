@@ -25,6 +25,6 @@ Implemented in version **0.261.278** (`application/single_app/config.py`):
 
 Opening the classic Control Center no longer triggers four cross-partition count scans or a misleading migration prompt. Administrators retain an explicit diagnostic and recovery path in V2. Existing logs are preserved; the manual backfill skips records that already have matching creation events.
 
-## Update in 0.261.290
+## Update in 0.261.291
 
 The V2 Data health section was removed, and with it the only callers of `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all`. Both APIs and the backfill-only `has_activity_log_for_resource` helper were deleted, so neither Control Center offers the backfill any longer. Normal application workflows continue to write activity records, and `build_activity_log_id` still gives idempotent writers stable record IDs. `ui_tests/test_v2_control_center_data_health.py` was replaced by `ui_tests/test_v2_control_center_data_health_removed.py`, and `functional_tests/test_v2_control_center_foundation.py` now checks that the section and APIs stay removed. See [V2 Control Center Cosmos Query Compatibility Fix](V2_CONTROL_CENTER_COSMOS_QUERY_COMPATIBILITY_FIX.md).

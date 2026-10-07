@@ -1,6 +1,6 @@
 # V2 Control Center Cosmos Query Compatibility Fix
 
-**Fixed in version:** 0.261.290
+**Fixed in version:** 0.261.291
 
 ## Issue
 
@@ -54,7 +54,7 @@ The response contracts are unchanged. Each unsupported query is replaced with a 
 
 - `application/single_app/route_backend_control_center.py`: dashboard summary and insights helpers, and Users paging and export helpers.
 - `application/single_app/functions_control_center_groups.py`: `load_group_inventory`.
-- `application/single_app/config.py`: version 0.261.290.
+- `application/single_app/config.py`: version 0.261.291.
 - `functional_tests/test_support/cosmos_query_guard.py` (new): rejects `GROUP BY`, `COUNT` over `DISTINCT` values, and multi-property `ORDER BY` without a declared composite index.
 - `functional_tests/test_v2_control_center_cosmos_query_compatibility.py` (new): scans every SQL string in the V2 Control Center code paths through the guard. The activity-log `ORDER BY` passes only because `config.py` declares its composite index.
 - `functional_tests/test_v2_control_center_dashboard.py`, `functional_tests/test_v2_control_center_users.py` and `functional_tests/test_v2_control_center_groups.py`: the fakes now pass every query through the guard. The tests run the real routes and aggregation helpers.
