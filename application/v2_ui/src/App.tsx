@@ -29,6 +29,7 @@ import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
+import { ControlCenterPage } from './pages/ControlCenterPage';
 
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
 // import.meta.env.DEV, which a production build replaces with false, so production never
@@ -217,6 +218,8 @@ export function App() {
                 <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />
                 <Route path="/admin/agents/:resourceId" element={<AdminAgentEditorPage />} />
                 <Route path="/admin/actions/:resourceId" element={<AdminActionEditorPage />} />
+                <Route path="/control-center" element={<ControlCenterPage />} />
+                <Route path="/control-center/:section" element={<ControlCenterPage />} />
                 <Route path="/content-review" element={<ContentReviewPage />} />
                 <Route
                     path="/agents"
