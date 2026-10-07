@@ -11,7 +11,7 @@
 import { clsx } from 'clsx';
 import { ArrowUpRight } from 'lucide-react';
 import type { AdminEndpointAccess, AdminEndpointLink } from '../../lib/adminFields';
-import { absoluteUrl } from '../../lib/adminOperations';
+import { safeSameOriginUrl } from '../../lib/adminOperations';
 import { apiUrl } from '../../lib/apiClient';
 import { CopyButton } from './CopyValue';
 import { ReadoutRow } from './ReadoutRow';
@@ -115,7 +115,8 @@ export function EndpointLinks({
             <ul className="divide-y divide-edge rounded-lg border border-edge">
                 {endpoints.map((endpoint) => {
                     const state = stateOf(endpoint, isSavedOn, isDraftOn, runtimeFlags);
-                    const url = absoluteUrl(apiUrl(endpoint.path), origin);
+                    const href = safeSameOriginUrl(apiUrl(endpoint.path), origin);
+                    const address = href ?? endpoint.path;
                     return (
                         <li key={endpoint.path} className="px-3 py-2.5">
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -126,9 +127,9 @@ export function EndpointLinks({
                                     {ACCESS_LABEL[endpoint.access]}
                                 </Chip>
                                 <Chip tone={stateTone(state)}>{STATE_LABEL[state.kind]}</Chip>
-                                {isLive(state) ? (
+                                {isLive(state) && href ? (
                                     <a
-                                        href={url}
+                                        href={href}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
@@ -143,9 +144,9 @@ export function EndpointLinks({
                             </div>
                             <div className="mt-1.5 flex min-w-0 items-center gap-1">
                                 <code className="min-w-0 flex-1 truncate rounded-md bg-surface-2 px-2 py-1 font-mono text-xs text-text-1">
-                                    {url}
+                                    {address}
                                 </code>
-                                <CopyButton value={url} label={`the ${endpoint.label.toLowerCase()} address`} />
+                                <CopyButton value={address} label={`the ${endpoint.label.toLowerCase()} address`} />
                             </div>
                             {endpoint.returns ? (
                                 <p className="mt-1 text-xs leading-relaxed text-text-3">{endpoint.returns}</p>

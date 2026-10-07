@@ -43,7 +43,7 @@ background tasks previously implemented separately or not at all. Neither import
 | Module | Holds |
 | --- | --- |
 | `functions_logging_timers.py` | `LOGGING_TIMERS` key map, per-unit limits, clamping, `calculate_logging_turnoff_time`, `parse_logging_turnoff_time`, `is_logging_turnoff_due`, `resolve_logging_timer_settings` |
-| `functions_control_center_schedule.py` | Schedule helpers moved from `functions_control_center.py` (re-exported there), time and timezone validation, `resolve_control_center_auto_refresh_settings` |
+| `functions_control_center_schedule.py` | Schedule helpers moved from `functions_control_center.py`, which every caller now imports directly, plus time and timezone validation and `resolve_control_center_auto_refresh_settings` |
 
 The helpers keep the classic page's rules rather than changing them, and give V2 saves the
 same ones. `resolve_logging_timer_settings` recalculates a turnoff time only when the timer,
@@ -106,7 +106,7 @@ server.
 
 | File | Role |
 | --- | --- |
-| `lib/adminOperations.ts` | Pure readout logic, including a TypeScript mirror of the Python schedule and timer rules |
+| `lib/adminOperations.ts` | Pure readout logic, including a TypeScript mirror of the Python schedule and timer rules, and the link guards: `safeSameOriginUrl` keeps an endpoint address on this deployment, and `safeHttpsUrl` keeps documentation links to plain HTTPS |
 | `components/admin/RefreshScheduleStatus.tsx` | Next and last refresh, in the schedule's zone and the reader's |
 | `components/admin/ControlCenterAccessMatrix.tsx` | Access table read from the two switches, unsaved edits included |
 | `components/admin/LoggingTimerStatus.tsx` | Turnoff time, or what a save would set |

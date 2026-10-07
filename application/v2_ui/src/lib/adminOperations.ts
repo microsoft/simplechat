@@ -498,12 +498,33 @@ export function describeRestartState({
 // Endpoints and links
 // ---------------------------------------------------------------------------------
 
-/** The full address of a path on this deployment, for pasting into another tool. */
-export function absoluteUrl(path: string, base: string): string {
+/**
+ * The full address of a path on this deployment, or null when it would leave it.
+ *
+ * The address is pasted into monitoring tools and offered as a link, so it must be this
+ * deployment's own: a path that resolves to another origin, or to a scheme such as
+ * `javascript:`, is refused rather than shown.
+ */
+export function safeSameOriginUrl(path: string, origin: string): string | null {
     try {
-        return new URL(path, base).href;
+        const base = new URL(origin);
+        const url = new URL(path, base);
+        return url.origin === base.origin ? url.href : null;
     } catch {
-        return path;
+        return null;
+    }
+}
+
+/** An outside link, such as the documentation site, kept only when it is plain HTTPS. */
+export function safeHttpsUrl(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && !url.username && !url.password ? url.href : null;
+    } catch {
+        return null;
     }
 }
 

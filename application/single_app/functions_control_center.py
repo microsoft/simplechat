@@ -10,20 +10,9 @@ from config import cosmos_user_settings_container, cosmos_groups_container
 from functions_debug import debug_print
 from functions_settings import get_settings, update_settings
 from functions_appinsights import log_event
-# The schedule rules are pure and live apart from this module so the admin settings
-# normalizer can share them without importing config. Re-exported for existing callers.
-from functions_control_center_schedule import (  # noqa: F401
-    CONTROL_CENTER_DEFAULT_AUTO_REFRESH_HOUR,
-    CONTROL_CENTER_DEFAULT_AUTO_REFRESH_MINUTE,
-    CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIME,
-    CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE,
-    calculate_next_control_center_auto_refresh_run,
-    get_control_center_auto_refresh_schedule,
-    is_control_center_auto_refresh_due,
-    normalize_control_center_auto_refresh_time,
-    parse_control_center_auto_refresh_datetime,
-    resolve_control_center_auto_refresh_settings,
-)
+# The schedule rules are pure and live in functions_control_center_schedule, so the
+# admin settings normalizer can share them without importing config.
+from functions_control_center_schedule import calculate_next_control_center_auto_refresh_run
 
 
 def execute_control_center_refresh(manual_execution=False):

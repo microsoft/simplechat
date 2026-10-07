@@ -11,6 +11,7 @@
 import type { ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { AlertCircle, ArrowUpRight, Info } from 'lucide-react';
+import { safeHttpsUrl } from '../../../lib/adminOperations';
 import { Modal } from '../../ui/Modal';
 import { GlassButton } from '../../ui/primitives';
 import { CopyButton } from '../CopyValue';
@@ -28,6 +29,8 @@ export function GuideDialog({
     onClose: () => void;
     children: ReactNode;
 }) {
+    // The documentation address comes from the server; anything but plain HTTPS is dropped.
+    const docsHref = safeHttpsUrl(docsUrl);
     return (
         <Modal
             title={title}
@@ -36,9 +39,9 @@ export function GuideDialog({
             onClose={onClose}
             footer={
                 <>
-                    {docsUrl ? (
+                    {docsHref ? (
                         <a
-                            href={docsUrl}
+                            href={docsHref}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="mr-auto inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline"
@@ -142,20 +145,23 @@ export function GuideIssue({ symptom, children }: { symptom: string; children: R
 export function GuideLinks({ links }: { links: { label: string; href: string }[] }) {
     return (
         <ul className="space-y-1.5">
-            {links.map((link) => (
-                <li key={link.href}>
-                    <a
-                        href={link.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-accent hover:underline"
-                    >
-                        {link.label}
-                        <ArrowUpRight size={13} aria-hidden="true" />
-                        <span className="sr-only">(opens in a new tab)</span>
-                    </a>
-                </li>
-            ))}
+            {links.map((link) => {
+                const href = safeHttpsUrl(link.href);
+                return href ? (
+                    <li key={link.href}>
+                        <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-accent hover:underline"
+                        >
+                            {link.label}
+                            <ArrowUpRight size={13} aria-hidden="true" />
+                            <span className="sr-only">(opens in a new tab)</span>
+                        </a>
+                    </li>
+                ) : null;
+            })}
         </ul>
     );
 }

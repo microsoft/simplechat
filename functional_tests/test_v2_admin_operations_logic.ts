@@ -19,7 +19,6 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-    absoluteUrl,
     buildLogCleanupRequest,
     clampTimerValue,
     controlCenterAccess,
@@ -31,6 +30,8 @@ import {
     formatWallTime,
     nextDailyRun,
     readStoredInstant,
+    safeHttpsUrl,
+    safeSameOriginUrl,
     wallTimeToInstant,
 } from '../application/v2_ui/src/lib/adminOperations';
 import type { AdminLoggingTimerKeys } from '../application/v2_ui/src/lib/adminFields';
@@ -352,11 +353,24 @@ check('a related section resolves to the tab the classic page addresses', () => 
     assert.equal(findNavLocation(nav, 'missing-section'), null);
 });
 
-check('endpoint addresses are absolute on this deployment', () => {
-    assert.equal(
-        absoluteUrl('/external/healthcheck', 'https://chat.contoso.com'),
-        'https://chat.contoso.com/external/healthcheck',
-    );
+check('endpoint addresses are absolute on this deployment, and never leave it', () => {
+    const origin = 'https://chat.contoso.com';
+    assert.equal(safeSameOriginUrl('/external/healthcheck', origin), `${origin}/external/healthcheck`);
+    // A path that resolves elsewhere is refused rather than linked.
+    assert.equal(safeSameOriginUrl('//attacker.example/external/healthcheck', origin), null);
+    assert.equal(safeSameOriginUrl('https://attacker.example/external/healthcheck', origin), null);
+    assert.equal(safeSameOriginUrl('javascript:alert(1)', origin), null);
+    assert.equal(safeSameOriginUrl('http://chat.contoso.com/external/healthcheck', origin), null);
+});
+
+check('outside links are kept only when they are plain HTTPS', () => {
+    const docs = 'https://microsoft.github.io/simplechat/admin/operations/#health-check-section';
+    assert.equal(safeHttpsUrl(docs), docs);
+    assert.equal(safeHttpsUrl('javascript:alert(1)'), null);
+    assert.equal(safeHttpsUrl('http://microsoft.github.io/simplechat/'), null);
+    assert.equal(safeHttpsUrl('https://user:secret@example.com/'), null);
+    assert.equal(safeHttpsUrl('/admin/operations/'), null);
+    assert.equal(safeHttpsUrl(undefined), null);
 });
 
 check('relative times round the way people read them', () => {
@@ -425,7 +439,10 @@ check('endpoint rows offer Open only while the endpoint answers', () => {
             runtimeFlags: {},
         }),
     );
-    assert.match(markup, /https:\/\/chat\.contoso\.com\/external\/healthcheck/);
+    assert.ok(
+        markup.includes('href="https://chat.contoso.com/external/healthcheck"'),
+        'The live endpoint should link to its full address on this deployment.',
+    );
     assert.equal((markup.match(/>Open</g) ?? []).length, 1);
     assert.match(markup, /No sign-in/);
 });

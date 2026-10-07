@@ -9,8 +9,7 @@ surfaces: the server-rendered Admin Settings form and the V2 admin settings PATC
 The module imports nothing from the application. ``functions_control_center``
 reaches ``config``, which builds Azure clients on import, so keeping the pure rules
 here is what lets the V2 settings normalizer share them without pulling that
-chain into ``admin_settings_fields``. ``functions_control_center`` re-exports every
-name, so existing imports keep working.
+chain into ``admin_settings_fields``. Callers import the rules from here.
 """
 
 import re
@@ -59,6 +58,8 @@ def normalize_control_center_auto_refresh_time(
                     normalized_hour = parsed_hour
                     normalized_minute = parsed_minute
             except (TypeError, ValueError):
+                # A stored time that cannot be read keeps the 02:00 default, so a
+                # damaged value still schedules a refresh rather than none.
                 pass
     else:
         try:
@@ -66,6 +67,7 @@ def normalize_control_center_auto_refresh_time(
             if 0 <= parsed_hour <= 23:
                 normalized_hour = parsed_hour
         except (TypeError, ValueError):
+            # Same for the legacy hour field: an unreadable hour keeps the default.
             pass
 
         try:
@@ -73,6 +75,7 @@ def normalize_control_center_auto_refresh_time(
             if 0 <= parsed_minute <= 59:
                 normalized_minute = parsed_minute
         except (TypeError, ValueError):
+            # And for the legacy minute field: an unreadable minute keeps the default.
             pass
 
     normalized_timezone = (

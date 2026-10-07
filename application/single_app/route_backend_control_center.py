@@ -11,7 +11,7 @@ from flask import make_response
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
-from functions_control_center import (
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
     parse_control_center_auto_refresh_datetime,

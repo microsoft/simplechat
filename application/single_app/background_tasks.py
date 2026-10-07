@@ -16,9 +16,9 @@ from azure.core import MatchConditions
 from config import cosmos_m365_execution_runs_container, cosmos_settings_container, exceptions
 from content_screening.jobs import check_due_scan_jobs_once
 from functions_appinsights import log_event
-from functions_control_center import (
+from functions_control_center import execute_control_center_refresh
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
-    execute_control_center_refresh,
     get_control_center_auto_refresh_schedule,
     is_control_center_auto_refresh_due,
     parse_control_center_auto_refresh_datetime,

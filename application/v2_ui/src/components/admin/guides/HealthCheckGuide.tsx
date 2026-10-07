@@ -9,7 +9,7 @@
 // against the documented shape would have been waiting for a response that never comes.
 
 import { asBoolean } from '../../../lib/adminFields';
-import { absoluteUrl } from '../../../lib/adminOperations';
+import { safeSameOriginUrl } from '../../../lib/adminOperations';
 import { apiUrl } from '../../../lib/apiClient';
 import type { Json } from '../../../lib/types';
 import { CopyButton } from '../CopyValue';
@@ -57,7 +57,7 @@ export function HealthCheckGuide({ settings }: { settings: Json }) {
                 </p>
                 <ul className="divide-y divide-edge rounded-lg border border-edge">
                     {ENDPOINTS.map((endpoint) => {
-                        const url = absoluteUrl(apiUrl(endpoint.path), origin);
+                        const url = safeSameOriginUrl(apiUrl(endpoint.path), origin) ?? endpoint.path;
                         const enabled = asBoolean(settings[endpoint.key]);
                         return (
                             <li key={endpoint.path} className="space-y-1.5 px-3 py-2.5">

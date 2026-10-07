@@ -12,7 +12,6 @@ DST-aware UTC next-run timestamps, and scheduler/admin/status integration.
 
 import importlib.util
 import sys
-import types
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from test_support.versioning import assert_app_version_at_least
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT_DIR / "application" / "single_app"
 SETTINGS_FILE = APP_DIR / "functions_settings.py"
-CONTROL_CENTER_FUNCTIONS_FILE = APP_DIR / "functions_control_center.py"
+SCHEDULE_FILE = APP_DIR / "functions_control_center_schedule.py"
 BACKGROUND_TASKS_FILE = APP_DIR / "background_tasks.py"
 ADMIN_SETTINGS_ROUTE_FILE = APP_DIR / "route_frontend_admin_settings.py"
 CONTROL_CENTER_ROUTE_FILE = APP_DIR / "route_backend_control_center.py"
@@ -31,49 +30,15 @@ ADMIN_TEMPLATE_FILE = APP_DIR / "templates" / "admin_settings.html"
 CONTROL_CENTER_JS_FILE = APP_DIR / "static" / "js" / "control-center.js"
 
 
-def load_control_center_module():
-    """Load schedule helpers without initializing external application clients."""
-    stub_modules = {
-        "config": types.SimpleNamespace(
-            cosmos_user_settings_container=None,
-            cosmos_groups_container=None,
-        ),
-        "functions_debug": types.SimpleNamespace(debug_print=lambda *args, **kwargs: None),
-        "functions_settings": types.SimpleNamespace(
-            get_settings=lambda: {},
-            update_settings=lambda settings: True,
-        ),
-        "functions_appinsights": types.SimpleNamespace(
-            log_event=lambda *args, **kwargs: None,
-        ),
-    }
-    original_modules = {}
-    for module_name, module in stub_modules.items():
-        original_modules[module_name] = sys.modules.get(module_name)
-        sys.modules[module_name] = module
-
-    # The schedule rules live in functions_control_center_schedule, which
-    # functions_control_center re-exports, so the app directory has to be importable.
-    added_app_dir = str(APP_DIR) not in sys.path
-    if added_app_dir:
-        sys.path.insert(0, str(APP_DIR))
-
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "control_center_schedule_under_test",
-            CONTROL_CENTER_FUNCTIONS_FILE,
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        if added_app_dir:
-            sys.path.remove(str(APP_DIR))
-        for module_name, original_module in original_modules.items():
-            if original_module is None:
-                sys.modules.pop(module_name, None)
-            else:
-                sys.modules[module_name] = original_module
+def load_schedule_module():
+    """Load the schedule helpers, which import nothing from the application."""
+    spec = importlib.util.spec_from_file_location(
+        "control_center_schedule_under_test",
+        SCHEDULE_FILE,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def assert_contains(source, expected, description):
@@ -233,7 +198,7 @@ def test_version():
 
 def run_all_tests():
     """Run all Control Center auto-refresh schedule checks."""
-    schedule_module = load_control_center_module()
+    schedule_module = load_schedule_module()
     tests = [
         lambda: test_default_schedule(schedule_module),
         lambda: test_dst_aware_utc_next_runs(schedule_module),
