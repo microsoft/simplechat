@@ -8,7 +8,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Groups implemented in version:** 0.261.282
 **Activity Logs implemented in version:** 0.261.284
 **Public Workspaces implemented in version:** 0.261.283
-**Current version:** 0.261.285 (Activity Logs integrated above Public Workspaces and Groups validation-safety fixes)
+**Current version:** 0.261.286 (Public Workspace validation-safety fixes above the integrated management phases)
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 

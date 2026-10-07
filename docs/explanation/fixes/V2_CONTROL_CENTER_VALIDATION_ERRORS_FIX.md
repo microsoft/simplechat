@@ -2,12 +2,16 @@
 
 Fixed in version: **0.261.283**, tracked in `application/single_app/config.py`.
 
+Extended to Public Workspaces in version: **0.261.286**.
+
 ## Issue and root cause
 
 Users and Groups API validation handlers returned exception text to the browser.
 Even when a custom validation exception normally contains a reviewed message,
 returning exception text creates an unnecessary client-visible exception boundary.
 CodeQL identified nine such handlers in the V2 Control Center routes.
+The Public Workspace list, detail, bulk-status, status and export handlers had
+the same exception boundary; all five now return stable validation messages.
 
 ## Technical details
 
@@ -23,6 +27,9 @@ Focused Users and Groups regression tests cover validation failures and safe
 storage-error responses. The prior Control Center tests and route-policy tests
 check that the merged integration retains the same authorization boundaries.
 The built local V2 bundle is exercised by Groups and Users browser workflows.
+`functional_tests/test_control_center_safe_exception_responses.py` injects
+sensitive exception text into all fourteen validation handlers and checks the
+exact safe response and HTTP 400 status.
 
 Before the fix, client responses could contain exception text. After the fix,
 validation failures use stable messages and do not expose exception details.

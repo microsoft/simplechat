@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.286)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   Public Workspace list, detail, status, bulk-status and export APIs return stable validation messages rather than exception text.
+    *   Preserves authorization and HTTP status behavior; adds sensitive-error regression coverage.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
 ### **(v0.261.285)**
 
 #### New Features
