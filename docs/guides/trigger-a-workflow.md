@@ -104,7 +104,7 @@ approval or sign-in, its status shows **Needs you**, and for a sign-in the card 
 
 ## Hand large work off to a workflow
 
-Since **0.261.288**, a request too big for one chat plan, such as "review every
+Since **0.261.290**, a request too big for one chat plan, such as "review every
 contract in my Legal workspace and list the renewal terms", can be handed off to a
 one-time workflow. The workflow reviews each document, writes one report, and posts
 the outcome back into the chat. It runs in the background, so the work goes on after
