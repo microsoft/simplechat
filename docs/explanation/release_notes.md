@@ -12,6 +12,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A **Latest Features** shortcut appears in the V2 navigation rail when the Support menu offers it. Hiding it lasts until the next release, and the setting is shared with the classic interface.
     *   (Ref: `lib/tours.ts`, `GuidedTour.tsx`, `TourLauncher.tsx`, `LatestFeaturesLink.tsx`, `GuidanceCards.tsx`, `_build_latest_features_nav`, `tutorialVisibility`, [V2 User Settings Redesign](features/V2_USER_SETTINGS_REDESIGN.md))
 
+#### Bug Fixes
+
+*   **Dashboard Date-Range Error Safety**
+    *   Dashboard summary and insights APIs now return a generic validation message for invalid date ranges instead of returning exception text.
+    *   (Ref: `route_backend_control_center.py`, `DASHBOARD_INVALID_RANGE_ERROR`)
+
 ### **(v0.261.279)**
 
 #### New Features
@@ -20,6 +26,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fact memory is now one workbench: add, search, filter, edit, and delete (with confirmation) instructions and facts.
     *   Microsoft 365 sharing, chat connection, workflow connection, and workflow authorizations match the classic page, including CSRF-protected writes and confirmed revocations.
     *   (Ref: `FactMemoryBench.tsx`, `M365Cards.tsx`, `PreferencesTab.tsx`)
+
+*   **V2 Control Center Dashboard**
+    *   Adds period-based summary metrics, correct group and public-workspace status counts, login/activity/token charts, token filters, CSV export, and chat-with-trends.
+    *   Aggregates use activity-log and workspace data with a 90-second cache. Metrics without retained historical snapshots are identified as current state instead of presenting misleading period deltas.
+    *   Dashboard readers can access the dashboard APIs without receiving management capabilities.
+    *   (Ref: `route_backend_control_center.py`, `DashboardSection.tsx`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
 
 *   **Feedback and Safety Review in V2**
     *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
