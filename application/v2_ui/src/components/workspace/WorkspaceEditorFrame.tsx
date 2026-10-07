@@ -98,7 +98,9 @@ export function WorkspaceEditorFrame({
     const [current, setCurrent] = useState<string | null>(sections[0]?.id ?? null);
     // A section chosen in the rail stays marked while the pane scrolls to it, and until the
     // person scrolls themselves; one near the end could never rise far enough to be marked.
-    // Until then it also stays in place while lists above or inside it finish loading.
+    // Until then it also stays in place while lists above or inside it finish loading. Any
+    // other use of the editor ends the pin, as does a save or focus moving anywhere else, so
+    // holding the section never scrolls an error or an invalid field back out of view.
     const pinned = useRef<string | null>(null);
     const sectionIds = sections.map((section) => section.id).join('|');
     const blocker = useBlocker(({ currentLocation, nextLocation, historyAction }) => {
@@ -134,7 +136,9 @@ export function WorkspaceEditorFrame({
     }, [dirty, saving, readOnly]);
 
     useEffect(() => {
-        if (error) errorSummary.current?.focus();
+        if (!error) return;
+        pinned.current = null;
+        errorSummary.current?.focus();
     }, [error]);
 
     // Mark the section in view, as the Admin Settings index does: the last one whose top has
@@ -165,6 +169,11 @@ export function WorkspaceEditorFrame({
         const release = () => {
             pinned.current = null;
         };
+        // Only the pinned section itself may take focus without ending the pin.
+        const releaseOnFocus = (event: FocusEvent) => {
+            if (pinned.current && event.target !== document.getElementById(`${prefix}-${pinned.current}`)) release();
+        };
+        const owner = form.current;
         const content = root.firstElementChild;
         const realign = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
             if (pinned.current) document.getElementById(`${prefix}-${pinned.current}`)?.scrollIntoView({ block: 'start' });
@@ -174,16 +183,20 @@ export function WorkspaceEditorFrame({
         root.addEventListener('scroll', onScroll, { passive: true });
         root.addEventListener('wheel', release, { passive: true });
         root.addEventListener('touchstart', release, { passive: true });
-        root.addEventListener('pointerdown', release);
-        root.addEventListener('keydown', release);
+        // The whole form, not just the pane: Save and the header commands sit above it. A rail
+        // choice still pins, because its click follows the pointerdown or keydown.
+        owner?.addEventListener('pointerdown', release);
+        owner?.addEventListener('keydown', release);
+        owner?.addEventListener('focusin', releaseOnFocus);
         return () => {
             cancelAnimationFrame(frame);
             realign?.disconnect();
             root.removeEventListener('scroll', onScroll);
             root.removeEventListener('wheel', release);
             root.removeEventListener('touchstart', release);
-            root.removeEventListener('pointerdown', release);
-            root.removeEventListener('keydown', release);
+            owner?.removeEventListener('pointerdown', release);
+            owner?.removeEventListener('keydown', release);
+            owner?.removeEventListener('focusin', releaseOnFocus);
         };
     }, [sectionIds, prefix]);
 
@@ -212,8 +225,13 @@ export function WorkspaceEditorFrame({
 
     return (
         <form ref={form} className="flex h-full min-h-0 flex-col"
-            onSubmit={(event) => { event.preventDefault(); if (!readOnly && !saving && !saveDisabled) onSave(); }}
+            onSubmit={(event) => {
+                event.preventDefault();
+                pinned.current = null;
+                if (!readOnly && !saving && !saveDisabled) onSave();
+            }}
             onInvalidCapture={(event) => {
+                pinned.current = null;
                 const input = event.target;
                 if (input instanceof HTMLElement) {
                     const details = input.closest('details');

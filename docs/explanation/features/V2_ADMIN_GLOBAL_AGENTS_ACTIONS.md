@@ -128,9 +128,11 @@ lays them out as Admin Settings is laid out:
 - A section rail on the left, with an icon per section, marks the section in view
   as the pane scrolls. Below the `lg` breakpoint it becomes the **Jump to section**
   list. Choosing a section pins it: while it is pinned, the frame keeps it at the
-  top as lists above or inside it finish loading, and scrolling, clicking, or typing
-  in the pane releases it. `initialSection` opens the editor at a section this way,
-  which is how `?templates=1` shows the gallery.
+  top as lists above or inside it finish loading. Scrolling, clicking or typing
+  anywhere in the editor releases it, and so do saving, a field failing validation,
+  and focus moving anywhere but the section itself, so holding the section never
+  scrolls a save error or an invalid field back out of view. `initialSection` opens
+  the editor at a section this way, which is how `?templates=1` shows the gallery.
 - Each section is a card with an icon tile, a title, and a line on what it holds.
   **Advanced** is a collapsible card.
 - The fields are Admin Settings rows, built from `components/workspace/EditorLayout.tsx`:

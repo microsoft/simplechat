@@ -430,6 +430,42 @@ def test_failures_are_shown_and_a_conflicting_draft_is_kept(global_ui):
     assert ui.agents[POLICY_AGENT_ID]["description"] == "Changed by another administrator."
 
 
+def test_a_failed_save_stays_in_view_after_jumping_to_a_section(global_ui):
+    """A section chosen in the rail is held in place while it loads, but never over a failed save."""
+    ui, page = global_ui, global_ui.page
+    ui.open(ready_region="Global Agents")
+    page.get_by_role("link", name="Policy advisor", exact=True).click()
+    description = page.get_by_label("Description", exact=True)
+    expect(description).to_have_value("Policy advisor for everyone in the organisation.")
+    description.fill("An edit the server refuses.")
+    _editor_section(page, "Instructions")
+    path = f"/api/v2/admin/agents/{POLICY_AGENT_ID}"
+    ui.fail_next("PATCH", path, error="The agent service is unavailable.")
+    assert _save(ui, "Save agent", "PATCH", path).status == 503
+    error = page.get_by_role("alert").filter(has_text="The agent service is unavailable.")
+    expect(error).to_be_focused()
+    expect(error).to_be_in_viewport()
+    expect(description).to_have_value("An edit the server refuses.")
+
+
+def test_an_invalid_field_stays_in_view_after_jumping_to_a_section(global_ui):
+    """Saving reveals an invalid field in a closed group; the chosen section must not hide it again."""
+    ui, page = global_ui, global_ui.page
+    ui.open(ready_region="Global Agents")
+    page.get_by_role("link", name="Policy advisor", exact=True).click()
+    internal_identity = page.locator("summary", has_text="Internal identity")
+    internal_identity.click()
+    internal_name = _action_field(page, "Internal name")
+    internal_name.fill("")
+    internal_identity.click()
+    expect(internal_name).to_be_hidden()
+    _editor_section(page, "Advanced")
+    page.get_by_role("button", name="Save agent", exact=True).click()
+    expect(internal_name).to_be_focused()
+    expect(internal_name).to_be_in_viewport()
+    assert not ui.writes_to("PATCH", f"/api/v2/admin/agents/{POLICY_AGENT_ID}")
+
+
 def test_unsaved_settings_are_kept_unless_discarded_before_opening_an_editor(global_ui):
     """Opening a global editor replaces the page, so it asks before dropping unsaved settings."""
     ui, page = global_ui, global_ui.page
