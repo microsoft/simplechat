@@ -201,7 +201,7 @@ export function GroupDetailDrawer({ id, onClose, onChanged }: {
         <div className="space-y-4">
             {loading ? <p role="status" className="text-sm text-text-3">Loading group details...</p> : null}
             {error ? <p role="alert" className="rounded-lg bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
-            {approval ? <ApprovalSubmittedNotice>Request {approval} submitted for approval. No group or documents have been deleted, and ownership has not changed.</ApprovalSubmittedNotice> : null}
+            {approval ? <ApprovalSubmittedNotice approvalId={approval} groupId={id}>Request {approval} submitted for approval. No group or documents have been deleted, and ownership has not changed.</ApprovalSubmittedNotice> : null}
             {detail && !loading ? <>
                 <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge status={detail.group.status} />

@@ -5,7 +5,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Dashboard implemented in version:** 0.261.279
 **Foundation implemented in version:** 0.261.278
 **Users implemented in version:** 0.261.280
-**Groups implemented in version:** 0.261.281
+**Groups implemented in version:** 0.261.282
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 
@@ -22,6 +22,8 @@ Public Workspaces remains a permission-gated placeholder linking to the classic 
 The Dashboard is available to users with `can_view_dashboard`, including users assigned the configured ControlCenterDashboardReader role. `GET /api/v2/control-center/dashboard/summary` returns counts and period comparisons; `GET /api/v2/control-center/dashboard/insights` returns grouped chart data. Both use a 90-second in-process cache keyed by the date range and token filters. Pass `force_refresh=1` to bypass it.
 
 The date presets are 7, 30, and 90 UTC calendar days. Custom ranges use `start_date` and `end_date` in `YYYY-MM-DD` format and are limited to 366 days. The trend charts reuse the existing activity-trends and token-filter APIs, CSV export, and “Chat with these trends” endpoint. Chart data is grouped from the fields written by `functions_activity_logging.py`: `user_login.timestamp`, creation activity types and `workspace_type`, and `token_usage.usage.model`, `usage.total_tokens`, `token_type`, `user_id`, and `workspace_context` IDs. The login heatmap uses UTC and Monday=0.
+
+Invalid dashboard date ranges return a generic validation error rather than exposing exception details.
 
 Group and public-workspace status counts use the stored `status` values (`active`, `locked`, `upload_disabled`, `inactive`); missing values count as active. Unknown group statuses count as active, matching the group permission default, while unknown public-workspace statuses count as inactive, matching its fail-closed permission behavior. Current user, blocked-user, group/workspace status, and pending-approval counts are snapshots. The application does not retain historical snapshots for those dimensions, so their period deltas are intentionally unavailable. Period deltas are shown for login activity, conversations, document creations, document processing failures, and tokens. Processing failures are counted only when a document's stored status text contains “failed” or “error”; when that query is unavailable, the dashboard shows the metric as unavailable rather than zero. Pending approvals are omitted when the aggregate query cannot be completed.
 
@@ -54,7 +56,7 @@ Data health is available to users with `can_run_maintenance`. Its Check button c
 
 ## Groups
 
-Implemented in version: **0.261.281**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.282**, tracked in `application/single_app/config.py`.
 
 The Groups section helps administrators find shared workspaces that need attention, inspect their membership and usage, and perform audited status changes without losing the classic approval boundaries. Dashboard links with `id` open the drawer; `status` filters the list. Every new endpoint uses the existing Control Center Blueprint login policy, Swagger security decorator, and `control_center_required('admin')`.
 
@@ -93,7 +95,7 @@ Member addition reuses `/api/userSearch` and the existing admin `/groups/<id>/ad
 
 Removing members and changing roles reuse the existing `/api/groups/<id>/members/<member_id>` DELETE/PATCH routes. Those operations still require current group Owner/Admin membership; a Control Center role alone does not confer it. The owner cannot be removed or assigned a member role. Retention uses the existing `/api/retention-policy/group/<id>` POST route, requires group Owner/Admin membership and enabled group retention, and accepts `default`, `none`, or organization-bounded whole-number days. Nonmember administrators can inspect these settings and request ownership rather than bypassing the existing membership rules.
 
-Delete group, delete all documents, take ownership and transfer ownership reuse the existing admin approval APIs. Each requires a reason and returns an approval ID, not a performed deletion or ownership change. Transfer recipients must already be members; the UI excludes the current owner. The submitted notice links to the shared approvals destination instead of adding an approvals queue to Control Center.
+Delete group, delete all documents, take ownership and transfer ownership reuse the existing admin approval APIs. Each requires a reason and returns an approval ID, not a performed deletion or ownership change. Transfer recipients must already be members; the UI excludes the current owner. The shared submitted notice links to `/v2/approvals/all/<approval_id>?group_id=<group_id>` using a basename-aware router link, matching the V2 Approvals contract (PR #1687), instead of adding an approvals queue to Control Center. User requests use the same detail destination without a group filter.
 
 ### Validation
 
@@ -109,4 +111,4 @@ Functional checks cover dashboard status normalization, period deltas, cache exp
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, and group management in **0.261.281**.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, user management in **0.261.280**, and group management in **0.261.282**.

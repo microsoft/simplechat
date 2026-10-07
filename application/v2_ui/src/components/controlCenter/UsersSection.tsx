@@ -569,7 +569,7 @@ export function UsersSection() {
                                             </label>
                                         </GlassPanel>
                                         {approvalId ? (
-                                            <ApprovalSubmittedNotice>
+                                            <ApprovalSubmittedNotice approvalId={approvalId}>
                                                 Document deletion approval {approvalId} was submitted for another administrator to review.
                                             </ApprovalSubmittedNotice>
                                         ) : null}

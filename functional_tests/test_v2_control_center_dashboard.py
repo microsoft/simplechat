@@ -2,8 +2,8 @@
 # test_v2_control_center_dashboard.py
 """
 Functional test for the V2 Control Center dashboard.
-Version: 0.261.279
-Implemented in: 0.261.279
+Version: 0.261.280
+Implemented in: 0.261.280
 
 This test validates status aggregation, period comparisons, bounded cache behavior,
 dashboard-reader authorization, and the summary and insights route contracts.
@@ -211,8 +211,32 @@ def test_summary_and_insights_cover_recorded_dashboard_fields():
         assert required in source, f"Dashboard contract is missing {required!r}."
 
 
+def test_invalid_period_errors_do_not_expose_exception_text():
+    route_tree = ast.parse(ROUTE.read_text(encoding="utf-8"))
+    route_functions = {
+        node.name: node
+        for node in ast.walk(route_tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+    for name in (
+        "api_v2_control_center_dashboard_summary",
+        "api_v2_control_center_dashboard_insights",
+    ):
+        handlers = [
+            handler
+            for node in ast.walk(route_functions[name])
+            if isinstance(node, ast.Try)
+            for handler in node.handlers
+            if isinstance(handler.type, ast.Name) and handler.type.id == "ValueError"
+        ]
+        assert len(handlers) == 1
+        handler_source = "\n".join(ast.unparse(statement) for statement in handlers[0].body)
+        assert "str(ex)" not in handler_source
+        assert "DASHBOARD_INVALID_RANGE_ERROR" in handler_source
+
+
 def test_version_is_at_least_implementation_version():
-    assert_app_version_at_least("0.261.279")
+    assert_app_version_at_least("0.261.280")
 
 
 TESTS = [
@@ -222,6 +246,7 @@ TESTS = [
     test_dashboard_cache_expires_and_can_be_bypassed,
     test_dashboard_reader_can_call_summary_and_insights_routes,
     test_summary_and_insights_cover_recorded_dashboard_fields,
+    test_invalid_period_errors_do_not_expose_exception_text,
     test_version_is_at_least_implementation_version,
 ]
 

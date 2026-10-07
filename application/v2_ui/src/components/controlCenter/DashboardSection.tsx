@@ -174,6 +174,21 @@ function makeDatasets(series: { label: string; values: number[]; color: keyof ty
     }));
 }
 
+function safeControlCenterHref(value: string): string {
+    try {
+        const url = new URL(value, window.location.origin);
+        const isControlCenterPath = url.pathname === '/control-center'
+            || url.pathname.startsWith('/control-center/');
+        if (url.origin !== window.location.origin
+            || (!isControlCenterPath && url.pathname !== '/approvals')) {
+            return '/control-center';
+        }
+        return `${url.pathname}${url.search}${url.hash}`;
+    } catch {
+        return '/control-center';
+    }
+}
+
 function MetricTile({
     label,
     metric,
@@ -191,7 +206,7 @@ function MetricTile({
         ? 'Not tracked'
         : valueLabel ?? metric.value.toLocaleString();
     return (
-        <Link to={to} className="block rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+        <Link to={safeControlCenterHref(to)} className="block rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
             <KpiCard label={label} value={value} detail={metricDetail(metric, days)} />
         </Link>
     );

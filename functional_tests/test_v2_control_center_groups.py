@@ -1,8 +1,8 @@
 # test_v2_control_center_groups.py
 """
 Functional tests for V2 Control Center Groups.
-Version: 0.261.281
-Implemented in: 0.261.281
+Version: 0.261.282
+Implemented in: 0.261.282
 
 Run real filters and routes over isolated Cosmos services and the real guarded
 group writer. Cover selection caps before writes, audit parity, detail projections,
@@ -331,7 +331,7 @@ def test_routes_have_explicit_admin_and_swagger_decorators():
             decorators = [ast.unparse(decorator) for decorator in node.decorator_list]
             assert "login_required" in decorators and "control_center_required('admin')" in decorators
             assert "swagger_route(security=get_auth_security())" in decorators
-    assert_app_version_at_least("0.261.281")
+    assert_app_version_at_least("0.261.282")
 
 
 if __name__ == "__main__":

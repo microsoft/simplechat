@@ -2,7 +2,7 @@
 # test_v2_control_center_users.py
 """
 Browser coverage for the V2 Control Center Users section.
-Version: 0.261.280
+Version: 0.261.282
 Implemented in: 0.261.280
 
 Validates filtered users, cross-page selection, detail tabs, reconciled access
@@ -221,6 +221,9 @@ def test_user_detail_activity_reconciled_update_and_approval(users_ui):
     page.get_by_label("Reason (required)").fill("Requested account cleanup")
     page.get_by_role("button", name="Submit approval request").click()
     expect(page.get_by_text("Document deletion approval approval-42 was submitted")).to_be_visible()
+    expect(page.get_by_role("link", name="View approval requests")).to_have_attribute(
+        "href", "/v2/approvals/all/approval-42",
+    )
 
 
 def test_users_export_uses_server_filter_endpoint(users_ui):
