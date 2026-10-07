@@ -101,7 +101,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.281"
+VERSION = "0.261.287"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -1063,9 +1063,21 @@ cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
 )
 
 cosmos_activity_logs_container_name = "activity_logs"
+ACTIVITY_LOGS_INDEXING_POLICY = {
+    "indexingMode": "consistent",
+    "automatic": True,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [{"path": "/\"_etag\"/?"}],
+    "compositeIndexes": [[
+        {"path": "/timestamp", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+        {"path": "/user_id", "order": "descending"},
+    ]],
+}
 cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_activity_logs_container_name,
-    partition_key=PartitionKey(path="/user_id")
+    partition_key=PartitionKey(path="/user_id"),
+    indexing_policy=ACTIVITY_LOGS_INDEXING_POLICY,
 )
 
 cosmos_notifications_container_name = "notifications"
