@@ -24,9 +24,12 @@
 import assert from 'node:assert/strict';
 import { useBootstrapStore } from '../application/v2_ui/src/stores/bootstrapStore';
 import {
+    clearWorkspaceActionHandoff,
     clearWorkspaceEditorDrafts,
     queueCreatedWorkspaceAction,
+    seedNewWorkspaceActionDraft,
     takeCreatedWorkspaceAction,
+    takeWorkspaceActionHandoff,
     type EditorWorkspaceScope,
 } from '../application/v2_ui/src/lib/workspaceEditorDrafts';
 
@@ -101,10 +104,31 @@ function testAnInvalidReturnPathIsRejected(): void {
         'A group agent path must not seed a personal handoff.');
 }
 
+function testDraftedActionHandoffStaysInItsScope(): void {
+    seedOwner('owner-4');
+    clearWorkspaceEditorDrafts();
+    // Finishing an Ask AI drafted action records which placeholder the saved action replaces.
+    seedNewWorkspaceActionDraft(GROUP_RETURN_PATH, action('drafted'), action(''), GROUP_A, 'new:N1');
+    assert.equal(takeWorkspaceActionHandoff(GROUP_RETURN_PATH, GROUP_B), '',
+        'A group A drafted-action handoff must never be taken from group B.');
+    assert.equal(takeWorkspaceActionHandoff(GROUP_RETURN_PATH, PERSONAL), '',
+        'A group A drafted-action handoff must never be taken from personal scope.');
+    assert.equal(takeWorkspaceActionHandoff(GROUP_RETURN_PATH, GROUP_A), 'new:N1',
+        'The group A drafted-action handoff must be taken from group A.');
+    assert.equal(takeWorkspaceActionHandoff(GROUP_RETURN_PATH, GROUP_A), '',
+        'A drafted-action handoff must be taken exactly once.');
+    // Starting an unrelated new action forgets the placeholder so it is not replaced by mistake.
+    seedNewWorkspaceActionDraft(GROUP_RETURN_PATH, action('drafted'), action(''), GROUP_A, 'new:N2');
+    clearWorkspaceActionHandoff(GROUP_RETURN_PATH, GROUP_A);
+    assert.equal(takeWorkspaceActionHandoff(GROUP_RETURN_PATH, GROUP_A), '',
+        'A cleared drafted-action handoff must not be taken.');
+}
+
 for (const check of [
     testGroupDraftNeverLeaksToAnotherGroupOrPersonal,
     testPersonalHandoffIsUnchangedByTheScopeArgument,
     testAnInvalidReturnPathIsRejected,
+    testDraftedActionHandoffStaysInItsScope,
 ]) {
     check();
 }

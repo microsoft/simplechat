@@ -49,6 +49,8 @@ interface DraftState<T extends Configuration> {
 
 const drafts = new Map<string, DraftState<Configuration>>();
 const createdActions = new Map<string, ActionConfiguration>();
+// The drafted-action placeholder a seeded new-action editor will replace once it saves.
+const actionHandoffs = new Map<string, string>();
 let draftOwner = '';
 
 function warnBeforeDraftUnload(event: BeforeUnloadEvent): void {
@@ -70,6 +72,7 @@ function ownerKey(): string {
     if (owner !== draftOwner) {
         drafts.clear();
         createdActions.clear();
+        actionHandoffs.clear();
         draftOwner = owner;
         syncDraftUnloadProtection();
     }
@@ -79,6 +82,7 @@ function ownerKey(): string {
 export function clearWorkspaceEditorDrafts(): void {
     drafts.clear();
     createdActions.clear();
+    actionHandoffs.clear();
     syncDraftUnloadProtection();
 }
 
@@ -154,6 +158,40 @@ export function queueCreatedWorkspaceAction(
     syncDraftUnloadProtection();
 }
 
+/**
+ * Opens the new-action editor that returns to ``returnPath`` with ``draft`` already filled in,
+ * such as an action Ask AI drafted for an agent. ``baseline`` is the editor's empty action, so
+ * the seeded draft counts as unsaved. The key matches the one the action editor builds.
+ * ``handoff`` is the agent's placeholder reference the saved action replaces; it is recorded here
+ * rather than in the agent draft because the agent editor unmounts as it navigates away.
+ */
+export function seedNewWorkspaceActionDraft(
+    returnPath: string,
+    draft: ActionConfiguration,
+    baseline: ActionConfiguration,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+    handoff = '',
+): string {
+    const path = agentEditorReturnPath(returnPath, returnPathScope(workspaceScope));
+    if (!path) throw new Error('Invalid agent editor return path.');
+    const key = JSON.stringify(['personal', 'new', path]);
+    drafts.set(JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), 'actions', key]),
+        { draft: structuredClone(draft), baseline, original: null });
+    const handoffKey = JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), path]);
+    if (handoff) actionHandoffs.set(handoffKey, handoff);
+    else actionHandoffs.delete(handoffKey);
+    syncDraftUnloadProtection();
+    return path;
+}
+
+/** Forgets a drafted-action handoff, as when the person starts an unrelated new action. */
+export function clearWorkspaceActionHandoff(
+    returnPath: string,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+): void {
+    actionHandoffs.delete(JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), returnPath]));
+}
+
 export function takeCreatedWorkspaceAction(
     returnPath: string,
     workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
@@ -163,4 +201,15 @@ export function takeCreatedWorkspaceAction(
     createdActions.delete(key);
     syncDraftUnloadProtection();
     return action ?? null;
+}
+
+/** Takes, once, the drafted-action placeholder a just-created action should replace. */
+export function takeWorkspaceActionHandoff(
+    returnPath: string,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+): string {
+    const key = JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), returnPath]);
+    const handoff = actionHandoffs.get(key) ?? '';
+    actionHandoffs.delete(key);
+    return handoff;
 }

@@ -88,11 +88,26 @@ Global Actions**, with a **Review** link to each under
 Those switches decide who may use the agents and actions you publish, and they
 keep their value while Enable Agents is off.
 
+**Enable Ask AI in the Agent Editor** and **Enable Ask AI in the Action Editor**
+add an **Ask AI** panel to the V2 agent and action editors, for personal, group
+and global agents and actions alike. People describe what they want, and the
+assistant fills in the unsaved draft with highlighted changes they can undo. It
+never saves, never sees or enters keys or other credentials, and only offers
+models, actions and knowledge the person could already pick in the editor. In
+the agent editor it can also draft up to three new actions, which are created
+only when the agent is saved. Both are on by default and only take effect while
+Enable Agents is on. Turn one off if you would rather people configure that
+editor entirely by hand, or to stop its model calls. The panel uses the
+deployment's instruction-drafting model and shares the workflow assistant's
+per-user rate limit.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Enable Agents | Starts the agent runtime. Gates the Agents catalog page, the global agent and action tables, and every workspace permission in this group. | Off | `enable_semantic_kernel`; capability toggle |
+| Enable Ask AI in the Agent Editor | Shows the Ask AI panel in the V2 agent editor, which fills in an agent's draft from a plain-language request and can draft new actions for it. | On | `enable_agent_ai_assistant`; requires Enable Agents |
+| Enable Ask AI in the Action Editor | Shows the Ask AI panel in the V2 action editor, which fills in an action's type, configuration and sign-in method from a plain-language request. | On | `enable_action_ai_assistant`; requires Enable Agents |
 | Workspace Mode | Chooses between one shared global set of agents and actions, and a separate collection per user and group. | Off | `per_user_semantic_kernel` |
 | Add Global Agents and Actions to Workspaces | Includes the global set in every workspace collection, so people see both what they built and what you publish. | Off | `merge_global_semantic_kernel_with_workspace`; only applies in Workspace Mode |
 | Orchestration Type | Selects how a chat is routed across agents. Hidden while only one mode is available. | default_agent | `orchestration_type`; saved by the orchestration settings API |

@@ -21,6 +21,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The Run view labels the step **Hand off large work** and puts what it prepares in words: the workflow's name, what it reviews, such as "3 named documents" or "a search of 2 workspaces, the 50 best matches", and its task titles. The tasks' instructions, the document and workspace references, the content filter and the tags aren't shown.
     *   (Ref: `OrchestrationWorkflowHandoffNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`)
 
+### **(v0.261.288)**
+
+#### New Features
+
+*   **Ask AI in the Agent and Action Editors**
+    *   The V2 agent and action editors for personal, group and global agents and actions now have an **Ask AI** panel, matching the workflow editor. Describe what you want and the assistant fills in the unsaved draft, highlighting each changed field, with **Jump to** and **Undo this change** for every turn. It never saves and never sees or enters keys or other credentials.
+    *   In the agent editor it can set the name, description, instructions, model, assigned actions, token limit, reasoning effort and knowledge. In the action editor it can choose the action type and fill in its configuration, capabilities and sign-in method.
+    *   The agent assistant can draft up to three new actions for the agent. They are listed under **New actions from Ask AI** and created only when the agent is saved. One that still needs something, such as an endpoint, blocks the save and can be completed with **Finish in action editor**, which returns to the agent with the action assigned.
+    *   Administrators can turn each panel off with **Enable Ask AI in the Agent Editor** and **Enable Ask AI in the Action Editor** in Agents and Actions settings. Both are on by default.
+    *   (Ref: `functions_editor_assist.py`, `POST /api/agents/assist`, `POST /api/actions/assist`, `EditorAskAiPanel.tsx`, `agentEditorAssist.ts`, `actionEditorAssist.ts`, `AgentActionPicker.tsx`, `workspaceEditorDrafts.ts`, [Ask AI in the Agent and Action Editors](features/AGENT_ACTION_AI_ASSISTANT.md))
+
 ### **(v0.261.287)**
 
 #### New Features

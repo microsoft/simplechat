@@ -916,6 +916,10 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_workflow_user'] = False
         if 'enable_workflow_ai_assistant' not in settings:
             settings['enable_workflow_ai_assistant'] = True
+        if 'enable_agent_ai_assistant' not in settings:
+            settings['enable_agent_ai_assistant'] = True
+        if 'enable_action_ai_assistant' not in settings:
+            settings['enable_action_ai_assistant'] = True
         if 'enable_chat_workflow_results' not in settings:
             settings['enable_chat_workflow_results'] = False
         if 'enable_workflow_alert_sounds' not in settings:
@@ -2421,6 +2425,8 @@ def register_route_frontend_admin_settings(bp):
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
+                'enable_agent_ai_assistant': form_data.get('enable_agent_ai_assistant') == 'on',
+                'enable_action_ai_assistant': form_data.get('enable_action_ai_assistant') == 'on',
                 'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
                 'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
                 'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',

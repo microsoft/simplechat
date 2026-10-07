@@ -442,6 +442,25 @@ workflow-ai-assistant:
   reference:
     - title: "Workflow settings"
       url: /admin/workflow/
+agent-action-ai-assistant:
+  name: "Ask AI in the agent and action editors"
+  area: "Agents and actions"
+  audience: "End users"
+  summary: "Adds an Ask AI panel to the V2 agent and action editors for personal, group and global agents and actions. A person describes what they want, and the assistant fills in the unsaved draft, such as instructions, model, assigned actions and knowledge for an agent, or the type, configuration and sign-in method for an action. Each change is highlighted and can be undone by turn. The agent assistant can also draft new actions for the agent, which are created only when the agent is saved."
+  why: "Use this when people know what an agent or connector should do but not which fields to set, for example \"build a helpdesk agent that searches our IT policies and can look up tickets\". Nothing is saved until the person saves, the usual checks still run, and the assistant never sees or enters keys, secrets or other credentials."
+  default_state: "Enabled"
+  admin_tab: agents-actions
+  setting_keys:
+    - enable_agent_ai_assistant
+    - enable_action_ai_assistant
+  guides:
+    - title: "Create an agent"
+      url: /guides/create-an-agent/
+    - title: "Create an action"
+      url: /guides/create-an-action/
+  reference:
+    - title: "Agents and actions settings"
+      url: /admin/agents-actions/
 workflow-results-in-chat:
   name: "Workflow results in chat"
   area: "Chat and retrieval"

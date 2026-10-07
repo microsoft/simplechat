@@ -1,13 +1,12 @@
 // AgentAdvancedFields.tsx
 
 import type { Dispatch, SetStateAction } from 'react';
-import { getModelSupportedLevels } from '../../lib/reasoning';
 import type { ModelCatalogEntry } from '../../lib/models';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import type { AgentConfiguration, AgentEditorOptions, AuthoringResource } from '../../lib/workspaceAuthoring';
 import {
-    AGENT_INPUT_CLASS, agentModelChoices, agentStoredArrayEditError, agentText, clearAgentDraftFields, parseAgentSettings,
-    secretValueAt, selectedAgentModel, setAgentSecret,
+    AGENT_INPUT_CLASS, agentReasoningLevels, agentStoredArrayEditError, agentText, clearAgentDraftFields, parseAgentSettings,
+    secretValueAt, setAgentSecret,
 } from '../../lib/workspaceAgentAuthoring';
 import { GlassButton } from '../ui/primitives';
 import { EditorGroup } from '../workspace/EditorLayout';
@@ -35,13 +34,8 @@ export function AgentAdvancedFields({
     original: AuthoringResource<AgentConfiguration> | null;
     options: AgentEditorOptions;
 }) {
-    const selectedModel = selectedAgentModel(draft, agentModelChoices(options));
     const models = useBootstrapStore((state) => state.data?.catalogs?.models) as ModelCatalogEntry[] | undefined;
-    const catalogModel = models?.find((model) => draft.model_endpoint_id
-        ? model.endpoint_id === draft.model_endpoint_id && model.model_id === draft.model_id
-        : model.model_name === selectedModel?.modelName &&
-            model.deployment_name === (draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment));
-    const levels = getModelSupportedLevels(catalogModel?.reasoning_capabilities);
+    const levels = agentReasoningLevels(draft, options, models);
     const rawSettings = typeof draft._editor_settings_text === 'string' ? draft._editor_settings_text : JSON.stringify(draft.other_settings, null, 2);
     const error = agentAdvancedError(draft, original);
     return (
