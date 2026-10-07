@@ -2,7 +2,7 @@
 """
 UI test for the live run status of an accepted workflow hand-off in V2.
 Version: 0.261.253
-Implemented in: 0.261.282
+Implemented in: 0.261.287
 Refs: microsoft/simplechat#1549, microsoft/simplechat#1543
 
 This test ensures that the run an accepted hand-off queued is followed through the tab's workflow
