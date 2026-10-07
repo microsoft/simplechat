@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.280)**
+### **(v0.261.281)**
 
 #### New Features
 
@@ -17,9 +17,23 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Each request has its own address. Notification links and classic bookmarks open the matching request, and the Admin Settings agent template link opens the V2 queue.
     *   (Ref: `ApprovalsPage.tsx`, `components/approvals/`, `approvalsApi.ts`, `notificationLinks.ts`, `Sidebar.tsx`, `v2ApprovalsRailCollapsed` user setting)
 
+### **(v0.261.280)**
+
+#### Bug Fixes
+
+*   **Dashboard Date-Range Error Safety**
+    *   Dashboard summary and insights APIs now return a generic validation message for invalid date ranges instead of returning exception text.
+    *   (Ref: `route_backend_control_center.py`, `DASHBOARD_INVALID_RANGE_ERROR`)
+
 ### **(v0.261.279)**
 
 #### New Features
+
+*   **V2 Control Center Dashboard**
+    *   Adds period-based summary metrics, correct group and public-workspace status counts, login/activity/token charts, token filters, CSV export, and chat-with-trends.
+    *   Aggregates use activity-log and workspace data with a 90-second cache. Metrics without retained historical snapshots are identified as current state instead of presenting misleading period deltas.
+    *   Dashboard readers can access the dashboard APIs without receiving management capabilities.
+    *   (Ref: `route_backend_control_center.py`, `DashboardSection.tsx`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
 
 *   **Feedback and Safety Review in V2**
     *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
