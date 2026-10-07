@@ -142,7 +142,9 @@ from functions_settings import (
     get_application_update_status,
     get_settings,
     get_user_settings,
+    is_action_assistant_enabled,
     is_admin_settings_redacted_secret,
+    is_agent_assistant_enabled,
     is_chat_file_upload_enabled_for_user,
     is_chat_workflow_results_enabled_for_user,
     is_content_understanding_supported_environment,
@@ -719,6 +721,9 @@ def register_route_backend_v2(bp):
                 "enable_workflow_ai_assistant": is_workflow_assistant_enabled_for_user(
                     settings, user_roles=current_user_roles
                 ),
+                # Only hides Ask AI; each assist route re-checks the scope permission.
+                "enable_agent_ai_assistant": is_agent_assistant_enabled(settings),
+                "enable_action_ai_assistant": is_action_assistant_enabled(settings),
                 # Only hides the chip and entry points; the server re-checks every read.
                 "enable_chat_workflow_results": is_chat_workflow_results_enabled_for_user(
                     settings, user_roles=current_user_roles

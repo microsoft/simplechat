@@ -1268,6 +1268,28 @@ def is_workflow_assistant_enabled_for_user(settings, user_roles=None):
     return source_settings.get('enable_workflow_ai_assistant', False) is True
 
 
+def is_agent_assistant_enabled(settings):
+    """Return True when Ask AI is on for the agent editor and agents are enabled.
+
+    Scope permissions (personal, group, global) are checked by each assist route.
+    """
+    source_settings = settings or {}
+    if source_settings.get('enable_semantic_kernel', False) is not True:
+        return False
+    return source_settings.get('enable_agent_ai_assistant', True) is not False
+
+
+def is_action_assistant_enabled(settings):
+    """Return True when Ask AI is on for the action editor and agents are enabled.
+
+    Scope permissions (personal, group, global) are checked by each assist route.
+    """
+    source_settings = settings or {}
+    if source_settings.get('enable_semantic_kernel', False) is not True:
+        return False
+    return source_settings.get('enable_action_ai_assistant', True) is not False
+
+
 def is_chat_workflow_results_enabled_for_user(settings, user_roles=None):
     """Return True when a user may ask about their personal workflow results in chat."""
     source_settings = settings or {}
@@ -1647,6 +1669,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_workflow_user': False,
         # The AI workflow assistant in the V2 editor. It only applies where personal workflows do.
         'enable_workflow_ai_assistant': True,
+        # Ask AI in the V2 agent and action editors. Each scope still needs its own permission.
+        'enable_agent_ai_assistant': True,
+        'enable_action_ai_assistant': True,
         # Lets users ask chat about the stored results of their personal workflow runs.
         'enable_chat_workflow_results': False,
         # Lets workflow alert rules play one-shot or repeating browser sounds.

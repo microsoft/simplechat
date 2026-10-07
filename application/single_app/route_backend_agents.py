@@ -76,7 +76,15 @@ from functions_workspace_authoring import (
     ensure_editor_options_access,
     personal_editor_response,
 )
-from functions_group_agent_policy import group_agents_available
+from functions_group_agent_policy import group_agent_write_roles, group_agents_available
+from functions_settings import is_agent_assistant_enabled
+from functions_editor_assist import EditorAssistError
+from functions_editor_assist_runtime import (
+    authorize_group_editor_scope,
+    editor_assist_error_response,
+    handle_editor_assist_request,
+    is_session_admin,
+)
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
@@ -1106,6 +1114,45 @@ def draft_agent_instructions():
             exceptionTraceback=True,
         )
         return jsonify({'error': 'Failed to draft instructions.'}), 500
+
+
+@bpa.route('/api/agents/assist', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def assist_agent_editor():
+    """Ask AI for the agent editor: propose edits to the caller's unsaved agent draft.
+
+    Nothing is saved. The answer is a candidate draft the editor shows for review.
+    """
+    settings = get_settings()
+    user_id = get_current_user_id()
+    if not is_agent_assistant_enabled(settings):
+        return editor_assist_error_response(EditorAssistError('agent_assistant_disabled'), user_id=user_id)
+
+    def authorize(scope, group_id):
+        if scope == 'global':
+            if not is_session_admin(session.get('user')):
+                raise EditorAssistError('scope_forbidden')
+        elif scope == 'group':
+            authorize_group_editor_scope(
+                user_id, group_id,
+                write_roles=group_agent_write_roles(settings),
+                available=group_agents_available(user_id, settings),
+            )
+        elif not settings.get('allow_user_agents', False):
+            raise EditorAssistError('scope_forbidden')
+
+    return handle_editor_assist_request(
+        kind='agent',
+        user_id=user_id,
+        settings=settings,
+        authorize=authorize,
+        client_factory=lambda: (
+            _create_agent_instruction_client(settings),
+            _resolve_agent_instruction_model(settings),
+        ),
+    )
 
 # === USER AGENTS ENDPOINTS ===
 @bpa.route('/api/user/agents', methods=['GET'])

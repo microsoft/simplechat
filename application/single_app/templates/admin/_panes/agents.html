@@ -137,6 +137,16 @@
                         <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_actions_usage">Govern Global Actions</button>
                     </div>
                     <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_agent_ai_assistant" name="enable_agent_ai_assistant" {% if settings.enable_agent_ai_assistant | default(true) %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_agent_ai_assistant">Enable Ask AI in the Agent Editor</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="People can describe an agent in plain language and review the changes the assistant makes to their unsaved draft in the V2 agent editor. The assistant never saves an agent."></i>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_action_ai_assistant" name="enable_action_ai_assistant" {% if settings.enable_action_ai_assistant | default(true) %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_action_ai_assistant">Enable Ask AI in the Action Editor</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="People can describe an action in plain language and review the changes the assistant makes to their unsaved draft in the V2 action editor. The assistant never saves an action or sees its secrets."></i>
+                    </div>
                 </div>
                 {% if not settings.enable_semantic_kernel %}
                     <div class="alert alert-info">

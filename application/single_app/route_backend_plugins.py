@@ -55,7 +55,21 @@ from functions_group import (
     find_group_by_id,
     get_user_role_in_group,
 )
-from functions_group_action_policy import group_action_management_operations
+from functions_group_action_policy import (
+    group_action_management_operations,
+    group_action_write_roles,
+    group_actions_available,
+)
+from functions_settings import is_action_assistant_enabled
+from functions_editor_assist import EditorAssistError
+from functions_editor_assist_runtime import (
+    authorize_group_editor_scope,
+    editor_assist_error_response,
+    handle_editor_assist_request,
+    is_session_admin,
+)
+# Action Ask AI uses the same deployment as agent instruction drafting.
+from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
 from functions_group_actions import (
     get_group_actions,
     get_governed_group_actions,
@@ -1907,6 +1921,45 @@ def delete_user_plugin(action_id):
     log_action_deletion(user_id=user_id, action_id=action_id, action_name=action_id, scope='personal')
     log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": action_id})
     return jsonify({'success': True})
+
+
+@bpap.route('/api/actions/assist', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def assist_action_editor():
+    """Ask AI for the action editor: propose edits to the caller's unsaved action draft.
+
+    Nothing is saved, and secret fields are never sent to or set by the assistant.
+    """
+    settings = get_settings()
+    user_id = get_current_user_id()
+    if not is_action_assistant_enabled(settings):
+        return editor_assist_error_response(EditorAssistError('action_assistant_disabled'), user_id=user_id)
+
+    def authorize(scope, group_id):
+        if scope == 'global':
+            if not is_session_admin(session.get('user')):
+                raise EditorAssistError('scope_forbidden')
+        elif scope == 'group':
+            authorize_group_editor_scope(
+                user_id, group_id,
+                write_roles=group_action_write_roles(settings),
+                available=group_actions_available(user_id, settings),
+            )
+        elif not settings.get('allow_user_plugins', False):
+            raise EditorAssistError('scope_forbidden')
+
+    return handle_editor_assist_request(
+        kind='action',
+        user_id=user_id,
+        settings=settings,
+        authorize=authorize,
+        client_factory=lambda: (
+            _create_agent_instruction_client(settings),
+            _resolve_agent_instruction_model(settings),
+        ),
+    )
 
 
 # === GROUP ACTION ENDPOINTS ===
