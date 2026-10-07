@@ -1,14 +1,17 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.139
+Version: 0.261.270
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
 Pre-acquisition provider failure classification updated in: 0.261.134
 Single orchestration contract updated in: 0.261.139
+Agent and action steps trust the signed-in session, without attestation, in: 0.261.270
 
 Real adapters, web search and source review run with provider/page I/O doubled.
-No live provider, remote configuration or user artifact is accessed.
+No live provider, remote configuration or user artifact is accessed. Web search, URL
+fetch and Deep Research keep configuration attestation; agent and action steps check
+current access once and run as manual chat runs them (microsoft/simplechat#1660).
 """
 
 import asyncio
@@ -744,7 +747,7 @@ def test_real_sk_observes_sdk_runs_and_cleans_owned_thread(capture_runtime, monk
     assert "Actual SDK retained final line." in "\n".join(result["notes"])
 
 
-def test_real_action_configuration_captures_prepared_origin_and_constructed_model(capture_runtime, monkeypatch):
+def test_real_action_step_checks_session_access_and_runs_the_classic_engine(capture_runtime, monkeypatch):
     runtime = capture_runtime
     actions = importlib.import_module("functions_orchestration_actions")
     manifests = importlib.import_module("functions_action_manifest")
@@ -754,7 +757,6 @@ def test_real_action_configuration_captures_prepared_origin_and_constructed_mode
     settings_module = importlib.import_module("functions_settings")
     kernel_loader = importlib.import_module("semantic_kernel_loader")
     policy = importlib.import_module("functions_orchestration_execution_policy")
-    configuration = runtime.modules.configuration
     runtime.settings.update({
         "enable_chat_orchestration": True, "enable_chat_orchestration_actions": True,
         "azure_openai_gpt_endpoint": "https://model.invalid", "azure_openai_gpt_api_version": "2024-10-21",
@@ -803,31 +805,12 @@ def test_real_action_configuration_captures_prepared_origin_and_constructed_mode
             ])]
         return [ChatMessageContent(role=AuthorRole.ASSISTANT, content="First retained row\nFinal retained row 1000")]
 
-    def metadata(_source_type, *, producer, settings, source, selector):
-        return {
-            "version": configuration.EXTERNAL_ACQUISITION_VERSION, "kind": "action", "phase": "current",
-            "reference": {"id": "lookup", "scope_type": "personal", "scope_id": "owner"},
-            "manifest": deepcopy(manifest),
-            "prepared_manifest": kernel_loader.prepare_action_plugin_manifest(manifest, settings),
-            "model": {
-                "provider": "aoai", "protocol": "azure_openai",
-                "endpoint": settings["azure_openai_gpt_endpoint"], "api_version": settings["azure_openai_gpt_api_version"],
-                "deployment": "gpt-4o", "endpoint_id": None, "model_id": None,
-                "parameters": {"parallel_tool_calls": False, "tool_choice": "auto"},
-            },
-        }
-
-    attestor = configuration.OrchestrationExternalConfigurationAttestor(
-        user_id="owner", conversation_id="conversation-1", read_current_source=metadata, private_digest=_private_digest,
-    )
-
     def capture(source_type, **kwargs):
         if kwargs["source"] is None:
             calls.append("preflight")
             return
         calls.append("capture")
         captures.append(deepcopy(kwargs))
-        attestor.capture(source_type, **kwargs)
 
     runtime.context.capture_external_source_configuration = capture
     monkeypatch.setattr(actions, "resolve_action_manifest", lambda *_args, **_kwargs: deepcopy(manifest))
@@ -837,26 +820,16 @@ def test_real_action_configuration_captures_prepared_origin_and_constructed_mode
     with policy.orchestration_file_policy(allow_generated_files=False):
         step, result = run_gather(runtime, "action_invoke", arguments={"action_ref": selector, "task": "Read all rows."})
     assert result["status"] == "completed", result
-    assert calls == ["preflight", "preflight", "capture", "load", "model", "capture", "tool", "model"]
-    assert len(captures) == 2
-    assert captures[0]["source"] == captures[1]["source"]
-    assert captures[0]["source"]["prepared_manifest"] == loaded[0]
-    origin = manifests.get_action_origin(captures[0]["source"]["manifest"])
-    assert origin == manifests.McpActionOrigin("personal", "owner", "lookup")
-    assert captures[0]["source"]["model"]["deployment"] == models[0].ai_model_id
+    # One session access check for the exact action, then the classic engine, as manual chat
+    # runs it: no configuration is captured or attested (microsoft/simplechat#1660).
+    assert calls == ["preflight", "load", "model", "tool", "model"]
+    assert captures == []
+    assert loaded[0] == kernel_loader.prepare_action_plugin_manifest(manifest, runtime.settings)
+    assert models[0].ai_model_id == "gpt-4o"
     assert models[0].client.is_closed()
     assert "Final retained row 1000" in "\n".join(result["notes"])
     assert not result["artifacts"]
     assert "SYNTHETIC_PRIVATE" not in json.dumps(result)
-    producer = runtime.context.result_producer(step)
-    proof = attestor.for_admission(
-        "action", producer=producer, settings=runtime.settings, source=manifest, selector=selector,
-    )
-    restarted = configuration.OrchestrationExternalConfigurationAttestor(
-        user_id="owner", conversation_id="conversation-1", read_current_source=metadata, private_digest=_private_digest,
-    )
-    current = restarted.current("action", producer=producer, settings=runtime.settings, source=manifest)
-    assert proof == current
 
 
 @pytest.mark.parametrize("field,value", [
@@ -977,17 +950,27 @@ def test_research_does_not_rediscover_planner_after_capture(capture_runtime):
 
 
 @pytest.mark.parametrize("capability", ["agent_invoke", "action_invoke"])
-def test_freshly_resolved_engines_are_not_attested_from_catalog_candidates(capture_runtime, monkeypatch, capability):
+def test_agent_and_action_steps_run_on_a_session_access_check_without_attestation(
+    capture_runtime, monkeypatch, capability,
+):
+    """Agent and action steps trust the signed-in session as manual chat does (#1660, #1661).
+
+    Current access to the exact catalog selection is checked once, and the engine then runs
+    without an invocation capture, so its output is accepted without configuration attestation.
+    """
     runtime = capture_runtime
     runtime.settings["allow_user_agents"] = True
+    runtime.settings["enable_semantic_kernel"] = True
     contexts = importlib.import_module("agent_execution_context")
     catalog = importlib.import_module("functions_action_catalog")
     selector = catalog._action_ref("personal", "owner", "original-action-id")
     engine_name = "agent_delegation_runtime" if capability == "agent_invoke" else "functions_orchestration_actions"
     engine = importlib.import_module(engine_name)
 
-    async def unobserved_engine(*args, **kwargs):
-        return {"findings": "Unattested output", "calls": 1, "root_id": "root", "invocations": [], "artifacts": []}
+    async def session_engine(*args, **kwargs):
+        if capability == "agent_invoke":
+            return {"response": "Session-trusted output", "citations": []}
+        return {"findings": "Session-trusted output", "calls": 1, "root_id": "root", "invocations": [], "artifacts": []}
 
     preparations = []
 
@@ -995,7 +978,7 @@ def test_freshly_resolved_engines_are_not_attested_from_catalog_candidates(captu
         assert source is None
         preparations.append((source_type, selector))
 
-    invocation = Mock(side_effect=unobserved_engine)
+    invocation = Mock(side_effect=session_engine)
     monkeypatch.setattr(engine, "invoke_scoped_agent" if capability == "agent_invoke" else "invoke_action", invocation)
     runtime.context.agent_catalog = [{
         "id": "original-agent-id", "name": "original-agent",
@@ -1011,8 +994,8 @@ def test_freshly_resolved_engines_are_not_attested_from_catalog_candidates(captu
     runtime.context.capture_external_source_configuration = prepare
     arguments = {"action_ref": selector, "task": "Gather facts"} if capability == "action_invoke" else None
     _, result = run_gather(runtime, capability, arguments=arguments)
-    assert result["status"] == "failed"
-    assert result["notes"] == result["artifacts"] == []
+    assert result["status"] == "completed", result
+    assert "Session-trusted output" in "\n".join(result["notes"])
     assert runtime.state.calls == []
     expected = (
         ("agent", "personal:owner:original-agent-id") if capability == "agent_invoke"
@@ -1020,6 +1003,7 @@ def test_freshly_resolved_engines_are_not_attested_from_catalog_candidates(captu
     )
     assert preparations == [expected]
     invocation.assert_called_once()
+    assert invocation.call_args.kwargs.get("invocation_capture") is None
 
 
 @pytest.mark.parametrize("capability", ["web_search", "url_fetch", "deep_research", "agent_invoke", "action_invoke"])

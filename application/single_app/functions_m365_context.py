@@ -97,10 +97,18 @@ class M365ExecutionContext:
     workflow_fingerprint: str | None = None
     connection_id: str | None = None
     group_id: str | None = None
+    # An interactive request in a shared conversation by the data owner, whose own request is
+    # their consent to share the sources it reads there. Kept out of the approval fingerprint.
+    shared_by_request: bool = False
 
     def __post_init__(self):
-        if type(self.shared) is not bool or not isinstance(self.action_configs, Mapping):
+        if (
+            type(self.shared) is not bool or type(self.shared_by_request) is not bool
+            or not isinstance(self.action_configs, Mapping)
+        ):
             raise ValueError("Invalid authoritative Microsoft 365 execution context.")
+        if self.shared_by_request and (not self.shared or self.workflow_id):
+            raise ValueError("Only an interactive shared request can share by request.")
         object.__setattr__(self, "action_configs", _immutable(self.action_configs))
         approval_context(self)
         if not self.workflow_id and self.actor_user_id != self.data_user_id:

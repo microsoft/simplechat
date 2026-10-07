@@ -57,7 +57,7 @@ The Groups page still provides focused delegation management without switching
 the active workspace. For global agents, V2 Admin Settings now works like My
 Workspace: create the Call agent action under **Global Actions** with **New
 action**, then attach it in the global agent's editor. The focused **Global agent
-delegation** card was removed in **0.261.270**.
+delegation** card was removed in **0.261.271**.
 
 Owned Call agent actions can also be deleted in V2 after confirmation. Deleting
 an action stops future calls through that action; it does not rewrite agents or

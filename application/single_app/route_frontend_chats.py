@@ -8,6 +8,7 @@ from content_screening.access import (
 )
 from content_screening.contracts import ScreeningError
 from config import *
+from collaboration_models import is_shared_conversation_backing
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
@@ -406,6 +407,14 @@ def _resolve_chat_upload_context(conversation_id, user_id, current_user_info):
             item=normalized_conversation_id,
             partition_key=normalized_conversation_id,
         )
+        # Orchestrate's backing record shares its shared conversation's id; files shared in the
+        # conversation belong to its classic source conversation like any other.
+        if is_shared_conversation_backing(conversation_item):
+            return _resolve_collaboration_upload_context(
+                normalized_conversation_id,
+                user_id,
+                current_user_info,
+            )
     except CosmosResourceNotFoundError:
         try:
             return _resolve_collaboration_upload_context(

@@ -1,6 +1,6 @@
 # V2 Admin Category Scroll Reset Fix
 
-Fixed/Implemented in version: **0.261.270**
+Fixed/Implemented in version: **0.261.271**
 
 ## Issue
 
@@ -31,7 +31,7 @@ section while the page sat at the top.
 | File | Change |
 | --- | --- |
 | `application/v2_ui/src/pages/AdminSettingsPage.tsx` | `selectCategory` sets the category, scrolls the pane to the top, and counts the visit. The rail buttons and the phone category select both use it, including when the category already shown is chosen again. `SettingsIndex` is keyed by the visit count, so it restarts and marks the category's first section. |
-| `application/single_app/config.py` | Version `0.261.269` -> `0.261.270`. |
+| `application/single_app/config.py` | Version `0.261.270` -> `0.261.271`. |
 
 Cross-references that jump to a section, such as going from the Model Catalog to
 AI Connections, still use `goToSection`, which switches category only when the

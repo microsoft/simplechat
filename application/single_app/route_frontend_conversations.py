@@ -7,6 +7,7 @@ import requests
 from flask import Response, jsonify, redirect, render_template, request
 
 from config import *
+from collaboration_models import is_shared_conversation_backing
 from functions_appinsights import log_event
 from functions_chat_content_checks import strip_private_chat_checks
 from functions_chat_content_review import refresh_checked_message
@@ -234,6 +235,13 @@ def register_route_frontend_conversations(bp):
                 partition_key=conversation_id,
             )
         except CosmosResourceNotFoundError:
+            conversation = None
+        # Orchestrate's backing record shares its shared conversation's id and is part of it: the
+        # shared conversation authorizes the reader, and the backing holds orchestrated answers'
+        # artifacts.
+        orchestration_backing = is_shared_conversation_backing(conversation)
+
+        if conversation is None or orchestration_backing:
             try:
                 conversation = get_collaboration_conversation(conversation_id)
             except CosmosResourceNotFoundError:
@@ -269,6 +277,13 @@ def register_route_frontend_conversations(bp):
             collaboration_messages = list_collaboration_messages(conversation_id)
             artifact_payload_map = build_message_artifact_payload_map(collaboration_messages)
             artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
+        if artifact_payload is None and orchestration_backing:
+            backing_messages = list(cosmos_messages_container.query_items(
+                query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                partition_key=conversation_id,
+            ))
+            artifact_payload = build_message_artifact_payload_map(backing_messages).get(str(artifact_id or ''))
         if not isinstance(artifact_payload, dict):
             return jsonify({'error': 'Agent citation artifact not found'}), 404
 

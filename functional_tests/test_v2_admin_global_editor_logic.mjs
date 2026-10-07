@@ -1,6 +1,6 @@
 // test_v2_admin_global_editor_logic.mjs
-// Version: 0.261.270
-// Implemented in: 0.261.270
+// Version: 0.261.271
+// Implemented in: 0.261.271
 // Executes the real global agent and action adapters, return-path rules and connector payloads
 // that let Admin Settings author global agents and actions in the V2 editors.
 

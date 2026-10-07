@@ -516,6 +516,36 @@ export function shouldInvokeAi(
     return resolveSendTarget(message, options, catalogs) !== null;
 }
 
+/**
+ * The AI target of a shared conversation message, from the composer's own options.
+ *
+ * Manual sends and Orchestrate both decide with this, so a message that only addresses people is
+ * posted to them in either mode and never reaches a model or a plan. While a saved analysis is
+ * being asked about, its source toggles do not address the assistant: that answer comes from the
+ * stored result.
+ */
+export function sharedConversationTarget(
+    message: string,
+    options: InvocationOptions,
+    catalogs: { agents?: AgentOption[]; models?: ModelCatalogEntry[] },
+    { savedContext = false }: { savedContext?: boolean } = {},
+): InvocationTarget | null {
+    return resolveSendTarget(
+        message,
+        {
+            agentSelection: options.agentSelection,
+            promptId: options.promptId,
+            documentSearch: !savedContext && options.documentSearch,
+            webSearch: !savedContext && options.webSearch,
+            imageGeneration: !savedContext && options.imageGeneration,
+            deepResearch: !savedContext && options.deepResearch,
+            urlAccess: !savedContext && options.urlAccess,
+            modelDeployment: options.modelDeployment,
+        },
+        catalogs,
+    );
+}
+
 /* -------------------------------------------------------------------------- */
 /* The mention menu                                                            */
 /* -------------------------------------------------------------------------- */

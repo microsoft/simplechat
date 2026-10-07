@@ -1,9 +1,9 @@
 # test_workspace_authoring_credential_compatibility.py
 """Regression coverage for conditional editor writes and classic credential cleanup.
 
-Version: 0.261.270
+Version: 0.261.271
 Implemented in: 0.261.096
-Classic global agent delete of an editor-keyed credential: 0.261.270
+Classic global agent delete of an editor-keyed credential: 0.261.271
 
 The real editor and classic functions share isolated Cosmos/Key Vault services.
 Lost write responses must not delete committed credentials, and classic operations

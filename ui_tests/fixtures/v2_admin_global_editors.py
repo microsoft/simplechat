@@ -1,8 +1,8 @@
 # v2_admin_global_editors.py
 """
 Closed API fixtures for the V2 Admin Settings global agents and actions.
-Version: 0.261.270
-Implemented in: 0.261.270
+Version: 0.261.271
+Implemented in: 0.261.271
 
 Extend the schema-backed Admin Settings fixture with an in-memory store for the
 organisation's global agents and actions. It answers the admin-only V2 editor

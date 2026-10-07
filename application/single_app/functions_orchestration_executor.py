@@ -1018,7 +1018,7 @@ def _run_dependency_step(
         if isinstance(exc, OrchestrationFilePolicyError):
             failure = build_failure('file_publication_not_allowed')
         elif isinstance(exc, (ResultUnavailableError, ElicitationContextError, PermissionError, ScreeningError)):
-            failure = access_failure(exc)
+            failure = access_failure(exc, capability_id=step['capability_id'])
         elif isinstance(exc, PartialInputNotAcceptedError):
             failure = build_failure('input_partial_not_accepted')
         elif isinstance(exc, ResultContractError):
