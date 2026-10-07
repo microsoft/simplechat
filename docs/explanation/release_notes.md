@@ -2,6 +2,53 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.280)**
+
+#### New Features
+
+*   **Guided Tours and Latest Features in V2**
+    *   Chat and Personal Workspace have step-by-step guided tours, started from a help button in the page header or with **Start now** in User Settings. Tours skip controls that are not on screen, support the keyboard, and respect reduced motion.
+    *   A new **Help and guidance** group in Preferences turns tours off one by one, or all at once with **Show tour buttons**. That switch is shared with the classic tutorial buttons.
+    *   A **Latest Features** shortcut appears in the V2 navigation rail when the Support menu offers it. Hiding it lasts until the next release, and the setting is shared with the classic interface.
+    *   (Ref: `lib/tours.ts`, `GuidedTour.tsx`, `TourLauncher.tsx`, `LatestFeaturesLink.tsx`, `GuidanceCards.tsx`, `_build_latest_features_nav`, `tutorialVisibility`, [V2 User Settings Redesign](features/V2_USER_SETTINGS_REDESIGN.md))
+
+### **(v0.261.279)**
+
+#### New Features
+
+*   **Fact Memory Workbench and Microsoft 365 Cards in V2 User Settings**
+    *   Fact memory is now one workbench: add, search, filter, edit, and delete (with confirmation) instructions and facts.
+    *   Microsoft 365 sharing, chat connection, workflow connection, and workflow authorizations match the classic page, including CSRF-protected writes and confirmed revocations.
+    *   (Ref: `FactMemoryBench.tsx`, `M365Cards.tsx`, `PreferencesTab.tsx`)
+
+### **(v0.261.278)**
+
+#### New Features
+
+*   **Voice, Audio and Retention in V2 User Settings**
+    *   Completion sounds with preview and mute, spoken reply voice, speed, and auto-play, microphone permission status, and personal retention for conversations and documents.
+    *   (Ref: `PreferencesTab.tsx`, `lib/speechPlayback.ts`, `/api/retention-policy/user`)
+
+#### Bug Fixes
+
+*   **Personal Retention Default Value**
+    *   Choosing the organization default for personal retention is now accepted.
+    *   (Ref: [Personal Retention Default Value Fix](fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md))
+
+### **(v0.261.277)**
+
+#### User Interface Enhancements
+
+*   **V2 User Settings Follows the Admin Settings Design**
+    *   A collapsible section rail remembered per user, full-width settings cards, and an **On this page** index on every tab. Preferences are grouped instead of listed, and the Violations tab is always listed.
+    *   (Ref: `SettingsPage.tsx`, `SettingsCard.tsx`, `v2UserSettingsRailCollapsed`)
+
+#### Bug Fixes
+
+*   **Feedback Tab Loads in V2**
+    *   The Feedback tab failed with "too many values to unpack". The user's own feedback now loads.
+    *   (Ref: [Feedback My Routes Filter Unpack Fix](fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md))
+
 ### **(v0.261.276)**
 
 #### New Features
