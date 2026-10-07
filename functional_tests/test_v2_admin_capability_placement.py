@@ -2,11 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.273
+Version: 0.261.275
 Implemented in: 0.261.047
 Operations described in full: 0.261.269
 Data Lifecycle added to the fully described groups in: 0.261.272
 Governance added to the fully described groups in: 0.261.273
+Scale described in full: 0.261.274
+Backup & Recovery added to the fully described groups in: 0.261.275
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -31,9 +33,9 @@ Declaring a field is what takes a key out of that scan. This test holds five
 invariants so the misfiling cannot come back:
 
   1. The Appearance, Chat, Security, Governance, Agents & Actions, Workspaces, Data
-     Lifecycle and Operations groups are fully described by the schema, so they must
-     receive *no* guessed rows at all. A new undeclared key that lands in any of them
-     fails here, and the fix is to declare it in its real section.
+     Lifecycle, Backup & Recovery, Scale and Operations groups are fully described by the
+     schema, so they must receive *no* guessed rows at all. A new undeclared key that
+     lands in any of them fails here, and the fix is to declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
@@ -78,6 +80,10 @@ under Knowledge > Web & Research > Deep Research labelled with their key names, 
 the cross-format Compare pair fell into "Other capabilities". Two of them did nothing
 on their own. The derived ones are now suppressed, the two real choices are declared
 where they belong, and ``test_mixed_source_keys_are_never_guessed`` keeps it that way.
+
+Scale was described after that. The scan had drawn switches for the four always-on
+Document Access Index flags, which ``get_settings`` forces back to True on every
+read, so each would appear to save and then revert. All four are now suppressed.
 """
 
 import ast
@@ -102,6 +108,8 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
+# Backup & Recovery is described by one component per section (0.261.275); its
+# settings live in a separate document, so no settings-document key belongs there.
 FULLY_DESCRIBED_GROUP_IDS = (
     APPEARANCE_GROUP_ID,
     "chat",
@@ -110,7 +118,9 @@ FULLY_DESCRIBED_GROUP_IDS = (
     "agents-actions",
     "workspaces",
     "data-lifecycle",
+    "backup-recovery",
     "operations",
+    "scale",
 )
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
@@ -186,6 +196,12 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_tabular_search_shared_preflight",
     "enable_tabular_analyze_durable_preflight",
     "enable_tabular_hierarchical_analysis",
+    # Forced to True by normalize_document_access_index_required_settings on every
+    # settings read and write.
+    "enable_document_access_index_container",
+    "enable_document_access_index_write_through",
+    "enable_document_access_index_reads",
+    "enable_startup_document_access_index_backfill",
 )
 
 # Every mixed-source key the settings document still carries. Each must be declared

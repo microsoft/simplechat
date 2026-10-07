@@ -1,12 +1,13 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.267
+Version: 0.261.274
 Implemented in: 0.261.093
 Separate release check boundary: 0.261.133
 The rail's notification count is answered: 0.261.195
 Selectable sections, Model Catalog, and AI Connections stubs: 0.261.258
 Seeded user preferences on open: 0.261.267
+Test-supplied routes for operational APIs such as the Scale group's: 0.261.274
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in
@@ -150,6 +151,9 @@ class AdminSettingsFixture:
         ]
         self.patches = []
         self.reject_next_save = False
+        # Further APIs a test serves itself, keyed by (method, path). Each handler receives
+        # the Playwright route and fulfils it; anything unlisted still fails the test.
+        self.extra_routes = {}
         self.errors = []
         self.unexpected_requests = []
         page.on("pageerror", lambda error: self.errors.append(str(error)))
@@ -243,6 +247,8 @@ class AdminSettingsFixture:
             route.fulfill(json=self._catalog_payload(admin=False))
         elif path == "/api/v2/admin/model-endpoints" and request.method == "GET":
             route.fulfill(json={"endpoints": self.endpoints, "custom_api_types": [], "default_notices": {}})
+        elif (request.method, path) in self.extra_routes:
+            self.extra_routes[(request.method, path)](route)
         else:
             self.unexpected_requests.append(f"{request.method} {path}")
             route.fulfill(status=404, json={"error": "Unexpected fixture request."})
