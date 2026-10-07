@@ -1,14 +1,14 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.275
+Version: 0.261.276
 Implemented in: 0.261.093
 Separate release check boundary: 0.261.133
 The rail's notification count is answered: 0.261.195
 Selectable sections, Model Catalog, and AI Connections stubs: 0.261.258
 Seeded user preferences on open: 0.261.267
 Test-supplied routes for operational APIs such as the Scale group's: 0.261.274
-Help group: catalogue tabs, Latest Features, Send Feedback and registration stubs: 0.261.275
+Help group: catalogue tabs, Latest Features, Send Feedback and registration stubs: 0.261.276
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in

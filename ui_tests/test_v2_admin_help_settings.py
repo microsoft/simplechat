@@ -1,8 +1,8 @@
 # test_v2_admin_help_settings.py
 """
 Browser coverage for the V2 Admin Settings Help group.
-Version: 0.261.275
-Implemented in: 0.261.275
+Version: 0.261.276
+Implemented in: 0.261.276
 
 Exercise the built application with the real Help field schema, the real Latest
 Features catalogues and intercepted APIs. Check the four Help cards and the

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.275)**
+### **(v0.261.276)**
 
 #### New Features
 
@@ -19,6 +19,22 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Application Title No Longer Doubles in Latest Features**
     *   An application title containing "SimpleChat", such as "SimpleChat Contoso", was substituted twice in Latest Features copy and showed up as "SimpleChat Contoso Contoso". The title is now applied once, on both the classic pages and V2.
     *   (Ref: `support_menu_config.py`, `test_v2_admin_latest_features_api.py`)
+
+### **(v0.261.275)**
+
+#### New Features
+
+*   **Backup & Recovery in V2 Admin Settings**
+    *   The Backup & Recovery group no longer shows "No settings match". Each of its nine sections now has a V2 card with the same capabilities as the classic page: a Start Here readiness checklist with guides, on-demand full and partial backups, the schedule and retention window, backup storage and encryption, a six-step migration wizard, a backup inventory with restore, the Cosmos DB editor, and job history.
+    *   Backup settings join the page's Save bar and save after the other Admin Settings. Queueing a backup, running retention cleanup, reviewing or queueing a restore, and starting a migration save pending Backup & Recovery changes first; retrying or resuming a job never does. When unsaved Enhanced Citations or Key Vault settings would change how an action is checked, the action offers **Save all and continue**.
+    *   Restore and migration queue only from a current, passing review, with typed confirmations for overwrite restores and mirror migrations. Cosmos DB editor saves are ETag-guarded, and leaving the page with unsaved work asks first.
+    *   (Ref: `components/admin/dataManagement/`, `dataManagementStore.ts`, `dataManagement.ts`, `dataManagementLogic.ts`, `AdminSettingsPage.tsx`, `admin_settings_fields.py`, [V2 Admin Backup & Recovery](features/V2_ADMIN_BACKUP_RECOVERY.md))
+
+#### Bug Fixes
+
+*   **Backup Inventory & Restore Label**
+    *   The navigation label showed a literal `&amp;` on both the classic and V2 admin pages. It now reads "Backup Inventory & Restore".
+    *   (Ref: `admin_settings_nav.py`, `docs/_data/app_surface.yml`)
 
 ### **(v0.261.274)**
 

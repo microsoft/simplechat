@@ -2,8 +2,8 @@
 # test_v2_admin_latest_features_api.py
 """
 Functional test for the Latest Features catalogues served to the V2 admin surface.
-Version: 0.261.275
-Implemented in: 0.261.275
+Version: 0.261.276
+Implemented in: 0.261.276
 
 The server-rendered Help tabs resolve each Latest Features shortcut with
 ``url_for`` and each screenshot with the static route while rendering Jinja. The
@@ -60,7 +60,7 @@ def build(settings=None, endpoints=None):
         settings if settings is not None else {"enable_semantic_kernel": True},
         resolve_endpoint_url=lambda endpoint: resolved.get(endpoint, ""),
         resolve_static_url=lambda path: f"/static/{path}",
-        version="0.261.275",
+        version="0.261.276",
     )
 
 
@@ -75,10 +75,10 @@ def test_catalogues_keep_their_release_groups():
     """Both catalogues arrive whole and in release order."""
     print("Testing catalogue shape...")
 
-    assert_app_version_at_least("0.261.275")
+    assert_app_version_at_least("0.261.276")
 
     payload = build()
-    assert payload["version"] == "0.261.275"
+    assert payload["version"] == "0.261.276"
     for side, source in (
         ("admin", support_menu_config.get_admin_latest_feature_release_groups_for_settings({})),
         ("user", support_menu_config.get_support_latest_feature_release_groups()),
