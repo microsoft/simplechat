@@ -1,8 +1,8 @@
 # test_v2_control_center_activity_logs_queries.py
 """
 Functional tests for bounded Control Center activity queries, paging and export.
-Version: 0.261.283
-Implemented in: 0.261.283
+Version: 0.261.284
+Implemented in: 0.261.284
 
 Executes the actual dependency-neutral helper module with a query-contract storage fake.
 No cloud calls, Flask bootstrap replacement, or production module mutations.

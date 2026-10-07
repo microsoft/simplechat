@@ -49,14 +49,14 @@ export interface EntityActivityItem extends Record<string, unknown> {
     description?: string;
 }
 
-export function EntityActivity({ items }: { items: EntityActivityItem[] }) {
+export function EntityActivity({ items, entityLabel = 'group' }: { items: EntityActivityItem[]; entityLabel?: string }) {
     const [expanded, setExpanded] = useState<string | null>(null);
     return <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-text-3">Most recent {items.length} records. Export includes these records only.</p>
             <ExportButton filename="workspace-recent-activity.csv" rows={items} />
         </div>
-        {!items.length ? <p className="text-sm text-text-3">No group activity recorded.</p> : null}
+        {!items.length ? <p className="text-sm text-text-3">No {entityLabel} activity recorded.</p> : null}
         <ol className="space-y-3">
             {items.map((item) => <li key={item.id} className="space-y-1 border-b border-edge pb-3">
                 <p className="text-sm font-medium text-text-1">{item.activity_type.replaceAll('_', ' ')}</p>

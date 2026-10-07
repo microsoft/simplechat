@@ -20,6 +20,7 @@ import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
 import { UsersSection } from '../components/controlCenter/UsersSection';
 import { GroupsSection } from '../components/controlCenter/GroupsSection';
+import { PublicWorkspacesSection } from '../components/controlCenter/PublicWorkspacesSection';
 
 type SectionId = 'dashboard' | 'users' | 'groups' | 'public-workspaces' | 'activity-logs' | 'data-health';
 
@@ -231,6 +232,7 @@ export function ControlCenterPage() {
                         : section === 'users' ? <UsersSection />
                         : section === 'groups' ? <GroupsSection />
                         : section === 'activity-logs' ? <ActivityLogsSection />
+                        : section === 'public-workspaces' ? <PublicWorkspacesSection />
                         : section === 'data-health' ? <MigrationDataHealth />
                             : <SectionPlaceholder label={current.label} />}
                 </main>

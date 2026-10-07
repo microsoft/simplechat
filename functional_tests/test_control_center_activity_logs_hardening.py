@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center activity logs hardening.
-Version: 0.261.283
+Version: 0.261.284
 Implemented in: 0.241.021
 
 This test ensures that the Control Center activity logs flow validates

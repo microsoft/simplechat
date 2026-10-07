@@ -10,7 +10,7 @@ audience: admin
 
 The V2 Control Center is a separate administration pane for users assigned Control Center access. It is kept out of the primary workspace navigation and appears in **Account → Control Center** when at least one Control Center capability is available to you.
 
-The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users and Groups have native V2 management; Public Workspaces still links to the classic Control Center while that V2 section is delivered.
+The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users, Groups and Public Workspaces have native V2 management.
 
 ## Manage users
 
@@ -44,7 +44,7 @@ Requesting group deletion, deleting all group documents, taking ownership, or tr
 
 ## Investigate activity
 
-Activity Logs was implemented in **0.261.283**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. Choose a UTC date window (default 30 days, maximum 366), select one or more activity-type chips, and narrow by user or workspace ID, model, token type, text or recorded status. **Apply filters** updates the URL so a bookmark preserves the investigation. **More filters** exposes explicit group/public-workspace IDs and status.
+Activity Logs was implemented in **0.261.284**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. Choose a UTC date window (default 30 days, maximum 366), select one or more activity-type chips, and narrow by user or workspace ID, model, token type, text or recorded status. **Apply filters** updates the URL so a bookmark preserves the investigation. **More filters** exposes explicit group/public-workspace IDs and status.
 
 The histogram and chip counts describe the filtered records. For busy ranges, they describe only the newest 5,000 matches and clearly say **Sampled**; do not use them as organization-wide totals. Expand the histogram data table to select a UTC bucket and investigate that date window. The table reads 50 records at a time in newest-first order. **Refresh** starts over with newly recorded activity; changing filters resets paging.
 
@@ -53,6 +53,20 @@ Choose **Inspect** for a record's fields and raw JSON. Related links open its re
 **Export CSV** uses the same filters, not just the visible page, and exports no more than 10,000 activity rows. A final `export_limit_reached` row means the limit was reached; narrow the filters to export a smaller complete range. Spreadsheet formula prefixes are escaped. The export includes raw JSON, so handle the downloaded audit information according to your organization's data policies.
 
 On an existing deployment, an indexing error requires an administrator to apply the new expected activity-log composite index in **Admin Settings → App Maintenance** and wait for Cosmos index transformation. The activity page does not automatically apply cloud changes. A date cutoff stabilizes forward paging against newer events, but cannot freeze deletes or late/backdated writes; the feed is not a transactional snapshot.
+
+## Manage public workspaces
+
+Public workspace management was implemented in **0.261.283**. Open **Public Workspaces** to find knowledge spaces by name/description, responsible owner and status. Sort and page on the server, bookmark the filtered URL or export matching records (up to 10,000). The list displays recorded metric refresh times. Unavailable metrics are not zero; refresh reloads stored snapshots, while opening details computes live document and token totals.
+
+Managers include the owner, administrators and document managers, not everyone who can read the public collection. Add or import only Admin and DocumentManager roles. Public readers are implicit. Verify CSV identities before import, and review each import outcome.
+
+Select up to 500 workspaces across pages to change status. Locked and inactive changes require a reason. Active both unlocks the workspace and enables uploads; upload-disabled blocks uploads, while inactive makes the workspace unavailable. Failed items stay visible after the list refresh.
+
+The detail drawer shares the Groups tabs and supports status history, recent activity/raw JSON/export, ownership requests and document summaries. Member removal/role changes and retention edits still require workspace Owner/Admin membership. The existing public retention API supports `none` or a permitted numeric day count: inherited fields are left unchanged, and resetting a custom value to organization defaults is not available here.
+
+Individual document deletion, workspace deletion, take-ownership and transfer-to-member workflows request approval on the existing server routes. A submission notice means **requested**, not executed. Its link opens the particular approval with workspace scope. The existing document-deletion executor can report successful deletions while other documents fail; workspace deletion can then proceed after partial cleanup. Review execution logs/results rather than treating the submitted request as completed cleanup.
+
+Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links retain public workspace scope for Phase 6.
 
 ## Check activity-log data health
 
