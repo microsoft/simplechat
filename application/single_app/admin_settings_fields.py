@@ -30,7 +30,7 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Beyond a field's type, five optional descriptors shape how a section reads:
+Beyond a field's type, six optional descriptors shape how a section reads:
 
 ``group``
     Names the cluster a field belongs to, either as a label or with a variant
@@ -63,6 +63,16 @@ Beyond a field's type, five optional descriptors shape how a section reads:
     ``data-requires`` attributes ``admin_settings_dependencies.js`` reads. File
     Sync needs Redis Cache, which lives under Scale, and saying so where the
     dependency is felt beats discovering it from a flash message after saving.
+    An optional ``when`` condition limits the prerequisite to one configuration:
+    Redis needs Key Vault only while its access key is read from a vault. A
+    ``target_section`` is also what lets the target card list what uses it.
+
+``label_variants``
+    Replaces a field's label and help while a condition holds, for a stored
+    value whose meaning changes with another setting. ``redis_key`` holds the
+    Redis access key, or the name of the Key Vault secret that holds it, and the
+    server-rendered form relabels its single input the same way. Declaring a
+    second field would invent a setting nothing reads.
 
 ``paths``
     Where the value actually lives, when that is not a top-level settings key.
@@ -83,8 +93,8 @@ Beyond a field's type, five optional descriptors shape how a section reads:
     the switch on without naming the companion, so an API client gets the same
     result. A value named in the same save always wins.
 
-The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Operations, Workflow,
-Workspaces and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Operations, Scale,
+Workflow, Workspaces and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -410,6 +420,69 @@ KEY_VAULT_REMINDER_DEFAULT_ADMIN_ROLES = ["Admin"]
 
 ACCESS_DENIED_MESSAGE_MAX_LENGTH = 2000
 
+# Scale groups. Each is shared by several fields, and the first field of a group
+# decides its label, variant and help, so declaring them once keeps them in step.
+REDIS_CONNECTION_GROUP = {
+    "id": "redis-connection",
+    "label": "Connection",
+    "variant": "connection",
+    "help": "Where SimpleChat finds Redis, and how it signs in.",
+}
+DAI_DIAGNOSTICS_GROUP = {
+    "id": "dai-diagnostics",
+    "label": "Automatic maintenance and diagnostics",
+    "variant": "advanced",
+    "help": (
+        "Shown while Document Access Index diagnostics is on, under Operations > Logging "
+        "& Health > Debug Logging. Container, write-through, read-path and automatic "
+        "backfill stay on regardless; the status above reports them."
+    ),
+}
+DAI_READ_PATH_GROUP = {
+    "id": "dai-read-path",
+    "label": "Default read path",
+    "variant": "behavior",
+}
+COSMOS_RESOURCE_GROUP = {
+    "id": "cosmos-resource",
+    "label": "Cosmos resource",
+    "variant": "connection",
+    "help": (
+        "The account automation and manual actions manage. Blank values fall back to "
+        "the App Service settings, so most deployments leave them empty."
+    ),
+}
+COSMOS_METRICS_WINDOW_GROUP = {
+    "id": "cosmos-metrics-window",
+    "label": "Metrics window",
+    "variant": "behavior",
+}
+COSMOS_SCALE_UP_GROUP = {
+    "id": "cosmos-scale-up",
+    "label": "Scale up policy",
+    "variant": "limits",
+}
+COSMOS_SCALE_DOWN_GROUP = {
+    "id": "cosmos-scale-down",
+    "label": "Scale down policy",
+    "variant": "limits",
+}
+COSMOS_CONTAINER_POLICY_GROUP = {
+    "id": "cosmos-autoscale-containers",
+    "label": "Autoscale and container policy",
+    "variant": "advanced",
+}
+
+# Mirrors COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU, COSMOS_THROUGHPUT_DEFAULT_MIN_RU and
+# DEFAULT_COSMOS_DATABASE_NAME in functions_cosmos_throughput.py. The scale parity
+# test compares them, so a change to either side fails until both agree.
+COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000
+COSMOS_THROUGHPUT_MIN_RU = 1000
+COSMOS_THROUGHPUT_DEFAULT_DATABASE_NAME = "SimpleChat"
+
+# Shared by every Redis-backed cache that bypasses itself without Redis.
+REDIS_CACHE_REQUIREMENT_LABEL = "Redis Cache"
+REDIS_CACHE_SECTION_ID = "redis-cache-section"
 # The periods the server-rendered Retention pane offers for each organization
 # default, in its order and with its wording. Stored as strings because that is what
 # the classic form posts and what resolve_retention_value reads. The Data Lifecycle
@@ -6646,6 +6719,352 @@ ADMIN_SETTINGS_FIELDS = {
             "notice_level": "info",
         },
     ],
+    # ------------------------------------------------------------------
+    # Scale / Redis & Caching
+    #
+    # Redis is the prerequisite several other sections lean on: File Sync will
+    # not run without it, and the conversation and document list caches bypass
+    # themselves while it is missing. Those sections declare `requires` pointing
+    # at redis-cache-section, which is also what lets this card say what uses it.
+    #
+    # The access key and the Key Vault secret name share one stored value,
+    # `redis_key`, because the server-rendered form has a single input whose
+    # label follows the authentication type. `label_variants` reproduces that
+    # rather than inventing a second setting.
+    #
+    # The live readouts -- Redis INFO metrics, the Redis Explorer and the cache
+    # counters -- are bespoke components over the existing admin APIs. They own
+    # no settings, so they carry no key.
+    # ------------------------------------------------------------------
+    "redis-cache-section": [
+        {
+            "key": "enable_redis_cache",
+            "type": "switch",
+            "label": "Enable Redis Cache",
+            "help": (
+                "Keeps sessions, app settings and shared caches in Redis, so several app "
+                "instances behave as one. Recommended for production and for any "
+                "deployment running more than one worker."
+            ),
+            "default": False,
+            "role": "capability",
+            "notice": (
+                "Turning Redis on or off, or changing its connection, takes effect once "
+                "every web worker and the scheduler restart together. Do not leave workers "
+                "on different cache backends, and do not share one Redis database between "
+                "SimpleChat deployments."
+            ),
+            "notice_level": "warning",
+        },
+        {
+            "key": "redis_url",
+            "type": "text",
+            "label": "Redis Server Host Name",
+            "help": (
+                "Azure Managed Redis looks like simple-chat.eastus.redis.azure.net, and "
+                "Azure Cache for Redis like simple-chat.redis.cache.windows.net."
+            ),
+            "default": "",
+            "max_length": 255,
+            "placeholder": "simple-chat.eastus.redis.azure.net",
+            "required": True,
+            "group": REDIS_CONNECTION_GROUP,
+            "depends_on": {"key": "enable_redis_cache", "equals": True},
+        },
+        {
+            "key": "redis_service_type",
+            "type": "select",
+            "label": "Redis Service",
+            "help": (
+                "Detection reads the host name suffix and uses port 10000 for Azure "
+                "Managed Redis or 6380 for Azure Cache for Redis. Choose the service "
+                "explicitly when a custom DNS name or private endpoint hides the suffix."
+            ),
+            "default": "auto",
+            "options": [
+                {"value": "auto", "label": "Detect from host name"},
+                {"value": "azure_managed_redis", "label": "Azure Managed Redis"},
+                {"value": "azure_cache_for_redis", "label": "Azure Cache for Redis"},
+            ],
+            "group": REDIS_CONNECTION_GROUP,
+            "depends_on": {"key": "enable_redis_cache", "equals": True},
+        },
+        {
+            "key": "redis_port",
+            "type": "text",
+            "label": "Redis Port",
+            "help": (
+                "Only needed for a proxy or a non-standard listener. Left blank, the port "
+                "comes from the selected service."
+            ),
+            "default": "",
+            "max_length": 5,
+            "placeholder": "Leave blank to use the service's port",
+            "group": REDIS_CONNECTION_GROUP,
+            "depends_on": {"key": "enable_redis_cache", "equals": True},
+        },
+        {
+            "key": "redis_auth_type",
+            "type": "select",
+            "label": "Redis Authentication Type",
+            "help": (
+                "Managed identity stores no credential. Key Vault keeps the access key in "
+                "the configured vault and stores only the secret's name here."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+                {"value": "key_vault", "label": "Key Vault"},
+            ],
+            "group": REDIS_CONNECTION_GROUP,
+            "depends_on": {"key": "enable_redis_cache", "equals": True},
+        },
+        {
+            "key": "redis_key",
+            "type": "secret",
+            "label": "Redis Access Key",
+            "help": "Used with key authentication. Leave it blank to keep the stored key.",
+            "label_variants": [
+                {
+                    "when": {"key": "redis_auth_type", "equals": "key_vault"},
+                    "label": "Key Vault Secret Name",
+                    "help": (
+                        "The full name of the Key Vault secret that holds the Redis access "
+                        "key. Leave it blank to keep the stored name."
+                    ),
+                },
+            ],
+            "default": "",
+            "required": True,
+            "group": REDIS_CONNECTION_GROUP,
+            # Not `equals: "key"`: a document saved before the authentication type
+            # existed stores "", which every reader treats as key authentication.
+            "depends_on": [
+                {"key": "enable_redis_cache", "equals": True},
+                {"key": "redis_auth_type", "not_equals": "managed_identity"},
+            ],
+            "requires": {
+                "key": "enable_key_vault_secret_storage",
+                "label": "Key Vault secret storage",
+                "mode": "warn",
+                "target_section": "keyvault-section",
+                "when": {"key": "redis_auth_type", "equals": "key_vault"},
+                "description": (
+                    "With Key Vault authentication Redis reads its access key from the "
+                    "vault, so the connection fails until a vault is configured."
+                ),
+            },
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test Redis connection",
+            "help": (
+                "Connects with the values above and writes, reads and expires a short-lived "
+                "test key, so a connection can be checked before it is saved."
+            ),
+            "test_type": "redis",
+            "test_payload": {
+                "endpoint": {"key": "redis_url"},
+                "service_type": {"key": "redis_service_type"},
+                "port": {"key": "redis_port"},
+                "auth_type": {"key": "redis_auth_type"},
+                "key": {
+                    "key": "redis_key",
+                    "when": {"key": "redis_auth_type", "not_equals": "managed_identity"},
+                },
+            },
+            "group": REDIS_CONNECTION_GROUP,
+            "depends_on": {"key": "enable_redis_cache", "equals": True},
+        },
+    ],
+    "redis-monitoring-section": [
+        {
+            "type": "component",
+            "component": "redis-monitoring",
+            "label": "Redis health and capacity",
+            "help": (
+                "Availability, memory pressure, hit rate, evictions and key counts from the "
+                "Redis INFO command, plus a read-only Redis Explorer for troubleshooting "
+                "cache keys."
+            ),
+            "requires": {
+                "key": "enable_redis_cache",
+                "label": REDIS_CACHE_REQUIREMENT_LABEL,
+                "mode": "warn",
+                "target_section": REDIS_CACHE_SECTION_ID,
+                "description": (
+                    "Metrics are read through the Redis connection the running application "
+                    "uses, so there is nothing to show until Redis is enabled."
+                ),
+            },
+        },
+    ],
+    "conversation-cache-section": [
+        {
+            "key": "enable_conversation_cache",
+            "type": "switch",
+            "label": "Enable conversation cache",
+            "help": (
+                "Caches each user's conversation list, feed and advanced-search results by "
+                "user and version, so a repeat load skips the Cosmos query. Turning it off "
+                "bypasses cache reads and writes."
+            ),
+            "default": True,
+            "role": "capability",
+            "requires": {
+                "key": "enable_redis_cache",
+                "label": REDIS_CACHE_REQUIREMENT_LABEL,
+                "mode": "warn",
+                "target_section": REDIS_CACHE_SECTION_ID,
+                "description": (
+                    "The cache lives in Redis. Until Redis is enabled, list, feed and search "
+                    "requests bypass it and read Cosmos directly."
+                ),
+            },
+        },
+        {
+            "key": "conversation_cache_ttl_seconds",
+            "type": "number",
+            "label": "Cache TTL",
+            "help": (
+                "How long a cached payload lives. Version invalidation already refreshes a "
+                "user's changed conversations, so this mainly bounds stale entries. Set 0 "
+                "to stop writing new entries."
+            ),
+            "default": 120,
+            "min": 0,
+            "suffix": " sec",
+            "depends_on": {"key": "enable_conversation_cache", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "conversation-cache-metrics",
+            "label": "Cache activity",
+            "help": (
+                "Hits, misses, bypasses, writes and invalidations over the last 15 minutes, "
+                "counted in this app worker. Application Insights remains the fleet-wide "
+                "record of cache warnings and fallbacks."
+            ),
+        },
+    ],
+    # ------------------------------------------------------------------
+    # Scale / Cosmos
+    #
+    # The document access index (DAI) maintains itself, so its card is mostly a
+    # readout. Its tuning controls exist on the server-rendered page only while
+    # `enable_dai_debug` is set, and that page has no control for the flag. V2
+    # declares the flag under Operations > Debug Logging as Document Access Index
+    # diagnostics, and the diagnostics fields here depend on it, so they appear as
+    # soon as it is turned on. The four DAI switches the server forces on are
+    # suppressed rather than declared, and the status reports them instead.
+    #
+    # Throughput policy fields are hidden while automation is off, as on the
+    # server-rendered page. The status and actions stay visible, because manual
+    # scaling and access validation do not depend on automation.
+    # ------------------------------------------------------------------
+    "document-access-index-section": [
+        {
+            "type": "component",
+            "component": "document-access-index-status",
+            "label": "Document access index",
+            "help": (
+                "The projection that replaces expensive cross-partition document access "
+                "queries. Maintenance is automatic: the background job repairs fail-open "
+                "records first, then runs bounded backfill batches while work remains. Read "
+                "metrics show DAI-served reads, Redis cache hits, source fallbacks, RU and "
+                "latency without shadow validation."
+            ),
+            "requires": {
+                "key": "enable_app_maintenance",
+                "label": "Background maintenance",
+                "mode": "warn",
+                "target_section": "cosmos-maintenance-section",
+                "description": (
+                    "Repair and backfill run inside the background maintenance job. With it "
+                    "off the index stops converging, and document lists keep falling back "
+                    "to slower source queries."
+                ),
+            },
+        },
+        {
+            "key": "enable_document_access_index_shadow_validation",
+            "type": "switch",
+            "label": "Enable shadow validation",
+            "help": (
+                "Compares source list results to projection rows and logs mismatches "
+                "without changing reads."
+            ),
+            "default": False,
+            "group": DAI_DIAGNOSTICS_GROUP,
+            "depends_on": {"key": "enable_dai_debug", "equals": True},
+        },
+        {
+            "key": "document_access_index_backfill_batch_size",
+            "type": "number",
+            "label": "Backfill Batch Size",
+            "help": "Documents processed per manual or scheduled batch.",
+            "default": 200,
+            "min": 1,
+            "max": 1000,
+            "suffix": " documents",
+            "group": DAI_DIAGNOSTICS_GROUP,
+            "depends_on": {"key": "enable_dai_debug", "equals": True},
+        },
+        {
+            "key": "document_access_index_repair_batch_size",
+            "type": "number",
+            "label": "Repair Batch Size",
+            "help": "Fail-open repair records reconciled before each backfill batch.",
+            "default": 100,
+            "min": 1,
+            "max": 500,
+            "suffix": " records",
+            "group": DAI_DIAGNOSTICS_GROUP,
+            "depends_on": {"key": "enable_dai_debug", "equals": True},
+        },
+        {
+            "key": "enable_document_access_index_cache",
+            "type": "switch",
+            "label": "Redis document list cache",
+            "help": (
+                "Read-through Redis caching for DAI document, tag and legacy-count reads. "
+                "If Redis is unavailable, reads bypass the cache and use DAI directly."
+            ),
+            "default": True,
+            "group": DAI_READ_PATH_GROUP,
+            "depends_on": {"key": "enable_dai_debug", "equals": True},
+            "requires": {
+                "key": "enable_redis_cache",
+                "label": REDIS_CACHE_REQUIREMENT_LABEL,
+                "mode": "warn",
+                "target_section": REDIS_CACHE_SECTION_ID,
+                "description": (
+                    "Without Redis the document list cache is bypassed and every list reads "
+                    "the index directly."
+                ),
+            },
+        },
+        {
+            "key": "document_access_index_cache_ttl_seconds",
+            "type": "number",
+            "label": "Cache TTL",
+            "help": (
+                "Scope-version invalidation makes document changes visible immediately; the "
+                "TTL clears entries nothing can reach any more."
+            ),
+            "default": 900,
+            "min": 60,
+            "max": 900,
+            "suffix": " sec",
+            "group": DAI_READ_PATH_GROUP,
+            "depends_on": [
+                {"key": "enable_dai_debug", "equals": True},
+                {"key": "enable_document_access_index_cache", "equals": True},
+            ],
+        },
+    ],
     "cosmos-maintenance-section": [
         {
             "key": "enable_app_maintenance",
@@ -6658,6 +7077,7 @@ ADMIN_SETTINGS_FIELDS = {
                 "converging, so document lists fall back to slower source queries."
             ),
             "default": True,
+            "role": "capability",
         },
         {
             "key": "enable_startup_app_maintenance",
@@ -6671,6 +7091,293 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": True,
             "depends_on": {"key": "enable_app_maintenance", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "cosmos-maintenance-status",
+            "label": "Indexing policies and stale cache cleanup",
+            "help": (
+                "What maintenance last found, and on-demand runs of its two Cosmos tasks. "
+                "Index maintenance only adds missing expected composite indexes and keeps "
+                "existing policy paths. Stale cleanup is limited to obsolete cache "
+                "artifacts, offers a dry run, and deletes at most one bounded batch per run."
+            ),
+        },
+    ],
+    "cosmos-throughput-section": [
+        {
+            "key": "cosmos_throughput_autoscale_enabled",
+            "type": "switch",
+            "label": "Enable Cosmos throughput automation",
+            "help": (
+                "A background task checks recent RU utilization on the metrics window "
+                "cadence and scales the database, or each dedicated-throughput container, "
+                "within the guardrails below. SimpleChat changes capacity only at 10,000 "
+                "RU/s or lower; above that it monitors, and changes belong in the Azure "
+                "portal, where they can take 4 to 6 hours."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "type": "component",
+            "component": "cosmos-throughput-console",
+            "label": "Throughput status and actions",
+            "help": (
+                "The current mode, RU/s and utilization, with access validation and manual "
+                "changes. Manual changes use the saved policy, so save any edits first."
+            ),
+        },
+        {
+            "type": "status",
+            "status_source": "cosmos_throughput_resource",
+            "label": "Saved target",
+            "help": (
+                "What automation and manual actions manage, from the saved values or, where "
+                "those are blank, the App Service settings."
+            ),
+            "group": COSMOS_RESOURCE_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "default": "",
+            "max_length": 64,
+            "placeholder": "Uses AZURE_SUBSCRIPTION_ID when blank",
+            "group": COSMOS_RESOURCE_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "default": "",
+            "max_length": 90,
+            "placeholder": "Uses AZURE_RESOURCE_GROUP when blank",
+            "group": COSMOS_RESOURCE_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_account_name",
+            "type": "text",
+            "label": "Cosmos Account",
+            "default": "",
+            "max_length": 64,
+            "placeholder": "Uses the account in AZURE_COSMOS_ENDPOINT when blank",
+            "group": COSMOS_RESOURCE_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_database_name",
+            "type": "text",
+            "label": "Database",
+            # A blank name also resolves to this database, so clearing the field is safe.
+            "default": COSMOS_THROUGHPUT_DEFAULT_DATABASE_NAME,
+            "max_length": 255,
+            "placeholder": COSMOS_THROUGHPUT_DEFAULT_DATABASE_NAME,
+            "group": COSMOS_RESOURCE_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_metrics_window_minutes",
+            "type": "number",
+            "label": "Metrics Window",
+            "help": (
+                "How much recent utilization each check reads, and how often automation "
+                "runs. Scale intervals cannot be shorter than this."
+            ),
+            "default": 5,
+            "min": 1,
+            "max": 60,
+            "suffix": " min",
+            "group": COSMOS_METRICS_WINDOW_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_auto_scale_up_enabled",
+            "type": "switch",
+            "label": "Auto scale up",
+            "help": "Raise throughput automatically when utilization crosses the threshold.",
+            "default": True,
+            "group": COSMOS_SCALE_UP_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_scale_up_threshold_percent",
+            "type": "number",
+            "label": "Scale Up At",
+            "help": "Utilization that triggers a scale up. Must be higher than Scale Down At.",
+            "default": 90,
+            "min": 1,
+            "max": 100,
+            "suffix": " %",
+            "group": COSMOS_SCALE_UP_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_scale_up_step_ru",
+            "type": "number",
+            "label": "Scale Up Step",
+            "help": (
+                "Added per scale up, automatic or manual. Saved in 1,000 RU/s increments, "
+                "which is how Cosmos autoscale moves."
+            ),
+            "default": 1000,
+            "min": COSMOS_THROUGHPUT_MIN_RU,
+            "step": 1000,
+            "suffix": " RU/s",
+            "group": COSMOS_SCALE_UP_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_scale_up_cooldown_minutes",
+            "type": "number",
+            "label": "Scale Up Interval",
+            "help": "The shortest gap between scale ups. At least the metrics window.",
+            "default": 5,
+            "min": 1,
+            "max": 1440,
+            "suffix": " min",
+            "group": COSMOS_SCALE_UP_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_max_ru",
+            "type": "number",
+            "label": "Maximum RU/s",
+            "help": (
+                "Scaling stops here. SimpleChat-managed scaling never goes above 10,000 "
+                "RU/s; use the Azure portal beyond that."
+            ),
+            "default": COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+            "min": COSMOS_THROUGHPUT_MIN_RU,
+            "max": COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+            "step": 1000,
+            "suffix": " RU/s",
+            "group": COSMOS_SCALE_UP_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_ignore_max_limit",
+            "type": "switch",
+            "label": "Ignore maximum guardrail",
+            "help": (
+                "Scale past Maximum RU/s. The 10,000 RU/s SimpleChat ceiling still applies."
+            ),
+            "default": False,
+            "group": COSMOS_SCALE_UP_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_auto_scale_down_enabled",
+            "type": "switch",
+            "label": "Auto scale down",
+            "help": "Lower throughput automatically when utilization stays under the threshold.",
+            "default": True,
+            "group": COSMOS_SCALE_DOWN_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_scale_down_threshold_percent",
+            "type": "number",
+            "label": "Scale Down At",
+            "help": "Utilization that allows a scale down. Must be lower than Scale Up At.",
+            "default": 70,
+            "min": 0,
+            "max": 99,
+            "suffix": " %",
+            "group": COSMOS_SCALE_DOWN_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_scale_down_step_ru",
+            "type": "number",
+            "label": "Scale Down Step",
+            "help": "Removed per scale down, automatic or manual, in 1,000 RU/s increments.",
+            "default": 1000,
+            "min": COSMOS_THROUGHPUT_MIN_RU,
+            "step": 1000,
+            "suffix": " RU/s",
+            "group": COSMOS_SCALE_DOWN_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_scale_down_cooldown_minutes",
+            "type": "number",
+            "label": "Scale Down Interval",
+            "help": "The shortest gap between scale downs. At least the metrics window.",
+            "default": 20,
+            "min": 1,
+            "max": 1440,
+            "suffix": " min",
+            "group": COSMOS_SCALE_DOWN_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_min_ru",
+            "type": "number",
+            "label": "Minimum RU/s",
+            "help": "Scaling down stops here.",
+            "default": COSMOS_THROUGHPUT_MIN_RU,
+            "min": COSMOS_THROUGHPUT_MIN_RU,
+            "step": 1000,
+            "suffix": " RU/s",
+            "group": COSMOS_SCALE_DOWN_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_ignore_min_limit",
+            "type": "switch",
+            "label": "Ignore minimum guardrail",
+            "help": "Scale below Minimum RU/s, down to the Cosmos service minimum.",
+            "default": False,
+            "group": COSMOS_SCALE_DOWN_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_convert_manual_to_autoscale_enabled",
+            "type": "switch",
+            "label": "Convert manual throughput to Cosmos autoscale",
+            "help": (
+                "Before applying guardrails, automation converts manual database or "
+                "dedicated container throughput to native Cosmos autoscale. The autoscale "
+                "maximum keeps the current manual RU/s, rounded up to autoscale increments."
+            ),
+            "default": False,
+            "group": COSMOS_CONTAINER_POLICY_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+        {
+            "key": "cosmos_throughput_enforce_container_defaults",
+            "type": "switch",
+            "label": "Enforce global policy for all containers",
+            "help": (
+                "Every dedicated-throughput container, including ones discovered later, "
+                "uses the thresholds, intervals, steps, guardrails and autoscale conversion "
+                "above instead of its own policy."
+            ),
+            "default": False,
+            "group": COSMOS_CONTAINER_POLICY_GROUP,
+            "depends_on": {"key": "cosmos_throughput_autoscale_enabled", "equals": True},
+        },
+    ],
+    "cosmos-throughput-metrics-table-section": [
+        {
+            # The per-container policies are edited in the workbench this component
+            # opens, and staged into the draft like any other setting. The key is
+            # declared here so the save path validates it and the parity test can
+            # map V1's hidden JSON field to it.
+            "key": "cosmos_throughput_container_policies",
+            "type": "component",
+            "component": "cosmos-container-metrics",
+            "label": "Container throughput",
+            "help": (
+                "RU utilization and request units per container over the metrics window, "
+                "and each container's automation policy. Containers sharing database "
+                "throughput are listed for visibility but cannot be scaled individually."
+            ),
         },
     ],
     "embeddings-config": [
@@ -7522,6 +8229,9 @@ LEGACY_FIELD_NAMES = {
     "inbound_mcp_allowed_client_app_entries": ["inbound_mcp_allowed_client_app_entries_json"],
     "inbound_mcp_allowed_tenant_entries": ["inbound_mcp_allowed_tenant_entries_json"],
     "inbound_mcp_allowed_source_entries": ["inbound_mcp_allowed_source_entries_json"],
+    # Same again: V1 stages the per-container throughput policies into a hidden JSON
+    # field from its modal; V2 stages the object itself from the policy workbench.
+    "cosmos_throughput_container_policies": ["cosmos_throughput_container_policies_json"],
     # Same again for the classification categories, whose table script writes the
     # list into a hidden JSON field; V2 edits the stored list directly.
     "document_classification_categories": ["document_classification_categories_json"],
@@ -7552,6 +8262,24 @@ LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
         "Saved through POST /api/orchestration_settings alongside "
         "orchestration_type, and only meaningful for a multi-agent orchestration "
         "type. Owned by the agent-orchestration component."
+    ),
+    # The DAI diagnostics block shows these three as permanently checked, disabled
+    # checkboxes. Nothing can change them -- the server forces them on -- so V2
+    # reports them in the DAI status instead of drawing a control that cannot move.
+    "enable_document_access_index_write_through": (
+        "A disabled, always-checked checkbox in V1. "
+        "normalize_document_access_index_required_settings forces it on, so V2 shows "
+        "it as an 'Always on' status in DAI Metrics."
+    ),
+    "enable_document_access_index_reads": (
+        "A disabled, always-checked checkbox in V1. "
+        "normalize_document_access_index_required_settings forces it on, so V2 shows "
+        "it as an 'Always on' status in DAI Metrics."
+    ),
+    "enable_startup_document_access_index_backfill": (
+        "A disabled, always-checked checkbox in V1. "
+        "normalize_document_access_index_required_settings forces it on, so V2 shows "
+        "it as an 'Always on' status in DAI Metrics."
     ),
 }
 
@@ -7769,6 +8497,25 @@ SUPPRESSED_CAPABILITY_KEYS = {
         "answer. get_settings() resets it to True on every read; the "
         "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is the "
         "only way to turn it off."
+    ),
+    # Forced on by normalize_document_access_index_required_settings on every
+    # settings read and write. The fallback scan filed all four under DAI Metrics,
+    # where a switch appeared to save and then quietly reverted.
+    "enable_document_access_index_container": (
+        "Always on: normalize_document_access_index_required_settings rewrites it to "
+        "true on every settings read and write. DAI Metrics reports it instead."
+    ),
+    "enable_document_access_index_write_through": (
+        "Always on: normalize_document_access_index_required_settings rewrites it to "
+        "true on every settings read and write. DAI Metrics reports it instead."
+    ),
+    "enable_document_access_index_reads": (
+        "Always on: normalize_document_access_index_required_settings rewrites it to "
+        "true on every settings read and write. DAI Metrics reports it instead."
+    ),
+    "enable_startup_document_access_index_backfill": (
+        "Always on: normalize_document_access_index_required_settings rewrites it to "
+        "true on every settings read and write. DAI Metrics reports it instead."
     ),
 }
 
@@ -8947,6 +9694,28 @@ def _validate_identity_header_name(value):
     return normalized, None
 
 
+REDIS_PORT_ERROR = "Enter a port from 1 to 65535, or leave it blank to use the service's port."
+
+
+def _validate_redis_port(value):
+    """Return ``(normalized, error)`` for the optional Redis port override.
+
+    Stored as a string, as the server-rendered form stores it: the connection test
+    reads the value with ``.strip()``. Blank means "use the port for the selected
+    service". ``resolve_redis_port`` would ignore an out-of-range value at connection
+    time, but on an explicit save an administrator should be told it was refused.
+    """
+    candidate = str(value if value is not None else "").strip()
+    if not candidate:
+        return "", None
+    if not candidate.isdigit():
+        return None, REDIS_PORT_ERROR
+    port = int(candidate)
+    if not 1 <= port <= 65535:
+        return None, REDIS_PORT_ERROR
+    return str(port), None
+
+
 def _validate_multi_model_endpoint_enablement(value, current_settings):
     """Return ``(normalized, error)`` for the connections capability toggle.
 
@@ -9073,6 +9842,25 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 normalized[key] = front_door_value
             continue
 
+        if key == "redis_port":
+            port_value, port_error = _validate_redis_port(value)
+            if port_error:
+                errors[key] = port_error
+            else:
+                normalized[key] = port_value
+            continue
+
+        if key == "cosmos_throughput_container_policies":
+            # A component field, so the type-driven path below would refuse it.
+            # Shape is checked here; the policy rules run once the whole save is
+            # known, in _check_cosmos_throughput_policy.
+            policies, policies_error = _normalize_cosmos_container_policies(value, current)
+            if policies_error:
+                errors[key] = policies_error
+            else:
+                normalized[key] = policies
+            continue
+
         if key == "control_center_auto_refresh_time":
             refresh_time, refresh_time_error = _validate_control_center_refresh_time(value)
             if refresh_time_error:
@@ -9113,6 +9901,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     _check_minimum_selections(normalized, current, errors)
     _check_content_screening_dependency(normalized, current, errors)
     _check_planner_model_selection(normalized, current, errors)
+    _check_cosmos_throughput_policy(normalized, current, errors, warnings)
 
     # Applied last so the checks above still see flat keys, which is the shape
     # they and the schema are written against.
@@ -9267,6 +10056,133 @@ def _check_planner_model_selection(normalized, current_settings, errors):
     if problem:
         key, message = problem
         errors[key] = message
+
+
+# Throughput settings held in RU/s, which Cosmos autoscale moves in 1,000 RU/s steps.
+COSMOS_THROUGHPUT_RU_KEYS = (
+    "cosmos_throughput_scale_up_step_ru",
+    "cosmos_throughput_scale_down_step_ru",
+    "cosmos_throughput_min_ru",
+    "cosmos_throughput_max_ru",
+)
+
+
+def _normalize_cosmos_container_policies(value, current_settings):
+    """Return ``(policies, error)`` for the per-container throughput policies.
+
+    The server-rendered form posts these as a JSON string and the V2 workbench as an
+    object, so both are accepted. Each policy's values are normalized with the rest
+    of the throughput settings once the whole save is known, in
+    ``_check_cosmos_throughput_policy``.
+
+    A policy's scale timestamps belong to the automation, not the administrator. A
+    page loaded before an automatic or manual scale would otherwise write older
+    timestamps back and let a container rescale inside its cooldown, so they are
+    always taken from the stored document.
+
+    ``functions_cosmos_throughput`` is imported here rather than at module scope
+    because it loads the Azure identity SDK and Application Insights logging, and
+    this schema module stays importable without them (see the module docstring).
+    """
+    from functions_cosmos_throughput import COSMOS_THROUGHPUT_POLICY_RUNTIME_FIELDS
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except ValueError:
+            return None, "Container policies could not be read."
+    if not isinstance(value, dict):
+        return None, "Container policies must be an object keyed by container name."
+
+    stored = current_settings.get("cosmos_throughput_container_policies")
+    stored = stored if isinstance(stored, dict) else {}
+
+    policies = {}
+    for name, policy in value.items():
+        container_name = str(name or "").strip()
+        if not container_name:
+            continue
+        if not isinstance(policy, dict):
+            return None, f"The policy for {container_name} must be an object."
+        cleaned = {
+            field_name: field_value
+            for field_name, field_value in policy.items()
+            if field_name not in COSMOS_THROUGHPUT_POLICY_RUNTIME_FIELDS
+        }
+        stored_policy = stored.get(container_name)
+        if isinstance(stored_policy, dict):
+            for field_name in COSMOS_THROUGHPUT_POLICY_RUNTIME_FIELDS:
+                if stored_policy.get(field_name):
+                    cleaned[field_name] = stored_policy[field_name]
+        cleaned["container_name"] = container_name
+        policies[container_name] = cleaned
+    return policies, None
+
+
+def _describe_cosmos_adjustment(key, submitted, resolved):
+    """Say why a throughput value was saved differently from how it was entered."""
+    if key in COSMOS_THROUGHPUT_RU_KEYS:
+        if resolved == COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU and submitted > resolved:
+            return f"Saved as {resolved:,} RU/s, the most SimpleChat scales to."
+        if key == "cosmos_throughput_max_ru" and resolved > submitted and submitted % 1000 == 0:
+            return f"Raised to {resolved:,} RU/s so it is not below Minimum RU/s."
+        return (
+            f"Saved as {resolved:,} RU/s. Cosmos autoscale moves in 1,000 RU/s "
+            "increments, so values round up."
+        )
+    if key == "cosmos_throughput_scale_down_threshold_percent":
+        return f"Lowered to {resolved}% so it stays below Scale Up At."
+    return f"Saved as {resolved}."
+
+
+def _check_cosmos_throughput_policy(normalized, current_settings, errors, warnings):
+    """Apply the throughput policy rules the server-rendered form enforces on save.
+
+    The rules relate several settings -- Scale Up At must stay above Scale Down At,
+    and each interval must cover the metrics window -- and a partial save can carry
+    any one of them, so the merged result is what is judged. Each error is placed on
+    the controls involved, using the rule list both admin interfaces share.
+
+    A save that passes is normalized exactly as the server-rendered form normalizes
+    it, which rounds RU/s to the increments Cosmos autoscale accepts. A value that
+    changes is reported as a warning instead of being rewritten silently.
+
+    Imported lazily for the reason ``_normalize_cosmos_container_policies`` gives.
+    """
+    if not any(key.startswith("cosmos_throughput_") for key in normalized):
+        return
+
+    from functions_cosmos_throughput import (
+        collect_cosmos_throughput_policy_errors,
+        get_cosmos_throughput_setting_keys,
+        normalize_cosmos_throughput_settings,
+    )
+
+    managed_keys = [key for key in get_cosmos_throughput_setting_keys() if key in normalized]
+    if not managed_keys:
+        return
+
+    candidate = dict(current_settings)
+    candidate.update({key: normalized[key] for key in managed_keys})
+
+    problems = collect_cosmos_throughput_policy_errors(candidate)
+    for problem in problems:
+        for setting_key in problem["setting_keys"]:
+            errors.setdefault(setting_key, problem["message"])
+    if problems:
+        return
+
+    resolved = normalize_cosmos_throughput_settings(candidate)
+    for key in managed_keys:
+        submitted = normalized[key]
+        value = resolved.get(key, submitted)
+        if (
+            isinstance(submitted, int)
+            and not isinstance(submitted, bool)
+            and value != submitted
+        ):
+            warnings[key] = _describe_cosmos_adjustment(key, submitted, value)
+        normalized[key] = value
 
 
 def _apply_enable_defaults(normalized, current_settings, warnings):

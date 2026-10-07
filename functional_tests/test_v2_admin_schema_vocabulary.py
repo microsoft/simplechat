@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.266
+Version: 0.261.274
 Implemented in: 0.261.084
 Runtime flag evaluation, open_until_set and on_enable added in: 0.261.265
 Anchored group coverage added in: 0.261.266
+label_variants and requires.when coverage added in: 0.261.274
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed
@@ -354,6 +355,84 @@ def test_declared_groups_and_requires_are_well_formed():
     return True
 
 
+def _condition_problems(condition, declared_keys, runtime_flags):
+    """Describe what is wrong with one ``depends_on``-shaped condition, if anything."""
+    if not isinstance(condition, dict):
+        return [f"condition {condition!r} is not an object"]
+    if "any_of" in condition or "all_of" in condition:
+        nested = condition.get("any_of") or condition.get("all_of") or []
+        return [problem for item in nested for problem in _condition_problems(item, declared_keys, runtime_flags)]
+    if condition.get("flag"):
+        if condition["flag"] not in runtime_flags:
+            return [f"names runtime flag {condition['flag']!r}, which the settings API never sends"]
+        return []
+    key = condition.get("key")
+    if not key:
+        return ["condition names neither a key nor a flag"]
+    if key not in declared_keys:
+        return [f"condition reads {key!r}, which no field declares"]
+    if "equals" not in condition and "not_equals" not in condition:
+        return [f"condition on {key!r} has neither equals nor not_equals"]
+    return []
+
+
+def test_label_variants_and_conditional_requirements_are_well_formed():
+    """A condition naming the wrong key never holds, and the label never changes."""
+    print("\nTesting label_variants and requires.when descriptors...")
+
+    assert_app_version_at_least("0.261.274")
+
+    declared_keys = {
+        field["key"] for _section_id, field in fields_module.iter_fields() if field.get("key")
+    }
+    # The flags a field may depend on; mirrors RUNTIME_FLAGS in test_v2_admin_settings_schema.py.
+    runtime_flags = {"mcp_ui_enabled", "content_understanding_supported"}
+
+    problems = []
+    variant_count = 0
+    conditional_count = 0
+    for section_id, field in fields_module.iter_fields():
+        name = f"{section_id}.{field.get('key') or field.get('component') or field.get('label')}"
+
+        variants = field.get("label_variants")
+        if variants is not None:
+            if not isinstance(variants, list) or not variants:
+                problems.append(f"{name}: label_variants must be a non-empty list")
+                variants = []
+            for variant in variants:
+                variant_count += 1
+                if not isinstance(variant, dict):
+                    problems.append(f"{name}: a label variant is not an object")
+                    continue
+                if not any(isinstance(variant.get(part), str) and variant[part].strip() for part in ("label", "help")):
+                    problems.append(f"{name}: a label variant changes neither label nor help")
+                if "when" not in variant:
+                    problems.append(f"{name}: a label variant has no when condition")
+                    continue
+                problems.extend(
+                    f"{name}: label variant {problem}"
+                    for problem in _condition_problems(variant["when"], declared_keys, runtime_flags)
+                )
+
+        requires = field.get("requires")
+        if isinstance(requires, dict) and "when" in requires:
+            conditional_count += 1
+            problems.extend(
+                f"{name}: requires.when {problem}"
+                for problem in _condition_problems(requires["when"], declared_keys, runtime_flags)
+            )
+
+    assert variant_count, "No label variants are declared; the Redis key should carry one."
+    assert conditional_count, "No conditional prerequisites are declared; Redis should carry one."
+    assert not problems, "\n  ".join(["Malformed conditional descriptors:"] + problems)
+
+    print(
+        f"  {variant_count} label variant(s) and {conditional_count} conditional "
+        "prerequisite(s) read real settings."
+    )
+    return True
+
+
 def _required_conditions(dependency):
     """Conditions that must all hold for a dependency to hold, as (key, expected).
 
@@ -553,6 +632,7 @@ if __name__ == "__main__":
         test_id_list_accepts_both_stored_and_edited_shapes,
         test_dependency_evaluation_supports_every_declared_shape,
         test_declared_groups_and_requires_are_well_formed,
+        test_label_variants_and_conditional_requirements_are_well_formed,
         test_anchored_groups_hang_off_a_switch_above_them,
         test_on_enable_effects_are_well_formed,
         test_runtime_flag_conditions_follow_the_flags_given,

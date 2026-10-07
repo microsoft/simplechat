@@ -44,7 +44,13 @@ import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ClassificationCategoriesEditor } from '../components/admin/ClassificationCategoriesEditor';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { ControlCenterAccessMatrix } from '../components/admin/ControlCenterAccessMatrix';
+import { ConversationCacheMetrics } from '../components/admin/ConversationCacheMetrics';
+import { CosmosCapacityConfirm } from '../components/admin/CosmosCapacityConfirm';
+import { CosmosContainerMetrics } from '../components/admin/CosmosContainerMetrics';
+import { CosmosMaintenancePanel } from '../components/admin/CosmosMaintenancePanel';
+import { CosmosThroughputConsole } from '../components/admin/CosmosThroughputConsole';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { DocumentAccessIndexPanel } from '../components/admin/DocumentAccessIndexPanel';
 import { EndpointLinks } from '../components/admin/EndpointLinks';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
 import { EnhancedExtractionEngine } from '../components/admin/EnhancedExtractionEngine';
@@ -70,6 +76,7 @@ import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { AgentTemplateApprovalsLink } from '../components/admin/AgentTemplateApprovalsLink';
 import { GlobalActionsManager } from '../components/admin/GlobalActionsManager';
 import { GlobalAgentsManager } from '../components/admin/GlobalAgentsManager';
+import { RedisMonitoringPanel } from '../components/admin/RedisMonitoringPanel';
 import { RefreshScheduleStatus } from '../components/admin/RefreshScheduleStatus';
 import { RelatedSectionLink } from '../components/admin/RelatedSectionLink';
 import { RestartStatus } from '../components/admin/RestartStatus';
@@ -114,7 +121,9 @@ import {
     isRequirementSatisfied,
     isSectionVisible,
     readFieldValue,
+    readSettingValue,
     readStoredFieldValue,
+    resolveFieldPresentation,
     type AdminField,
     type AdminSectionGuide,
     type AdminSettingsPatchResponse,
@@ -126,7 +135,12 @@ import {
 } from '../lib/adminFields';
 import { CONTROL_CENTER_ACCESS_KEYS, findNavLocation } from '../lib/adminOperations';
 import { toast } from '../stores/toastStore';
-import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
+import { buildSectionDependents, computeSectionStatus, type SectionStatus } from '../lib/adminSections';
+import {
+    CONTAINER_POLICIES_KEY,
+    hasUnsavedThroughputEdits,
+    validateCosmosThroughputPolicy,
+} from '../lib/cosmosThroughput';
 import {
     CONTENT_UNDERSTANDING_SUPPORTED_FLAG,
     resolveEnhancedExtractionEngine,
@@ -134,6 +148,7 @@ import {
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
 import { modelConnectionsChanged, requestConnectionFocus } from '../stores/modelConnectionsStore';
+import { useScaleStatusStore } from '../stores/scaleStatusStore';
 import type { CatalogConnectionTarget } from '../lib/modelCatalog';
 import type { AdminNavGroup, Json } from '../lib/types';
 
@@ -586,11 +601,50 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                     draft,
                     sectionStatus[section.sectionId],
                     fieldsByKey,
+                    runtimeFlags,
                 ),
             );
         }
         return statuses;
-    }, [sections, settings, draft, sectionStatus, fieldsByKey]);
+    }, [sections, settings, draft, sectionStatus, fieldsByKey, runtimeFlags]);
+
+    /**
+     * Which sections rely on which, from their `requires` declarations.
+     *
+     * Drawn on the section relied on, so Redis Cache says that File Sync and the caches
+     * need it -- the other half of the prerequisite notice those sections show.
+     */
+    const dependentsBySection = useMemo(
+        () =>
+            buildSectionDependents(
+                sections.map((section) => ({
+                    sectionId: section.sectionId,
+                    label: section.label,
+                    fields: section.allFields,
+                })),
+                settings,
+                draft,
+                fieldsByKey,
+                runtimeFlags,
+            ),
+        [sections, settings, draft, fieldsByKey, runtimeFlags],
+    );
+
+    /**
+     * The throughput policy rules, checked as the administrator types.
+     *
+     * The server enforces the same rules on save; running them here puts the reason next
+     * to the value that breaks them before a save is attempted.
+     */
+    const cosmosValidation = useMemo(
+        () =>
+            validateCosmosThroughputPolicy((key) =>
+                Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
+            ),
+        [settings, draft],
+    );
+
+    const requestRedisRefresh = useScaleStatusStore((state) => state.requestRedisRefresh);
 
     /** The page index follows the same filters as the cards. */
     const indexEntries = useMemo<SettingsIndexEntry[]>(
@@ -974,17 +1028,26 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
     const effectiveSettings = useMemo<Json>(() => ({ ...settings, ...draft }), [settings, draft]);
 
     /** Render one declared field, dispatching the types the page owns. */
-    const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)) {
+    const renderField = (declared: AdminField) => {
+        if (!isFieldVisible(declared, settings, draft, fieldsByKey, runtimeFlags)) {
             return null;
         }
+
+        // A label that follows another setting, such as the Redis key in Key Vault mode.
+        const field = resolveFieldPresentation(
+            declared,
+            (settingKey) => readFieldValue(READ_ONLY_REF(settingKey), settings, draft),
+            runtimeFlags,
+        );
 
         const key = field.key ?? field.component ?? field.status_source ?? field.label;
         const value =
             field.type === 'status'
                 ? data?.status_readouts?.[field.status_source ?? '']
                 : readFieldValue(field, settings, draft);
-        const error = field.key ? fieldErrors[field.key] : undefined;
+        const error = field.key
+            ? fieldErrors[field.key] ?? cosmosValidation.fieldErrors[field.key]
+            : undefined;
         const warning = field.key ? fieldWarnings[field.key] : undefined;
 
         if (field.type === 'image') {
@@ -1105,6 +1168,56 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             draft={draft}
                             fieldsByKey={fieldsByKey}
                             disabled={saving}
+                            // A passing Redis test is a reason for Redis Metrics to look again.
+                            onSuccess={field.test_type === 'redis' ? requestRedisRefresh : undefined}
+                        />
+                    );
+                case 'redis-monitoring':
+                    // The saved value: metrics describe the Redis the running app uses.
+                    return (
+                        <RedisMonitoringPanel
+                            key={key}
+                            field={field}
+                            redisEnabled={asBoolean(settings['enable_redis_cache'])}
+                        />
+                    );
+                case 'conversation-cache-metrics':
+                    return <ConversationCacheMetrics key={key} field={field} />;
+                case 'document-access-index-status':
+                    return (
+                        <DocumentAccessIndexPanel
+                            key={key}
+                            field={field}
+                            // The same switch the diagnostics fields depend on, so the
+                            // panel's diagnostics appear with them as it is turned on.
+                            diagnostics={asBoolean(readSettingValue('enable_dai_debug', settings, draft, fieldsByKey))}
+                        />
+                    );
+                case 'cosmos-maintenance-status':
+                    return <CosmosMaintenancePanel key={key} field={field} />;
+                case 'cosmos-throughput-console':
+                    return (
+                        <CosmosThroughputConsole
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            dirtyKeys={dirtyKeys}
+                            onNavigate={goToSection}
+                        />
+                    );
+                case 'cosmos-container-metrics':
+                    return (
+                        <CosmosContainerMetrics
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            settings={settings}
+                            draft={draft}
+                            saving={saving}
+                            onChange={(next) => setValue(CONTAINER_POLICIES_KEY, next)}
+                            onNavigate={goToSection}
                         />
                     );
                 case 'agent-orchestration':
@@ -1835,6 +1948,7 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                                         }
                                         runtimeFlags={runtimeFlags}
                                         onNavigate={navigateToSetting}
+                                        dependents={dependentsBySection.get(section.sectionId)}
                                         // While a search is filtering, a match inside a
                                         // collapsed group has to be shown or the card would
                                         // appear empty.
@@ -1969,6 +2083,11 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                     </p>
                 </AdminModal>
             ) : null}
+
+            <CosmosCapacityConfirm
+                settings={settings}
+                unsavedThroughputEdits={hasUnsavedThroughputEdits(dirtyKeys)}
+            />
 
             {saving ? (
                 <div className="pointer-events-none fixed inset-0 z-40 flex items-end justify-center pb-24">

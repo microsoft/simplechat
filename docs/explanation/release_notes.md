@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.274)**
+
+#### New Features
+
+*   **Scale Settings in V2 Admin Settings**
+    *   The V2 Scale group now covers everything the classic page offers. Redis Cache has its connection settings, an access key field that becomes the Key Vault secret name with Key Vault authentication, and **Test Redis connection**. Redis Metrics shows health and capacity with an inline, read-only Redis Explorer, and Conversation Cache has its TTL and the last 15 minutes of cache activity.
+    *   DAI Metrics shows the always-on index components, backfill progress, and read and cache metrics. Its diagnostics, batch sizes, and backfill actions appear only while **Document Access Index diagnostics** (`enable_dai_debug`) is on under **Operations › Logging & Health › Debug Logging**, matching the classic page, which shows them only while that flag is set.
+    *   Cosmos Maintenance shows indexing and stale cache status and runs its tasks on demand. Cosmos DB Throughput adds the resource, guardrails, access validation, and manual scaling, and Cosmos Metrics is a container workbench where each container's policy is edited in place and saved with the page.
+    *   Applying indexes, deleting stale cache documents, resetting the backfill, and scaling or converting throughput each ask for confirmation first. A scale states the current RU/s and the target the server will most likely choose.
+    *   Saves enforce the classic throughput rules, with each error beside the value that caused it, and report any RU/s value the server rounds. Container policy saves keep the automation's own timestamps, so a page loaded before a scale cannot reset a cooldown.
+    *   (Ref: `admin_settings_fields.py`, `functions_cosmos_throughput.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `CosmosThroughputConsole.tsx`, `CosmosContainerMetrics.tsx`, `RedisMonitoringPanel.tsx`, `DocumentAccessIndexPanel.tsx`, [V2 Admin Scale Settings](features/V2_ADMIN_SCALE_SETTINGS.md))
+
+#### User Interface Enhancements
+
+*   **Settings Cards Show What Depends on Them**
+    *   A section other sections rely on now lists them under **Used by**. Redis Cache, for example, lists Conversation Cache, Redis Metrics, and File Sync. The list follows the same rules as the prerequisite notices on those cards, and each entry moves the page to that section.
+    *   A field's label can follow another setting, and a prerequisite can apply to one configuration only. The schema descriptors are `label_variants` and `requires.when`.
+    *   (Ref: `SettingsSection.tsx`, `adminSections.ts`, `adminFields.ts`, `admin_settings_fields.py`)
+
 ### **(v0.261.271)**
 
 #### New Features

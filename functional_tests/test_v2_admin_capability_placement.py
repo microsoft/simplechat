@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.273
+Version: 0.261.274
 Implemented in: 0.261.047
 Operations described in full: 0.261.269
 Data Lifecycle added to the fully described groups in: 0.261.272
 Governance added to the fully described groups in: 0.261.273
+Scale described in full: 0.261.274
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -78,6 +79,10 @@ under Knowledge > Web & Research > Deep Research labelled with their key names, 
 the cross-format Compare pair fell into "Other capabilities". Two of them did nothing
 on their own. The derived ones are now suppressed, the two real choices are declared
 where they belong, and ``test_mixed_source_keys_are_never_guessed`` keeps it that way.
+
+Scale was described after that. The scan had drawn switches for the four always-on
+Document Access Index flags, which ``get_settings`` forces back to True on every
+read, so each would appear to save and then revert. All four are now suppressed.
 """
 
 import ast
@@ -111,6 +116,7 @@ FULLY_DESCRIBED_GROUP_IDS = (
     "workspaces",
     "data-lifecycle",
     "operations",
+    "scale",
 )
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
@@ -186,6 +192,12 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_tabular_search_shared_preflight",
     "enable_tabular_analyze_durable_preflight",
     "enable_tabular_hierarchical_analysis",
+    # Forced to True by normalize_document_access_index_required_settings on every
+    # settings read and write.
+    "enable_document_access_index_container",
+    "enable_document_access_index_write_through",
+    "enable_document_access_index_reads",
+    "enable_startup_document_access_index_backfill",
 )
 
 # Every mixed-source key the settings document still carries. Each must be declared

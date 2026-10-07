@@ -29,11 +29,12 @@
 //
 // A prerequisite owned by another section is stated where it is felt. Previously an
 // administrator could turn File Sync on and have nothing happen, because Redis Cache was
-// off two groups away and nothing said so until a flash message after saving.
+// off two groups away and nothing said so until a flash message after saving. The section
+// it points at says what uses it in turn, and both links move within this page.
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
-import { AlertTriangle, BookOpen, ChevronRight, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BookOpen, ChevronRight, Link2, type LucideIcon } from 'lucide-react';
 import {
     asBoolean,
     groupFields,
@@ -52,6 +53,7 @@ import {
     readSectionValue,
     shouldGroupStartOpen,
     type FieldEmphasis,
+    type SectionDependent,
     type SectionStatus,
 } from '../../lib/adminSections';
 import { GlassPanel } from '../ui/primitives';
@@ -134,10 +136,12 @@ export interface SettingsSectionProps {
      */
     runtimeFlags?: Record<string, boolean>;
     /**
-     * Move the page to another section, for prerequisite links. Without it those links
-     * open the classic page.
+     * Move the page to another section, for prerequisite links and "Used by". Without it
+     * a prerequisite links to the classic page, and "Used by" names sections unlinked.
      */
     onNavigate?: (sectionId: string) => void;
+    /** Sections whose settings rely on this one. */
+    dependents?: SectionDependent[];
     children?: ReactNode;
 }
 
@@ -200,6 +204,44 @@ function RequirementNotice({
                 ) : null}
             </div>
         </div>
+    );
+}
+
+/**
+ * The sections that rely on this one, each a link to it.
+ *
+ * Redis Cache is switched on for File Sync, the conversation cache and the document list
+ * cache, none of which says so from here otherwise. Read from the same `requires`
+ * declarations that put the prerequisite notice on those sections.
+ */
+function DependentsLine({
+    dependents,
+    onNavigate,
+}: {
+    dependents: SectionDependent[];
+    onNavigate?: (sectionId: string) => void;
+}) {
+    return (
+        <p className="mb-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-text-3">
+            <Link2 size={12} aria-hidden="true" className="shrink-0" />
+            <span>Used by</span>
+            {dependents.map((dependent, index) => (
+                <span key={dependent.sectionId} className="inline-flex items-center gap-1.5">
+                    {index > 0 ? <span aria-hidden="true">·</span> : null}
+                    {onNavigate ? (
+                        <button
+                            type="button"
+                            className="text-accent hover:underline"
+                            onClick={() => onNavigate(dependent.sectionId)}
+                        >
+                            {dependent.label}
+                        </button>
+                    ) : (
+                        <span className="text-text-2">{dependent.label}</span>
+                    )}
+                </span>
+            ))}
+        </p>
     );
 }
 
@@ -348,6 +390,7 @@ export function SettingsSection({
     guide,
     runtimeFlags,
     onNavigate,
+    dependents,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -358,8 +401,8 @@ export function SettingsSection({
     );
 
     const derivedStatus = useMemo(
-        () => computeSectionStatus(fields, settings, draft, statusRule, fieldsByKey),
-        [statusRule, fields, settings, draft, fieldsByKey],
+        () => computeSectionStatus(fields, settings, draft, statusRule, fieldsByKey, runtimeFlags),
+        [statusRule, fields, settings, draft, fieldsByKey, runtimeFlags],
     );
     const status = statusProp ?? derivedStatus;
 
@@ -375,8 +418,8 @@ export function SettingsSection({
     // A section states each distinct prerequisite once, at the top, rather than repeating
     // it on every field that carries it.
     const requirements = useMemo(
-        () => collectRequirements(fields, settings, draft, fieldsByKey),
-        [fields, settings, draft, fieldsByKey],
+        () => collectRequirements(fields, settings, draft, fieldsByKey, runtimeFlags),
+        [fields, settings, draft, fieldsByKey, runtimeFlags],
     );
 
     const groups = useMemo(
@@ -566,6 +609,13 @@ export function SettingsSection({
             </div>
 
             <div className="admin-section-body p-4 sm:p-5">
+                {dependents?.length ? (
+                    <DependentsLine
+                        dependents={dependents}
+                        onNavigate={onNavigate}
+                    />
+                ) : null}
+
                 {requirements.map((requirement) => (
                     <RequirementNotice
                         key={requirement.key}
