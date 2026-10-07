@@ -1,8 +1,9 @@
 // AgentActionPicker.tsx
 
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { PencilLine, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { actionTarget, referenceKey, type AgentTargetCatalog } from '../../lib/agentDelegation';
+import { isPendingActionReference, type PendingAgentAction } from '../../lib/agentEditorAssist';
 import type { ActionConfiguration, AgentConfiguration, AgentEditorOptions } from '../../lib/workspaceAuthoring';
 import {
     AGENT_ACTION_CAPABILITIES, agentActionCapabilities, agentActionLabel, agentActionUnavailableReason,
@@ -13,9 +14,14 @@ import { EditorGroup, EditorPanel } from '../workspace/EditorLayout';
 import { Pill, SectionSearch } from '../workspace/primitives';
 import { AgentNotice } from './AgentFields';
 
+function pendingActionLabel(action: ActionConfiguration): string {
+    return (typeof action.displayName === 'string' && action.displayName.trim()) || action.name || 'New action';
+}
+
 export function AgentActionPicker({
     draft, setDraft, actions, targets, loading, error, targetError, ownerId, builtinActions,
     canCreateActions, onRefresh, onNewAction, readOnly, scopeKind = 'personal',
+    pendingActions = [], pendingIssues = {}, onFinishPendingAction,
 }: {
     draft: AgentConfiguration;
     setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
@@ -32,13 +38,23 @@ export function AgentActionPicker({
     readOnly: boolean;
     /** Which kind of agent is being edited. A global agent's actions are all the organisation's own. */
     scopeKind?: 'personal' | 'group' | 'global';
+    /** Actions Ask AI drafted for this agent; they are created when the agent is saved. */
+    pendingActions?: readonly PendingAgentAction[];
+    /** What each drafted action still needs before it can be created, by reference. */
+    pendingIssues?: Readonly<Record<string, readonly string[]>>;
+    /** Opens a drafted action in the action editor to finish it, such as to add credentials. */
+    onFinishPendingAction?: (reference: string) => void;
 }) {
     const globalScope = scopeKind === 'global';
     const [query, setQuery] = useState('');
     const [typeFilter, setTypeFilter] = useState('');
     const [selectedOnly, setSelectedOnly] = useState(false);
     const [confirmDetach, setConfirmDetach] = useState(false);
-    const unresolved = draft.actions_to_load.filter((reference) => !resolveAgentAction(reference, actions));
+    const pendingLabel = (reference: string) => {
+        const pending = pendingActions.find((item) => item.reference === reference);
+        return pending ? pendingActionLabel(pending.action) : null;
+    };
+    const unresolved = draft.actions_to_load.filter((reference) => !resolveAgentAction(reference, actions) && !isPendingActionReference(reference));
     const types = [...new Set(actions.map((action) => action.type))].sort();
     const visible = actions.filter((action) =>
         `${agentActionLabel(action)} ${action.name} ${action.description} ${action.type} ${action.type === 'agent' ? 'Call agent' : ''}`.toLowerCase().includes(query.trim().toLowerCase()) &&
@@ -56,7 +72,7 @@ export function AgentActionPicker({
                         <ul className="list-inside list-disc text-sm text-text-3">
                             {draft.actions_to_load.map((reference) => {
                                 const action = resolveAgentAction(reference, actions);
-                                return <li key={reference}>{action ? agentActionLabel(action) : 'Unavailable action'}</li>;
+                                return <li key={reference}>{action ? agentActionLabel(action) : pendingLabel(reference) ?? 'Unavailable action'}</li>;
                             })}
                         </ul>
                         {!readOnly ? confirmDetach ? (
@@ -89,6 +105,42 @@ export function AgentActionPicker({
             {error ? <AgentNotice error>{error} Existing references have not been removed.</AgentNotice> : null}
             {targetError ? <AgentNotice error>{targetError} Call agent targets could not be checked; existing assignments are preserved.</AgentNotice> : null}
             {loading ? <p role="status" className="text-sm text-text-3">Loading available actions…</p> : null}
+            {pendingActions.length ? (
+                <EditorPanel title="New actions from Ask AI"
+                    description="These actions are created in this workspace when you save the agent. Ask AI never enters keys or credentials; finish an action that needs them in the action editor.">
+                    <ul className="space-y-2" aria-label="New actions from Ask AI">
+                        {pendingActions.map(({ reference, action }) => {
+                            const label = pendingActionLabel(action);
+                            const issues = pendingIssues[reference] ?? [];
+                            return (
+                                <li key={reference} className="space-y-2 rounded-lg border border-accent/50 bg-surface-1 p-3">
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <span className="min-w-0 flex-1">
+                                            <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-text-1">
+                                                {label}<Pill>{action.type}</Pill><Pill tone="accent">New</Pill>
+                                            </span>
+                                            {action.description ? <span className="mt-1 block break-words text-xs text-text-3">{action.description}</span> : null}
+                                            {issues.length ? <span className="mt-1 block text-xs text-warn">Needs attention before saving: {issues.join(' ')}</span> : null}
+                                        </span>
+                                        {!readOnly ? (
+                                            <span className="flex flex-wrap gap-2">
+                                                {onFinishPendingAction && canCreateActions ? (
+                                                    <GlassButton type="button" size="sm" variant="subtle" aria-label={`Finish ${label} in the action editor`}
+                                                        onClick={() => onFinishPendingAction(reference)}><PencilLine size={13} />Finish in action editor</GlassButton>
+                                                ) : null}
+                                                <GlassButton type="button" size="sm" aria-label={`Remove new action ${label}`}
+                                                    onClick={() => setDraft((current) => ({ ...current, actions_to_load: current.actions_to_load.filter((item) => item !== reference) }))}>
+                                                    <Trash2 size={13} />Remove
+                                                </GlassButton>
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </EditorPanel>
+            ) : null}
             <div className="flex flex-wrap items-center gap-3">
                 <div className="min-w-0 flex-[1_1_16rem]">
                     <SectionSearch value={query} onChange={setQuery} placeholder="Search actions by name, description or type" />
