@@ -34,6 +34,9 @@ import {
 import type { ActionConnectorProps, ActionIdentity } from '../../lib/workspaceActionTypes';
 import { isGroupActionTestScope } from '../../lib/workspaceActionTypes';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { actionAssistValues, applyActionAssistPatch, buildActionAssistView, type ActionAssistContext } from '../../lib/actionEditorAssist';
+import { useEditorAssist } from '../../components/editorAssist/useEditorAssist';
+import { EditorAskAiPanel, EditorAskAiToggle, EditorAssistLockBanner } from '../../components/editorAssist/EditorAskAiPanel';
 
 export function ActionEditorPage({ adapter = PERSONAL_ACTION_WORKBENCH }: { adapter?: ActionWorkbenchAdapter }) {
     const { resourceId = 'new' } = useParams();
@@ -193,6 +196,29 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         groupScope: isGroupActionTestScope(adapter.testScope) ? adapter.testScope : undefined,
         globalScope: isGlobal,
     };
+    const assistEnabled = useBootstrapStore((state) => state.data?.features?.enable_action_ai_assistant === true);
+    const [assistOpen, setAssistOpen] = useState(false);
+    const [jumpTo, setJumpTo] = useState<{ section: string; sequence: number } | null>(null);
+    const assistContext: ActionAssistContext = { catalogue, isNew, secretPaths: original?.secret_paths ?? [] };
+    const assist = useEditorAssist({
+        kind: 'action',
+        available: assistEnabled && !readOnly && canAuthor && !loading && !loadError && !catalogueLoading && !catalogueError,
+        scope: adapter.scope.kind === 'group' ? { kind: 'group', id: adapter.scope.id } : { kind: adapter.scope.kind },
+        recordKey: `${scope}:${resourceId}`,
+        blocked: saving || validating,
+        buildView: () => buildActionAssistView(draftRef.current, assistContext),
+        apply: (patch) => {
+            const next = applyActionAssistPatch(draftRef.current, patch, assistContext);
+            if (!next) return null;
+            validationController.current?.abort();
+            draftRef.current = next;
+            setDraft(next);
+            setFieldErrors({}); setError(null); setValidationFeedback(null);
+            return actionAssistValues(next, assistContext);
+        },
+        onJump: (section) => setJumpTo((current) => ({ section, sequence: (current?.sequence ?? 0) + 1 })),
+    });
+    const assistShown = assist.available && assistOpen;
 
     const validateLocally = () => {
         const errors = validateActionDraft(actionForSave(draft), definition, original);
@@ -359,7 +385,14 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
                 }))} dirty={dirty || Object.keys(validity).some((key) => key.startsWith('json:'))} saving={saving} readOnly={readOnly}
                 error={loadError || error} saveLabel="Save action" onSave={() => void save()} onDiscard={clear}
                 saveDisabled={!canAuthor || catalogueLoading || Boolean(catalogueError) || Boolean(loadError) || !definition}
+                sidePanel={assist.available ? <EditorAskAiPanel assist={assist} id="action-ask-ai-panel" inputId="action-ask-ai-input"
+                    onClose={() => setAssistOpen(false)} /> : undefined}
+                sidePanelOpen={assistShown} aiChangedSections={assist.changedSections}
+                locked={Boolean(assist.pending)} jumpTo={jumpTo}
+                lockBanner={assist.pending ? <EditorAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : undefined}
                 actions={!readOnly ? <>
+                    {assist.available ? <EditorAskAiToggle id="action-ask-ai-toggle" open={assistShown} controls="action-ask-ai-panel"
+                        onToggle={() => setAssistOpen((value) => !value)} /> : null}
                     {!isNew ? <GlassButton type="button" size="sm" disabled={saving} onClick={() => setReloadConfirmation(true)}><RefreshCw size={14} />Load saved version</GlassButton> : null}
                     <GlassButton type="button" size="sm" disabled={!canAuthor || saving || validating || !definition}
                         onClick={() => void validate()}><CheckCircle2 size={14} />{validating ? 'Validating…' : 'Validate configuration'}</GlassButton>
