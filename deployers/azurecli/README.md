@@ -145,7 +145,7 @@ The offline [Key Vault deployer regression test](../../functional_tests/test_dep
 
 ## External Azure Files and Azure AI Search permissions
 
-Implemented in application version **0.261.293** and deployer version **1.0.34** (`deployers/version.txt`).
+Implemented in application version **0.261.294** and deployer version **1.0.34** (`deployers/version.txt`).
 
 Leave these optional parameters empty to keep existing behavior. You can pass them when invoking the script:
 

@@ -2,8 +2,8 @@
 # test_file_sync_azure_files_token_intent.py
 """
 Functional test for the File Sync Azure Files managed identity and service principal fix.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that File Sync builds Azure Files clients with backup token intent for
 token credentials (the real azure-storage-file-share SDK refuses to build them otherwise),
@@ -123,8 +123,8 @@ def _azure_files_source(auth):
 
 
 def test_version():
-    """The fix ships in 0.261.293 or later."""
-    assert_app_version_at_least("0.261.293")
+    """The fix ships in 0.261.294 or later."""
+    assert_app_version_at_least("0.261.294")
 
 
 def test_sdk_rejects_token_credentials_without_intent():

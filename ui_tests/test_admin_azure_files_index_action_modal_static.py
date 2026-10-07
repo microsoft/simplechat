@@ -2,8 +2,8 @@
 """
 UI test for the V1 Azure Files Search action modal on a local static harness.
 
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test runs the real `_plugin_modal.html` partial and the real `plugin_modal_stepper.js`
 module in Chromium, served from a local static server with mocked API routes, so it needs no

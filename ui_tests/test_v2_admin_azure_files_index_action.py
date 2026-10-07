@@ -1,8 +1,8 @@
 # test_v2_admin_azure_files_index_action.py
 """
 UI test for the V2 Azure Files Search global action editor.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that the admin-only global action editor renders Azure Files
 Search settings, enforces the permission-check warning flow, edits storage share

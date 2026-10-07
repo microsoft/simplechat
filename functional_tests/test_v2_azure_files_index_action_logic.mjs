@@ -1,6 +1,6 @@
 // test_v2_azure_files_index_action_logic.mjs
-// Version: 0.261.293
-// Implemented in: 0.261.293
+// Version: 0.261.294
+// Implemented in: 0.261.294
 // Executes the real V2 Azure Files Search native registry, validation, preset, and test-payload logic.
 
 import assert from 'node:assert/strict';

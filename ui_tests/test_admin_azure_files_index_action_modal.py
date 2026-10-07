@@ -1,8 +1,8 @@
 # test_admin_azure_files_index_action_modal.py
 """
 UI test for the V1 Azure Files Search action modal.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that the admin-only Azure Files Search action modal renders
 its dedicated fields, applies layout presets, enforces the permission warning,

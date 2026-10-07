@@ -1,6 +1,6 @@
 # Azure Files Search Action
 
-Implemented in version: **0.261.293**
+Implemented in version: **0.261.294**
 
 Related issue: [#1697](https://github.com/microsoft/simplechat/issues/1697)
 

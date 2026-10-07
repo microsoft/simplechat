@@ -2,8 +2,8 @@
 # test_azure_files_search_integration.py
 """
 Functional test for Azure Files Search action integration with SimpleChat.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that the Azure Files Search action (type azure_files_index) is discovered and
 matched by the action loader without colliding with Document Search, validated by the plugin
@@ -165,7 +165,7 @@ def _normalize(value):
 
 
 def test_version():
-    assert_app_version_at_least("0.261.293")
+    assert_app_version_at_least("0.261.294")
 
 
 def test_plugin_metadata_and_loader_matching(app):

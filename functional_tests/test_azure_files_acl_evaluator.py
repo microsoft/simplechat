@@ -2,8 +2,8 @@
 # test_azure_files_acl_evaluator.py
 """
 Functional test for the Azure Files SDDL parser and read-access evaluator.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that Azure Files security descriptors are parsed correctly and that
 read access is decided the way Windows orders a DACL, failing closed: unresolved principals,
@@ -45,7 +45,7 @@ def _decide(sddl, **kwargs):
 
 
 def test_version():
-    assert_app_version_at_least("0.261.293")
+    assert_app_version_at_least("0.261.294")
 
 
 def test_parse_owner_group_flags_and_aces():

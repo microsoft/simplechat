@@ -123,7 +123,7 @@ Offline coverage in [test_deployer_key_vault_secret_permissions.py](../../functi
 
 ## External Azure Files and Azure AI Search permissions
 
-Implemented in application version **0.261.293** and deployer version **1.0.34** (`deployers/version.txt`).
+Implemented in application version **0.261.294** and deployer version **1.0.34** (`deployers/version.txt`).
 
 Leave these optional variables empty to keep existing behavior:
 

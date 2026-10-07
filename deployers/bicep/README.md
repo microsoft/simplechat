@@ -369,7 +369,7 @@ Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](
 
 ## External Azure Files and Azure AI Search permissions
 
-Implemented in application version **0.261.293** and deployer version **1.0.34** (`deployers/version.txt`).
+Implemented in application version **0.261.294** and deployer version **1.0.34** (`deployers/version.txt`).
 
 SimpleChat can read customer-owned storage accounts and Azure AI Search services that are not deployed by this template. Leave these optional parameters empty to keep existing behavior:
 

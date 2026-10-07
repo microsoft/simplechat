@@ -2,8 +2,8 @@
 # test_azure_files_search_pipeline.py
 """
 Functional test for the Azure Files Search action's search and permission pipeline.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that the Azure Files Search action validates its configuration, refuses
 SimpleChat's own indexes, parses indexed Azure Files paths, and returns only results from files
@@ -104,7 +104,7 @@ def _dependencies(hits, *, membership=None, identity_reason="", share=(acl.MEMBE
 
 
 def test_version():
-    assert_app_version_at_least("0.261.293")
+    assert_app_version_at_least("0.261.294")
 
 
 def test_endpoint_validators():

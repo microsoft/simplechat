@@ -2,7 +2,7 @@
 # test_action_test_connection_modal_wiring.py
 """
 Functional test for the action modal Test Connection wiring.
-Version: 0.261.293
+Version: 0.261.294
 Implemented in: 0.250.217
 
 This test ensures the action modal renders a Test Connection control for all

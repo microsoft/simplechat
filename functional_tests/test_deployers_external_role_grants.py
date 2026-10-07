@@ -2,8 +2,8 @@
 # test_deployers_external_role_grants.py
 """
 Functional test for optional deployer role grants on existing Azure Files storage accounts and Azure AI Search services.
-Version: 0.261.293
-Implemented in: 0.261.293
+Version: 0.261.294
+Implemented in: 0.261.294
 
 This test ensures that all deployers expose optional empty-by-default inputs for external Azure Files
 storage accounts and Azure AI Search services, grant the expected RBAC roles at the supplied resource
@@ -45,7 +45,7 @@ def require_contains(content: str, expected: str, description: str) -> None:
 
 def test_application_version_floor() -> None:
     """Validate the functional test is running against the implemented app version or newer."""
-    assert_app_version_at_least("0.261.293")
+    assert_app_version_at_least("0.261.294")
 
 
 def test_bicep_external_role_grants() -> None:
