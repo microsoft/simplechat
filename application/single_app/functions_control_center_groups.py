@@ -2,6 +2,7 @@
 """Server-side group inventory and validated selection for Control Center."""
 
 import re
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 
@@ -118,30 +119,29 @@ def group_row(group, documents, tokens, last_activity):
 
 
 def load_group_inventory(groups_container, documents_container, activity_container):
-    """Four batched queries, independent of row count. Fail rather than invent totals."""
+    """Four batched queries, independent of row count. Fail rather than invent totals.
+
+    The Python Cosmos SDK cannot run cross-partition GROUP BY, so the document, token and
+    activity queries stream narrow projections and the totals are aggregated here.
+    """
     groups = list(groups_container.query_items(
         query=("SELECT c.id, c.name, c.description, c.owner, c.users, c.admins, "
                "c.documentManagers, c.status, c.createdDate, c.metrics FROM c"),
         enable_cross_partition_query=True,
     ))
-    documents = {
-        row["group_id"]: int(row.get("total") or 0)
-        for row in documents_container.query_items(
-            query=("SELECT c.group_id, COUNT(1) AS total FROM c "
-                   "WHERE c.type = 'document_metadata' AND IS_DEFINED(c.group_id) GROUP BY c.group_id"),
-            enable_cross_partition_query=True,
-        )
-    }
-    tokens = {
-        row["group_id"]: int(row.get("total") or 0)
-        for row in activity_container.query_items(
-            query=("SELECT c.workspace_context.group_id AS group_id, SUM(c.usage.total_tokens) AS total "
-                   "FROM c WHERE c.activity_type = 'token_usage' "
-                   "AND IS_DEFINED(c.workspace_context.group_id) AND IS_NUMBER(c.usage.total_tokens) "
-                   "GROUP BY c.workspace_context.group_id"),
-            enable_cross_partition_query=True,
-        )
-    }
+    documents = Counter(documents_container.query_items(
+        query=("SELECT VALUE c.group_id FROM c "
+               "WHERE c.type = 'document_metadata' AND IS_STRING(c.group_id)"),
+        enable_cross_partition_query=True,
+    ))
+    tokens = defaultdict(int)
+    for row in activity_container.query_items(
+        query=("SELECT c.workspace_context.group_id AS group_id, c.usage.total_tokens AS tokens "
+               "FROM c WHERE c.activity_type = 'token_usage' "
+               "AND IS_STRING(c.workspace_context.group_id) AND IS_NUMBER(c.usage.total_tokens)"),
+        enable_cross_partition_query=True,
+    ):
+        tokens[row["group_id"]] += row["tokens"]
     # The writers use three group locations. One coalesced expression avoids duplicate
     # records and includes admin CSV and approval events that use top-level group_id.
     group_expression = (
@@ -149,18 +149,19 @@ def load_group_inventory(groups_container, documents_container, activity_contain
         "IIF(IS_STRING(c.group.group_id) AND c.group.group_id != '', "
         "c.group.group_id, c.workspace_context.group_id))"
     )
-    activity_times = {
-        row["group_id"]: row.get("last_activity")
-        for row in activity_container.query_items(
-            query=(f"SELECT {group_expression} AS group_id, MAX(c.timestamp) AS last_activity FROM c "
-                   f"WHERE IS_STRING({group_expression}) AND {group_expression} != '' "
-                   f"GROUP BY {group_expression}"),
-            enable_cross_partition_query=True,
-        )
-    }
+    activity_times = {}
+    for row in activity_container.query_items(
+        query=(f"SELECT {group_expression} AS group_id, c.timestamp FROM c "
+               f"WHERE IS_STRING({group_expression}) AND {group_expression} != '' "
+               "AND IS_STRING(c.timestamp)"),
+        enable_cross_partition_query=True,
+    ):
+        group_id, timestamp = row["group_id"], row["timestamp"]
+        if timestamp > activity_times.get(group_id, ""):
+            activity_times[group_id] = timestamp
     calculated_at = datetime.now(timezone.utc).isoformat()
     return {
-        "rows": [group_row(group, documents.get(group["id"], 0), tokens.get(group["id"], 0),
+        "rows": [group_row(group, documents.get(group["id"], 0), int(tokens.get(group["id"], 0)),
                            activity_times.get(group["id"])) for group in groups],
         "calculated_at": calculated_at,
     }

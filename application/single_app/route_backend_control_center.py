@@ -5,6 +5,7 @@ import logging
 import math
 import re
 import time
+from collections import Counter, defaultdict
 from io import StringIO
 
 from flask import Response, make_response, stream_with_context
@@ -85,6 +86,12 @@ CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE = 25
 CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
 CONTROL_CENTER_DASHBOARD_CACHE_TTL_SECONDS = 90
 CONTROL_CENTER_DASHBOARD_CACHE_MAX_ENTRIES = 128
+CONTROL_CENTER_DASHBOARD_RANKING_LIMIT = 10
+CONTROL_CENTER_DASHBOARD_RANKED_FIELDS = (
+    ("users", "user_id"),
+    ("groups", "group_id"),
+    ("public_workspaces", "public_workspace_id"),
+)
 DASHBOARD_INVALID_RANGE_ERROR = (
     "Invalid dashboard date range. Use 7, 30, or 90 days or a valid custom range of up to 366 days."
 )
@@ -279,23 +286,26 @@ def _dashboard_query_count(container, query, parameters=None):
 
 
 def _dashboard_count_active_users(start_date, end_date):
-    """Count distinct users with recorded login activity in a UTC interval."""
-    return _dashboard_query_count(
-        cosmos_activity_logs_container,
-        """
-        SELECT VALUE COUNT(1) FROM (
-            SELECT DISTINCT c.user_id FROM c
-            WHERE c.activity_type = 'user_login'
-              AND IS_DEFINED(c.user_id)
-              AND c.timestamp >= @start_date
-              AND c.timestamp <= @end_date
-        )
+    """Count distinct users with recorded login activity in a UTC interval.
+
+    The Python Cosmos SDK cannot run COUNT over a DISTINCT subquery across partitions,
+    so the distinct user IDs are read with SELECT DISTINCT VALUE and counted here.
+    """
+    user_ids = cosmos_activity_logs_container.query_items(
+        query="""
+        SELECT DISTINCT VALUE c.user_id FROM c
+        WHERE c.activity_type = 'user_login'
+          AND IS_DEFINED(c.user_id)
+          AND c.timestamp >= @start_date
+          AND c.timestamp <= @end_date
         """,
-        [
+        parameters=[
             {"name": "@start_date", "value": start_date.isoformat()},
             {"name": "@end_date", "value": end_date.isoformat()},
         ],
+        enable_cross_partition_query=True,
     )
+    return len(set(user_ids))
 
 
 def _dashboard_activity_count(activity_type, start_date, end_date):
@@ -319,30 +329,49 @@ def _dashboard_activity_count(activity_type, start_date, end_date):
 
 
 def _dashboard_document_upload_counts(start_date, end_date):
-    """Aggregate document-creation activity by the recorded workspace type."""
-    rows = list(cosmos_activity_logs_container.query_items(
-        query="""
-        SELECT c.workspace_type AS workspace_type, COUNT(1) AS count FROM c
-        WHERE c.activity_type = 'document_creation'
-          AND (
-              (c.timestamp >= @start_date AND c.timestamp <= @end_date)
-              OR (c.created_at >= @start_date AND c.created_at <= @end_date)
-          )
-        GROUP BY c.workspace_type
-        """,
-        parameters=[
-            {"name": "@start_date", "value": start_date.isoformat()},
-            {"name": "@end_date", "value": end_date.isoformat()},
-        ],
-        enable_cross_partition_query=True,
-    ))
-    counts = {"personal": 0, "group": 0, "public": 0}
-    for row in rows:
-        workspace_type = row.get("workspace_type") or "personal"
-        if workspace_type not in counts:
-            workspace_type = "personal"
-        counts[workspace_type] += int(row.get("count") or 0)
-    return counts
+    """Count document-creation activity by the recorded workspace type.
+
+    Cross-partition GROUP BY is unavailable to the Python Cosmos SDK, so group and
+    public uploads are counted directly. Every other recorded or missing type is
+    personal, so personal is the remainder of the period total.
+    """
+    window = """
+        c.activity_type = 'document_creation'
+        AND (
+            (c.timestamp >= @start_date AND c.timestamp <= @end_date)
+            OR (c.created_at >= @start_date AND c.created_at <= @end_date)
+        )
+    """
+    parameters = [
+        {"name": "@start_date", "value": start_date.isoformat()},
+        {"name": "@end_date", "value": end_date.isoformat()},
+    ]
+    total = _dashboard_query_count(
+        cosmos_activity_logs_container,
+        f"SELECT VALUE COUNT(1) FROM c WHERE {window}",
+        parameters,
+    )
+    counts = {
+        workspace_type: _dashboard_query_count(
+            cosmos_activity_logs_container,
+            f"SELECT VALUE COUNT(1) FROM c WHERE {window} AND c.workspace_type = @workspace_type",
+            parameters + [{"name": "@workspace_type", "value": workspace_type}],
+        )
+        for workspace_type in ("group", "public")
+    }
+    return {"personal": max(total - counts["group"] - counts["public"], 0), **counts}
+
+
+def _dashboard_status_rows(container):
+    """Tally stored status values for _dashboard_status_counts without a GROUP BY query."""
+    statuses = Counter(
+        status if status is None or isinstance(status, str) else str(status)
+        for status in container.query_items(
+            query="SELECT VALUE c.status FROM c WHERE IS_DEFINED(c.status)",
+            enable_cross_partition_query=True,
+        )
+    )
+    return [{"status": status, "count": count} for status, count in statuses.items()]
 
 
 def _dashboard_token_total(start_date, end_date, token_filters):
@@ -390,6 +419,115 @@ def _dashboard_document_failures(start_date, end_date):
             cosmos_public_documents_container,
         )
     )
+
+
+def _dashboard_token_value(value):
+    """Return the numeric token count Cosmos SUM would add; other values count as zero."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return value
+
+
+def _dashboard_ranked(totals, value_key):
+    """Return the largest totals, with ties ordered by ID so the ranking is stable."""
+    ranked = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    return [
+        {"id": entity_id, value_key: int(total)}
+        for entity_id, total in ranked[:CONTROL_CENTER_DASHBOARD_RANKING_LIMIT]
+    ]
+
+
+def _dashboard_token_insights(start_date, end_date, token_filters):
+    """Total filtered token usage by day and model and rank the largest consumers.
+
+    The Python Cosmos SDK cannot run cross-partition GROUP BY, so one narrow projection
+    of the filtered token records is streamed and totalled here.
+    """
+    where_clause, parameters = build_token_usage_query_context(
+        start_date,
+        end_date,
+        token_filters=token_filters,
+    )
+    by_model = defaultdict(int)
+    consumers = {key: defaultdict(int) for key, _ in CONTROL_CENTER_DASHBOARD_RANKED_FIELDS}
+    rows = cosmos_activity_logs_container.query_items(
+        query=f"""
+        SELECT c.timestamp,
+               c.usage.model AS model,
+               c.usage.total_tokens AS tokens,
+               c.user_id AS user_id,
+               c.workspace_context.group_id AS group_id,
+               c.workspace_context.public_workspace_id AS public_workspace_id
+        FROM c
+        WHERE {where_clause}
+        """,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    )
+    for row in rows:
+        tokens = _dashboard_token_value(row.get("tokens"))
+        timestamp = row.get("timestamp")
+        if isinstance(timestamp, str) and "model" in row:
+            by_model[(timestamp[:10], str(row.get("model") or "Unknown model"))] += tokens
+        for key, field in CONTROL_CENTER_DASHBOARD_RANKED_FIELDS:
+            entity_id = row.get(field)
+            if isinstance(entity_id, str) and entity_id:
+                consumers[key][entity_id] += tokens
+    token_usage_by_model = [
+        {"date": date, "model": model, "tokens": int(tokens)}
+        for (date, model), tokens in sorted(by_model.items())
+    ]
+    return token_usage_by_model, {
+        key: _dashboard_ranked(totals, "tokens") for key, totals in consumers.items()
+    }
+
+
+def _dashboard_activity_insights(start_date, end_date):
+    """Rank recorded activity and build the UTC login heatmap from one projection.
+
+    Each heatmap cell totals every login in the period for one weekday and hour.
+    """
+    actors = {key: defaultdict(int) for key, _ in CONTROL_CENTER_DASHBOARD_RANKED_FIELDS}
+    logins = Counter()
+    rows = cosmos_activity_logs_container.query_items(
+        query="""
+        SELECT c.timestamp,
+               c.activity_type,
+               c.user_id AS user_id,
+               c.workspace_context.group_id AS group_id,
+               c.workspace_context.public_workspace_id AS public_workspace_id
+        FROM c
+        WHERE c.timestamp >= @start_date
+          AND c.timestamp <= @end_date
+        """,
+        parameters=[
+            {"name": "@start_date", "value": start_date.isoformat()},
+            {"name": "@end_date", "value": end_date.isoformat()},
+        ],
+        enable_cross_partition_query=True,
+    )
+    for row in rows:
+        for key, field in CONTROL_CENTER_DASHBOARD_RANKED_FIELDS:
+            entity_id = row.get(field)
+            if isinstance(entity_id, str) and entity_id:
+                actors[key][entity_id] += 1
+        timestamp = row.get("timestamp")
+        if row.get("activity_type") != "user_login" or not isinstance(timestamp, str):
+            continue
+        try:
+            weekday = datetime.strptime(timestamp[:10], "%Y-%m-%d").weekday()
+            hour = int(timestamp[11:13])
+        except ValueError:
+            continue
+        if 0 <= hour <= 23:
+            logins[(weekday, hour)] += 1
+    login_cells = [
+        {"weekday": weekday, "hour": hour, "count": count}
+        for (weekday, hour), count in sorted(logins.items())
+    ]
+    return {
+        key: _dashboard_ranked(counts, "activity_count") for key, counts in actors.items()
+    }, login_cells
 
 
 def parse_control_center_management_pagination(request_args):
@@ -1474,6 +1612,7 @@ CONTROL_CENTER_USER_SORTS = {
     "documents": "c.settings.metrics.document_metrics.total_documents",
     "tokens": "c.settings.metrics.token_metrics.total_tokens",
 }
+CONTROL_CENTER_USER_FIELDS = "c.id, c.email, c.display_name, c.settings"
 
 
 def _control_center_validate_user_id(user_id):
@@ -1601,6 +1740,93 @@ def _control_center_user_where(filters):
         clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} = 0")
 
     return (" AND ".join(clauses) if clauses else "1=1"), parameters
+
+
+def _control_center_user_populations(filters):
+    """Split users by whether the sort property is recorded; each part orders one property.
+
+    An ORDER BY over two properties needs a composite index that user_settings does not
+    have. Users with a recorded sort value are ordered by that property alone, and users
+    without one follow in ID order, last in either direction.
+    """
+    field = CONTROL_CENTER_USER_SORTS[filters["sort"]]
+    recorded = f"(IS_DEFINED({field}) AND NOT IS_NULL({field}))"
+    return (
+        (recorded, f"ORDER BY {field} {filters['direction'].upper()}"),
+        (f"NOT {recorded}", "ORDER BY c.id ASC"),
+    )
+
+
+def _control_center_count_users(container, where_clause, parameters):
+    """Count the users matching a parameterized WHERE clause."""
+    rows = list(container.query_items(
+        query=f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}",
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    return int(rows[0] or 0) if rows else 0
+
+
+def _control_center_query_user_page(container, filters, page, per_page):
+    """Return one page of filtered users with the total, clamped page and page count.
+
+    A page can end the recorded population and continue into the missing one.
+    """
+    where_clause, parameters = _control_center_user_where(filters)
+    (recorded_clause, recorded_order), (missing_clause, missing_order) = (
+        _control_center_user_populations(filters)
+    )
+    total = _control_center_count_users(container, where_clause, parameters)
+    recorded = _control_center_count_users(
+        container,
+        f"({where_clause}) AND {recorded_clause}",
+        parameters,
+    )
+    total_pages = get_control_center_total_pages(total, per_page)
+    page = clamp_control_center_page(page, total_pages)
+    offset = (page - 1) * per_page
+    user_docs = []
+    if offset < recorded:
+        user_docs.extend(container.query_items(
+            query=(
+                f"SELECT {CONTROL_CENTER_USER_FIELDS} FROM c "
+                f"WHERE ({where_clause}) AND {recorded_clause} {recorded_order} "
+                "OFFSET @offset LIMIT @limit"
+            ),
+            parameters=parameters + [
+                {"name": "@offset", "value": offset},
+                {"name": "@limit", "value": min(per_page, recorded - offset)},
+            ],
+            enable_cross_partition_query=True,
+        ))
+    if len(user_docs) < per_page and total > recorded:
+        user_docs.extend(container.query_items(
+            query=(
+                f"SELECT {CONTROL_CENTER_USER_FIELDS} FROM c "
+                f"WHERE ({where_clause}) AND {missing_clause} {missing_order} "
+                "OFFSET @offset LIMIT @limit"
+            ),
+            parameters=parameters + [
+                {"name": "@offset", "value": max(0, offset - recorded)},
+                {"name": "@limit", "value": per_page - len(user_docs)},
+            ],
+            enable_cross_partition_query=True,
+        ))
+    return user_docs, total, page, total_pages
+
+
+def _control_center_iter_users(container, filters):
+    """Yield every filtered user: recorded sort values in order, then the rest by ID."""
+    where_clause, parameters = _control_center_user_where(filters)
+    for clause, order in _control_center_user_populations(filters):
+        yield from container.query_items(
+            query=(
+                f"SELECT {CONTROL_CENTER_USER_FIELDS} FROM c "
+                f"WHERE ({where_clause}) AND {clause} {order}"
+            ),
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
 
 
 def _control_center_effective_restriction(settings, setting_key, now=None):
@@ -3762,31 +3988,12 @@ def register_route_backend_control_center(bp):
         try:
             filters = _control_center_parse_user_filters(request.args)
             page, per_page = parse_control_center_management_pagination(request.args)
-            where_clause, parameters = _control_center_user_where(filters)
-
-            count_result = list(cosmos_user_settings_container.query_items(
-                query=f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}",
-                parameters=parameters,
-                enable_cross_partition_query=True,
-            ))
-            total = int(count_result[0] or 0) if count_result else 0
-            total_pages = get_control_center_total_pages(total, per_page)
-            page = clamp_control_center_page(page, total_pages)
-            sort_expression = CONTROL_CENTER_USER_SORTS[filters["sort"]]
-            query = (
-                "SELECT c.id, c.email, c.display_name, c.settings FROM c "
-                f"WHERE {where_clause} ORDER BY {sort_expression} {filters['direction'].upper()}, c.id ASC "
-                "OFFSET @offset LIMIT @limit"
+            user_docs, total, page, total_pages = _control_center_query_user_page(
+                cosmos_user_settings_container,
+                filters,
+                page,
+                per_page,
             )
-            paged_parameters = parameters + [
-                {"name": "@offset", "value": (page - 1) * per_page},
-                {"name": "@limit", "value": per_page},
-            ]
-            user_docs = list(cosmos_user_settings_container.query_items(
-                query=query,
-                parameters=paged_parameters,
-                enable_cross_partition_query=True,
-            ))
             users = [_control_center_user_row(user, filters["now"]) for user in user_docs]
             metric_times = sorted(
                 user["metrics_calculated_at"] for user in users
@@ -4106,17 +4313,14 @@ def register_route_backend_control_center(bp):
         """Stream a CSV export of users matching the same filters as the Users list."""
         try:
             filters = _control_center_parse_user_filters(request.args)
-            where_clause, parameters = _control_center_user_where(filters)
-            sort_expression = CONTROL_CENTER_USER_SORTS[filters["sort"]]
-            query = (
-                "SELECT c.id, c.email, c.display_name, c.settings FROM c "
-                f"WHERE {where_clause} ORDER BY {sort_expression} {filters['direction'].upper()}, c.id ASC"
-            )
-            user_docs = cosmos_user_settings_container.query_items(
-                query=query,
-                parameters=parameters,
-                enable_cross_partition_query=True,
-            )
+            user_docs = _control_center_iter_users(cosmos_user_settings_container, filters)
+            # Run the first query now so a storage failure returns an error, not a truncated CSV.
+            first_user = next(user_docs, None)
+
+            def remaining_users():
+                if first_user is not None:
+                    yield first_user
+                yield from user_docs
 
             def stream_csv():
                 buffer = StringIO()
@@ -4130,7 +4334,7 @@ def register_route_backend_control_center(bp):
                 yield buffer.getvalue()
                 buffer.seek(0)
                 buffer.truncate(0)
-                for user_doc in user_docs:
+                for user_doc in remaining_users():
                     row = _control_center_user_row(user_doc, filters["now"])
                     values = (
                         row["id"], row["display_name"], row["email"],
@@ -6719,28 +6923,14 @@ def register_route_backend_control_center(bp):
                 cosmos_groups_container,
                 'SELECT VALUE COUNT(1) FROM c',
             )
-            group_statuses = list(cosmos_groups_container.query_items(
-                query="""
-                SELECT c.status AS status, COUNT(1) AS count FROM c
-                WHERE IS_DEFINED(c.status)
-                GROUP BY c.status
-                """,
-                enable_cross_partition_query=True,
-            ))
+            group_statuses = _dashboard_status_rows(cosmos_groups_container)
             groups_by_status = _dashboard_status_counts(groups_total, group_statuses)
 
             workspaces_total = _dashboard_query_count(
                 cosmos_public_workspaces_container,
                 'SELECT VALUE COUNT(1) FROM c',
             )
-            workspace_statuses = list(cosmos_public_workspaces_container.query_items(
-                query="""
-                SELECT c.status AS status, COUNT(1) AS count FROM c
-                WHERE IS_DEFINED(c.status)
-                GROUP BY c.status
-                """,
-                enable_cross_partition_query=True,
-            ))
+            workspace_statuses = _dashboard_status_rows(cosmos_public_workspaces_container)
             workspaces_by_status = _dashboard_status_counts(
                 workspaces_total,
                 workspace_statuses,
@@ -6926,100 +7116,12 @@ def register_route_backend_control_center(bp):
             return jsonify({**cached, 'cached': True})
 
         try:
-            token_where, token_parameters = build_token_usage_query_context(
+            token_usage_by_model, top_tokens = _dashboard_token_insights(
                 start_date,
                 end_date,
-                token_filters=token_filters,
+                token_filters,
             )
-            model_rows = list(cosmos_activity_logs_container.query_items(
-                query=f"""
-                SELECT SUBSTRING(c.timestamp, 0, 10) AS date,
-                       c.usage.model AS model,
-                       SUM(c.usage.total_tokens) AS tokens
-                FROM c
-                WHERE {token_where}
-                  AND IS_DEFINED(c.timestamp)
-                  AND IS_DEFINED(c.usage.model)
-                GROUP BY SUBSTRING(c.timestamp, 0, 10), c.usage.model
-                """,
-                parameters=token_parameters,
-                enable_cross_partition_query=True,
-            ))
-
-            def ranked_token_totals(field_path):
-                rows = list(cosmos_activity_logs_container.query_items(
-                    query=f"""
-                    SELECT c.{field_path} AS id, SUM(c.usage.total_tokens) AS tokens
-                    FROM c
-                    WHERE {token_where} AND IS_DEFINED(c.{field_path})
-                    GROUP BY c.{field_path}
-                    """,
-                    parameters=token_parameters,
-                    enable_cross_partition_query=True,
-                ))
-                return sorted(
-                    (
-                        {'id': row.get('id'), 'tokens': int(row.get('tokens') or 0)}
-                        for row in rows if row.get('id')
-                    ),
-                    key=lambda item: item['tokens'],
-                    reverse=True,
-                )[:10]
-
-            def ranked_activity_totals(field_path):
-                rows = list(cosmos_activity_logs_container.query_items(
-                    query=f"""
-                    SELECT c.{field_path} AS id, COUNT(1) AS activity_count
-                    FROM c
-                    WHERE c.timestamp >= @start_date
-                      AND c.timestamp <= @end_date
-                      AND IS_DEFINED(c.{field_path})
-                    GROUP BY c.{field_path}
-                    """,
-                    parameters=[
-                        {'name': '@start_date', 'value': start_date.isoformat()},
-                        {'name': '@end_date', 'value': end_date.isoformat()},
-                    ],
-                    enable_cross_partition_query=True,
-                ))
-                return sorted(
-                    (
-                        {'id': row.get('id'), 'activity_count': int(row.get('activity_count') or 0)}
-                        for row in rows if row.get('id')
-                    ),
-                    key=lambda item: item['activity_count'],
-                    reverse=True,
-                )[:10]
-
-            login_rows = list(cosmos_activity_logs_container.query_items(
-                query="""
-                SELECT SUBSTRING(c.timestamp, 0, 10) AS date,
-                       SUBSTRING(c.timestamp, 11, 2) AS hour,
-                       COUNT(1) AS count
-                FROM c
-                WHERE c.activity_type = 'user_login'
-                  AND c.timestamp >= @start_date
-                  AND c.timestamp <= @end_date
-                GROUP BY SUBSTRING(c.timestamp, 0, 10), SUBSTRING(c.timestamp, 11, 2)
-                """,
-                parameters=[
-                    {'name': '@start_date', 'value': start_date.isoformat()},
-                    {'name': '@end_date', 'value': end_date.isoformat()},
-                ],
-                enable_cross_partition_query=True,
-            ))
-            login_heatmap = []
-            for row in login_rows:
-                try:
-                    weekday = datetime.strptime(row['date'], '%Y-%m-%d').weekday()
-                    hour = int(row['hour'])
-                    login_heatmap.append({
-                        'weekday': weekday,
-                        'hour': hour,
-                        'count': int(row.get('count') or 0),
-                    })
-                except (KeyError, TypeError, ValueError):
-                    continue
+            top_activity, login_cells = _dashboard_activity_insights(start_date, end_date)
 
             response_data = {
                 'period': {
@@ -7028,32 +7130,13 @@ def register_route_backend_control_center(bp):
                     'days': period_days,
                     'timezone': 'UTC',
                 },
-                'token_usage_by_model': [
-                    {
-                        'date': row.get('date'),
-                        'model': row.get('model') or 'Unknown model',
-                        'tokens': int(row.get('tokens') or 0),
-                    }
-                    for row in model_rows
-                ],
-                'top_tokens': {
-                    'users': ranked_token_totals('user_id'),
-                    'groups': ranked_token_totals('workspace_context.group_id'),
-                    'public_workspaces': ranked_token_totals(
-                        'workspace_context.public_workspace_id'
-                    ),
-                },
-                'top_activity': {
-                    'users': ranked_activity_totals('user_id'),
-                    'groups': ranked_activity_totals('workspace_context.group_id'),
-                    'public_workspaces': ranked_activity_totals(
-                        'workspace_context.public_workspace_id'
-                    ),
-                },
+                'token_usage_by_model': token_usage_by_model,
+                'top_tokens': top_tokens,
+                'top_activity': top_activity,
                 'login_heatmap': {
                     'weekday_convention': 'Monday=0 through Sunday=6',
                     'timezone': 'UTC',
-                    'cells': login_heatmap,
+                    'cells': login_cells,
                 },
             }
             _dashboard_cache_set(cache_key, response_data)
@@ -7758,477 +7841,6 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error getting refresh status: {e}")
             return jsonify({'error': 'Failed to get refresh status'}), 500
     
-    # Activity Log Migration APIs
-    @bp.route('/api/admin/control-center/migrate/status', methods=['GET'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @control_center_required('admin')
-    def api_get_migration_status():
-        """
-        Check if there are conversations and documents that need to be migrated to activity logs.
-        Returns counts of records without the 'added_to_activity_log' flag.
-        """
-        try:
-            migration_status = {
-                'conversations_without_logs': 0,
-                'personal_documents_without_logs': 0,
-                'group_documents_without_logs': 0,
-                'public_documents_without_logs': 0,
-                'total_documents_without_logs': 0,
-                'migration_needed': False,
-                'estimated_total_records': 0
-            }
-            
-            # Check conversations without the flag
-            try:
-                conversations_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                conversations_result = list(cosmos_conversations_container.query_items(
-                    query=conversations_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['conversations_without_logs'] = conversations_result[0] if conversations_result else 0
-            except Exception as e:
-                debug_print(f"Error checking conversations migration status: {e}")
-            
-            # Check personal documents without the flag
-            try:
-                personal_docs_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                personal_docs_result = list(cosmos_user_documents_container.query_items(
-                    query=personal_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['personal_documents_without_logs'] = personal_docs_result[0] if personal_docs_result else 0
-            except Exception as e:
-                debug_print(f"Error checking personal documents migration status: {e}")
-            
-            # Check group documents without the flag
-            try:
-                group_docs_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                group_docs_result = list(cosmos_group_documents_container.query_items(
-                    query=group_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['group_documents_without_logs'] = group_docs_result[0] if group_docs_result else 0
-            except Exception as e:
-                debug_print(f"Error checking group documents migration status: {e}")
-            
-            # Check public documents without the flag
-            try:
-                public_docs_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                public_docs_result = list(cosmos_public_documents_container.query_items(
-                    query=public_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['public_documents_without_logs'] = public_docs_result[0] if public_docs_result else 0
-            except Exception as e:
-                debug_print(f"Error checking public documents migration status: {e}")
-            
-            # Calculate totals
-            migration_status['total_documents_without_logs'] = (
-                migration_status['personal_documents_without_logs'] +
-                migration_status['group_documents_without_logs'] +
-                migration_status['public_documents_without_logs']
-            )
-            
-            migration_status['estimated_total_records'] = (
-                migration_status['conversations_without_logs'] +
-                migration_status['total_documents_without_logs']
-            )
-            
-            migration_status['migration_needed'] = migration_status['estimated_total_records'] > 0
-            
-            return jsonify(migration_status), 200
-            
-        except Exception as e:
-            debug_print(f"Error getting migration status: {e}")
-            return jsonify({'error': 'Failed to get migration status'}), 500
-    
-    @bp.route('/api/admin/control-center/migrate/all', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @control_center_required('admin')
-    def api_migrate_to_activity_logs():
-        """
-        Migrate all conversations and documents without activity logs.
-        This adds activity log records and sets the 'added_to_activity_log' flag.
-        
-        WARNING: This may take a while for large datasets and could impact performance.
-        Recommended to run during off-peak hours.
-        """
-        try:
-            from functions_activity_logging import log_conversation_creation, log_document_creation_transaction
-            
-            results = {
-                'conversations_migrated': 0,
-                'conversations_failed': 0,
-                'conversations_skipped_existing': 0,
-                'personal_documents_migrated': 0,
-                'personal_documents_failed': 0,
-                'personal_documents_skipped_existing': 0,
-                'group_documents_migrated': 0,
-                'group_documents_failed': 0,
-                'group_documents_skipped_existing': 0,
-                'public_documents_migrated': 0,
-                'public_documents_failed': 0,
-                'public_documents_skipped_existing': 0,
-                'total_migrated': 0,
-                'total_skipped_existing': 0,
-                'total_failed': 0,
-                'errors': []
-            }
-            
-            # Migrate conversations
-            debug_print("Starting conversation migration...")
-            try:
-                conversations_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                conversations = list(cosmos_conversations_container.query_items(
-                    query=conversations_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                debug_print(f"Found {len(conversations)} conversations to migrate")
-                
-                for conv in conversations:
-                    try:
-                        if has_activity_log_for_resource(
-                            conv.get('user_id'), 'conversation_creation', conv.get('id')
-                        ):
-                            conv['added_to_activity_log'] = True
-                            cosmos_conversations_container.upsert_item(conv)
-                            results['conversations_skipped_existing'] += 1
-                            continue
-
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': build_activity_log_id(
-                                'conversation_creation',
-                                conv.get('user_id'),
-                                f"backfill:{conv.get('id')}",
-                            ),
-                            'activity_type': 'conversation_creation',
-                            'user_id': conv.get('user_id'),
-                            'timestamp': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
-                            'created_at': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
-                            'conversation': {
-                                'conversation_id': conv.get('id'),
-                                'title': conv.get('title', 'Untitled'),
-                                'context': conv.get('context', []),
-                                'tags': conv.get('tags', [])
-                            },
-                            'workspace_type': 'personal',
-                            'workspace_context': {}
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to conversation
-                        conv['added_to_activity_log'] = True
-                        cosmos_conversations_container.upsert_item(conv)
-                        
-                        results['conversations_migrated'] += 1
-                        
-                    except Exception as conv_error:
-                        results['conversations_failed'] += 1
-                        error_msg = f"Failed to migrate conversation {conv.get('id')}: {str(conv_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during conversation migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Migrate personal documents
-            debug_print("Starting personal documents migration...")
-            try:
-                personal_docs_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                personal_docs = list(cosmos_user_documents_container.query_items(
-                    query=personal_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in personal_docs:
-                    try:
-                        if has_activity_log_for_resource(
-                            doc.get('user_id'), 'document_creation', doc.get('id'), 'personal'
-                        ):
-                            doc['added_to_activity_log'] = True
-                            cosmos_user_documents_container.upsert_item(doc)
-                            results['personal_documents_skipped_existing'] += 1
-                            continue
-
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': build_activity_log_id(
-                                'document_creation',
-                                doc.get('user_id'),
-                                f"backfill:personal:{doc.get('id')}",
-                            ),
-                            'user_id': doc.get('user_id'),
-                            'activity_type': 'document_creation',
-                            'workspace_type': 'personal',
-                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'document': {
-                                'document_id': doc.get('id'),
-                                'file_name': doc.get('file_name', 'Unknown'),
-                                'file_type': doc.get('file_type', 'unknown'),
-                                'file_size_bytes': doc.get('file_size', 0),
-                                'page_count': doc.get('number_of_pages', 0),
-                                'version': doc.get('version', 1)
-                            },
-                            'embedding_usage': {
-                                'total_tokens': doc.get('embedding_tokens', 0),
-                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
-                            },
-                            'document_metadata': {
-                                'author': doc.get('author'),
-                                'title': doc.get('title'),
-                                'subject': doc.get('subject'),
-                                'publication_date': doc.get('publication_date'),
-                                'keywords': doc.get('keywords', []),
-                                'abstract': doc.get('abstract')
-                            },
-                            'workspace_context': {}
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to document
-                        doc['added_to_activity_log'] = True
-                        cosmos_user_documents_container.upsert_item(doc)
-                        
-                        results['personal_documents_migrated'] += 1
-                        
-                    except Exception as doc_error:
-                        results['personal_documents_failed'] += 1
-                        error_msg = f"Failed to migrate personal document {doc.get('id')}: {str(doc_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during personal documents migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Migrate group documents
-            debug_print("Starting group documents migration...")
-            try:
-                group_docs_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                group_docs = list(cosmos_group_documents_container.query_items(
-                    query=group_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in group_docs:
-                    try:
-                        if has_activity_log_for_resource(
-                            doc.get('user_id'), 'document_creation', doc.get('id'), 'group'
-                        ):
-                            doc['added_to_activity_log'] = True
-                            cosmos_group_documents_container.upsert_item(doc)
-                            results['group_documents_skipped_existing'] += 1
-                            continue
-
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': build_activity_log_id(
-                                'document_creation',
-                                doc.get('user_id'),
-                                f"backfill:group:{doc.get('id')}",
-                            ),
-                            'user_id': doc.get('user_id'),
-                            'activity_type': 'document_creation',
-                            'workspace_type': 'group',
-                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'document': {
-                                'document_id': doc.get('id'),
-                                'file_name': doc.get('file_name', 'Unknown'),
-                                'file_type': doc.get('file_type', 'unknown'),
-                                'file_size_bytes': doc.get('file_size', 0),
-                                'page_count': doc.get('number_of_pages', 0),
-                                'version': doc.get('version', 1)
-                            },
-                            'embedding_usage': {
-                                'total_tokens': doc.get('embedding_tokens', 0),
-                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
-                            },
-                            'document_metadata': {
-                                'author': doc.get('author'),
-                                'title': doc.get('title'),
-                                'subject': doc.get('subject'),
-                                'publication_date': doc.get('publication_date'),
-                                'keywords': doc.get('keywords', []),
-                                'abstract': doc.get('abstract')
-                            },
-                            'workspace_context': {
-                                'group_id': doc.get('group_id')
-                            }
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to document
-                        doc['added_to_activity_log'] = True
-                        cosmos_group_documents_container.upsert_item(doc)
-                        
-                        results['group_documents_migrated'] += 1
-                        
-                    except Exception as doc_error:
-                        results['group_documents_failed'] += 1
-                        error_msg = f"Failed to migrate group document {doc.get('id')}: {str(doc_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during group documents migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Migrate public documents
-            debug_print("Starting public documents migration...")
-            try:
-                public_docs_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                public_docs = list(cosmos_public_documents_container.query_items(
-                    query=public_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in public_docs:
-                    try:
-                        if has_activity_log_for_resource(
-                            doc.get('user_id'), 'document_creation', doc.get('id'), 'public'
-                        ):
-                            doc['added_to_activity_log'] = True
-                            cosmos_public_documents_container.upsert_item(doc)
-                            results['public_documents_skipped_existing'] += 1
-                            continue
-
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': build_activity_log_id(
-                                'document_creation',
-                                doc.get('user_id'),
-                                f"backfill:public:{doc.get('id')}",
-                            ),
-                            'user_id': doc.get('user_id'),
-                            'activity_type': 'document_creation',
-                            'workspace_type': 'public',
-                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'document': {
-                                'document_id': doc.get('id'),
-                                'file_name': doc.get('file_name', 'Unknown'),
-                                'file_type': doc.get('file_type', 'unknown'),
-                                'file_size_bytes': doc.get('file_size', 0),
-                                'page_count': doc.get('number_of_pages', 0),
-                                'version': doc.get('version', 1)
-                            },
-                            'embedding_usage': {
-                                'total_tokens': doc.get('embedding_tokens', 0),
-                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
-                            },
-                            'document_metadata': {
-                                'author': doc.get('author'),
-                                'title': doc.get('title'),
-                                'subject': doc.get('subject'),
-                                'publication_date': doc.get('publication_date'),
-                                'keywords': doc.get('keywords', []),
-                                'abstract': doc.get('abstract')
-                            },
-                            'workspace_context': {
-                                'public_workspace_id': doc.get('public_workspace_id')
-                            }
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to document
-                        doc['added_to_activity_log'] = True
-                        cosmos_public_documents_container.upsert_item(doc)
-                        
-                        results['public_documents_migrated'] += 1
-                        
-                    except Exception as doc_error:
-                        results['public_documents_failed'] += 1
-                        error_msg = f"Failed to migrate public document {doc.get('id')}: {str(doc_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during public documents migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Calculate totals
-            results['total_migrated'] = (
-                results['conversations_migrated'] +
-                results['personal_documents_migrated'] +
-                results['group_documents_migrated'] +
-                results['public_documents_migrated']
-            )
-
-            results['total_skipped_existing'] = (
-                results['conversations_skipped_existing'] +
-                results['personal_documents_skipped_existing'] +
-                results['group_documents_skipped_existing'] +
-                results['public_documents_skipped_existing']
-            )
-
-            results['total_failed'] = (
-                results['conversations_failed'] +
-                results['personal_documents_failed'] +
-                results['group_documents_failed'] +
-                results['public_documents_failed']
-            )
-            
-            debug_print(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
-            
-            return jsonify(results), 200
-            
-        except Exception as e:
-            debug_print(f"Error during migration: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': f'Migration failed: {str(e)}'}), 500
-
     @bp.route('/api/admin/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
