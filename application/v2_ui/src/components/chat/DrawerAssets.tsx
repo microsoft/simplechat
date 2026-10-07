@@ -4,11 +4,12 @@
 // Generated lists the documents agents created in a shared conversation, with Download where the
 // workspace's own download rules allow it and a preview for Markdown. Media gathers every image,
 // video and audio clip the thread shows, including signed links an action fetched from a remote
-// service, which are otherwise hard to find again in a long thread.
+// service, which are otherwise hard to find again in a long thread. Images and clips are tiles,
+// three to a row, that open one viewer stepping through them all; recordings are players, each
+// with Download and a button that scrolls to its message.
 
-import { useCallback, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Download, Eye, FileText, Film, ImageOff, Loader2, Music } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Download, Eye, FileText, Loader2 } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
 import {
     fetchCollaborationGeneratedDocument,
@@ -16,16 +17,15 @@ import {
     type GeneratedDocument,
 } from '../../lib/collaboration';
 import { saveBlob } from '../../lib/endpoints';
-import { resolveImageSource } from '../../lib/images';
 import type { ConversationMediaItem } from '../../lib/conversationMedia';
 import { useChatStore } from '../../stores/chatStore';
 import { toast } from '../../stores/toastStore';
 import { Modal } from '../ui/Modal';
 import { PlainMarkdown } from '../ui/PlainMarkdown';
 import { GlassButton } from '../ui/primitives';
-import { ImageLightbox } from './ImageLightbox';
 import { InlineAudioPlayer } from './InlineAudioPlayer';
-import { InlineVideoCard } from './InlineVideoCard';
+import { MediaViewer, type MediaViewerItem } from './MediaViewer';
+import { ImageTile, VideoTile } from './MediaTiles';
 
 /** Largest Markdown file previewed in the app; anything bigger is better read downloaded. */
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
@@ -245,82 +245,108 @@ export function GeneratedDocumentsSection({
     );
 }
 
-function ImageTile({ item, onOpen }: { item: ConversationMediaItem; onOpen: () => void }) {
-    const [failed, setFailed] = useState(false);
+function MediaGroup({ label, count, children }: { label: string; count: number; children: React.ReactNode }) {
     return (
-        <li>
-            <button type="button" onClick={onOpen} title={item.title}
-                aria-label={`View image: ${item.title}`} aria-haspopup="dialog"
-                className="block aspect-square w-full overflow-hidden rounded-lg border border-edge bg-surface-sunken">
-                {failed ? (
-                    // A signed link can expire; the tile still opens, where the viewer says so.
-                    <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-1 text-[10px] text-text-3">
-                        <ImageOff size={16} aria-hidden="true" />
-                        Unavailable
-                    </span>
-                ) : (
-                    <img src={item.src} alt="" loading="lazy" onError={() => setFailed(true)}
-                        className="h-full w-full object-cover" />
-                )}
-            </button>
-        </li>
+        <div role="group" aria-label={label} data-drawer-media-group={label.toLowerCase()}>
+            <h4 className="flex items-baseline gap-1.5 px-1 pb-1.5 text-xs text-text-2">
+                {label}
+                <span className="text-[11px] text-text-3 tabular-nums">{count}</span>
+            </h4>
+            {children}
+        </div>
     );
 }
 
-function PlayerDialog({ item, onClose }: { item: ConversationMediaItem; onClose: () => void }) {
-    return (
-        <Modal title={item.title} onClose={onClose} size="lg">
-            {item.kind === 'video' ? (
-                <InlineVideoCard src={item.src} title={item.title} />
-            ) : (
-                <InlineAudioPlayer src={item.src} title={item.title} />
-            )}
-        </Modal>
+export function MediaSection({
+    items,
+    onLocate,
+}: {
+    items: ConversationMediaItem[];
+    /** Scrolls the thread to the message an item appears in. */
+    onLocate?: (messageId: string) => void;
+}) {
+    const [viewing, setViewing] = useState<number | null>(null);
+    const images = useMemo(() => items.filter((item) => item.kind === 'image'), [items]);
+    const videos = useMemo(() => items.filter((item) => item.kind === 'video'), [items]);
+    const recordings = useMemo(() => items.filter((item) => item.kind === 'audio'), [items]);
+    // One viewer steps through the images and then the clips, in the order the tiles show them.
+    const visual = useMemo<MediaViewerItem[]>(
+        () => [...images, ...videos].map(({ kind, src, title, messageId }) => ({
+            kind: kind === 'video' ? 'video' : 'image',
+            src,
+            title,
+            messageId,
+        })),
+        [images, videos],
     );
-}
 
-export function MediaSection({ items }: { items: ConversationMediaItem[] }) {
-    const [viewing, setViewing] = useState<ConversationMediaItem | null>(null);
     if (items.length === 0) {
         return null;
     }
-    const images = items.filter((item) => item.kind === 'image');
-    const recordings = items.filter((item) => item.kind !== 'image');
-    const imageSource = viewing?.kind === 'image' ? resolveImageSource(viewing.src) : null;
 
     return (
         <section aria-label="Media" data-drawer-media="">
             <SectionHeading>Media</SectionHeading>
-            {images.length > 0 && (
-                <ul className="grid grid-cols-3 gap-1.5">
-                    {images.map((item) => (
-                        <ImageTile key={item.key} item={item} onOpen={() => setViewing(item)} />
-                    ))}
-                </ul>
+            <div className="space-y-3">
+                {images.length > 0 && (
+                    <MediaGroup label="Images" count={images.length}>
+                        <ul className="grid grid-cols-3 gap-1.5">
+                            {images.map((item, index) => (
+                                <li key={item.key}>
+                                    <ImageTile
+                                        src={item.src}
+                                        title={item.title}
+                                        label={`View image: ${item.title}`}
+                                        onOpen={() => setViewing(index)}
+                                        className="aspect-square"
+                                    />
+                                </li>
+                            ))}
+                        </ul>
+                    </MediaGroup>
+                )}
+                {videos.length > 0 && (
+                    <MediaGroup label="Videos" count={videos.length}>
+                        <ul className="grid grid-cols-3 gap-1.5">
+                            {videos.map((item, index) => (
+                                <li key={item.key}>
+                                    <VideoTile
+                                        src={item.src}
+                                        title={item.title}
+                                        label={`Play video: ${item.title}`}
+                                        onOpen={() => setViewing(images.length + index)}
+                                        className="aspect-square"
+                                    />
+                                </li>
+                            ))}
+                        </ul>
+                    </MediaGroup>
+                )}
+                {recordings.length > 0 && (
+                    <MediaGroup label="Audio" count={recordings.length}>
+                        <ul>
+                            {recordings.map((item) => (
+                                <li key={item.key}>
+                                    <InlineAudioPlayer
+                                        src={item.src}
+                                        title={item.title}
+                                        onLocate={onLocate ? () => onLocate(item.messageId) : undefined}
+                                    />
+                                </li>
+                            ))}
+                        </ul>
+                    </MediaGroup>
+                )}
+            </div>
+            {viewing !== null && visual[viewing] && (
+                <MediaViewer
+                    items={visual}
+                    index={viewing}
+                    onIndexChange={setViewing}
+                    onClose={() => setViewing(null)}
+                    onLocate={onLocate ? (item) => item.messageId && onLocate(item.messageId) : undefined}
+                />
             )}
-            {recordings.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                    {recordings.map((item) => (
-                        <li key={item.key}>
-                            <button type="button" onClick={() => setViewing(item)} aria-haspopup="dialog"
-                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1">
-                                {item.kind === 'video'
-                                    ? <Film size={14} className="shrink-0 text-text-3" aria-hidden="true" />
-                                    : <Music size={14} className="shrink-0 text-text-3" aria-hidden="true" />}
-                                <span className="sr-only">{item.kind === 'video' ? 'Video: ' : 'Audio: '}</span>
-                                <span className="min-w-0 truncate">{item.title}</span>
-                            </button>
-                        </li>
-                    ))}
-                </ul>
-            )}
-            {viewing && imageSource && createPortal(
-                // Portalled: the drawer's backdrop filter would otherwise confine a fixed overlay to it.
-                <ImageLightbox source={imageSource} title={viewing.title}
-                    naming={{ prompt: viewing.title }} onClose={() => setViewing(null)} />,
-                document.body,
-            )}
-            {viewing && viewing.kind !== 'image' && <PlayerDialog item={viewing} onClose={() => setViewing(null)} />}
         </section>
     );
 }

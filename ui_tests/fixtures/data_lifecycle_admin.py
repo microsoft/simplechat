@@ -1,8 +1,8 @@
 # data_lifecycle_admin.py
 """
 Closed V2 fixture for the Admin Settings Data Lifecycle group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.272
+Implemented in: 0.261.272
 
 Serves the real built SPA with the real Data Lifecycle field schema and the real settings
 normalizer, and answers the three retention routes the controls call from memory: Run

@@ -52,6 +52,7 @@ category: Version History
 ## Versioned Features
 
 - [Saved Analyze Results](ANALYZE_RESULTS.md)
+- [V2 Media Galleries And Viewer](V2_MEDIA_GALLERIES_AND_VIEWER.md)
 - [V2 Inline Diagram Editing](V2_INLINE_DIAGRAM_EDITING.md)
 - [V2 Inline Chart Editing](V2_INLINE_CHART_EDITING.md)
 - [V2 Inline Image Editing](V2_INLINE_IMAGE_EDITING.md)

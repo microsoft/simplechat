@@ -23,7 +23,7 @@
 import { api } from './apiClient';
 import { generateAgentId } from './workspaceApi';
 import {
-    buildEditorWrite, isRecord,
+    buildEditorWrite, GLOBAL_ACTIONS_BASE_PATH, GLOBAL_AGENTS_BASE_PATH, isRecord, withoutServerStampedFields,
     type ActionConfiguration, type AgentConfiguration, type AgentEditorOptions, type AuthoringResource,
     type WorkspaceAgentType,
 } from './workspaceAuthoring';
@@ -34,22 +34,25 @@ import {
     fetchAuthoringAgents, saveAgentConfiguration,
 } from './workspaceAuthoringApi';
 import {
-    fetchAgentKnowledgeCatalog, fetchGroupAgentKnowledgeCatalog, type AgentKnowledgeCatalog,
+    fetchAgentKnowledgeCatalog, fetchGlobalAgentKnowledgeCatalog, fetchGroupAgentKnowledgeCatalog,
+    type AgentKnowledgeCatalog,
 } from './workspaceAgentKnowledge';
 import {
-    discoverAgentFoundryResources, draftAgentInstructions, PERSONAL_INSTRUCTION_SCOPE, type InstructionDraftScope,
+    discoverAgentFoundryResources, draftAgentInstructions, GLOBAL_INSTRUCTION_SCOPE, PERSONAL_INSTRUCTION_SCOPE,
+    type InstructionDraftScope,
 } from './workspaceAgentCommands';
 import {
-    fetchAgentTargets, PERSONAL_DELEGATION_SCOPE, type AgentTargetCatalog, type DelegationScope,
+    fetchAgentTargets, GLOBAL_DELEGATION_SCOPE, PERSONAL_DELEGATION_SCOPE, type AgentTargetCatalog, type DelegationScope,
 } from './agentDelegation';
 import type { AgentLinkScope } from './conversationUrl';
 import type { EditorWorkspaceScope } from './workspaceEditorDrafts';
-import type { ActionWorkbenchAdapter } from './actionWorkbench';
+import { fetchGlobalActions, type ActionWorkbenchAdapter } from './actionWorkbench';
 import { requireWorkspaceId, workspaceBasePath } from './workspaceContext';
 
 export type AgentWorkbenchScope =
     | { kind: 'personal' }
-    | { kind: 'group'; id: string; name: string };
+    | { kind: 'group'; id: string; name: string }
+    | { kind: 'global' };
 
 export const AGENT_OPERATIONS = ['create', 'edit', 'delete'] as const;
 export type AgentOperation = typeof AGENT_OPERATIONS[number];
@@ -126,11 +129,13 @@ export function advertisedAgentOperations(value: unknown): ReadonlySet<AgentOper
 /**
  * Whether an operation is allowed in a scope.
  *
- * Personal scope allows everything, exactly as the section did before it was scoped. Group scope
- * requires the workspace-level `agent_management` hint to offer the operation, and edit and delete
- * additionally require the specific agent to belong to this group and to carry the operation in its
- * own `agent_actions`. Create is workspace-level with no per-agent subject. There is deliberately no
- * fallback that enables an agent when the hint is empty or absent.
+ * Personal scope allows everything, exactly as the section did before it was scoped. Global scope
+ * does too: it is reachable only from Admin Settings, and every global route requires the Admin
+ * role on the server. Group scope requires the workspace-level `agent_management` hint to offer
+ * the operation, and edit and delete additionally require the specific agent to belong to this
+ * group and to carry the operation in its own `agent_actions`. Create is workspace-level with no
+ * per-agent subject. There is deliberately no fallback that enables an agent when the hint is empty
+ * or absent.
  */
 export function agentOperationAllowed(
     scope: AgentWorkbenchScope,
@@ -138,7 +143,7 @@ export function agentOperationAllowed(
     operation: AgentOperation,
     agent?: AgentConfiguration,
 ): boolean {
-    if (scope.kind === 'personal') {
+    if (scope.kind === 'personal' || scope.kind === 'global') {
         return true;
     }
     if (!supported.has(operation)) {
@@ -225,7 +230,7 @@ function agentsFromResponse(value: unknown): AgentConfiguration[] {
     return value.agents as AgentConfiguration[];
 }
 
-function assertGroupAgentOptions(value: unknown): AgentEditorOptions {
+function assertAgentEditorOptions(value: unknown): AgentEditorOptions {
     if (!isRecord(value) || !Array.isArray(value.agent_types) || !Array.isArray(value.model_endpoints)
         || !Array.isArray(value.builtin_actions) || !isRecord(value.settings)) {
         throw new Error('The agent editor options returned an invalid response.');
@@ -289,7 +294,7 @@ export function createGroupAgentWorkbench(
             agents.forEach((agent) => assertGroupAgentScope(agent, groupId));
             return agents;
         },
-        fetchOptions: async (signal) => assertGroupAgentOptions(
+        fetchOptions: async (signal) => assertAgentEditorOptions(
             await api.get<unknown>(`/api/groups/${encodeURIComponent(groupId)}/agent-options`, signal),
         ),
         fetchEditor: async (id, _providedScope, signal) => {
@@ -327,3 +332,101 @@ export function createGroupAgentWorkbench(
             discoverAgentFoundryResources(endpoint, type, signal, groupId),
     };
 }
+
+const GLOBAL_AGENTS_API = '/api/v2/admin/agents';
+
+function globalAgentUrl(agentId?: string): string {
+    return agentId ? `${GLOBAL_AGENTS_API}/${encodeURIComponent(requireWorkspaceId(agentId))}` : GLOBAL_AGENTS_API;
+}
+
+/**
+ * Prove a returned agent is the organisation's: marked global and claiming no group, as the
+ * server's global projection always is. Anything else is refused rather than rendered.
+ */
+function assertGlobalAgentScope(agent: AgentConfiguration, id?: string): void {
+    if (!agent || typeof agent.id !== 'string' || !agent.id
+        || (id !== undefined && agent.id !== id)
+        || agent.is_global !== true || Boolean(agent.group_id)) {
+        throw new Error('The agent response is not a global agent. Refresh and try again.');
+    }
+}
+
+/** The editor contract for a global agent, which an administrator always edits. */
+function assertGlobalAgentEditorResource(
+    response: AuthoringResource<AgentConfiguration>, id?: string,
+): AuthoringResource<AgentConfiguration> {
+    if (!isRecord(response) || !isRecord(response.record) || response.read_only !== false
+        || typeof response.revision !== 'string' || !response.revision
+        || !Array.isArray(response.secret_paths)
+        || !response.secret_paths.every((path) => typeof path === 'string' && path.startsWith('/'))) {
+        throw new Error('Admin Settings returned an invalid agent editor resource. Reload before trying again.');
+    }
+    assertGlobalAgentScope(response.record, id);
+    return response;
+}
+
+export interface GlobalAgentCatalog {
+    agents: AgentConfiguration[];
+    /** The default agent, which settings store by name; empty when none is chosen. */
+    selectedAgentName: string;
+}
+
+/** The global agents and the default among them, for the editor and the Admin Settings list. */
+export async function fetchGlobalAgentCatalog(signal?: AbortSignal): Promise<GlobalAgentCatalog> {
+    const response = await api.get<unknown>(GLOBAL_AGENTS_API, signal);
+    const agents = agentsFromResponse(response);
+    agents.forEach((agent) => assertGlobalAgentScope(agent));
+    const selected = isRecord(response) && typeof response.selected_agent_name === 'string' ? response.selected_agent_name : '';
+    return { agents, selectedAgentName: selected };
+}
+
+/**
+ * The administrator's global agents, edited from Admin Settings with the same editor workspaces
+ * use. Every route it calls requires the Admin role. Knowledge is limited to public workspaces,
+ * which is all a global agent may hold; actions, Call agent targets and instruction drafting all
+ * resolve in the global scope; and a new action created from the editor returns to it.
+ */
+export const GLOBAL_AGENT_WORKBENCH: AgentWorkbenchAdapter = {
+    scope: { kind: 'global' },
+    basePath: GLOBAL_AGENTS_BASE_PATH,
+    draftScope: { kind: 'global' },
+    knowledgeScopes: ['public'],
+    instructionScope: GLOBAL_INSTRUCTION_SCOPE,
+    delegationScope: GLOBAL_DELEGATION_SCOPE,
+    actionsBasePath: GLOBAL_ACTIONS_BASE_PATH,
+    canCreateActions: true,
+    supported: new Set(AGENT_OPERATIONS),
+    allows: () => true,
+    // Whether people can reach a global agent depends on Workspace Mode and the merge setting, so
+    // the editor links nowhere it cannot be sure of.
+    canUseInChat: () => false,
+    chatScope: () => ({ kind: 'global' }),
+    // The classic admin editor has always let a global agent carry its own model connection.
+    allowsCustomEndpoints: () => true,
+    allowsTemplateSubmission: (settings) => settings.agent_template_submission_allowed === true,
+    listAgents: async (signal) => (await fetchGlobalAgentCatalog(signal)).agents,
+    fetchOptions: async (signal) => assertAgentEditorOptions(await api.get<unknown>('/api/v2/admin/agent-options', signal)),
+    fetchEditor: async (id, _providedScope, signal) =>
+        assertGlobalAgentEditorResource(await api.get<AuthoringResource<AgentConfiguration>>(globalAgentUrl(id), signal), id),
+    save: async (draft, original) => {
+        const record = original ? draft : { ...draft, id: await generateAgentId() };
+        if (!record.id) throw new Error('Could not allocate an agent identifier. Try again.');
+        const write = buildEditorWrite(
+            withoutServerStampedFields(record),
+            original ? { ...original, record: withoutServerStampedFields(original.record) } : null,
+        );
+        const response = original
+            ? await api.patch<AuthoringResource<AgentConfiguration>>(globalAgentUrl(original.record.id), write)
+            : await api.post<AuthoringResource<AgentConfiguration>>(GLOBAL_AGENTS_API, write);
+        return assertGlobalAgentEditorResource(response, original?.record.id);
+    },
+    deleteAgent: async (agent) => {
+        await api.delete<{ success: boolean }>(globalAgentUrl(agent.id));
+    },
+    fetchActions: (signal) => fetchGlobalActions(signal),
+    fetchTargets: (signal) => fetchAgentTargets(GLOBAL_DELEGATION_SCOPE, signal),
+    fetchKnowledge: (signal) => fetchGlobalAgentKnowledgeCatalog(signal),
+    draftInstructions: (draft, actions, catalog, signal) =>
+        draftAgentInstructions(draft, actions, catalog, signal, GLOBAL_INSTRUCTION_SCOPE),
+    discoverFoundryResources: (endpoint, type, signal) => discoverAgentFoundryResources(endpoint, type, signal),
+};

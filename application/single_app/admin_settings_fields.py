@@ -30,7 +30,7 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Beyond a field's type, four optional descriptors shape how a section reads:
+Beyond a field's type, five optional descriptors shape how a section reads:
 
 ``group``
     Names the cluster a field belongs to, either as a label or with a variant
@@ -39,6 +39,19 @@ Beyond a field's type, four optional descriptors shape how a section reads:
     endpoint before the tuning knobs. Without this, a section like Document
     Intelligence is a flat run of forty controls in which the credential that
     makes the rest work is simply the last one.
+
+    A group may also name an ``anchor``: the key of an ungrouped switch declared
+    earlier in the same section. The renderer then draws the group as a panel
+    directly beneath that switch instead of at the foot of the card, which is
+    how each File Sync workspace type keeps its Access panel beside its own
+    toggle. Every field in an anchored group depends on the anchor, so the
+    panel can never show while its switch is off.
+
+    A group may also name ``open_until_set``: a key in the same group whose
+    blank value opens the group while the section's capability is on. That is
+    for an optional connection the administrator most likely wants next --
+    Content Understanding under Enhanced extraction -- which cannot be marked
+    ``required`` because the capability works without it.
 
 ``depends_on``
     Shows a field only while a condition holds. See ``evaluate_dependency`` for
@@ -59,8 +72,19 @@ Beyond a field's type, four optional descriptors shape how a section reads:
     input would otherwise save to a top-level key nothing reads. See
     ``_apply_nested_paths``.
 
-The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Workflow, Workspaces
-and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+``on_enable``
+    Companion values a switch sets when it is turned on, as
+    ``{"set": {key: value}, "when": <condition>}``. Enhanced extraction is the
+    case: the extraction mode only matters while it is on, and turning it on
+    with the mode still on Standard would change nothing, so the mode moves to
+    Auto, which is what the server-rendered form has always done. The browser
+    applies it to the draft as the switch flips, so the new value is visible
+    before saving; ``_apply_enable_defaults`` applies it to a save that turns
+    the switch on without naming the companion, so an API client gets the same
+    result. A value named in the same save always wins.
+
+The Appearance, Agents & Actions, Chat, Data Lifecycle, Knowledge, Operations, Workflow,
+Workspaces and Security groups are described in full. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -105,6 +129,12 @@ from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
     normalize_content_safety_violation_message,
 )
+from functions_control_center_schedule import (
+    is_valid_control_center_auto_refresh_time,
+    is_valid_control_center_auto_refresh_timezone,
+    normalize_control_center_auto_refresh_time,
+    resolve_control_center_auto_refresh_settings,
+)
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -113,6 +143,11 @@ from functions_model_endpoint_identity_header import (
 )
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
+)
+from functions_logging_timers import (
+    LOGGING_TIMERS,
+    clamp_logging_timer_value,
+    resolve_logging_timer_settings,
 )
 from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
 from functions_model_endpoint_identity_header import (
@@ -222,11 +257,31 @@ NON_PATCHABLE_KEYS = {
         "Model endpoints hold credentials that are stripped before they reach "
         "the browser, so they cannot be saved from here."
     ),
+    # Calculated by the server whenever the settings they follow from are saved.
+    # Accepting one directly would let a save move a scheduled refresh or extend a
+    # running debug session without touching the controls that are meant to.
+    "control_center_auto_refresh_next_run": (
+        "The next refresh is calculated from the schedule when it is saved."
+    ),
+    "control_center_auto_refresh_hour": (
+        "The refresh hour is taken from the refresh time when it is saved."
+    ),
+    "control_center_auto_refresh_minute": (
+        "The refresh minute is taken from the refresh time when it is saved."
+    ),
+    "debug_logging_turnoff_time": (
+        "The turnoff time is calculated from the debug logging timer when it is saved."
+    ),
+    "file_processing_logs_turnoff_time": (
+        "The turnoff time is calculated from the file processing log timer when it is saved."
+    ),
 }
 
 # ``input_type`` values a text field may ask the browser for. Anything else would
-# reach the DOM unvalidated, so the schema test rejects it.
-TEXT_INPUT_TYPES = ("text", "email", "url")
+# reach the DOM unvalidated, so the schema test rejects it. ``time`` is a 24-hour
+# HH:MM picker and ``timezone`` an IANA zone with suggestions; both are validated
+# on save rather than trusted from the browser.
+TEXT_INPUT_TYPES = ("text", "email", "url", "time", "timezone")
 
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
@@ -875,37 +930,15 @@ ADMIN_SETTINGS_FIELDS = {
     # The sections below are not part of the Appearance group. They are described
     # here because the V2 surface's `enable_*` fallback was filing their toggles
     # under Appearance: it matches a key to a section by shared leading word
-    # stems and takes the first section that scores at all, so
-    # `enable_external_healthcheck` matched "external" in External Links long
-    # before it could reach Health Check, whose id splits into "health" and
-    # "check" and so never matches the single token "healthcheck". Declaring a
-    # key is what takes it out of that scan, so these five are declared rather
-    # than guessed at. Wording is taken from the V1 panes so both interfaces say
-    # the same thing.
-    "health-check-section": [
-        {
-            "key": "enable_external_healthcheck",
-            "type": "switch",
-            "label": "Enable /external/healthcheck",
-            "help": (
-                "Authenticated endpoint for external monitoring systems. Best for "
-                "internal monitors or diagnostics tooling that already signs in to "
-                "the application."
-            ),
-            "default": False,
-        },
-        {
-            "key": "enable_no_auth_external_healthcheck",
-            "type": "switch",
-            "label": "Enable /external/healthcheckz",
-            "help": (
-                "Unauthenticated endpoint for platform probes that cannot sign in. "
-                "This route is intentionally unauthenticated, so only enable it for "
-                "trusted health probes or controlled network paths."
-            ),
-            "default": False,
-        },
-    ],
+    # stems and takes the first section that scores at all. Declaring a key is
+    # what takes it out of that scan, so these are declared rather than guessed
+    # at. Health Check had the same problem -- `enable_external_healthcheck`
+    # matched "external" in External Links -- and so did Application Insights,
+    # whose global logging switch the scan filed under Debug Logging on the word
+    # "logging". Both are now declared with the rest of the Operations group
+    # below, beside the mixed-source telemetry switch that reports to the same
+    # place. Wording is taken from the V1 panes so both interfaces say the same
+    # thing.
     "user-facing-latest-features-section": [
         {
             "key": "enable_support_latest_feature_documentation_links",
@@ -1155,6 +1188,55 @@ ADMIN_SETTINGS_FIELDS = {
                 },
             },
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        # Declared here because the fallback scan matched "search" and filed the
+        # switch under Web Search, which reaches the public internet. This cache sits
+        # in front of the workspace indexes configured above.
+        {
+            "key": "enable_search_result_caching",
+            "type": "switch",
+            "label": "Cache workspace search results",
+            "help": (
+                "Reuses the results of a recent identical search, so a repeated question "
+                "returns faster, cites the same sources, and skips the query embedding and "
+                "the semantic-ranked Azure AI Search queries. Results are reused only while "
+                "the query, scope, filters, embedding model and the documents in scope, "
+                "including their versions, still match, and they are re-checked against the "
+                "requesting user's access before they are returned. Leave it on; turn it off "
+                "only to make every search run fresh while you troubleshoot relevance."
+            ),
+            "default": True,
+            "group": {
+                "id": "search-result-cache",
+                "label": "Search result cache",
+                "variant": "behavior",
+                "help": (
+                    "Applies to the workspace document searches behind grounded chat, "
+                    "agents and workflows, not to web search. Cached results are kept in "
+                    "the search_cache Cosmos DB container, so Redis is not required."
+                ),
+            },
+        },
+        {
+            "key": "search_cache_ttl_seconds",
+            "type": "number",
+            "label": "Cache lifetime (seconds)",
+            "help": (
+                "How long a cached result set can be reused. Adding, deleting, re-sharing "
+                "or re-versioning a document forces a fresh search straight away. Other "
+                "changes, such as a document that finishes processing after the search ran "
+                "or an edit made directly in Azure AI Search, can take up to this long to "
+                "appear. 300 seconds (5 minutes) by default."
+            ),
+            "default": 300,
+            "min": 60,
+            "max": 3600,
+            "group": {
+                "id": "search-result-cache",
+                "label": "Search result cache",
+                "variant": "behavior",
+            },
+            "depends_on": {"key": "enable_search_result_caching", "equals": True},
         },
     ],
     # ------------------------------------------------------------------
@@ -1858,9 +1940,11 @@ ADMIN_SETTINGS_FIELDS = {
     # and then scrolls past everything that depends on the connection before
     # reaching the connection itself.
     #
-    # Here the connection comes first and the behaviour that needs it follows,
-    # declaring `requires` so a toggle flipped without a configured endpoint says
-    # so rather than silently doing nothing.
+    # Here Document Intelligence is the connection and nothing else. It is needed
+    # whatever else is configured -- Standard extraction is its Read model, and
+    # Enhanced falls back to its Layout model -- so it comes first, and the
+    # settings that only matter once Enhanced extraction is on live in the
+    # section after it.
     # ------------------------------------------------------------------
     "document-intelligence-section": [
         {
@@ -1878,8 +1962,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "label": "Connection",
                 "variant": "connection",
                 "help": (
-                    "Document Intelligence reads PDFs and images. Nothing else in this "
-                    "tab works until it is reachable."
+                    "Document Intelligence reads PDFs and images. Standard extraction "
+                    "is its Read model and Enhanced extraction falls back to its Layout "
+                    "model, so nothing else in this tab works until it is reachable."
                 ),
             },
         },
@@ -1949,11 +2034,15 @@ ADMIN_SETTINGS_FIELDS = {
             "test_type": "azure_doc_intelligence",
             "test_payload": {
                 "enable_apim": {"key": "enable_document_intelligence_apim"},
+                # With Enhanced extraction off every document uses Standard,
+                # whatever mode is stored, so the test exercises Read too.
                 "document_intelligence_pdf_image_extraction_mode": {
-                    "key": "document_intelligence_pdf_image_extraction_mode"
+                    "key": "document_intelligence_pdf_image_extraction_mode",
+                    "when": {"key": "enable_enhanced_extraction", "equals": True},
                 },
                 "document_intelligence_auto_sample_pages": {
-                    "key": "document_intelligence_auto_sample_pages"
+                    "key": "document_intelligence_auto_sample_pages",
+                    "when": {"key": "enable_enhanced_extraction", "equals": True},
                 },
                 "direct.endpoint": {
                     "key": "azure_document_intelligence_endpoint",
@@ -1978,15 +2067,61 @@ ADMIN_SETTINGS_FIELDS = {
             },
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
         },
+    ],
+    # ------------------------------------------------------------------
+    # Knowledge / Document Extraction / Enhanced Extraction
+    #
+    # One card for the capability and everything it governs. Enhanced extraction
+    # used to be a switch inside the collapsed Extraction group of Document
+    # Intelligence, while Content Understanding -- the engine behind it -- was a
+    # card of its own that could be filled in with Enhanced off, where it is
+    # never called. The switch now leads this card, and every setting that only
+    # means something while it is on sits beneath it and is hidden while it is
+    # off, so the relationship is shown rather than remembered.
+    #
+    # Content Understanding stays optional: without it Enhanced uses Document
+    # Intelligence Layout, which still captures tables and checkbox states but
+    # does not describe figures. The engine notice says which applies. Its
+    # fields are also gated on the cloud, because the service is not offered in
+    # Azure Government or custom clouds; the server-rendered pane does the same
+    # with ``content_understanding_supported``.
+    # ------------------------------------------------------------------
+    "enhanced-extraction-section": [
+        {
+            "key": "enable_enhanced_extraction",
+            "type": "switch",
+            "label": "Enable Enhanced extraction",
+            "help": (
+                "Extracts tables, page structure, forms and checkbox states from PDFs "
+                "and images, and with Azure AI Content Understanding connected, "
+                "descriptions of figures and charts. The extraction mode and the "
+                "Content Understanding connection appear here once it is on. While it "
+                "is off, every document uses Standard extraction (Document "
+                "Intelligence Read)."
+            ),
+            "default": False,
+            "role": "capability",
+            "on_enable": {
+                # Enhanced with the mode still on Standard would change nothing.
+                # The server-rendered form moves to Auto at this point as well.
+                "set": {"document_intelligence_pdf_image_extraction_mode": "auto"},
+                "when": {
+                    "key": "document_intelligence_pdf_image_extraction_mode",
+                    "equals": "read",
+                },
+            },
+        },
         {
             "key": "document_intelligence_pdf_image_extraction_mode",
             "type": "select",
             "label": "PDF and Image Extraction Mode",
             "help": (
-                "Standard is Document Intelligence Read: fastest and cheapest for plain "
-                "text. Enhanced captures tables, page structure, forms and checkbox "
-                "states, at roughly six times the cost per thousand pages. Auto samples "
-                "the first pages and picks."
+                "What new PDF and image uploads use. Standard is Document Intelligence "
+                "Read: fastest and cheapest for plain text. Enhanced captures tables, "
+                "page structure, forms and checkbox states, at roughly six times the "
+                "cost per thousand pages. Auto samples the first pages and picks. With "
+                "Standard selected, a document can still be extracted again as "
+                "Enhanced from its workspace."
             ),
             "default": "read",
             "options": [
@@ -2000,7 +2135,7 @@ ADMIN_SETTINGS_FIELDS = {
                     "label": "Auto — sample first pages, then choose",
                 },
             ],
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": {"key": "enable_enhanced_extraction", "equals": True},
         },
         {
             "key": "document_intelligence_auto_sample_pages",
@@ -2014,53 +2149,63 @@ ADMIN_SETTINGS_FIELDS = {
             "default": 3,
             "min": 1,
             "max": 20,
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
-            "depends_on": {
-                "key": "document_intelligence_pdf_image_extraction_mode",
-                "equals": "auto",
-            },
-        },
-        {
-            "key": "enable_enhanced_extraction",
-            "type": "switch",
-            "label": "Enable Enhanced extraction",
-            "help": (
-                "Uses Azure AI Content Understanding, which returns tables, page "
-                "structure, checkbox states and descriptions of figures and charts. "
-                "Falls back to Document Intelligence Layout where Content Understanding "
-                "is unavailable or unconfigured."
-            ),
-            "default": False,
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"key": "document_intelligence_pdf_image_extraction_mode", "equals": "auto"},
+            ],
         },
         {
             "key": "enable_document_intelligence_formula_extraction",
             "type": "switch",
             "label": "Extract mathematical formulas",
             "help": (
-                "Captures equations as LaTeX rather than approximate OCR text. This is a "
-                "billed Document Intelligence add-on that adds per-page cost to every "
-                "Enhanced extraction, and it has no effect while extraction is Standard."
+                "Captures equations as LaTeX rather than approximate OCR text. It is a "
+                "billed add-on to the Document Intelligence Layout model, so it adds "
+                "per-page cost wherever Layout runs: Auto's page sampling, and Enhanced "
+                "extraction without Content Understanding. Standard and Content "
+                "Understanding extractions do not use it."
             ),
             "default": False,
-            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": {"key": "enable_enhanced_extraction", "equals": True},
         },
-    ],
-    # Its own section now. The card has always been in the extraction pane but
-    # was missing from ADMIN_NAV, so neither interface could navigate to it.
-    "content-understanding-section": [
+        {
+            "type": "component",
+            "component": "enhanced-extraction-engine",
+            "label": "Extraction engine",
+            "help": (
+                "Which engine runs when a document is extracted as Enhanced, judged "
+                "from the settings on this page. Test the Content Understanding "
+                "connection to confirm it is reachable."
+            ),
+            "depends_on": {"key": "enable_enhanced_extraction", "equals": True},
+        },
         {
             "key": "azure_content_understanding_endpoint",
             "type": "text",
             "label": "Foundry Endpoint",
             "help": (
                 "The Microsoft Foundry resource endpoint, with no trailing path. Leave "
-                "blank and Enhanced extraction falls back to Document Intelligence "
-                "Layout."
+                "it blank to use Document Intelligence Layout instead."
             ),
             "default": "",
             "placeholder": "https://your-resource.services.ai.azure.com",
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
+                "help": (
+                    "Optional. Azure AI Content Understanding backs Enhanced extraction "
+                    "and adds descriptions of figures and charts. Without it, Enhanced "
+                    "uses Document Intelligence Layout."
+                ),
+                # Starts open while unconnected, because it is the step most
+                # administrators want next after turning Enhanced on.
+                "open_until_set": "azure_content_understanding_endpoint",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
         },
         {
             "key": "azure_content_understanding_authentication_type",
@@ -2075,42 +2220,31 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "key", "label": "Key"},
                 {"value": "managed_identity", "label": "Managed Identity"},
             ],
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
         },
         {
             "key": "azure_content_understanding_key",
             "type": "secret",
             "default": "",
             "label": "Content Understanding Key",
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
-            "depends_on": {
-                "key": "azure_content_understanding_authentication_type",
-                "equals": "key",
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
             },
-        },
-        {
-            "key": "azure_content_understanding_api_version",
-            "type": "text",
-            "label": "API Version",
-            "default": "",
-            "fallback_when_empty": True,
-            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
-        },
-        {
-            "key": "azure_content_understanding_analyzer_id",
-            "type": "text",
-            "label": "Document Analyzer",
-            "default": "",
-            "fallback_when_empty": True,
-            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
-        },
-        {
-            "key": "azure_content_understanding_image_analyzer_id",
-            "type": "text",
-            "label": "Image Analyzer",
-            "default": "",
-            "fallback_when_empty": True,
-            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+                {"key": "azure_content_understanding_authentication_type", "equals": "key"},
+            ],
         },
         {
             "type": "component",
@@ -2129,10 +2263,66 @@ ADMIN_SETTINGS_FIELDS = {
                     "key": "azure_content_understanding_image_analyzer_id"
                 },
             },
-            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "group": {
+                "id": "content-understanding",
+                "label": "Content Understanding connection",
+                "variant": "connection",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_content_understanding_api_version",
+            "type": "text",
+            "label": "API Version",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {
+                "id": "analyzers",
+                "label": "Content Understanding analyzers",
+                "variant": "advanced",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_content_understanding_analyzer_id",
+            "type": "text",
+            "label": "Document Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {
+                "id": "analyzers",
+                "label": "Content Understanding analyzers",
+                "variant": "advanced",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_content_understanding_image_analyzer_id",
+            "type": "text",
+            "label": "Image Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {
+                "id": "analyzers",
+                "label": "Content Understanding analyzers",
+                "variant": "advanced",
+            },
+            "depends_on": [
+                {"key": "enable_enhanced_extraction", "equals": True},
+                {"flag": "content_understanding_supported", "equals": True},
+            ],
         },
     ],
-    # Also promoted out of the extraction card into a section of its own. It is
+    # Promoted out of the extraction card into a section of its own. It is
     # independent of Enhanced extraction despite sitting inside it in the V1
     # markup, which is what made it read as part of that feature.
     "office-embedded-image-section": [
@@ -2835,7 +3025,10 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Stores original files in an Azure Storage account so citations can "
                 "link to and preview the source document rather than only quoting "
-                "extracted text."
+                "extracted text. It also turns on spreadsheet analysis: CSV and Excel "
+                "files are calculated over row by row instead of searched as text, and "
+                "Chat, Search, Analyze and Compare can combine documents and "
+                "spreadsheets selected together."
             ),
             "default": False,
         },
@@ -2886,6 +3079,22 @@ ADMIN_SETTINGS_FIELDS = {
                     "equals": "managed_identity",
                 },
             ],
+        },
+        {
+            "key": "enable_mixed_source_relevance_candidates",
+            "type": "switch",
+            "label": "Look for relevant spreadsheets when no files are selected",
+            "help": (
+                "When a chat searches workspace documents without specific files "
+                "selected, run a second search aimed at spreadsheet columns and sheets "
+                "and keep up to six spreadsheets that fit the question. A question about "
+                "figures can then be answered from the right file even when its text did "
+                "not rank among the first results. The extra search adds a little time to "
+                "those messages, and a matched spreadsheet that gets analyzed adds model "
+                "calls."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
         },
         {
             "key": "tabular_preview_max_blob_size_mb",
@@ -2981,8 +3190,19 @@ ADMIN_SETTINGS_FIELDS = {
     # `requires` descriptor: without it an administrator turns File Sync on and
     # nothing happens, with no visible reason until a flash message after saving.
     #
-    # The three scope sections share one shape -- enable, access, assignment --
-    # so learning Personal is enough to read Group and Public.
+    # Everything File Sync governs is one card. A workspace type is only live
+    # while File Sync and its own switch are both on (functions_file_sync.py),
+    # so the three type switches follow the capability and depend on it, which
+    # is what draws them nested beneath it. Keep them contiguous:
+    # deriveFieldHierarchy nests an uninterrupted run, so a field declared
+    # between them would leave the switches after it un-nested.
+    #
+    # Each type's access rules form an Access panel anchored under that type's
+    # switch. Visibility is not transitive, so every field in those panels
+    # repeats the enable_file_sync condition; without it a panel would stay
+    # visible with File Sync off. The three panels share one shape -- who
+    # manages sources, then the type's own restriction -- so learning Personal
+    # is enough to read Group and Public.
     # ------------------------------------------------------------------
     "file-sync-section": [
         {
@@ -3005,6 +3225,194 @@ ADMIN_SETTINGS_FIELDS = {
                     "until Redis Cache is enabled and configured."
                 ),
             },
+        },
+        {
+            "key": "enable_file_sync_personal",
+            "type": "switch",
+            "label": "Personal workspaces",
+            "default": True,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "enable_file_sync_group",
+            "type": "switch",
+            "label": "Group workspaces",
+            "default": True,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "enable_file_sync_public",
+            "type": "switch",
+            "label": "Public workspaces",
+            "default": False,
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_personal_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "help": "Users keep their synced documents but cannot add or edit a source.",
+            "default": False,
+            "group": {
+                "id": "personal-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_personal",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_personal", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_personal_require_app_role",
+            "type": "switch",
+            "label": "Require the PersonalFileSyncUser app role",
+            "help": (
+                "Required app role value: PersonalFileSyncUser. Assign it in the "
+                "Enterprise App before turning this on, or no user will be able to "
+                "manage a personal source."
+            ),
+            "default": False,
+            "group": {
+                "id": "personal-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_personal",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_personal", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_group_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+            ],
+        },
+        {
+            "key": "require_group_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned groups",
+            "help": "Only the groups listed below may use File Sync.",
+            "default": False,
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_allowed_group_ids",
+            "type": "id_list",
+            "label": "Assigned groups",
+            "help": (
+                "Leaving this empty while the restriction is on means no group can use "
+                "File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search groups by name",
+            "search_endpoint": "/api/admin/file-sync/groups/search",
+            "search_param": "q",
+            "results_key": "groups",
+            "item_noun": "group",
+            "item_noun_plural": "groups",
+            # Group ids are canonical UUIDs, and the shared normalizer drops
+            # anything else, matching what the server-rendered form stores.
+            "id_kind": "group",
+            "group": {
+                "id": "group-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_group",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_group", "equals": True},
+                {"key": "require_group_assignment_for_file_sync", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_public_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+            ],
+        },
+        {
+            "key": "require_public_workspace_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned public workspaces",
+            "help": "Only the public workspaces listed below may use File Sync.",
+            "default": False,
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+            ],
+        },
+        {
+            "key": "file_sync_allowed_public_workspace_ids",
+            "type": "id_list",
+            "label": "Assigned public workspaces",
+            "help": (
+                "Leaving this empty while the restriction is on means no public "
+                "workspace can use File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search public workspaces by name",
+            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "search_param": "q",
+            "results_key": "workspaces",
+            "item_noun": "public workspace",
+            "item_noun_plural": "public workspaces",
+            # Public workspace ids are not UUID-constrained, so they are only
+            # trimmed and deduplicated.
+            "id_kind": "opaque",
+            "group": {
+                "id": "public-access",
+                "label": "Access",
+                "variant": "access",
+                "anchor": "enable_file_sync_public",
+            },
+            "depends_on": [
+                {"key": "enable_file_sync", "equals": True},
+                {"key": "enable_file_sync_public", "equals": True},
+                {
+                    "key": "require_public_workspace_assignment_for_file_sync",
+                    "equals": True,
+                },
+            ],
         },
         {
             "key": "file_sync_max_sources_per_scope",
@@ -3073,8 +3481,6 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
         },
-    ],
-    "file-sync-source-types-section": [
         {
             "key": "file_sync_visible_source_types",
             "type": "checkbox_set",
@@ -3116,145 +3522,8 @@ ADMIN_SETTINGS_FIELDS = {
                     "disabled": True,
                 },
             ],
+            "group": {"id": "source-types", "label": "Source types", "variant": "behavior"},
             "depends_on": {"key": "enable_file_sync", "equals": True},
-        },
-    ],
-    "file-sync-personal-section": [
-        {
-            "key": "enable_file_sync_personal",
-            "type": "switch",
-            "label": "Enable sync for personal workspaces",
-            "default": True,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_personal_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "help": "Users keep their synced documents but cannot add or edit a source.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
-        },
-        {
-            "key": "file_sync_personal_require_app_role",
-            "type": "switch",
-            "label": "Require the PersonalFileSyncUser app role",
-            "help": (
-                "Required app role value: PersonalFileSyncUser. Assign it in the "
-                "Enterprise App before turning this on, or no user will be able to "
-                "manage a personal source."
-            ),
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
-        },
-    ],
-    "file-sync-group-section": [
-        {
-            "key": "enable_file_sync_group",
-            "type": "switch",
-            "label": "Enable sync for group workspaces",
-            "default": True,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_group_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_group", "equals": True},
-        },
-        {
-            "key": "require_group_assignment_for_file_sync",
-            "type": "switch",
-            "label": "Restrict to assigned groups",
-            "help": "Only the groups listed below may use File Sync.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_group", "equals": True},
-        },
-        {
-            "key": "file_sync_allowed_group_ids",
-            "type": "id_list",
-            "label": "Assigned groups",
-            "help": (
-                "Leaving this empty while the restriction is on means no group can use "
-                "File Sync."
-            ),
-            "default": [],
-            "placeholder": "Search groups by name",
-            "search_endpoint": "/api/admin/file-sync/groups/search",
-            "search_param": "q",
-            "results_key": "groups",
-            "item_noun": "group",
-            "item_noun_plural": "groups",
-            # Group ids are canonical UUIDs, and the shared normalizer drops
-            # anything else, matching what the server-rendered form stores.
-            "id_kind": "group",
-            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
-            "depends_on": {
-                "all_of": [
-                    {"key": "enable_file_sync_group", "equals": True},
-                    {"key": "require_group_assignment_for_file_sync", "equals": True},
-                ]
-            },
-        },
-    ],
-    "file-sync-public-section": [
-        {
-            "key": "enable_file_sync_public",
-            "type": "switch",
-            "label": "Enable sync for public workspaces",
-            "default": False,
-            "role": "capability",
-        },
-        {
-            "key": "file_sync_public_admin_only",
-            "type": "switch",
-            "label": "Only administrators manage sources",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_public", "equals": True},
-        },
-        {
-            "key": "require_public_workspace_assignment_for_file_sync",
-            "type": "switch",
-            "label": "Restrict to assigned public workspaces",
-            "help": "Only the public workspaces listed below may use File Sync.",
-            "default": False,
-            "group": {"id": "access", "label": "Access", "variant": "access"},
-            "depends_on": {"key": "enable_file_sync_public", "equals": True},
-        },
-        {
-            "key": "file_sync_allowed_public_workspace_ids",
-            "type": "id_list",
-            "label": "Assigned public workspaces",
-            "help": (
-                "Leaving this empty while the restriction is on means no public "
-                "workspace can use File Sync."
-            ),
-            "default": [],
-            "placeholder": "Search public workspaces by name",
-            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
-            "search_param": "q",
-            "results_key": "workspaces",
-            "item_noun": "public workspace",
-            "item_noun_plural": "public workspaces",
-            # Public workspace ids are not UUID-constrained, so they are only
-            # trimmed and deduplicated.
-            "id_kind": "opaque",
-            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
-            "depends_on": {
-                "all_of": [
-                    {"key": "enable_file_sync_public", "equals": True},
-                    {
-                        "key": "require_public_workspace_assignment_for_file_sync",
-                        "equals": True,
-                    },
-                ]
-            },
         },
     ],
     "permissions-section": [
@@ -3438,31 +3707,6 @@ ADMIN_SETTINGS_FIELDS = {
     # including this role requirement gated on the capability itself. A second
     # declaration here would override that one and silently drop
     # `enable_chat_file_uploads`, because a later key wins in a dict literal.
-    "control-center-overview-section": [
-        {
-            "key": "require_member_of_control_center_admin",
-            "type": "switch",
-            "label": "Require ControlCenterAdmin App Role",
-            "help": (
-                "Narrows the Control Center -- user management, group oversight, "
-                "public workspace control and activity logs -- to holders of the "
-                "ControlCenterAdmin app role. Note that this takes it away from "
-                "general Admins, so assign the role before switching it on."
-            ),
-            "default": False,
-        },
-        {
-            "key": "require_member_of_control_center_dashboard_reader",
-            "type": "switch",
-            "label": "Allow ControlCenterDashboardReader App Role",
-            "help": (
-                "Grants the Control Center dashboard, and nothing else, to holders of "
-                "the ControlCenterDashboardReader app role. Useful for giving someone "
-                "the usage picture without any management ability."
-            ),
-            "default": False,
-        },
-    ],
     "group-workspaces-section": [
         {
             "key": "enable_group_workspaces",
@@ -4415,6 +4659,25 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_semantic_kernel", "equals": True},
         },
     ],
+    # The organisation's agents themselves, rather than settings about them. The
+    # component reads and writes through the global editor routes
+    # (/api/v2/admin/agents) and the classic enable and default-agent routes, never
+    # the settings draft, so each change saves on its own.
+    "organization-agents-section": [
+        {
+            "type": "component",
+            "component": "global-agents-manager",
+            "label": "Global Agents",
+            "help": (
+                "Agents the organisation provides. Everyone uses the default agent while "
+                "Workspace Mode is off; with it on, these appear beside people's own agents "
+                "only when global agents are added to workspaces. Create one from scratch "
+                "or from an approved template, and disable one to keep it without offering "
+                "it."
+            ),
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+    ],
     # Rendered by V1 only while Workspace Mode is on, which ``ADMIN_NAV`` now
     # states as a section condition, so V2 hides the section on the same terms.
     "agent-toggles-card": [
@@ -4642,6 +4905,17 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": True,
             "depends_on": {"key": "agent_templates_allow_user_submission", "equals": True},
+        },
+        {
+            # Reviewing submissions happens in the shared approvals queue, which
+            # the classic Approvals page serves; this only points there.
+            "type": "component",
+            "component": "agent-template-approvals-link",
+            "label": "Approvals queue",
+            "help": (
+                "Review, approve and remove submitted templates in the approvals queue, "
+                "beside the other requests an administrator handles."
+            ),
         },
     ],
     # --- Actions ----------------------------------------------------------
@@ -4994,6 +5268,24 @@ ADMIN_SETTINGS_FIELDS = {
             "readonly": True,
             "managed_by": "Chat \u203a Citations \u203a Enhanced",
             "group": "Managed elsewhere",
+        },
+    ],
+    # The organisation's actions themselves. The built-in toggles that used to sit
+    # here live in core-plugin-toggles, so this section holds no setting at all:
+    # the component reads and writes through the global editor routes
+    # (/api/v2/admin/actions) and the classic enable route, never the settings draft.
+    "actions-config": [
+        {
+            "type": "component",
+            "component": "global-actions-manager",
+            "label": "Global Actions",
+            "help": (
+                "Connections to APIs, databases, MCP servers and other services that "
+                "global agents can call. Workspaces see them too when global agents and "
+                "actions are added to workspaces. Disable one to keep its configuration "
+                "without loading it."
+            ),
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
         },
     ],
     # --- Inbound MCP ------------------------------------------------------
@@ -6415,6 +6707,453 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
     ],
+    # ------------------------------------------------------------------
+    # Operations group: Control Center and Logging & Health. Sections and order
+    # follow admin_settings_nav.py, and every control follows the V1
+    # control-center-config and logging panes, so a setting never exists in one
+    # interface only.
+    #
+    # Several values in this group are calculated rather than edited: the next
+    # scheduled Control Center refresh and each log's turnoff time. They are worked
+    # out on save by the helpers both admin surfaces share (see
+    # ``_apply_operations_derivations``) and refused if submitted directly.
+    # ------------------------------------------------------------------
+    "control-center-auto-refresh-section": [
+        {
+            "key": "control_center_auto_refresh_enabled",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Daily Control Center Refresh",
+            "help": (
+                "Recalculates the Control Center's cached activity figures for every "
+                "user and group once a day, so the dashboard is current each morning "
+                "without anyone refreshing it by hand. When off, the figures change "
+                "only when an administrator refreshes them from the Control Center."
+            ),
+            "default": True,
+        },
+        {
+            "key": "control_center_auto_refresh_time",
+            "type": "text",
+            "input_type": "time",
+            "label": "Refresh Time",
+            "help": (
+                "When the refresh starts each day, read in the timezone below. Pick a "
+                "quiet hour: the refresh reads every user and group record."
+            ),
+            "default": "02:00",
+            "max_length": 8,
+            "depends_on": {"key": "control_center_auto_refresh_enabled", "equals": True},
+        },
+        {
+            "key": "control_center_auto_refresh_timezone",
+            "type": "text",
+            "input_type": "timezone",
+            "label": "Timezone",
+            "help": (
+                "The refresh follows this zone's clock, daylight saving included, so "
+                "02:00 stays 02:00 all year. The next run is stored in UTC."
+            ),
+            "default": "America/New_York",
+            "max_length": 64,
+            "depends_on": {"key": "control_center_auto_refresh_enabled", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "control-center-refresh-schedule",
+            "label": "Next refresh",
+            "help": (
+                "Worked out when the schedule is saved and again after each scheduled "
+                "refresh. Refreshing by hand in the Control Center leaves it where it is."
+            ),
+        },
+    ],
+    "control-center-overview-section": [
+        {
+            "key": "require_member_of_control_center_admin",
+            "type": "switch",
+            "label": "Require ControlCenterAdmin App Role",
+            "help": (
+                "Restricts the whole Control Center -- dashboard, user management, "
+                "group oversight, public workspace control and activity logs -- to "
+                "accounts holding the ControlCenterAdmin app role. General Admins lose "
+                "access, so assign the role before switching this on."
+            ),
+            "notice": (
+                "A new role assignment reaches a user at their next sign-in. Assign "
+                "ControlCenterAdmin, including to yourself, and sign in again before "
+                "saving. Admin Settings stays open to general Admins either way, so this "
+                "can always be switched back off."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "require_member_of_control_center_dashboard_reader",
+            "type": "switch",
+            "label": "Allow ControlCenterDashboardReader App Role",
+            "help": (
+                "Opens the Control Center dashboard -- usage statistics, activity "
+                "trends and metrics -- to accounts holding the ControlCenterDashboardReader "
+                "app role, without any management ability. It works whether or not the "
+                "ControlCenterAdmin requirement is on."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "control-center-access-matrix",
+            "label": "Who can open the Control Center",
+            "help": (
+                "Follows the two switches above, including changes you have not saved "
+                "yet. Copy a role value to paste it into the Entra app registration."
+            ),
+        },
+    ],
+    "application-insights-section": [
+        {
+            "key": "enable_appinsights_global_logging",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Application Insights Global Logging",
+            "help": (
+                "Raises the application-wide log level to informational, so messages "
+                "from every module and library reach Application Insights -- agents and "
+                "orchestration included -- rather than only SimpleChat's own events and "
+                "the warnings and errors from elsewhere. Useful while tracing a problem; "
+                "expect noticeably more ingestion, and cost, while it is on."
+            ),
+            "notice": (
+                "Application Insights is wired up once, when the app starts. Restart the "
+                "App Service after saving for this to take effect."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "type": "status",
+            "status_source": "appinsights_connection",
+            "label": "Connection",
+            "help": (
+                "Application Insights is reached through the "
+                "APPLICATIONINSIGHTS_CONNECTION_STRING App Service setting, not through "
+                "anything on this page."
+            ),
+        },
+        {
+            "type": "component",
+            "component": "restart-status",
+            "label": "Running state",
+            "help": "Compares the saved setting with how the running app was started.",
+            "watches": "enable_appinsights_global_logging",
+            "runtime_flag": "appinsights_global_logging_active",
+            "runtime_requires": "appinsights_connection_configured",
+        },
+        {
+            "key": "enable_mixed_source_development_telemetry",
+            "type": "switch",
+            "label": "Record mixed document and spreadsheet metrics",
+            "help": (
+                "Logs aggregate counts, timings and token totals for the processing "
+                "behind Chat, Search, Analyze and Compare over workspace documents and "
+                "spreadsheets: how many sources completed, were partial, failed, were "
+                "skipped or were canceled, plus authorization failures and background "
+                "exports. Never records prompts, content, file names, document IDs or "
+                "storage paths. Turn it on while checking how these requests behave; "
+                "each request adds several log entries."
+            ),
+            "default": False,
+        },
+    ],
+    "debug-logging-section": [
+        {
+            "key": "enable_debug_logging",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Debug Logging",
+            "help": (
+                "Turns on SimpleChat's DEBUG output everywhere, for troubleshooting a "
+                "problem you can reproduce. It is written to the App Service log stream "
+                "and, while Application Insights is connected, sent there as traces."
+            ),
+            "notice": (
+                "Debug output can include tokens, keys and request content that ordinary "
+                "logs leave out. Turn it off once you have what you need, or let the "
+                "timer below do it."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "debug_logging_timer_enabled",
+            "type": "switch",
+            "label": "Turn off automatically",
+            "help": (
+                "Switches debug logging off by itself once the time below has passed, "
+                "so a troubleshooting session cannot quietly keep running for weeks."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_debug_logging", "equals": True},
+        },
+        {
+            "key": "debug_timer_value",
+            "type": "number",
+            "label": "Duration",
+            "help": "How long debug logging stays on, counted from the save that starts the timer.",
+            "default": 1,
+            "min": 1,
+            "max": 120,
+            "depends_on": [
+                {"key": "enable_debug_logging", "equals": True},
+                {"key": "debug_logging_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "key": "debug_timer_unit",
+            "type": "select",
+            "label": "Time Unit",
+            "help": "Each unit has its own cap, shown beside it. The longest a timer can run is 52 weeks.",
+            "default": "hours",
+            "options": [
+                {"value": "minutes", "label": "Minutes (1-120)"},
+                {"value": "hours", "label": "Hours (1-24)"},
+                {"value": "days", "label": "Days (1-7)"},
+                {"value": "weeks", "label": "Weeks (1-52)"},
+            ],
+            "depends_on": [
+                {"key": "enable_debug_logging", "equals": True},
+                {"key": "debug_logging_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "type": "component",
+            "component": "logging-timer-status",
+            "label": "Turns off",
+            "help": "Calculated when the timer is saved, and shown in your own timezone.",
+            "timer_keys": LOGGING_TIMERS["debug"],
+            "depends_on": {"key": "enable_debug_logging", "equals": True},
+        },
+        {
+            "key": "enable_dai_debug",
+            "type": "switch",
+            "label": "Document Access Index diagnostics",
+            "help": (
+                "Adds the manual backfill, checkpoint reset and shadow validation "
+                "diagnostics to Scale > Cosmos > DAI Metrics. Leave it off unless you are "
+                "investigating document access projection problems; the background "
+                "maintenance runs either way."
+            ),
+            "default": False,
+            "group": {
+                "id": "feature-diagnostics",
+                "label": "Feature diagnostics",
+                "variant": "advanced",
+            },
+            "related_section": {
+                "section_id": "document-access-index-section",
+                "label": "DAI Metrics",
+                # The diagnostics this reveals are drawn by the server-rendered pane
+                # only; V2's card for the section holds its switches, not them.
+                "classic_only": True,
+            },
+        },
+    ],
+    "file-processing-logs-section": [
+        {
+            "key": "enable_file_processing_logs",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable File Processing Logs",
+            "help": (
+                "Records each step SimpleChat takes while processing an uploaded file, "
+                "including the errors, in the file_processing container in Cosmos DB. "
+                "Read them there when an upload stalls or fails. Turning this off stops "
+                "new records; existing ones stay until you delete them below."
+            ),
+            "default": True,
+        },
+        {
+            "key": "file_processing_logs_timer_enabled",
+            "type": "switch",
+            "label": "Turn off automatically",
+            "help": (
+                "Switches file processing logs off by itself once the time below has "
+                "passed, which keeps a temporary investigation from growing the "
+                "container indefinitely."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_file_processing_logs", "equals": True},
+        },
+        {
+            "key": "file_timer_value",
+            "type": "number",
+            "label": "Duration",
+            "help": "How long the logs stay on, counted from the save that starts the timer.",
+            "default": 1,
+            "min": 1,
+            "max": 120,
+            "depends_on": [
+                {"key": "enable_file_processing_logs", "equals": True},
+                {"key": "file_processing_logs_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "key": "file_timer_unit",
+            "type": "select",
+            "label": "Time Unit",
+            "help": "Each unit has its own cap, shown beside it. The longest a timer can run is 52 weeks.",
+            "default": "hours",
+            "options": [
+                {"value": "minutes", "label": "Minutes (1-120)"},
+                {"value": "hours", "label": "Hours (1-24)"},
+                {"value": "days", "label": "Days (1-7)"},
+                {"value": "weeks", "label": "Weeks (1-52)"},
+            ],
+            "depends_on": [
+                {"key": "enable_file_processing_logs", "equals": True},
+                {"key": "file_processing_logs_timer_enabled", "equals": True},
+            ],
+        },
+        {
+            "type": "component",
+            "component": "logging-timer-status",
+            "label": "Turns off",
+            "help": "Calculated when the timer is saved, and shown in your own timezone.",
+            "timer_keys": LOGGING_TIMERS["file"],
+            "depends_on": {"key": "enable_file_processing_logs", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "file-processing-log-cleanup",
+            "label": "Delete stored logs",
+            "help": (
+                "Permanently removes file processing records from Cosmos DB, whether or "
+                "not logging is on. These act immediately and are not part of Save."
+            ),
+        },
+    ],
+    "health-check-section": [
+        {
+            "key": "enable_external_healthcheck",
+            "type": "switch",
+            "label": "Enable /external/healthcheck",
+            "help": (
+                "A lightweight availability check for monitors that reach the app "
+                "through its normal access boundary, such as App Service Authentication. "
+                "It answers with the server time once the app can read its settings, and "
+                "does not exercise Azure AI Search, Azure OpenAI or storage."
+            ),
+            "notice": (
+                "The bundled deployers set App Service Health check to this path. While "
+                "that is configured, switching this off makes the route answer HTTP 400, "
+                "and App Service starts treating its instances as unhealthy."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "enable_no_auth_external_healthcheck",
+            "type": "switch",
+            "label": "Enable /external/healthcheckz",
+            "help": (
+                "The same check for platform probes that cannot sign in. It returns a "
+                "small JSON status and nothing else."
+            ),
+            "notice": (
+                "This route answers anyone who can reach the app, without signing in. "
+                "Only enable it for trusted health probes or controlled network paths."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "endpoint-links",
+            "label": "Endpoints",
+            "help": (
+                "Copy a full address into your monitoring tool. Open is offered once the "
+                "saved setting has the endpoint turned on."
+            ),
+            "endpoints": [
+                {
+                    "path": "/external/healthcheck",
+                    "label": "Authenticated check",
+                    "gate_key": "enable_external_healthcheck",
+                    "access": "protected",
+                    "returns": "HTTP 200 with the server time as text.",
+                },
+                {
+                    "path": "/external/healthcheckz",
+                    "label": "Unauthenticated check",
+                    "gate_key": "enable_no_auth_external_healthcheck",
+                    "access": "public",
+                    "returns": 'HTTP 200 with {"status": "ok", "time": ...}.',
+                },
+            ],
+        },
+    ],
+    "swagger-section": [
+        {
+            "key": "enable_swagger",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enable Swagger/OpenAPI Documentation (/swagger)",
+            "help": (
+                "Serves an interactive explorer for SimpleChat's API at /swagger, and the "
+                "OpenAPI specification it is generated from at /swagger.json and "
+                "/swagger.yaml. Any signed-in user can open them. Useful for developers "
+                "and integrations; turn it off if you would rather not publish the API "
+                "surface to every user."
+            ),
+            "notice": (
+                "These routes are registered when the app starts. Restart the App Service "
+                "after saving for this to take effect."
+            ),
+            "notice_level": "warning",
+            # No seeded default exists; swagger_wrapper treats a missing value as on.
+            "default": True,
+        },
+        {
+            "type": "component",
+            "component": "restart-status",
+            "label": "Running state",
+            "help": "Compares the saved setting with how the running app was started.",
+            "watches": "enable_swagger",
+            "runtime_flag": "swagger_routes_registered",
+        },
+        {
+            "type": "component",
+            "component": "endpoint-links",
+            "label": "Documentation links",
+            "help": (
+                "Share these with developers. They need to sign in, and the specification "
+                "endpoints answer at most 30 requests a minute per client address."
+            ),
+            "endpoints": [
+                {
+                    "path": "/swagger",
+                    "label": "Swagger UI",
+                    "runtime_flag": "swagger_routes_registered",
+                    "access": "signed_in",
+                    "returns": "The interactive API explorer.",
+                },
+                {
+                    "path": "/swagger.json",
+                    "label": "OpenAPI specification (JSON)",
+                    "runtime_flag": "swagger_routes_registered",
+                    "access": "signed_in",
+                    "returns": "The OpenAPI 3 document, for client generators and API tools.",
+                },
+                {
+                    "path": "/swagger.yaml",
+                    "label": "OpenAPI specification (YAML)",
+                    "runtime_flag": "swagger_routes_registered",
+                    "access": "signed_in",
+                    "returns": "The same specification as YAML.",
+                },
+            ],
+        },
+    ],
 }
 
 
@@ -6459,6 +7198,10 @@ LEGACY_FIELD_NAMES = {
     # Same again for the classification categories, whose table script writes the
     # list into a hidden JSON field; V2 edits the stored list directly.
     "document_classification_categories": ["document_classification_categories_json"],
+    # V1 names the auto-turnoff switches after the control rather than after the
+    # stored key, which reads the other way round.
+    "debug_logging_timer_enabled": ["enable_debug_logging_timer"],
+    "file_processing_logs_timer_enabled": ["enable_file_processing_logs_timer"],
 }
 
 # Field names present in the V1 panes covered by a parity test that intentionally
@@ -6507,6 +7250,59 @@ V2_ONLY_FIELDS = {
         "Same as enable_app_maintenance: no server-rendered control, and misfiled "
         "into Security by the fallback scan until it was declared."
     ),
+    "enable_dai_debug": (
+        "The server-rendered DAI Metrics pane only reads it, to decide whether to "
+        "show its backfill, checkpoint reset and shadow validation diagnostics, so "
+        "it could only be changed by editing the settings document. The fallback "
+        "scan drew it as an unexplained 'Dai debug' switch under Debug Logging; it "
+        "is declared there instead, named for what it does and linked to DAI Metrics."
+    ),
+    "enable_search_result_caching": (
+        "The classic Azure AI Search card showed this switch briefly in late 2025, "
+        "but the classic save handler never stored it and the control was removed. "
+        "Declared under Azure AI Search so the fallback scan stops filing it under "
+        "Web Search, which it matched on the shared word stem 'search'."
+    ),
+    "search_cache_ttl_seconds": (
+        "Read by utils_cache.get_cache_settings() but editable in neither interface "
+        "since the classic control was removed alongside the caching switch. "
+        "Declared with that switch so the cache lifetime can be tuned."
+    ),
+}
+
+
+# In-app guides a section header offers, keyed by section id.
+#
+# Some settings only make sense alongside work done outside SimpleChat -- creating
+# app roles in Entra, pointing App Service Health check at a path -- and the
+# server-rendered panes carry that walkthrough in a modal next to the section. The
+# V2 surface draws the same guide from its own registry of guide components, so
+# this names which guide a section offers and what its button says. ``docs_url``
+# is the matching page on the documentation site, linked from inside the guide.
+ADMIN_SECTION_GUIDES = {
+    "control-center-overview-section": {
+        "id": "control-center-roles",
+        "label": "Role setup guide",
+        "docs_url": (
+            "https://microsoft.github.io/simplechat/admin/operations/"
+            "#control-center-overview-section"
+        ),
+    },
+    "health-check-section": {
+        "id": "health-check",
+        "label": "Configuration guide",
+        "docs_url": (
+            "https://microsoft.github.io/simplechat/admin/operations/"
+            "#health-check-section"
+        ),
+    },
+    "swagger-section": {
+        "id": "swagger",
+        "label": "Why enable Swagger?",
+        "docs_url": (
+            "https://microsoft.github.io/simplechat/admin/operations/#swagger-section"
+        ),
+    },
 }
 
 
@@ -6587,12 +7383,65 @@ SUPPRESSED_CAPABILITY_KEYS = {
         "administrator-editable."
     ),
     "enable_mixed_source_chat_search": (
-        "Staged rollout flag for mixed-source chat and search, with no control in "
-        "the server-rendered admin form."
+        "Derived, not stored: get_settings() and update_settings() set it to "
+        "enable_enhanced_citations on every read and save, because mixed document and "
+        "spreadsheet Chat and Search needs the spreadsheet engine Enhanced Citations "
+        "provides. A switch here would revert on the next page load. The only override "
+        "is the SIMPLECHAT_DISABLE_MIXED_SOURCE environment kill switch."
     ),
     "enable_mixed_source_conversation_continuity": (
-        "Staged rollout flag gated behind enable_mixed_source_chat_search, with no "
-        "control in the server-rendered admin form."
+        "Derived from enable_enhanced_citations in the same way as "
+        "enable_mixed_source_chat_search, which it extends with reauthorized "
+        "follow-up grounding."
+    ),
+    "enable_cross_format_compare": (
+        "Derived from enable_enhanced_citations in the same way as "
+        "enable_mixed_source_chat_search. Comparing a document with a spreadsheet "
+        "needs the spreadsheet engine, and without it the request is refused rather "
+        "than comparing the spreadsheet as text."
+    ),
+    "enable_cross_format_compare_one_to_many": (
+        "Derived from enable_enhanced_citations alongside enable_cross_format_compare. "
+        "The Comparison document limits under Document Actions already bound how many "
+        "Targets one request may include."
+    ),
+    "enable_mixed_source_analyze_all": (
+        "Gates an Analyze target of every document in scope, which no chat or workflow "
+        "screen can request; only a hand-built API request can reach it. A switch here "
+        "would change nothing an administrator can see. The 0.261.266 settings upgrade "
+        "resets it to off once."
+    ),
+    # The three tabular durable-preflight switches below are always on by design.
+    # normalize_tabular_parity_durable_preflight_defaults() in functions_settings.py
+    # resets each one to True on every settings read and persists the correction, and
+    # _apply_tabular_parity_env_kill_switch() forces them off only while the
+    # SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is set.
+    # A switch would therefore revert in either direction. The word "shared" in the
+    # first key also filed it under Shared Conversation File Approvals, where it had
+    # nothing to do with the cards around it.
+    "enable_tabular_search_shared_preflight": (
+        "Always on. Routes an exhaustive row-by-row request against a CSV or XLSX file, "
+        "made from a regular chat message (Search), through the shared tabular planner, "
+        "so it can run as a durable background job over every row rather than a "
+        "bounded foreground answer that covers only the first few. get_settings() "
+        "resets it to True on every read, so a switch would revert; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is "
+        "the only way to turn it off."
+    ),
+    "enable_tabular_analyze_durable_preflight": (
+        "Always on. The Analyze counterpart of enable_tabular_search_shared_preflight: "
+        "an Analyze request against a single CSV or XLSX file goes through the same "
+        "shared planner and can run as a durable background job. get_settings() resets "
+        "it to True on every read; the SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT "
+        "environment variable is the only way to turn it off."
+    ),
+    "enable_tabular_hierarchical_analysis": (
+        "Always on. Lets the durable tabular job take exhaustive per-row and per-line "
+        "requests, including narrative ones that ask for written answers rather than a "
+        "CSV, JSON or XML export; without it they fall back to a bounded foreground "
+        "answer. get_settings() resets it to True on every read; the "
+        "SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment variable is the "
+        "only way to turn it off."
     ),
 }
 
@@ -6605,6 +7454,11 @@ def get_admin_settings_fields():
 def get_admin_section_status():
     """Return the section-id keyed status descriptors."""
     return ADMIN_SECTION_STATUS
+
+
+def get_admin_section_guides():
+    """Return the section-id keyed in-app guide descriptors."""
+    return ADMIN_SECTION_GUIDES
 
 
 def iter_fields():
@@ -6761,23 +7615,30 @@ def get_nested_path_fields():
     }
 
 
-def evaluate_dependency(dependency, read_value):
+def evaluate_dependency(dependency, read_value, runtime_flags=None):
     """Whether a ``depends_on`` condition holds, given a value reader.
 
     ``read_value`` takes a settings key and returns its current value, so the
     same rules apply whether the caller is reading a stored document or a draft
     that has not been saved yet.
 
-    Four shapes are supported, and they compose:
+    Five shapes are supported, and they compose:
 
     ``{"key": k, "equals": v}``      k currently equals v
     ``{"key": k, "not_equals": v}``  k currently differs from v
+    ``{"flag": f, "equals": b}``     runtime flag f is b
     ``{"any_of": [...]}``            at least one nested condition holds
     ``{"all_of": [...]}``            every nested condition holds
 
     ``equals`` against a boolean compares truthiness rather than identity,
     because a settings document written by the server-rendered form stores
     checkbox state as the string ``"on"``.
+
+    A runtime flag is resolved by the server rather than read from the settings
+    document -- whether Content Understanding is offered in this cloud, say.
+    ``runtime_flags`` supplies them. Without it a flag condition counts as met,
+    as ``_dependency_is_satisfied`` treats it, so validation is never suppressed
+    for a field behind a gate the caller cannot see.
     """
     if not dependency:
         return True
@@ -6785,17 +7646,27 @@ def evaluate_dependency(dependency, read_value):
     # A list means every condition has to hold. It is the shorthand the Security
     # and Workspaces sections declare, and is equivalent to ``all_of``.
     if isinstance(dependency, list):
-        return all(evaluate_dependency(nested, read_value) for nested in dependency)
+        return all(
+            evaluate_dependency(nested, read_value, runtime_flags) for nested in dependency
+        )
 
     if "any_of" in dependency:
         return any(
-            evaluate_dependency(nested, read_value) for nested in dependency["any_of"]
+            evaluate_dependency(nested, read_value, runtime_flags)
+            for nested in dependency["any_of"]
         )
 
     if "all_of" in dependency:
         return all(
-            evaluate_dependency(nested, read_value) for nested in dependency["all_of"]
+            evaluate_dependency(nested, read_value, runtime_flags)
+            for nested in dependency["all_of"]
         )
+
+    if dependency.get("flag"):
+        if runtime_flags is None:
+            return True
+        expected = _coerce_bool(dependency.get("equals", True))
+        return bool(runtime_flags.get(dependency["flag"])) is expected
 
     current = read_value(dependency["key"])
 
@@ -7875,6 +8746,22 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 normalized[key] = front_door_value
             continue
 
+        if key == "control_center_auto_refresh_time":
+            refresh_time, refresh_time_error = _validate_control_center_refresh_time(value)
+            if refresh_time_error:
+                errors[key] = refresh_time_error
+            else:
+                normalized[key] = refresh_time
+            continue
+
+        if key == "control_center_auto_refresh_timezone":
+            refresh_zone, refresh_zone_error = _validate_control_center_refresh_timezone(value)
+            if refresh_zone_error:
+                errors[key] = refresh_zone_error
+            else:
+                normalized[key] = refresh_zone
+            continue
+
         field_value, error, warning = _normalize_field_value(key, value, field)
         if error:
             errors[key] = error
@@ -7889,6 +8776,10 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         normalized[key] = field_value
 
     _check_acknowledgements(updates, current, errors)
+
+    # A switch turned on may bring companion values with it. Applied before the
+    # checks below so they judge the state that will actually be stored.
+    _apply_enable_defaults(normalized, current, warnings)
 
     # "At least one" style constraints can only be judged once the whole payload
     # is known, because the capability toggle and its selection may arrive apart.
@@ -7910,11 +8801,72 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     if not errors:
         _apply_nested_paths(normalized, current)
         _apply_inbound_mcp_derivations(normalized, current)
+        _apply_operations_derivations(normalized, current)
         # Derived from the merged scope switches and hour, so it is written only once
         # the whole save is known to be valid.
         _apply_retention_schedule(normalized, current)
 
     return normalized, errors, warnings
+
+
+def _validate_control_center_refresh_time(value):
+    """Return ``(time, error)`` for the daily Control Center refresh time.
+
+    The shared schedule normalizer reads anything it cannot parse as 02:00. That is
+    right for a stored value and wrong for one an administrator just typed, which
+    would otherwise save as a different time with no word said.
+    """
+    candidate = str(value if value is not None else "").strip()
+    if not candidate:
+        # A cleared time picker sends an empty value; the picker itself shows the
+        # reader's own clock format, so the 24-hour wording below would not match it.
+        return None, "Choose the time the refresh starts each day."
+    if not is_valid_control_center_auto_refresh_time(candidate):
+        return None, "Enter the time as HH:MM on a 24-hour clock, such as 02:00."
+    return normalize_control_center_auto_refresh_time(candidate)["time"], None
+
+
+def _validate_control_center_refresh_timezone(value):
+    """Return ``(zone, error)`` for the Control Center refresh timezone.
+
+    Refused rather than replaced: the shared normalizer substitutes
+    America/New_York for an unknown zone, which would quietly move the refresh by
+    several hours for anyone outside it.
+    """
+    candidate = str(value if value is not None else "").strip()
+    if not is_valid_control_center_auto_refresh_timezone(candidate):
+        return None, "Choose an IANA timezone, such as America/New_York or Europe/London."
+    return candidate, None
+
+
+def _apply_operations_derivations(normalized, current_settings):
+    """Work out the Operations values that are calculated rather than edited.
+
+    The next scheduled Control Center refresh and each log's turnoff time follow
+    from other settings. The server-rendered form calculates them on every save;
+    without the same step here, a schedule or timer edited in V2 would be stored and
+    then ignored. Both surfaces call the same helpers, so they agree on when a save
+    moves a refresh or restarts a timer, and a save that touches neither leaves both
+    alone.
+    """
+    for kind, keys in LOGGING_TIMERS.items():
+        inputs = (keys["enabled_key"], keys["timer_key"], keys["value_key"], keys["unit_key"])
+        incoming = {key: normalized[key] for key in inputs if key in normalized}
+        if incoming:
+            normalized.update(
+                resolve_logging_timer_settings(kind, incoming, current_settings)
+            )
+
+    schedule_inputs = (
+        "control_center_auto_refresh_enabled",
+        "control_center_auto_refresh_time",
+        "control_center_auto_refresh_timezone",
+    )
+    incoming = {key: normalized[key] for key in schedule_inputs if key in normalized}
+    if incoming:
+        normalized.update(
+            resolve_control_center_auto_refresh_settings(incoming, current_settings)
+        )
 
 
 def _check_content_screening_dependency(normalized, current_settings, errors):
@@ -7990,15 +8942,73 @@ def _check_planner_model_selection(normalized, current_settings, errors):
         errors[key] = message
 
 
+def _apply_enable_defaults(normalized, current_settings, warnings):
+    """Set the companion values a switch declares through ``on_enable``.
+
+    The browser does this to its draft as the switch flips. Doing it here as
+    well means a save that turns Enhanced extraction on through the API without
+    naming a mode still moves Standard to Auto, rather than enabling a
+    capability that then changes nothing.
+
+    Only a transition counts: re-saving a switch that is already on leaves its
+    companions alone, and a companion named in the same save is the
+    administrator's explicit choice and always wins.
+    """
+    def merged(key):
+        if key in normalized:
+            return normalized[key]
+        if key in current_settings:
+            return current_settings[key]
+        # A key that has never been saved reads as its declared default, which
+        # is what get_settings would have merged in.
+        definition = get_field_definition(key) or {}
+        return definition.get("default")
+
+    for _section_id, field in iter_fields():
+        key = field.get("key")
+        effect = field.get("on_enable")
+        if not key or not effect or field.get("readonly"):
+            continue
+        if key not in normalized or not _coerce_bool(normalized[key]):
+            continue
+        if _coerce_bool(current_settings.get(key)):
+            continue
+        if not evaluate_dependency(effect.get("when"), merged):
+            continue
+
+        for companion, value in (effect.get("set") or {}).items():
+            if companion in normalized:
+                continue
+            normalized[companion] = value
+            companion_field = get_field_definition(companion) or {}
+            shown = next(
+                (
+                    option.get("label", value)
+                    for option in companion_field.get("options", [])
+                    if option.get("value") == value
+                ),
+                value,
+            )
+            warnings[companion] = (
+                f'Set to "{shown}" because {field.get("label", key)} was turned on.'
+            )
+
+
 def _apply_cross_field_rules(normalized, current_settings, warnings):
     """Reconcile settings whose valid range depends on another setting.
 
-    Only the idle warning needs this today. It has to arrive before the sign-out it
-    warns about, and the two are separate fields that can be saved independently,
-    so the check cannot live on either field's own definition. The server-rendered
-    form silently lowers the warning to match; doing the same and saying so is
-    kinder than rejecting a save over a value the administrator did not touch.
+    The pairs may be edited together or one at a time, so the check cannot live on
+    either field's own definition: only the merged state of a save can be judged.
+    The server-rendered form silently brings an out-of-range value back into range;
+    doing the same and saying so is kinder than rejecting a save over a value the
+    administrator did not touch.
     """
+    _apply_idle_warning_rule(normalized, current_settings, warnings)
+    _apply_logging_timer_limits(normalized, current_settings, warnings)
+
+
+def _apply_idle_warning_rule(normalized, current_settings, warnings):
+    """Keep the idle warning from arriving after the sign-out it warns about."""
     if "idle_warning_minutes" not in normalized and "idle_timeout_minutes" not in normalized:
         return
 
@@ -8022,6 +9032,38 @@ def _apply_cross_field_rules(normalized, current_settings, warnings):
         f"Lowered to {timeout} minutes, because a warning cannot arrive after the "
         "sign-out it warns about."
     )
+
+
+def _apply_logging_timer_limits(normalized, current_settings, warnings):
+    """Keep each log's auto-turnoff duration inside its unit's range.
+
+    The duration field accepts 1 to 120 because that is the widest any unit
+    allows, but the real cap depends on the unit -- 24 hours, 7 days, 52 weeks --
+    and either may be saved on its own. Switching 90 minutes to hours would
+    otherwise ask for a 90-hour timer.
+    """
+    for keys in LOGGING_TIMERS.values():
+        value_key, unit_key = keys["value_key"], keys["unit_key"]
+        if value_key not in normalized and unit_key not in normalized:
+            continue
+
+        value = normalized.get(value_key, current_settings.get(value_key))
+        unit = normalized.get(unit_key, current_settings.get(unit_key))
+        try:
+            requested = int(float(value))
+        except (TypeError, ValueError):
+            continue
+
+        allowed, normalized_unit = clamp_logging_timer_value(requested, unit)
+        if allowed == requested:
+            continue
+
+        normalized[value_key] = allowed
+        direction = "Lowered" if requested > allowed else "Raised"
+        limit = "the longest" if requested > allowed else "the shortest"
+        warnings[value_key] = (
+            f"{direction} to {allowed}, {limit} a timer measured in {normalized_unit} can run."
+        )
 
 
 def _check_minimum_selections(normalized, current_settings, errors):

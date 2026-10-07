@@ -20,7 +20,12 @@
 //
 // Fields cluster into declared groups that collapse. A group opens when it is the one an
 // administrator needs next -- an empty connection on an enabled capability -- and stays
-// shut otherwise, so a configured section is a summary rather than a wall.
+// shut otherwise, so a configured section is a summary rather than a wall. A closed group
+// says what is inside it: a count, or for a single choice list how much is chosen.
+//
+// A group can be anchored beneath a switch, so settings that belong to one toggle sit
+// under that toggle rather than at the foot of the card. File Sync uses this to keep each
+// workspace type's Access panel beside the type's own switch.
 //
 // A prerequisite owned by another section is stated where it is felt. Previously an
 // administrator could turn File Sync on and have nothing happen, because Redis Cache was
@@ -28,7 +33,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
-import { AlertTriangle, ChevronRight, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BookOpen, ChevronRight, type LucideIcon } from 'lucide-react';
 import {
     asBoolean,
     groupFields,
@@ -41,7 +46,9 @@ import {
     collectRequirements,
     computeSectionStatus,
     deriveFieldHierarchy,
+    describeCollapsedGroup,
     findCapabilityField,
+    placeAnchoredGroups,
     readSectionValue,
     shouldGroupStartOpen,
     type FieldEmphasis,
@@ -102,10 +109,30 @@ export interface SettingsSectionProps {
      * settings while a search narrows `fields` to the matches.
      */
     hierarchyFields?: AdminField[];
+    /**
+     * Every declared field by key.
+     *
+     * A field saved at a nested path is found only through its declaration, so without
+     * this a gate stored that way -- the Web Search authentication type, say -- reads as
+     * unset and hides the fields that depend on it.
+     */
+    fieldsByKey?: Map<string, AdminField>;
     /** Force every group open, used while a search is filtering the page. */
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * An in-app guide the header offers, for settings that depend on work done outside
+     * SimpleChat. Declared per section by `ADMIN_SECTION_GUIDES`.
+     */
+    guide?: { label: string; onOpen: () => void };
+    /**
+     * Server-resolved runtime flags, such as whether Content Understanding is offered in
+     * this cloud. A field gated on one has to be judged the way the page judged it;
+     * without the flags its condition reads as unmet and the field is dropped from the
+     * card even though the page decided to show it.
+     */
+    runtimeFlags?: Record<string, boolean>;
     children?: ReactNode;
 }
 
@@ -207,11 +234,20 @@ function FieldGroup({
     startOpen,
     forceExpanded,
     renderFields,
+    summary,
+    contextLabel,
 }: {
     group: RenderedFieldGroup;
     startOpen: boolean;
     forceExpanded?: boolean;
     renderFields: (fields: AdminField[]) => ReactNode[];
+    /** What the header says while closed: a count, or how much a choice list has chosen. */
+    summary: string;
+    /**
+     * The switch an anchored panel sits beneath. Assistive technology reads it before the
+     * label, so several panels sharing a label such as "Access" stay distinguishable.
+     */
+    contextLabel?: string;
 }) {
     const [open, setOpen] = useState(startOpen);
 
@@ -228,7 +264,12 @@ function FieldGroup({
     }
 
     return (
-        <div className="admin-field-group mt-3 rounded-xl border border-edge-strong bg-surface-solid">
+        <div
+            className={clsx(
+                'admin-field-group rounded-xl border border-edge-strong bg-surface-solid',
+                contextLabel ? 'mt-1' : 'mt-3',
+            )}
+        >
             <button
                 type="button"
                 aria-expanded={open}
@@ -247,13 +288,11 @@ function FieldGroup({
                     )}
                 />
                 <span className="min-w-0 text-sm font-semibold text-text-1">
+                    {contextLabel ? <span className="sr-only">{`${contextLabel}: `}</span> : null}
                     {group.label ?? group.id}
                 </span>
                 {!open ? (
-                    <span className="ml-auto shrink-0 text-xs text-text-3">
-                        {group.fields.length}{' '}
-                        {group.fields.length === 1 ? 'setting' : 'settings'}
-                    </span>
+                    <span className="ml-auto shrink-0 text-xs text-text-3">{summary}</span>
                 ) : null}
             </button>
 
@@ -283,10 +322,13 @@ export function SettingsSection({
     status: statusProp,
     icon,
     hierarchyFields,
+    fieldsByKey,
     renderField,
     renderCapability,
     forceExpanded,
     appearance,
+    guide,
+    runtimeFlags,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -297,8 +339,8 @@ export function SettingsSection({
     );
 
     const derivedStatus = useMemo(
-        () => computeSectionStatus(fields, settings, draft, statusRule),
-        [statusRule, fields, settings, draft],
+        () => computeSectionStatus(fields, settings, draft, statusRule, fieldsByKey),
+        [statusRule, fields, settings, draft, fieldsByKey],
     );
     const status = statusProp ?? derivedStatus;
 
@@ -308,17 +350,48 @@ export function SettingsSection({
     );
 
     const capabilityOn = capability?.key
-        ? asBoolean(readSectionValue(settings, draft, capability.key))
+        ? asBoolean(readSectionValue(settings, draft, capability.key, fieldsByKey))
         : true;
 
     // A section states each distinct prerequisite once, at the top, rather than repeating
     // it on every field that carries it.
-    const requirements = useMemo(() => collectRequirements(fields, settings, draft), [fields, settings, draft]);
+    const requirements = useMemo(
+        () => collectRequirements(fields, settings, draft, fieldsByKey),
+        [fields, settings, draft, fieldsByKey],
+    );
 
     const groups = useMemo(
-        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft))),
-        [bodyFields, settings, draft],
+        () => groupFields(
+            bodyFields.filter((field) => isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)),
+        ),
+        [bodyFields, settings, draft, fieldsByKey, runtimeFlags],
     );
+
+    // A panel anchored to a switch is drawn beneath it, provided that switch is drawn at
+    // all. Anchors are ungrouped, so only the capability and the ungrouped run qualify.
+    const placement = useMemo(() => {
+        const rendered = new Set<string>();
+        if (capability?.key && isFieldVisible(capability, settings, draft, fieldsByKey, runtimeFlags)) {
+            rendered.add(capability.key);
+        }
+        for (const group of groups) {
+            if (group.id) {
+                continue;
+            }
+            for (const field of group.fields) {
+                if (field.key) {
+                    rendered.add(field.key);
+                }
+            }
+        }
+        const labels = new Map<string, string>();
+        for (const field of hierarchyFields ?? fields) {
+            if (field.key) {
+                labels.set(field.key, field.label);
+            }
+        }
+        return placeAnchoredGroups(groups, rendered, (key) => labels.get(key));
+    }, [capability, groups, hierarchyFields, fields, settings, draft, fieldsByKey, runtimeFlags]);
 
     const presentation = presentSectionStatus(status);
     const SectionIcon = appearance?.Icon ?? icon ?? FALLBACK_SECTION_ICON;
@@ -337,6 +410,7 @@ export function SettingsSection({
         !field.readonly &&
         Boolean(field.key) &&
         !hierarchy.leads.has(field.key as string) &&
+        !placement.anchored.has(field.key as string) &&
         !emphasisOf(field);
 
     const decorateField = (
@@ -345,8 +419,9 @@ export function SettingsSection({
     ) => {
         const emphasis = emphasisOf(field);
         const FieldIcon = appearance?.fields?.[field.key ?? '']?.Icon;
+        const panels = field.key ? placement.anchored.get(field.key) : undefined;
         const control = renderer(field);
-        if ((!emphasis && !FieldIcon) || control == null) {
+        if (control == null || (!emphasis && !FieldIcon && !panels)) {
             return control;
         }
         return (
@@ -369,7 +444,14 @@ export function SettingsSection({
                         <FieldIcon size={16} />
                     </span>
                 ) : null}
-                <div className="min-w-0 flex-1">{control}</div>
+                <div className="min-w-0 flex-1">
+                    {control}
+                    {panels ? (
+                        <div className="admin-anchored-groups pb-2" data-anchored-to={field.key}>
+                            {panels.map((group) => renderGroup(group, field.label))}
+                        </div>
+                    ) : null}
+                </div>
             </div>
         );
     };
@@ -380,6 +462,23 @@ export function SettingsSection({
             (field) => decorateField(field, renderField),
             flowsInGrid,
         );
+
+    const renderGroup = (group: RenderedFieldGroup, contextLabel?: string) => (
+        <FieldGroup
+            key={group.id || '__ungrouped'}
+            group={group}
+            startOpen={shouldGroupStartOpen(
+                group,
+                status,
+                capabilityOn,
+                (key) => readSectionValue(settings, draft, key, fieldsByKey),
+            )}
+            forceExpanded={forceExpanded}
+            renderFields={renderFields}
+            summary={describeCollapsedGroup(group, settings, draft)}
+            contextLabel={contextLabel}
+        />
+    );
 
     return (
         <GlassPanel
@@ -412,18 +511,38 @@ export function SettingsSection({
                     </div>
                 </div>
 
-                {presentation ? (
-                    // Free to shrink once it has wrapped onto its own line, so a long
-                    // status at a large text size wraps inside the card instead of past it.
-                    <span
-                        className={clsx(
-                            'flex max-w-full min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
-                            presentation.className,
-                        )}
-                    >
-                        <presentation.Icon size={11} className="shrink-0" />
-                        {presentation.label}
-                    </span>
+                {guide || presentation ? (
+                    <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">
+                        {guide ? (
+                            <button
+                                type="button"
+                                aria-haspopup="dialog"
+                                onClick={guide.onOpen}
+                                className={clsx(
+                                    'inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-edge-strong',
+                                    'bg-surface-solid px-2.5 py-1 text-xs font-medium text-text-2 transition-colors',
+                                    'hover:bg-surface-sunken hover:text-text-1',
+                                    'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
+                                )}
+                            >
+                                <BookOpen size={13} aria-hidden="true" className="shrink-0" />
+                                {guide.label}
+                            </button>
+                        ) : null}
+                        {presentation ? (
+                            // Free to shrink once it has wrapped onto its own line, so a long
+                            // status at a large text size wraps inside the card instead of past it.
+                            <span
+                                className={clsx(
+                                    'flex max-w-full min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs',
+                                    presentation.className,
+                                )}
+                            >
+                                <presentation.Icon size={11} className="shrink-0" />
+                                {presentation.label}
+                            </span>
+                        ) : null}
+                    </div>
                 ) : null}
             </div>
 
@@ -432,7 +551,7 @@ export function SettingsSection({
                     <RequirementNotice
                         key={requirement.key}
                         requirement={requirement}
-                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
+                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
                     />
                 ))}
 
@@ -442,15 +561,7 @@ export function SettingsSection({
                     </div>
                 ) : null}
 
-                {groups.map((group) => (
-                    <FieldGroup
-                        key={group.id || '__ungrouped'}
-                        group={group}
-                        startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
-                        forceExpanded={forceExpanded}
-                        renderFields={renderFields}
-                    />
-                ))}
+                {placement.topLevel.map((group) => renderGroup(group))}
 
                 {children}
             </div>

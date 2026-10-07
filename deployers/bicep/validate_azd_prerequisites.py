@@ -3,14 +3,15 @@
 """
 Validate and explain deployment prerequisites before `azd provision` or `azd up` continues.
 
-Version: 0.242.057
+Version: 0.261.264
 Implemented in: 0.237.018
-Enhanced in: 0.242.057
+Enhanced in: 0.242.057, 0.261.264
 
 This script ensures users understand the prerequisites for reusing an existing VNet
 and for configuring private DNS zones when private networking is enabled. It also
 fails fast when managed identity authentication is selected but the deployment
-identity cannot create the required RBAC assignments.
+identity cannot create the required RBAC assignments, and when Azure Video Indexer
+is requested in a region that does not offer it.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ MANAGED_IDENTITY_REQUIRED_PERMISSION_ACTIONS = (
     'Microsoft.Authorization/roleAssignments/write',
     'Microsoft.Authorization/roleDefinitions/write',
 )
+VIDEO_INDEXER_PROVIDER_NAMESPACE = 'Microsoft.VideoIndexer'
+VIDEO_INDEXER_ACCOUNT_RESOURCE_TYPE = 'accounts'
 
 
 def _to_bool(value: str | None) -> bool:
@@ -309,6 +312,73 @@ def _validate_managed_identity_preflight() -> bool:
     return True
 
 
+def _normalize_location(value: str | None) -> str:
+    return ''.join(str(value or '').split()).lower()
+
+
+def _get_video_indexer_locations() -> tuple[list[str] | None, str | None]:
+    exit_code, stdout, stderr = _run_command([
+        'az',
+        'provider',
+        'show',
+        '--namespace',
+        VIDEO_INDEXER_PROVIDER_NAMESPACE,
+        '--query',
+        f"resourceTypes[?resourceType=='{VIDEO_INDEXER_ACCOUNT_RESOURCE_TYPE}'].locations | [0]",
+        '-o',
+        'json',
+    ])
+    if exit_code != 0 or not stdout:
+        return None, stderr or stdout or 'Unable to list Azure Video Indexer regions with Azure CLI.'
+
+    try:
+        locations = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        return None, f'Azure CLI returned unreadable Azure Video Indexer regions: {exc}'
+
+    if not isinstance(locations, list) or not locations:
+        return None, 'Azure CLI did not return any Azure Video Indexer regions.'
+
+    return [_normalize_location(location) for location in locations if location], None
+
+
+def _validate_video_indexer_region() -> bool:
+    if not _to_bool(_get_env('AZURE_ENV_DEPLOY_VIDEO_INDEXER_SERVICE', 'DEPLOY_VIDEO_INDEXER_SERVICE')):
+        return True
+
+    override_location = _get_env('AZURE_ENV_VIDEO_INDEXER_LOCATION', 'VIDEO_INDEXER_LOCATION').strip()
+    target_location = _normalize_location(override_location or _get_env('AZURE_ENV_AZURE_LOCATION', 'AZURE_LOCATION'))
+    if not target_location:
+        return True
+
+    _print_header('VIDEO INDEXER REGION PREFLIGHT')
+    supported_locations, lookup_error = _get_video_indexer_locations()
+    if lookup_error or supported_locations is None:
+        # Azure Resource Manager still rejects an unsupported region, so a failed lookup must not block deployment.
+        print('WARNING: Could not confirm that Azure Video Indexer is available in the selected region.')
+        print(f'  Details: {lookup_error}')
+        print('  Azure Resource Manager still validates the region during provisioning.')
+        return True
+
+    if target_location in supported_locations:
+        print(f'Azure Video Indexer is available in {target_location}.')
+        return True
+
+    setting_name = 'VIDEO_INDEXER_LOCATION' if override_location else 'AZURE_LOCATION'
+    print('', file=sys.stderr)
+    print(f'ERROR: Azure Video Indexer is not available in {target_location} ({setting_name}).', file=sys.stderr)
+    print('', file=sys.stderr)
+    print('Deploy Video Indexer to a supported region while the rest of SimpleChat stays where it is:', file=sys.stderr)
+    print('  azd env set VIDEO_INDEXER_LOCATION <region>', file=sys.stderr)
+    print('Then rerun azd provision or azd up.', file=sys.stderr)
+    print('', file=sys.stderr)
+    print(f'Supported regions: {", ".join(sorted(supported_locations))}', file=sys.stderr)
+    print('', file=sys.stderr)
+    print('To deploy without Video Indexer instead, run:', file=sys.stderr)
+    print('  azd env set DEPLOY_VIDEO_INDEXER_SERVICE false', file=sys.stderr)
+    return False
+
+
 def _parse_private_dns(raw_value: str | None) -> tuple[dict, str | None]:
     if not raw_value or not raw_value.strip():
         return {}, None
@@ -404,6 +474,9 @@ def main() -> int:
     private_dns_raw = _get_env('AZURE_ENV_PRIVATE_DNS_ZONE_CONFIGS', 'PRIVATE_DNS_ZONE_CONFIGS')
 
     if not _validate_managed_identity_preflight():
+        return 1
+
+    if not _validate_video_indexer_region():
         return 1
 
     if not enable_private_networking:

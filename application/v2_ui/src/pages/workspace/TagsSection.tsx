@@ -23,7 +23,7 @@ import { groupScope, PERSONAL_SCOPE } from '../../lib/chatContext';
 import { clearContextTagCache } from '../../lib/contextMentions';
 import { createGroupDocumentReader, documentExplorerScopeKey, PERSONAL_DOCUMENT_READER, type DocumentReadAdapter } from '../../lib/documentReadAdapter';
 import {
-    createGroupDocumentOperations, PERSONAL_DOCUMENT_OPERATIONS, type DocumentOperationAdapter,
+    createGroupDocumentOperations, PERSONAL_DOCUMENT_OPERATIONS, SEARCH_SYNC_PENDING_NOTICE, type DocumentOperationAdapter,
     type TagMutationOutcome, type TagOperationError,
 } from '../../lib/documentOperations';
 import type { GroupWorkspaceContext } from '../../lib/workspaceContext';
@@ -374,6 +374,7 @@ function ScopedTagsSection({
             const refreshed = await reload();
             if (!mounted.current) return false;
             if (partial) toast.error(`${title} is incomplete. Review the propagation failures before retrying.`);
+            else if (refreshed && outcome.searchSyncPending) toast.info(`${title} confirmed. ${SEARCH_SYNC_PENDING_NOTICE}`);
             else if (refreshed) toast.success(`${title} confirmed.`);
             else toast.error(`${title} was confirmed, but the tag list could not be refreshed. Reload before another change.`);
             return !partial;

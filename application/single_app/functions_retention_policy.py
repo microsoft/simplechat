@@ -6,14 +6,14 @@ Retention Policy Management
 This module handles automated deletion of aged conversations and documents
 based on configurable retention policies for personal, group, and public workspaces.
 
-Version: 0.261.260
+Version: 0.261.272
 Implemented in: 0.234.067
 Updated in: 0.236.012 - Fixed race condition handling for NotFound errors during deletion
 Updated in: 0.237.004 - Fixed critical bug where conversations with null/undefined last_activity_at were deleted regardless of age
 Updated in: 0.237.005 - Fixed field name: use last_updated (actual field) instead of last_activity_at (non-existent)
 Updated in: 0.250.103 - Applied retention by conversation ownership across current, legacy, and collaboration stores
 Updated in: 0.261.038 - Stop pending Microsoft 365 delivery before deleting its destination
-Updated in: 0.261.260 - Chats grounded in a public workspace follow that workspace's conversation policy while it exists
+Updated in: 0.261.272 - Chats grounded in a public workspace follow that workspace's conversation policy while it exists
 """
 
 from config import *

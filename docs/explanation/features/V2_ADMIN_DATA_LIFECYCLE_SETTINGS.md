@@ -1,6 +1,6 @@
 # V2 Admin Data Lifecycle Settings
 
-**Implemented in version: 0.261.260**
+**Implemented in version: 0.261.272**
 
 ## Overview
 

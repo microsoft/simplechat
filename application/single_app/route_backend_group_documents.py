@@ -339,6 +339,15 @@ def _remove_group_share_entries(shared_group_ids, group_id):
     ]
 
 
+def _group_share_search_acl_error_response(error):
+    """Return the safe response for a sharing change the search index could not apply."""
+    message, status_code, retry_after_seconds = describe_document_search_acl_error(error)
+    response = jsonify({'error': message})
+    if retry_after_seconds:
+        response.headers['Retry-After'] = str(retry_after_seconds)
+    return response, status_code
+
+
 def _get_group_name(group_doc, fallback='Unknown Group'):
     return str((group_doc or {}).get('name') or fallback).strip()
 
@@ -1455,79 +1464,40 @@ def register_route_backend_group_documents(bp):
         if error_response:
             return error_response
 
-        data = request.get_json()
+        data = request.get_json() or {}
 
         # Track which fields were updated
         updated_fields = {}
+        document_updates = {}
 
         try:
             if 'title' in data:
-                update_document(
-                    document_id=document_id,
-                    group_id=active_group_id,
-                    user_id=user_id,
-                    title=data['title']
-                )
+                document_updates['title'] = data['title']
                 updated_fields['title'] = data['title']
             if 'abstract' in data:
-                update_document(
-                    document_id=document_id,
-                    group_id=active_group_id,
-                    user_id=user_id,
-                    abstract=data['abstract']
-                )
+                document_updates['abstract'] = data['abstract']
                 updated_fields['abstract'] = data['abstract']
             if 'keywords' in data:
                 if isinstance(data['keywords'], list):
-                    update_document(
-                        document_id=document_id,
-                        group_id=active_group_id,
-                        user_id=user_id,
-                        keywords=data['keywords']
-                    )
+                    document_updates['keywords'] = data['keywords']
                     updated_fields['keywords'] = data['keywords']
                 else:
                     keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
-                    update_document(
-                        document_id=document_id,
-                        group_id=active_group_id,
-                        user_id=user_id,
-                        keywords=keywords_list
-                    )
+                    document_updates['keywords'] = keywords_list
                     updated_fields['keywords'] = keywords_list
             if 'publication_date' in data:
-                update_document(
-                    document_id=document_id,
-                    group_id=active_group_id,
-                    user_id=user_id,
-                    publication_date=data['publication_date']
-                )
+                document_updates['publication_date'] = data['publication_date']
                 updated_fields['publication_date'] = data['publication_date']
             if 'document_classification' in data:
-                update_document(
-                    document_id=document_id,
-                    group_id=active_group_id,
-                    user_id=user_id,
-                    document_classification=data['document_classification']
-                )
+                document_updates['document_classification'] = data['document_classification']
                 updated_fields['document_classification'] = data['document_classification']
             if 'authors' in data:
                 if isinstance(data['authors'], list):
-                    update_document(
-                        document_id=document_id,
-                        group_id=active_group_id,
-                        user_id=user_id,
-                        authors=data['authors']
-                    )
+                    document_updates['authors'] = data['authors']
                     updated_fields['authors'] = data['authors']
                 else:
                     authors_list = [data['authors']]
-                    update_document(
-                        document_id=document_id,
-                        group_id=active_group_id,
-                        user_id=user_id,
-                        authors=authors_list
-                    )
+                    document_updates['authors'] = authors_list
                     updated_fields['authors'] = authors_list
 
             if 'tags' in data:
@@ -1538,13 +1508,18 @@ def register_route_backend_group_documents(bp):
                     return jsonify({'error': error_msg}), 400
                 for tag in normalized_tags:
                     get_or_create_tag_definition(user_id, tag, workspace_type='group', group_id=active_group_id)
-                update_document(
+                document_updates['tags'] = normalized_tags
+                updated_fields['tags'] = normalized_tags
+
+            # Save every change in one update; search chunks are synced in the background
+            update_result = {}
+            if document_updates:
+                update_result = update_document(
                     document_id=document_id,
                     group_id=active_group_id,
                     user_id=user_id,
-                    tags=normalized_tags
-                )
-                updated_fields['tags'] = normalized_tags
+                    **document_updates,
+                ) or {}
 
             # Log the metadata update transaction if any fields were updated
             if updated_fields:
@@ -1573,9 +1548,18 @@ def register_route_backend_group_documents(bp):
                         group_id=active_group_id
                     )
 
-            return jsonify({'message': 'Group document metadata updated successfully'}), 200
+            response_payload = {'message': 'Group document metadata updated successfully'}
+            if isinstance(update_result, dict) and update_result.get('search_sync'):
+                response_payload['search_sync'] = update_result['search_sync']
+
+            return jsonify(response_payload), 200
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to update group document metadata',
+                {'document_id': document_id, 'group_id': active_group_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to update document metadata'}), 500
 
     @bp.route('/api/group_documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
@@ -2038,10 +2022,25 @@ def register_route_backend_group_documents(bp):
                 )
                 # Invalidate cache for the group that approved
                 invalidate_group_search_cache(active_group_id)
+            else:
+                # Approving again completes an approval that was saved before its search update finished.
+                reproject_document_search_acl(document_item, user_id, group_id=document_item.get('group_id'))
 
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
+        except (
+            DocumentSearchAclProjectionDeferredError,
+            DocumentSearchAclProjectionError,
+            DocumentMutationPropagationError,
+            ScreeningConflictError,
+        ) as exc:
+            return _group_share_search_acl_error_response(exc)
         except Exception as e:
-            return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to approve a shared group document',
+                {'document_id': document_id, 'group_id': active_group_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to approve the shared document'}), 500
 
     @bp.route('/api/group_documents/<document_id>/approve-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -2426,8 +2425,20 @@ def register_route_backend_group_documents(bp):
                 'document_id': document_id,
                 'shared_with_group': target_group_id
             }), 200
+        except (
+            DocumentSearchAclProjectionDeferredError,
+            DocumentSearchAclProjectionError,
+            DocumentMutationPropagationError,
+            ScreeningConflictError,
+        ) as exc:
+            return _group_share_search_acl_error_response(exc)
         except Exception as e:
-            return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to share a group document',
+                {'document_id': document_id, 'group_id': active_group_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to share the document'}), 500
 
     @bp.route('/api/group_documents/<document_id>/unshare-with-group', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
@@ -2495,8 +2506,20 @@ def register_route_backend_group_documents(bp):
                 'document_id': document_id,
                 'unshared_with_group': target_group_id
             }), 200
+        except (
+            DocumentSearchAclProjectionDeferredError,
+            DocumentSearchAclProjectionError,
+            DocumentMutationPropagationError,
+            ScreeningConflictError,
+        ) as exc:
+            return _group_share_search_acl_error_response(exc)
         except Exception as e:
-            return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to unshare a group document',
+                {'document_id': document_id, 'group_id': active_group_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to remove document sharing'}), 500
 
     @bp.route('/api/group_documents/<document_id>/remove-self', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
@@ -2572,8 +2595,20 @@ def register_route_backend_group_documents(bp):
             return jsonify({
                 'message': 'Share denied' if was_pending else 'Successfully removed group from shared document'
             }), 200
+        except (
+            DocumentSearchAclProjectionDeferredError,
+            DocumentSearchAclProjectionError,
+            DocumentMutationPropagationError,
+            ScreeningConflictError,
+        ) as exc:
+            return _group_share_search_acl_error_response(exc)
         except Exception as e:
-            return jsonify({'error': f'Error removing group from shared document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to remove a group from a shared document',
+                {'document_id': document_id, 'group_id': active_group_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to remove the group from the shared document'}), 500
 
     @bp.route('/api/group_documents/tags', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -2757,7 +2792,7 @@ def register_route_backend_group_documents(bp):
 
         from functions_documents import (
             validate_tags, update_document,
-            propagate_tags_to_chunks, get_or_create_tag_definition
+            get_or_create_tag_definition
         )
 
         is_valid, error_msg, normalized_tags = validate_tags(tags_input)
@@ -2807,17 +2842,13 @@ def register_route_backend_group_documents(bp):
                     elif action == 'set_tags':
                         new_tags = normalized_tags
 
+                    # Search chunks and blob tags sync in the background
                     update_document(
                         document_id=doc_id,
                         group_id=active_group_id,
                         user_id=user_id,
                         tags=new_tags
                     )
-
-                    try:
-                        propagate_tags_to_chunks(doc_id, new_tags, user_id, group_id=active_group_id)
-                    except Exception:
-                        pass
 
                     results['success'].append({
                         'document_id': doc_id,
@@ -2870,7 +2901,7 @@ def register_route_backend_group_documents(bp):
         new_name = data.get('new_name')
         new_color = data.get('color')
 
-        from functions_documents import normalize_tag, validate_tag_color, validate_tags, update_document, propagate_tags_to_chunks
+        from functions_documents import normalize_tag, validate_tag_color, validate_tags, update_document
 
         try:
             normalized_old_tag = normalize_tag(tag_name)
@@ -2917,17 +2948,13 @@ def register_route_backend_group_documents(bp):
                         current_tags = doc['tags']
                         new_tags = [normalized_new_tag if t == normalized_old_tag else t for t in current_tags]
 
+                        # Search chunks and blob tags sync in the background
                         update_document(
                             document_id=doc['id'],
                             group_id=active_group_id,
                             user_id=user_id,
                             tags=new_tags
                         )
-
-                        try:
-                            propagate_tags_to_chunks(doc['id'], new_tags, user_id, group_id=active_group_id)
-                        except Exception:
-                            pass
 
                         updated_count += 1
 
@@ -2993,7 +3020,7 @@ def register_route_backend_group_documents(bp):
         if error_response:
             return error_response
 
-        from functions_documents import normalize_tag, update_document, propagate_tags_to_chunks
+        from functions_documents import normalize_tag, update_document
 
         try:
             normalized_tag = normalize_tag(tag_name)
@@ -3031,17 +3058,13 @@ def register_route_backend_group_documents(bp):
                 if normalized_tag in doc.get('tags', []):
                     new_tags = [t for t in doc['tags'] if t != normalized_tag]
 
+                    # Search chunks and blob tags sync in the background
                     update_document(
                         document_id=doc['id'],
                         group_id=active_group_id,
                         user_id=user_id,
                         tags=new_tags
                     )
-
-                    try:
-                        propagate_tags_to_chunks(doc['id'], new_tags, user_id, group_id=active_group_id)
-                    except Exception:
-                        pass
 
                     updated_count += 1
 

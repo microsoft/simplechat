@@ -1,8 +1,8 @@
 // test_v2_admin_data_lifecycle_logic.ts
 //
 // Runtime checks for the V2 Admin Settings Data Lifecycle controls.
-// Version: 0.261.260
-// Implemented in: 0.261.260
+// Version: 0.261.272
+// Implemented in: 0.261.272
 //
 // The decisions behind Retention Policy and Document Classification are easy to get
 // subtly wrong and invisible in a screenshot: whether an unsaved edit holds a run, which

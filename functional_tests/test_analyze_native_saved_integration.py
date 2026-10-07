@@ -317,7 +317,7 @@ def test_foreground_adapter_captures_complete_native_values_without_reduction(na
         plan_tabular_request=lambda *args, **kwargs: {}, run_tabular_analysis_with_thought_tracking=foreground,
     ))
     runner = runner_namespace(
-        asyncio=asyncio, is_mixed_source_manifest_enabled=lambda settings: False,
+        asyncio=asyncio,
         is_tabular_processing_enabled=lambda settings: True,
         get_plugin_logger=lambda: SimpleNamespace(get_invocations_for_conversation=lambda *args, **kwargs: []),
         classify_tabular_parity_request=lambda text: {},

@@ -2,9 +2,10 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.261.122
+Version: 0.261.268
 Implemented in: 0.241.110
 Updated in: 0.250.172
+Updated in: 0.261.268
 
 This test ensures upload processing runs final metadata extraction consistently
 for all supported file types and preserves public workspace scope for media files.
@@ -169,14 +170,21 @@ def test_public_workspace_media_scope_is_preserved():
 
     update_document = get_function(module_ast, 'update_document')
     update_calls = [node for node in ast.walk(update_document) if isinstance(node, ast.Call)]
-    get_all_chunk_calls = [call for call in update_calls if call_name(call) == 'get_all_chunks']
-    assert any(has_keyword(call, 'public_workspace_id') for call in get_all_chunk_calls), (
-        'Metadata-to-chunk sync must retrieve chunks using public scope'
+    sync_request_calls = [call for call in update_calls if call_name(call) == 'request_document_search_metadata_sync']
+    assert any(has_keyword(call, 'public_workspace_id') for call in sync_request_calls), (
+        'Metadata-to-chunk sync requests must keep public scope'
     )
-    update_chunk_calls = [call for call in update_calls if call_name(call) == 'update_chunk_metadata']
-    assert update_chunk_calls, 'Metadata-to-chunk sync should update search chunks'
-    assert '"public_workspace_id": public_workspace_id' in source, (
-        'Metadata-to-chunk sync must pass public scope into update_chunk_metadata'
+    sync_schedule_calls = [call for call in update_calls if call_name(call) == 'schedule_document_search_metadata_sync']
+    assert any(has_keyword(call, 'public_workspace_id') for call in sync_schedule_calls), (
+        'Metadata-to-chunk sync scheduling must keep public scope'
+    )
+    sync_worker = get_function(module_ast, 'run_document_search_metadata_sync')
+    projection_calls = [
+        node for node in ast.walk(sync_worker)
+        if isinstance(node, ast.Call) and call_name(node) == 'project_fields_to_document_chunks'
+    ]
+    assert any(has_keyword(call, 'public_workspace_id') for call in projection_calls), (
+        'Metadata-to-chunk sync must pass public scope into the chunk projection'
     )
 
     print('Public workspace media scope passed')

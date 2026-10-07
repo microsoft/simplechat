@@ -42,6 +42,13 @@ export interface DocumentOperationError {
 export interface DocumentBatchOutcome {
     succeeded: string[];
     errors: DocumentOperationError[];
+    /** Present and true when the server queued a background search index update for confirmed documents. */
+    searchSyncPending?: boolean;
+}
+
+/** A confirmed metadata change, and whether the search index is still catching up with it. */
+export interface DocumentMetadataOutcome {
+    searchSyncPending: boolean;
 }
 
 export interface DocumentUploadOutcome {
@@ -73,6 +80,8 @@ export interface TagMutationOutcome {
     success: Array<{ document_id: string; tags: string[] }>;
     errors: TagOperationError[];
     vocabularyRetained: boolean;
+    /** Present and true when the server queued a background search index update for re-tagged documents. */
+    searchSyncPending?: boolean;
 }
 
 export interface DocumentOperationAdapter {
@@ -82,7 +91,7 @@ export interface DocumentOperationAdapter {
     advertised: boolean;
     allows: (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) => boolean;
     upload: (files: File[]) => Promise<DocumentUploadOutcome>;
-    editMetadata: (document: WorkspaceDocument, changes: DocumentMetadataUpdate) => Promise<void>;
+    editMetadata: (document: WorkspaceDocument, changes: DocumentMetadataUpdate) => Promise<DocumentMetadataOutcome>;
     tagDocuments: (documents: WorkspaceDocument[], action: BulkTagAction, tags: string[]) => Promise<DocumentBatchOutcome>;
     deleteDocuments: (documents: WorkspaceDocument[], options: DocumentDeleteOptions) => Promise<DocumentBatchOutcome>;
     download: (documents: WorkspaceDocument[]) => Promise<DocumentDownload>;
@@ -91,6 +100,22 @@ export interface DocumentOperationAdapter {
     createTag: (name: string, color?: string) => Promise<TagMutationOutcome>;
     updateTag: (name: string, changes: { new_name?: string; color?: string }) => Promise<TagMutationOutcome>;
     deleteTag: (name: string) => Promise<TagMutationOutcome>;
+}
+
+/**
+ * Shown when a confirmed change still has to reach the search index. Saves return as soon as the
+ * document is stored; a background sync then updates every search chunk, which can take a minute
+ * on a very large document.
+ */
+export const SEARCH_SYNC_PENDING_NOTICE = 'Search and chat results will reflect the change once the search index finishes updating.';
+
+/**
+ * Whether a receipt reports a queued background search index update. The flag is informational:
+ * the rest of the receipt confirms the change itself, so a missing or unrecognized value reads as
+ * "nothing pending" rather than failing an otherwise confirmed operation.
+ */
+export function searchSyncPending(value: unknown): boolean {
+    return isRecord(value) && isRecord(value.search_sync) && value.search_sync.status === 'pending';
 }
 
 /** The operation names a recognized management hint offers, or null for a missing or unknown hint. */
@@ -237,7 +262,7 @@ export function inspectDocumentBatch(
             errors.push({ document_id: id, error: 'outcome_unconfirmed', message: 'The server did not confirm this item. Refresh before retrying.' });
         }
     }
-    return { succeeded, errors };
+    return succeeded.length && searchSyncPending(response) ? { succeeded, errors, searchSyncPending: true } : { succeeded, errors };
 }
 
 async function batchOutcome(
@@ -315,6 +340,7 @@ function inspectTagMutation(response: unknown, scope: DocumentReadScope, creatin
     return {
         tag, documentsUpdated: typeof response.documents_updated === 'number' ? response.documents_updated : 0,
         success, errors, vocabularyRetained: response.vocabulary_retained === true,
+        ...(searchSyncPending(response) ? { searchSyncPending: true } : {}),
     };
 }
 
@@ -438,12 +464,13 @@ function createOperations(
                     || (result.errors !== undefined && (!Array.isArray(result.errors) || result.errors.length > 0))) {
                     throw new Error('The server did not confirm the metadata change for this document. Your draft is kept; refresh before retrying.');
                 }
-                return;
+                return { searchSyncPending: searchSyncPending(result) };
             }
             const result = await updatePersonalDocumentMetadata(documentId(document), changes);
             if (isRecord(result) && (result.success === false || (Array.isArray(result.errors) && result.errors.length))) {
                 throw new Error('Metadata was not fully saved. Your draft has been kept; refresh before retrying.');
             }
+            return { searchSyncPending: searchSyncPending(result) };
         },
         tagDocuments: async (documents, action, tags) => {
             const ids = idsFor('tag_documents', documents);

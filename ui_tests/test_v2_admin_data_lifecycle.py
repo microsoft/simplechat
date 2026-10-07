@@ -1,8 +1,8 @@
 # test_v2_admin_data_lifecycle.py
 """
 Browser coverage for the V2 Admin Settings Data Lifecycle group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.272
+Implemented in: 0.261.272
 
 Exercise the built application with the real Data Lifecycle schema, the real settings
 normalizer and in-memory retention routes. Check that Retention Policy, Document

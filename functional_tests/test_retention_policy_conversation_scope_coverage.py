@@ -1,9 +1,9 @@
 # test_retention_policy_conversation_scope_coverage.py
 """
 Functional test for retention policy conversation scope coverage.
-Version: 0.261.260
+Version: 0.261.272
 Implemented in: 0.250.103
-Public workspace conversation retention added in: 0.261.260
+Public workspace conversation retention added in: 0.261.272
 
 This test verifies the retention ownership matrix, timestamp safeguards,
 collaboration cleanup, archival behavior, race handling, new-group defaults, and

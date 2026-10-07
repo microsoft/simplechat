@@ -200,7 +200,7 @@ are removed. Documents are always deleted permanently, whether archiving is on o
 | **Run now** or **Reset to the defaults** cannot be clicked | There are unsaved Retention changes (or, for a run, an unsaved archiving change), or no workspace type has retention on in the saved settings. | Save or discard the changes, or switch a type on and save. |
 | **Next run** says it is not set | Retention was switched on without a run time being saved, so no run has been scheduled yet. | Save the run time again, or let the next run set it. |
 | A run removed nothing | No owner chose a period and the defaults keep everything, or nothing is older than its period yet. | Check the defaults shown in the review. |
-| Chats grounded in a public workspace stopped following a user's personal period | Since 0.261.260 they follow the public workspace's period, as group-grounded chats follow their group's. | Switch **Public workspaces** on and set a default, or let workspace owners choose. |
+| Chats grounded in a public workspace stopped following a user's personal period | Since 0.261.272 they follow the public workspace's period, as group-grounded chats follow their group's. | Switch **Public workspaces** on and set a default, or let workspace owners choose. |
 | Saving categories fails because two categories share a label | Labels must be unique, without regard to case. | Rename one of them. |
 | Deleted conversations disappear permanently | Archiving was off when the deletion happened. | Switch archiving on before relying on review of future deletions. |
 

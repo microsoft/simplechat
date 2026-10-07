@@ -1,8 +1,9 @@
 # test_v2_workflow_control_flow.py
 """
 UI regressions for structured If/else, Run when and forward routing.
-Version: 0.261.127
+Version: 0.261.271
 Implemented in: 0.261.116
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 The real local SPA uses the existing closed API fixture and production definition
 validation. No model, source service, publication or live workspace is invoked.
@@ -33,6 +34,13 @@ from ui_tests.fixtures.workflow_control_definitions import (
     flow_condition as condition,
     structured_workflow_record as structured_record,
 )
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    workflow_editor,
+    workflow_editor_path,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -40,6 +48,10 @@ pytestmark = pytest.mark.ui
 
 def task_block(page, name):
     return page.get_by_role("region", name=f"{name} block", exact=True)
+
+
+def flow_region(page, name):
+    return page.get_by_role("group", name=f"{name} region", exact=True)
 
 
 def add_task(page, region, region_name, name):
@@ -70,12 +82,14 @@ def select_condition(block, label, field):
 def test_create_branches_skip_route_and_join_without_raw_json(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     page.get_by_label("Workflow name", exact=True).fill("Authored structured flow")
     page.get_by_label("Model", exact=True).select_option(label="Workspace GPT \u00b7 aoai")
     page.get_by_role("button", name="Enable structured control flow", exact=True).click()
     page.get_by_role("button", name="Convert draft", exact=True).click()
-    main = page.get_by_role("group", name="Main region", exact=True)
+    # Converting moves focus to the converted tasks, whose List surface is the default.
+    expect(page.get_by_role("heading", name="Structured List", exact=True)).to_be_focused()
+    main = flow_region(page, "Main")
     main.get_by_label("Task name", exact=True).fill("Evaluate")
     evaluate = task_block(page, "Evaluate")
     evaluate.get_by_label("Instructions", exact=True).fill("Return a JSON object with Boolean pass and add_note fields.")
@@ -88,8 +102,8 @@ def test_create_branches_skip_route_and_join_without_raw_json(workflow_ui):
     branch = page.get_by_role("region", name="If / else block", exact=True)
     add_input(branch, "If / else inputs", "Evaluate", "decision")
     select_condition(branch, "If / else condition", "/pass")
-    add_task(page, page.get_by_role("group", name="Then region", exact=True), "Then", "Accept")
-    add_task(page, page.get_by_role("group", name="Else region", exact=True), "Else", "Review")
+    add_task(page, flow_region(page, "Then"), "Then", "Accept")
+    add_task(page, flow_region(page, "Else"), "Else", "Review")
     branch.get_by_role("button", name="Add joined output", exact=True).click()
     branch.get_by_label("Join output 1 Then producer", exact=True).select_option(label="Accept")
     branch.get_by_label("Join output 1 Then output", exact=True).select_option("text")
@@ -123,7 +137,7 @@ def test_create_branches_skip_route_and_join_without_raw_json(workflow_ui):
     add_input(final_outputs, "Final outputs", "Finish", "report", output="text")
     ui.assert_no_overflow()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
 
     assert len(ui.workflow_writes) == 1
     body = ui.workflow_writes[0].body
@@ -145,7 +159,7 @@ def test_skip_dependency_is_rejected_and_stale_save_retains_flow(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     record = structured_record()
     ui.personal_workflows[STRUCTURED_ID] = record
-    ui.open(f"/workspace/workflows?workflow_id={STRUCTURED_ID}")
+    ui.open(workflow_editor_path(STRUCTURED_ID))
     finish = task_block(page, "Finish")
     open_details(finish)
     finish.get_by_label("Finish inputs input 2 required", exact=True).check()
@@ -159,7 +173,7 @@ def test_skip_dependency_is_rejected_and_stale_save_retains_flow(workflow_ui):
     expect(page.get_by_role("alert").filter(has_text="draft has been retained")).to_be_visible()
     expect(page.get_by_label("Workflow name", exact=True)).to_have_value("Retained structured draft")
     expect(page.get_by_label("Forward route target", exact=True)).to_have_value("node:finish")
-    expect(page.get_by_role("group", name="Then region", exact=True)).to_be_visible()
+    expect(flow_region(page, "Then")).to_be_visible()
     assert not ui.workflow_writes
     assert record["flow"]["nodes"][3]["run_when"] == condition("add_note")
 
@@ -178,7 +192,7 @@ def test_unknown_structured_semantics_are_read_only(workflow_ui, unsupported):
         record["tasks"][3]["runner"]["future_tool_policy"] = "new executor semantics"
     original = copy.deepcopy(record)
     ui.personal_workflows[STRUCTURED_ID] = record
-    ui.open(f"/workspace/workflows?workflow_id={STRUCTURED_ID}")
+    ui.open(workflow_editor_path(STRUCTURED_ID))
     expect(page.get_by_role("alert").filter(has_text="cannot safely save")).to_be_visible()
     expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
     assert not ui.workflow_writes
@@ -189,7 +203,7 @@ def test_structured_mobile_keyboard_edit_preserves_identity(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     record = structured_record()
     ui.personal_workflows[STRUCTURED_ID] = record
-    ui.open(f"/workspace/workflows?workflow_id={STRUCTURED_ID}", theme="dark", width=390, height=844)
+    ui.open(workflow_editor_path(STRUCTURED_ID), theme="dark", width=390, height=844)
     ui.assert_no_overflow()
     limit = page.get_by_label("Maximum execution admissions", exact=True)
     limit.focus()
@@ -198,7 +212,7 @@ def test_structured_mobile_keyboard_edit_preserves_identity(workflow_ui):
     save = page.get_by_role("button", name="Save workflow", exact=True)
     save.focus()
     save.press("Enter")
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert ui.workflow_writes[-1].body["limits"]["max_executions"] == 4999
     assert ui.workflow_writes[-1].body["flow"] == record["flow"]
     assert [task["id"] for task in ui.workflow_writes[-1].body["tasks"]] == [task["id"] for task in record["tasks"]]
@@ -212,10 +226,10 @@ def test_group_structured_save_keeps_explicit_group_scope(workflow_ui):
     ui.open("/groups")
     ui.select_group(GROUP_ID)
     expect(page.get_by_role("heading", name="Workflows", exact=True)).to_be_visible()
-    page.get_by_role("button", name=re.compile("Edit Structured review")).click()
+    edit_workflow(page, "Structured review")
     page.get_by_label("Workflow name", exact=True).fill("Group structured review")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     write = ui.workflow_writes[-1]
     assert write.path == "/api/group/workflows"
     assert write.query["group_id"] == [GROUP_ID]
@@ -227,7 +241,7 @@ def test_group_structured_save_keeps_explicit_group_scope(workflow_ui):
 def test_conversion_never_silently_changes_continue_on_error_inputs(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["error_handling"]["strategy"] = "continue"
-    ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
+    ui.open(workflow_editor_path(WORKFLOW_ID))
     page.get_by_role("button", name="Enable structured control flow", exact=True).click()
     page.get_by_role("button", name="Convert draft", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text="explicit task inputs")).to_be_visible()
@@ -241,7 +255,7 @@ def test_structured_publication_uses_one_explicit_input_and_destination(workflow
     record = structured_record()
     record["tasks"][1]["document_action"] = {"type": "analyze", "document_ids": ["personal-brief"]}
     ui.personal_workflows[STRUCTURED_ID] = record
-    ui.open(f"/workspace/workflows?workflow_id={STRUCTURED_ID}")
+    ui.open(workflow_editor_path(STRUCTURED_ID))
     finish = task_block(page, "Finish")
     open_details(finish)
     finish.get_by_text("Publish an existing analysis artifact", exact=True).click()
@@ -252,7 +266,7 @@ def test_structured_publication_uses_one_explicit_input_and_destination(workflow
     assert not ui.workflow_writes
     finish.get_by_role("button", name="Finish inputs remove input 2", exact=True).click()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     task = ui.workflow_writes[-1].body["tasks"][-1]
     assert task["publication"] == {
         "artifact_format": "md", "workspace_scope": "group", "group_id": "explicit-destination",

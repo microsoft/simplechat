@@ -1,11 +1,12 @@
 # test_v2_document_provenance.py
 """
 Production-SPA coverage for where a V2 document came from.
-Version: 0.261.251
+Version: 0.261.271
 Implemented in: 0.261.194
 A workflow alert's Open workflow, followed while that workflows list is already open: 0.261.199
 One more list read, and no more, for a workflow the open list lacks: 0.261.199
 Open run in Open workflow's place, for an alert that names its run: 0.261.251
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 The real SPA runs against closed synthetic document, workflow and chat APIs, with no live data.
 A list row says only which kind of origin a document has (`origin_kind`). The details pane asks
@@ -50,6 +51,11 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
     workflow_record,
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID, connect_options  # noqa: E402,F401
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    select_workflow,
+    workflow_detail,
+    workflow_row,
+)
 
 
 pytestmark = pytest.mark.ui
@@ -316,7 +322,14 @@ def raise_workflow_alert(ui, scope, identifier, title):
         ui.page.evaluate("() => window.dispatchEvent(new FocusEvent('focus'))")
         ui.page.wait_for_timeout(500)
     notice = ui.page.locator("[data-workflow-alert-notice]")
-    expect(notice).to_contain_text(title)
+    deadline = time.monotonic() + 10
+    while True:
+        if notice.count() and title in (notice.text_content() or ""):
+            break
+        if time.monotonic() > deadline:
+            expect(notice).to_contain_text(title)
+        ui.page.evaluate("() => window.dispatchEvent(new FocusEvent('focus'))")
+        ui.page.wait_for_timeout(500)
     return notice
 
 
@@ -372,7 +385,9 @@ def test_workflow_origin_links_to_its_run_in_the_workflow_history(provenance_ui)
 
     link.click()
     expect(ui.page).to_have_url(f"{ORIGIN}/v2{WORKFLOW_HREF}")
-    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    runs = workflow_detail(ui.page, "Quarterly review workflow").get_by_role("tabpanel", name="Runs", exact=True)
+    expect(runs).to_be_visible()
+    history = runs.get_by_role("list", name="Workflow run history", exact=True)
     linked = history.locator('li[aria-current="true"]')
     expect(linked).to_have_count(1)
     expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
@@ -380,7 +395,7 @@ def test_workflow_origin_links_to_its_run_in_the_workflow_history(provenance_ui)
     expect(history.get_by_role("button", name="Hide run task results", exact=True)).to_have_count(1)
     expect(history.get_by_role("button", name="Show run task results", exact=True)).to_have_count(1)
     expect(ui.page.get_by_text("The linked run is not among the most recent runs shown here.")).to_have_count(0)
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
     assert [entry.path for entry in ui.requests if entry.path.endswith("/items")] == [
         f"/api/user/workflows/{WORKFLOW_ID}/runs/{LINKED_RUN_ID}/items",
     ]
@@ -389,20 +404,24 @@ def test_workflow_origin_links_to_its_run_in_the_workflow_history(provenance_ui)
 
 def test_a_run_link_outside_the_recent_runs_says_so_and_a_workflow_link_still_edits(provenance_ui):
     """A run older than the history shows is reported rather than silently replaced by another
-    run. A link that names only the workflow keeps opening the editor, as it always has."""
+    run. A link that names only the workflow selects it in the workbench."""
     ui = provenance_ui
     ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}&run_id=run-archived")
     expect(ui.page.get_by_role("status").filter(
         has_text="The linked run is not among the most recent runs shown here.",
     )).to_be_visible()
-    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    runs = workflow_detail(ui.page, "Quarterly review workflow").get_by_role("tabpanel", name="Runs", exact=True)
+    expect(runs).to_be_visible()
+    history = runs.get_by_role("list", name="Workflow run history", exact=True)
     expect(history.get_by_role("button", name="Show run task results", exact=True)).to_have_count(2)
     expect(history.locator("li[aria-current]")).to_have_count(0)
     expect(history.get_by_role("button", name="Hide run task results", exact=True)).to_have_count(0)
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
-
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
     ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
+    detail = workflow_detail(ui.page, "Quarterly review workflow")
+    expect(detail).to_be_visible()
+    expect(detail.get_by_role("tabpanel", name="Overview", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
     assert not [entry for entry in ui.requests if entry.path.endswith("/items")]
 
 
@@ -423,9 +442,10 @@ def test_open_run_from_an_alert_while_the_list_is_open(alert_workflows_ui, scope
         ui.open("/workspace/workflows")
         items_path = f"/api/user/workflows/{workflow_id}/runs/{run_id}/items"
         list_api = "/api/user/workflows"
-    run_other = ui.page.get_by_role("button", name=f"Run {other}", exact=True)
+    detail = select_workflow(ui.page, other)
+    run_other = detail.get_by_role("button", name=f"Run {other}", exact=True)
     expect(run_other).to_be_visible()
-    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    history = workflow_detail(ui.page, other).get_by_role("list", name="Workflow run history", exact=True)
     linked = history.locator('li[aria-current="true"]')
     expect(history).to_have_count(0)
     target = f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}"
@@ -435,10 +455,13 @@ def test_open_run_from_an_alert_while_the_list_is_open(alert_workflows_ui, scope
 
     open_run_from(ui, raise_workflow_alert(ui, scope, "alert-1", "Review found blocking items"))
     expect(ui.page).to_have_url(target)
+    runs = workflow_detail(ui.page, ALERT_CASES[scope][1]).get_by_role("tabpanel", name="Runs", exact=True)
+    history = runs.get_by_role("list", name="Workflow run history", exact=True)
+    linked = history.locator('li[aria-current="true"]')
     expect(linked).to_have_count(1)
     expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
     expect(linked).to_contain_text("Collect evidence")
-    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
     wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
     assert item_reads() == [items_path]
 
@@ -446,7 +469,9 @@ def test_open_run_from_an_alert_while_the_list_is_open(alert_workflows_ui, scope
     linked.get_by_role("button", name="Hide run task results", exact=True).click()
     expect(linked.get_by_role("button", name="Show run task results", exact=True)).to_be_visible()
     open_run_from(ui, raise_workflow_alert(ui, scope, "alert-2", "Review still has blocking items"))
-    expect(ui.page).to_have_url(target)
+    runs = workflow_detail(ui.page, ALERT_CASES[scope][1]).get_by_role("tabpanel", name="Runs", exact=True)
+    history = runs.get_by_role("list", name="Workflow run history", exact=True)
+    linked = history.locator('li[aria-current="true"]')
     expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
     wait_until(ui, lambda: ui.read_calls == ["alert-1", "alert-2"], lambda: f"Opening marked {ui.read_calls} as read.")
     assert item_reads() == [items_path, items_path]
@@ -454,15 +479,22 @@ def test_open_run_from_an_alert_while_the_list_is_open(alert_workflows_ui, scope
     # Running another workflow refreshes the list and expands that workflow's history instead.
     # The address still names the run, but it was already acted on, so it stays closed.
     list_reads = sum(1 for entry in ui.requests if (entry.method, entry.path) == ("GET", list_api))
+    detail = select_workflow(ui.page, other)
+    run_other = detail.get_by_role("button", name=f"Run {other}", exact=True)
     run_other.click()
-    expect(ui.page.get_by_role("button", name=f"Cancel {other}", exact=True)).to_be_visible()
+    expect(detail.get_by_role("button", name=f"Cancel {other}", exact=True)).to_be_visible()
     wait_until(
         ui,
         lambda: sum(1 for entry in ui.requests if (entry.method, entry.path) == ("GET", list_api)) > list_reads,
         lambda: "Running the workflow did not refresh the list.",
     )
     ui.page.wait_for_timeout(500)
-    expect(ui.page.get_by_role("button", name="Hide run history", exact=True)).to_have_count(1)
+    # Run shows the other workflow's Runs tab; its new run is listed, and nothing is expanded.
+    runs = workflow_detail(ui.page, other).get_by_role("tabpanel", name="Runs", exact=True)
+    expect(runs).to_be_visible()
+    history = runs.get_by_role("list", name="Workflow run history", exact=True)
+    expect(history).to_be_visible()
+    expect(history.get_by_role("button", name="Hide run task results", exact=True)).to_have_count(0)
     expect(history.locator("li[aria-current]")).to_have_count(0)
     expect(ui.page).to_have_url(target)
     assert item_reads().count(items_path) == 2
@@ -498,8 +530,9 @@ def open_list_without_the_alerted_workflow(ui, scope):
         ui.select_group(GROUP_ID)
     else:
         ui.open("/workspace/workflows")
-    expect(ui.page.get_by_role("button", name=f"Run {other}", exact=True)).to_be_visible()
-    expect(ui.page.get_by_role("button", name=f"Run {name}", exact=True)).to_have_count(0)
+    detail = select_workflow(ui.page, other)
+    expect(detail.get_by_role("button", name=f"Run {other}", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, name)).to_have_count(0)
     return workflows, record
 
 
@@ -528,18 +561,18 @@ def test_open_run_reads_the_list_again_for_a_workflow_created_since(alert_workfl
     workflow_id, name, run_id, _, list_path = ALERT_CASES[scope]
     workflows, record = open_list_without_the_alerted_workflow(ui, scope)
     workflows[workflow_id] = record
-    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
-    linked = history.locator('li[aria-current="true"]')
-
     notice = raise_workflow_alert(ui, scope, "alert-1", "Review found blocking items")
     list_reads = workflow_list_reads(ui, scope)
     open_run_from(ui, notice)
     expect(ui.page).to_have_url(f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}")
+    runs = workflow_detail(ui.page, name).get_by_role("tabpanel", name="Runs", exact=True)
+    history = runs.get_by_role("list", name="Workflow run history", exact=True)
+    linked = history.locator('li[aria-current="true"]')
     expect(linked).to_have_count(1)
     expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
     expect(linked).to_contain_text("Collect evidence")
-    expect(ui.page.get_by_role("button", name=f"Run {name}", exact=True)).to_be_visible()
-    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    expect(workflow_detail(ui.page, name).get_by_role("button", name=f"Run {name}", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
     wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
     ui.page.wait_for_timeout(QUIET_MS)
     extra_reads = workflow_list_reads(ui, scope) - list_reads
@@ -563,14 +596,15 @@ def test_open_run_reads_the_list_only_once_more_for_a_workflow_it_lacks(alert_wo
     open_list_without_the_alerted_workflow(ui, scope)
     target = f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}"
     section = ui.page.get_by_role("group", name="Workspace workflows", exact=True)
-    run_other = section.get_by_role("button", name=f"Run {other}", exact=True)
-    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    expect(section).to_be_visible()
+    detail = select_workflow(ui.page, other)
+    run_other = detail.get_by_role("button", name=f"Run {other}", exact=True)
 
     extra_reads = follow_open_run_to_a_missing_workflow(ui, scope, "alert-1", "Review found blocking items")
     expect(ui.page).to_have_url(target)
     assert extra_reads == 1, f"Open run read the list {extra_reads} more times, not once."
-    expect(ui.page.get_by_role("dialog")).to_have_count(0)
-    expect(history).to_have_count(0)
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("list", name="Workflow run history", exact=True)).to_have_count(0)
     expect(section.get_by_role("alert")).to_have_count(0)
     wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
 
@@ -578,9 +612,10 @@ def test_open_run_reads_the_list_only_once_more_for_a_workflow_it_lacks(alert_wo
     search = section.get_by_role("searchbox", name="Search workflows", exact=True)
     search.fill("no such workflow")
     expect(section.get_by_text("No workflows match your search", exact=True)).to_be_visible()
+    expect(workflow_row(ui.page, other)).to_have_count(0)
     expect(run_other).to_have_count(0)
     search.fill("")
-    expect(run_other).to_be_enabled()
+    expect(workflow_row(ui.page, other)).to_be_enabled()
 
     # Following the same link again is a new navigation, with one read of its own.
     extra_reads = follow_open_run_to_a_missing_workflow(
@@ -588,8 +623,8 @@ def test_open_run_reads_the_list_only_once_more_for_a_workflow_it_lacks(alert_wo
     )
     expect(ui.page).to_have_url(target)
     assert extra_reads == 1, f"Following the link again read the list {extra_reads} more times, not once."
-    expect(ui.page.get_by_role("dialog")).to_have_count(0)
-    expect(history).to_have_count(0)
+    expect(ui.page.get_by_role("region", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("list", name="Workflow run history", exact=True)).to_have_count(0)
     expect(section.get_by_role("alert")).to_have_count(0)
     expect(run_other).to_be_enabled()
     wait_until(

@@ -2,8 +2,8 @@
 # test_v2_admin_data_lifecycle_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Data Lifecycle group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.272
+Implemented in: 0.261.272
 
 Before this group was described, the V2 admin surface drew Retention Policy, Document
 Classification and Conversation Archiving through its ``enable_*`` fallback scan: five
@@ -120,7 +120,7 @@ def test_data_lifecycle_panes_match_navigation():
     """The panes this test reads must be the ones ADMIN_NAV puts in the group."""
     print("Testing Data Lifecycle pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.272")
 
     group = next((g for g in ADMIN_NAV if g["id"] == DATA_LIFECYCLE_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines a 'data-lifecycle' group."

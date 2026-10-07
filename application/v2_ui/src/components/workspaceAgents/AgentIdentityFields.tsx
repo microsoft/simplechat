@@ -8,6 +8,7 @@ import {
     AGENT_INPUT_CLASS, AGENT_TYPE_LABELS, changeAgentType, clearAgentDraftFields, isAgentIconImage, renameAgentDraft,
 } from '../../lib/workspaceAgentAuthoring';
 import { GlassButton } from '../ui/primitives';
+import { EditorFieldset, EditorGroup } from '../workspace/EditorLayout';
 import { AgentField, AgentNotice, AgentTextField } from './AgentFields';
 
 const ICON_FALLBACKS = [
@@ -96,7 +97,7 @@ export function AgentIdentityFields({
             <link rel="stylesheet" href="/static/css/bootstrap-icons.css" />
             <AgentTextField id="agent-display-name" label="Display name" value={draft.display_name} required
                 onChange={(value) => setDraft((current) => renameAgentDraft(current, value, isNew))} />
-            <AgentField id="agent-description" label="Description" help="Explain what this agent does and when someone should choose it.">
+            <AgentField id="agent-description" label="Description" width="full" help="Explain what this agent does and when someone should choose it.">
                 <textarea id="agent-description" rows={3} value={draft.description} required className={AGENT_INPUT_CLASS}
                     onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
             </AgentField>
@@ -105,8 +106,8 @@ export function AgentIdentityFields({
                 onChange={(value) => setDraft((current) => ({
                     ...current, tags: [...new Set(value.split(',').map((tag) => tag.trim()).filter(Boolean))], _editor_tags_text: value,
                 }))} onBlur={() => setDraft((current) => clearAgentDraftFields(current, '_editor_tags_text'))} />
-            <fieldset className="space-y-2">
-                <legend className="mb-2 text-sm font-medium text-text-2">Agent type</legend>
+            <EditorFieldset legend="Agent type"
+                help="Changing type preserves existing settings. Foundry owns prompts and tools; any local action removal must be confirmed before saving.">
                 <div className="grid gap-2 sm:grid-cols-2">
                     {(Object.keys(AGENT_TYPE_LABELS) as WorkspaceAgentType[]).map((type) => {
                         const option = options.agent_types.find((item) => item.value === type);
@@ -122,37 +123,33 @@ export function AgentIdentityFields({
                         );
                     })}
                 </div>
-                <p className="text-xs text-text-3">Changing type preserves existing settings. Foundry owns prompts and tools; any local action removal must be confirmed before saving.</p>
-            </fieldset>
-            <fieldset className="space-y-3">
-                <legend className="mb-2 text-sm font-medium text-text-2">Agent icon</legend>
+            </EditorFieldset>
+            <EditorFieldset legend="Agent icon" help="Shown beside the agent wherever people choose it. Pick a Bootstrap icon or upload an image.">
                 <div className="flex flex-wrap items-center gap-3">
                     <AgentIcon icon={draft.icon} />
-                    <GlassButton type="button" size="sm" onClick={() => {
+                    <GlassButton type="button" size="sm" variant="subtle" onClick={() => {
                         uploadSequence.current += 1;
                         setImageBusy(false);
                         onIconBusyChange?.(false);
                         setDraft((current) => ({ ...current, icon: { kind: 'bootstrap', value: 'bi-robot' } }));
                     }}>Use default icon</GlassButton>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-2">
-                        <AgentTextField label="Search Bootstrap icons" type="search" value={iconSearch} onChange={setIconSearch} />
-                        <AgentField id="agent-bootstrap-icon" label="Bootstrap icon">
-                            <select id="agent-bootstrap-icon" className={AGENT_INPUT_CLASS} value={currentIcon}
-                                onChange={(event) => {
-                                    uploadSequence.current += 1;
-                                    setImageBusy(false);
-                                    onIconBusyChange?.(false);
-                                    setDraft((current) => ({ ...current, icon: { kind: 'bootstrap', value: event.target.value } }));
-                                }}>
-                                {!currentIcon ? <option value="">Choose an icon</option> : null}
-                                {currentIcon && !visibleIcons.includes(currentIcon) ? <option value={currentIcon}>{currentIcon}</option> : null}
-                                {visibleIcons.map((icon) => <option key={icon} value={icon}>{icon}</option>)}
-                            </select>
-                        </AgentField>
-                        <GlassButton type="button" size="sm" onClick={() => void loadIcons()}>Load all local icons</GlassButton>
-                    </div>
+                <div className="min-w-0">
+                    <AgentTextField label="Search Bootstrap icons" type="search" value={iconSearch} onChange={setIconSearch} />
+                    <AgentField id="agent-bootstrap-icon" label="Bootstrap icon">
+                        <select id="agent-bootstrap-icon" className={AGENT_INPUT_CLASS} value={currentIcon}
+                            onChange={(event) => {
+                                uploadSequence.current += 1;
+                                setImageBusy(false);
+                                onIconBusyChange?.(false);
+                                setDraft((current) => ({ ...current, icon: { kind: 'bootstrap', value: event.target.value } }));
+                            }}>
+                            {!currentIcon ? <option value="">Choose an icon</option> : null}
+                            {currentIcon && !visibleIcons.includes(currentIcon) ? <option value={currentIcon}>{currentIcon}</option> : null}
+                            {visibleIcons.map((icon) => <option key={icon} value={icon}>{icon}</option>)}
+                        </select>
+                        <div><GlassButton type="button" size="sm" variant="subtle" onClick={() => void loadIcons()}>Load all local icons</GlassButton></div>
+                    </AgentField>
                     <AgentField id="agent-icon-upload" label="Upload icon" help="PNG or JPEG, resized to at most 128 × 128 pixels. The stored PNG must fit the existing 350000-character limit.">
                         <input id="agent-icon-upload" type="file" accept="image/png,image/jpeg" disabled={imageBusy}
                             className={`${AGENT_INPUT_CLASS} file:mr-3 file:rounded-lg file:border-0 file:bg-surface-2 file:px-2 file:py-1 file:text-text-1`}
@@ -161,20 +158,17 @@ export function AgentIdentityFields({
                                 if (file) void uploadIcon(file);
                                 event.target.value = '';
                             }} />
-                        {imageBusy ? <p role="status" className="mt-2 text-xs text-text-3">Resizing icon…</p> : null}
+                        {imageBusy ? <p role="status" className="text-xs text-text-3">Resizing icon…</p> : null}
                     </AgentField>
                 </div>
                 {iconError ? <AgentNotice error>{iconError}</AgentNotice> : null}
-            </fieldset>
-            <details className="rounded-xl border border-edge p-3">
-                <summary className="cursor-pointer text-sm font-medium text-text-2">Internal identity</summary>
-                <div className="mt-3 space-y-3">
-                    <AgentTextField label="Internal name" value={draft.name} pattern="[A-Za-z0-9_\-]+" required
-                        help="Derived from the display name only for a new agent. Changing a saved display name does not rename this value or change its stable ID."
-                        onChange={(value) => setDraft((current) => ({ ...current, name: value }))} />
-                    <p className="break-all text-xs text-text-3">Stable ID: {draft.id || 'Allocated when this agent is first saved.'}</p>
-                </div>
-            </details>
+            </EditorFieldset>
+            <EditorGroup summary="Internal identity">
+                <AgentTextField label="Internal name" value={draft.name} pattern="[A-Za-z0-9_\-]+" required
+                    help="Derived from the display name only for a new agent. Changing a saved display name does not rename this value or change its stable ID."
+                    onChange={(value) => setDraft((current) => ({ ...current, name: value }))} />
+                <p className="break-all pb-1 text-xs text-text-3">Stable ID: {draft.id || 'Allocated when this agent is first saved.'}</p>
+            </EditorGroup>
         </div>
     );
 }

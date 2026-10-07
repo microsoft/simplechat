@@ -1,8 +1,9 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.207
+Version: 0.261.271
 Implemented in: 0.261.141
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
 group File Sync source list with the real `_serialize_workflow_file_sync_source`, and validates
@@ -48,6 +49,13 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
     connect_options,  # noqa: F401
     workflow_record,
     workflow_ui,  # noqa: F401
+)
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    open_workflow_runs,
+    workflow_editor,
 )
 
 
@@ -168,9 +176,7 @@ def test_manager_authors_a_monitor_trigger_and_posts_the_server_shape(workflow_u
     """A group manager picks the trigger and a source; the POST carries what the server accepts."""
     ui, page = workflow_ui, workflow_ui.page
     open_group_workflows(ui)
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Create workflow", exact=True)
-    expect(dialog).to_be_visible()
+    dialog = create_workflow(page)
 
     expect(source_checkbox(page, "Finance share (Group)")).to_be_visible()
     assert source_requests(ui) and all(
@@ -221,7 +227,7 @@ def test_manager_authors_a_monitor_trigger_and_posts_the_server_shape(workflow_u
     saved_id = next(identifier for identifier in ui.group_workflows[GROUP_ID] if identifier.startswith("group-created"))
     assert ui.group_workflows[GROUP_ID][saved_id]["file_sync"]["sources"] == [STORED_FINANCE_SOURCE]
 
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
     expect(source_checkbox(page, "Finance share (Group)")).to_be_checked()
     expect(labelled(page, "Interval value")).to_have_value("30")
@@ -240,7 +246,7 @@ def test_editing_an_existing_file_sync_workflow_round_trips_every_modelled_famil
     assert loaded["tasks"][0]["document_action"]["type"] == "analyze"
     assert loaded["tasks"][0]["document_action"]["document_ids"] == []
     open_group_workflows(ui)
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
     expect(source_checkbox(page, "Finance share (Group)")).to_be_checked()
     preserved = page.get_by_text("V2 does not edit these legacy settings", exact=False)
@@ -260,7 +266,7 @@ def test_editing_an_existing_file_sync_workflow_round_trips_every_modelled_famil
 
     labelled(page, "Description").first.fill("Summarize and flag risky changes.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
 
     body = workflow_post(ui).body
     assert body["description"] == "Summarize and flag risky changes."
@@ -279,7 +285,7 @@ def test_editing_an_existing_file_sync_workflow_round_trips_every_modelled_famil
     assert ("group", GROUP_ID, "finance-share") in ui.file_sync_source_reads
     assert ui.group_workflows[GROUP_ID][MONITOR_ID]["file_sync"] == loaded["file_sync"]
 
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     changed_files = page.get_by_role("checkbox", name=re.compile(r"^Use changed files as Analyze targets"))
     changed_files.uncheck(force=True)
     # Without changed files as targets, the server would refuse an Analyze task with no documents.
@@ -296,7 +302,7 @@ def test_editing_an_existing_file_sync_workflow_round_trips_every_modelled_famil
 
     source_checkbox(page, "Archive share (Group)").check()
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert workflow_post(ui).body["file_sync"] == {
         "enabled": True, "wait_mode": "complete", "continue_mode": "changed", "use_changed_documents": True,
         "sources": [
@@ -313,7 +319,7 @@ def test_file_sync_before_run_follows_the_server_rules_for_manual_triggers(workf
     """File Sync before run is optional for manual workflows, and queued plus changed is refused locally."""
     ui, page = workflow_ui, workflow_ui.page
     open_group_workflows(ui)
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     fill_required_basics(page, "Sync first")
     expect(page.get_by_label("Wait for File Sync", exact=True)).to_be_disabled()
     before_run_toggle(page).check(force=True)
@@ -329,7 +335,7 @@ def test_file_sync_before_run_follows_the_server_rules_for_manual_triggers(workf
 
     page.get_by_label("Wait for File Sync", exact=True).select_option("complete")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     body = workflow_post(ui).body
     assert body["trigger_type"] == "manual"
     assert body["file_sync"] == {
@@ -337,10 +343,10 @@ def test_file_sync_before_run_follows_the_server_rules_for_manual_triggers(workf
         "sources": [{"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"}],
     }
 
-    page.get_by_role("button", name="Edit Sync first", exact=True).click()
+    edit_workflow(page, "Sync first")
     before_run_toggle(page).uncheck(force=True)
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert workflow_post(ui).body["file_sync"] == {
         "enabled": False, "wait_mode": "complete", "continue_mode": "changed", "use_changed_documents": True,
         "sources": [],
@@ -357,7 +363,7 @@ def test_unavailable_saved_sources_must_be_removed_before_saving(workflow_ui):
     })
     ui.group_workflows[GROUP_ID][MONITOR_ID] = workflow
     open_group_workflows(ui)
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     stale = source_checkbox(page, "Deleted share")
     expect(stale).to_be_checked()
     expect(page.get_by_text("No longer available", exact=True)).to_be_visible()
@@ -371,7 +377,7 @@ def test_unavailable_saved_sources_must_be_removed_before_saving(workflow_ui):
     stale.click()
     expect(source_checkbox(page, "Deleted share")).to_have_count(0)
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     assert workflow_post(ui).body["file_sync"]["sources"] == [
         {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"},
     ]
@@ -382,7 +388,7 @@ def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_r
     ui, page = workflow_ui, workflow_ui.page
     ui.group_file_sync_enabled[GROUP_ID] = False
     open_group_workflows(ui)
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    editor = create_workflow(page)
     # 0.261.149: the list says File Sync is off, so the editor neither lists sources nor lets a draft use them.
     expect(page.get_by_text(
         "Group File Sync is not enabled, so this group's sources cannot be listed.", exact=True,
@@ -390,10 +396,11 @@ def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_r
     expect(page.get_by_text("No File Sync sources are available to this group.", exact=True)).to_have_count(0)
     expect(before_run_toggle(page)).to_be_disabled()
     assert trigger_options(page) == ["Manual", "Schedule"]
-    page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    expect(editor).to_have_count(0)
 
     ui.group_file_sync_enabled[GROUP_ID] = True
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     fill_required_basics(page, "Refused monitor")
     labelled(page, "Trigger").select_option("file_sync")
     source_checkbox(page, "Finance share (Group)").check()
@@ -413,8 +420,7 @@ def test_members_see_a_read_only_summary_and_never_request_sources(workflow_ui):
     ui.group_workflows[GROUP_ID][MONITOR_ID] = monitored_workflow()
     open_group_workflows(ui)
     expect(page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
-    page.get_by_role("button", name="View Monitor finance drops", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    dialog = edit_workflow(page, "Monitor finance drops", action="View")
     expect(dialog.get_by_text("You have read-only access to workflows in this scope.", exact=True)).to_be_visible()
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
     expect(labelled(page, "Trigger")).to_be_disabled()
@@ -444,26 +450,28 @@ def test_managers_edit_stored_alerts_natively_with_no_classic_link(workflow_ui):
     alerts = page.get_by_role("region", name="Alerts", exact=True)
     rules = page.get_by_role("list", name="Alert rules", exact=True).get_by_role("listitem")
 
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    dialog = edit_workflow(page, "Monitor finance drops")
     expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("rules")
     expect(rules).to_have_count(2)
     expect(alerts.get_by_role("heading", name="Rule 1: Files changed", exact=True)).to_be_visible()
     expect(alerts.get_by_label("Alert rule 2 task", exact=True)).to_have_value("summarize")
     expect(alerts.get_by_label("If a model evaluated condition cannot be judged", exact=True)).to_have_count(0)
     dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(dialog).to_have_count(0)
 
-    page.get_by_role("button", name="Edit Every run alerts", exact=True).click()
+    edit_workflow(page, "Every run alerts")
     expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("every_run")
     expect(alerts.get_by_label("Pop-up alert priority", exact=True)).to_have_value("low")
     expect(rules).to_have_count(0)
     dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(dialog).to_have_count(0)
 
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    creating = create_workflow(page)
     expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("off")
-    page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
+    creating.get_by_role("button", name="Cancel", exact=True).click()
+    expect(creating).to_have_count(0)
 
-    page.get_by_role("button", name="Edit Legacy alerts", exact=True).click()
+    edit_workflow(page, "Legacy alerts")
     # A priority-only record resolves on the server to the two legacy rules; the editor shows them.
     expect(alerts.get_by_label("When to alert", exact=True)).to_have_value("rules")
     expect(alerts.get_by_role("heading", name="Rule 1: Run failed", exact=True)).to_be_visible()
@@ -489,9 +497,8 @@ def test_group_durable_run_approval_decides_through_the_group_route(workflow_ui)
         },
     ), scope_type="group")
     open_group_workflows(ui)
-    row = page.get_by_role("listitem").filter(has_text="Group review workflow").first
-    row.get_by_role("button", name="Show run history", exact=True).click()
-    row.get_by_role("button", name="Show run task results", exact=True).click()
+    runs = open_workflow_runs(page, "Group review workflow")
+    runs.get_by_role("button", name="Show run task results", exact=True).click()
     expect(page.get_by_text("Approval is required before the group task starts.", exact=True)).to_be_visible()
     page.get_by_role("button", name="Approve task", exact=True).click()
     expect(page.get_by_text("queued", exact=True).first).to_be_visible()
@@ -513,7 +520,7 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
     ui.group_workflows[GROUP_ID][MONITOR_ID] = monitored_workflow()
     ui.open("/groups", theme=theme, width=width, height=height)
     ui.select_group(GROUP_ID)
-    page.get_by_role("button", name="Edit Monitor finance drops", exact=True).click()
+    edit_workflow(page, "Monitor finance drops")
     file_sync = page.get_by_role("region", name="File Sync")
     alerts = page.get_by_role("region", name="Alerts")
     file_sync.scroll_into_view_if_needed()
@@ -521,7 +528,9 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
     expect(page.get_by_label("Continue the workflow", exact=True)).to_be_visible()
     alerts.scroll_into_view_if_needed()
     expect(page.get_by_role("list", name="Alert rules", exact=True).get_by_role("listitem")).to_have_count(2)
-    clipped = page.evaluate("""() => [...document.querySelectorAll('[role="dialog"] *')]
+    # Visually hidden text, such as the File Sync sources legend, is clipped by design.
+    clipped = page.evaluate("""() => [...document.querySelectorAll('[data-workflow-editor-page] *')]
+        .filter((element) => !element.closest('.sr-only'))
         .filter((element) => element.scrollWidth > element.clientWidth + 1 && getComputedStyle(element).overflowX !== 'visible')
         .map((element) => element.tagName)""")
     assert clipped == [], clipped
@@ -546,7 +555,7 @@ def test_personal_workflows_keep_an_untouched_file_sync_unchanged(workflow_ui):
         exact=True,
     )).to_be_visible()
 
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+    edit_workflow(page, "Quarterly review workflow")
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
     expect(source_checkbox(page, "Home share (Personal)")).to_be_checked()
     assert trigger_options(page) == ["Manual", "Schedule", "Monitor File Sync changes"]
@@ -556,7 +565,7 @@ def test_personal_workflows_keep_an_untouched_file_sync_unchanged(workflow_ui):
     expect(preserved).not_to_contain_text("file sync settings")
     labelled(page, "Description").first.fill("Personal edit keeps its File Sync.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page)).to_have_count(0)
     body = workflow_post(ui).body
     assert body["trigger_type"] == "file_sync"
     assert body["file_sync"] == PERSONAL_MONITOR_FILE_SYNC
@@ -591,8 +600,7 @@ def test_personal_analyze_tasks_may_rely_on_file_sync_changed_files(workflow_ui)
         }],
     )
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Edit Personal changed files", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    dialog = edit_workflow(page, "Personal changed files")
     expect(before_run_toggle(page)).to_be_checked()
     expect(source_checkbox(page, "Home share (Personal)")).to_be_checked()
     page.get_by_text("Runner, inputs, references and outputs", exact=True).first.click()
@@ -613,7 +621,7 @@ def test_personal_analyze_tasks_may_rely_on_file_sync_changed_files(workflow_ui)
     # Without changed files as targets the same draft needs evidence, as the server requires.
     ui.personal_workflows["personal-sync"]["file_sync"]["use_changed_documents"] = False
     page.reload()
-    page.get_by_role("button", name="Edit Personal changed files", exact=True).click()
+    edit_workflow(page, "Personal changed files")
     expect(page.get_by_role("status").filter(has_text="Analyze changes needs selected evidence for Analyze.")).to_be_visible()
 
 
@@ -626,7 +634,7 @@ def test_group_workflow_pages_trap_personal_reads(workflow_ui):
     assert not ui.unexpected_requests
 
     open_group_workflows(ui)
-    page.get_by_role("button", name="Create workflow", exact=True).click()
+    create_workflow(page)
     expect(source_checkbox(page, "Finance share (Group)")).to_be_visible()
     assert not ui.unexpected_requests, ui.unexpected_requests
     assert page.evaluate(fetch_status, "/api/user/settings") == 200

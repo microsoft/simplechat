@@ -1,7 +1,7 @@
 ---
 layout: page
 title: "Scale settings"
-description: "Scale covers Redis, conversation and search caches, document access indexing, Cosmos maintenance, and Cosmos throughput automation."
+description: "Scale covers Redis, the conversation and document list caches, document access indexing, Cosmos maintenance, and Cosmos throughput automation."
 section: "Administration"
 audience: admin
 admin_tab: scale
@@ -12,7 +12,7 @@ admin_tab: scale
 
 ## What this group controls
 
-Scale covers Redis, conversation and search caches, document access indexing, Cosmos maintenance, and Cosmos throughput automation.
+Scale covers Redis, the conversation and document list caches, document access indexing, Cosmos maintenance, and Cosmos throughput automation.
 
 ## Why it matters
 
@@ -29,6 +29,8 @@ Scale settings trade latency, freshness, and Azure spend. Caches can make the ap
 - Review document access index rollout state before changing cache or repair settings.
 
 ## Redis & Caching {#redis-caching}
+
+The workspace search result cache is not configured here. It is part of Azure AI Search on the [Knowledge settings]({{ '/admin/knowledge/#azure-ai-search-section' | relative_url }}) page, and it is stored in Cosmos DB rather than Redis.
 
 ### Redis Cache {#redis-cache-section}
 
@@ -156,7 +158,6 @@ The Cosmos Metrics section belongs to the Cosmos tab. Use it with the adjacent s
 | --- | --- | --- | --- |
 | Key Filter | Blank filter browses all keys. Filters are case sensitive. Redis SCAN order is server-defined, so use Next Page to keep browsing. | N/A (runtime control) | Runtime UI control |
 | Page Size | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Search result caching | Caches workspace search-result payloads with document-set fingerprints so repeated personal, group, public, or all-scope searches can reuse results until document changes or the TTL invalidate them. | On | `enable_search_result_caching`; no visible field in `admin_settings.html` |
 | Write-through projection | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_document_access_index_write_through`; capability toggle |
 | Automatic repair/backfill | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_startup_document_access_index_backfill`; capability toggle |
 | Enable shadow validation | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_document_access_index_shadow_validation`; capability toggle |

@@ -203,6 +203,7 @@ $param_AzureOpenAiEmbeddingModelName = ""
 $param_AzureOpenAiEmbeddingModelVersion = "" # Leave blank to use the default for the selected cloud and region.
 $param_AzureOpenAiEmbeddingDeploymentCapacity = 80
 $param_DeployVideoIndexerService = $false
+$param_VideoIndexerLocation = "" # Optional Video Indexer region. Leave blank to use $paramLocation. Set it when $paramLocation does not offer Video Indexer (for example, northcentralus); a different region gets a dedicated Video Indexer storage account there.
 $param_CustomGraphUrl = ""
 $param_CustomIdentityUrl = ""
 $param_CustomResourceManagerUrl = ""
@@ -1388,6 +1389,15 @@ $videoIndexerName = Get-ResourceName -ResourceTypeSuffix $paramVideoIndexerSuffi
 $storageAccountName = Get-GloballyUniqueResourceName -ResourceTypeSuffix $paramStorageAccountSuffix # Storage names are strict (lowercase, no hyphens, 3-24 chars)
 if ($storageAccountName.Length -gt 24) { $storageAccountName = $storageAccountName.Substring(0, 24) }
 if ($storageAccountName.Length -lt 3) { Write-Error "Generated storage account name '$storageAccountName' is too short. Adjust base name or suffix." ; exit 1 }
+$videoIndexerLocation = if ([string]::IsNullOrWhiteSpace($param_VideoIndexerLocation)) { $paramLocation } else { $param_VideoIndexerLocation }
+$videoIndexerLocation = ($videoIndexerLocation -replace '\s', '').ToLower()
+# Video Indexer keeps its media in a storage account in its own region.
+$videoIndexerUsesDedicatedStorage = $videoIndexerLocation -ne (($paramLocation -replace '\s', '').ToLower())
+$videoIndexerStorageAccountName = Get-GloballyUniqueResourceName -ResourceTypeSuffix "vi"
+if ($videoIndexerStorageAccountName.Length -gt 24) { $videoIndexerStorageAccountName = $videoIndexerStorageAccountName.Substring(0, 24) }
+# The app identity needs generateAccessToken. Video Indexer Account Contributor is the least-privilege
+# built-in role; Contributor is used where that newer role has not been confirmed.
+$videoIndexerAppRoleName = if ($globalWhichAzurePlatform -eq "AzureCloud") { "Video Indexer Account Contributor" } else { "Contributor" }
 #$containerRegistryName = Get-GloballyUniqueResourceName -ResourceTypeSuffix $paramContainerRegistrySuffix # ACR names are strict
 $entraGroupName_Admins = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-Admins"
 $entraGroupName_Users = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-Users"
@@ -2006,16 +2016,37 @@ $searchServiceUrl = $param_AiSearch_Url -f $searchServiceName
 
 # --- Create Azure Video Indexer Service ---
 if ($param_DeployVideoIndexerService) {
-    Write-Host "`n=====> Creating Azure Video Indexer Service: $($videoIndexerName)..."
+    Write-Host "`n=====> Creating Azure Video Indexer Service: $($videoIndexerName) in $($videoIndexerLocation)..."
     $videoIndexerSubscriptionId = az account show --query id --output tsv
     $videoIndexerArmBaseUrl = $paramArmUrl.TrimEnd('/')
     $videoIndexerUri = "$videoIndexerArmBaseUrl/subscriptions/$videoIndexerSubscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.VideoIndexer/accounts/$videoIndexerName?api-version=$param_VideoIndexerArmApiVersion"
     $existingVideoIndexer = az rest --method get --uri $videoIndexerUri 2>$null | ConvertFrom-Json
 
     if (-not $existingVideoIndexer) {
+        if ($videoIndexerUsesDedicatedStorage) {
+            Write-Host "Video Indexer region '$videoIndexerLocation' differs from '$paramLocation'. Using storage account '$videoIndexerStorageAccountName' in the Video Indexer region."
+            $videoIndexerStorageResourceId = az storage account show --name $videoIndexerStorageAccountName --resource-group $resourceGroupName --query id --output tsv 2>$null
+            if (-not $videoIndexerStorageResourceId) {
+                # Only Video Indexer uses this account, and it connects as a trusted Azure service. A disabled
+                # public endpoint would also block that path, so private networking denies all other traffic instead.
+                $videoIndexerStorageDefaultAction = if ($param_EnablePrivateNetworking) { 'Deny' } else { 'Allow' }
+                $videoIndexerStorageTags = @($tags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
+                $videoIndexerStorageResourceId = az storage account create --name $videoIndexerStorageAccountName --resource-group $resourceGroupName `
+                    --location $videoIndexerLocation --sku $paramStorageSku --kind StorageV2 --access-tier Hot `
+                    --allow-blob-public-access false --min-tls-version TLS1_2 --public-network-access Enabled `
+                    --default-action $videoIndexerStorageDefaultAction --bypass AzureServices `
+                    --tags $videoIndexerStorageTags --query id --output tsv
+                if ($LASTEXITCODE -ne 0 -or -not $videoIndexerStorageResourceId) {
+                    Write-Warning "Failed to create Video Indexer storage account '$($videoIndexerStorageAccountName)'."
+                }
+            }
+        } else {
+            $videoIndexerStorageResourceId = az storage account show --name $storageAccountName --resource-group $resourceGroupName --query id --output tsv
+        }
+
         $videoIndexerProperties = @{
             storageServices = @{
-                resourceId = $(az storage account show --name $storageAccountName --resource-group $resourceGroupName --query id --output tsv)
+                resourceId = $videoIndexerStorageResourceId
             }
         }
 
@@ -2035,7 +2066,7 @@ if ($param_DeployVideoIndexerService) {
         }
 
         $videoIndexerBody = @{
-            location = $paramLocation
+            location = $videoIndexerLocation
             identity = @{
                 type = 'SystemAssigned'
             }
@@ -2052,6 +2083,10 @@ if ($param_DeployVideoIndexerService) {
         }
     } else {
         Write-Host "Azure Video Indexer Service '$videoIndexerName' already exists."
+    }
+
+    if ($existingVideoIndexer) {
+        Write-Host "Configure Admin Settings > AI Video Intelligence with Resource Group '$resourceGroupName', Account Name '$videoIndexerName', Account ID '$($existingVideoIndexer.properties.accountId)', and Location '$($existingVideoIndexer.location)'."
     }
 }
 
@@ -2311,7 +2346,8 @@ if ($param_DeployVideoIndexerService) {
     $videoIndexerPrincipalId = az resource show --ids $videoIndexerResourceId --api-version $param_VideoIndexerArmApiVersion --query "identity.principalId" --output tsv 2>$null
 
     if (-not [string]::IsNullOrWhiteSpace($videoIndexerPrincipalId)) {
-        $storageResourceId = az storage account show --name $storageAccountName --resource-group $resourceGroupName --query "id" --output tsv
+        # Use the storage account the Video Indexer account is actually connected to.
+        $storageResourceId = az resource show --ids $videoIndexerResourceId --api-version $param_VideoIndexerArmApiVersion --query "properties.storageServices.resourceId" --output tsv
         $assignment = az role assignment list --assignee $videoIndexerPrincipalId --scope "$storageResourceId" --query "[?roleDefinitionName=='Storage Blob Data Contributor']" --output json | ConvertFrom-Json
         if (-not $assignment) {
             az role assignment create --assignee $videoIndexerPrincipalId --role "Storage Blob Data Contributor" --scope "$storageResourceId" | Out-Null
@@ -2330,6 +2366,20 @@ if ($param_DeployVideoIndexerService) {
         }
     } else {
         Write-Warning "Azure Video Indexer principal ID could not be resolved. Skipping Video Indexer RBAC assignments."
+    }
+
+    # SimpleChat calls Video Indexer generateAccessToken with the App Service system-assigned identity.
+    if (-not [string]::IsNullOrWhiteSpace($videoIndexerResourceId) -and -not [string]::IsNullOrWhiteSpace($appService_SystemManagedIdentity_ObjectId)) {
+        $assignment = az role assignment list --assignee $appService_SystemManagedIdentity_ObjectId --scope "$videoIndexerResourceId" --query "[?roleDefinitionName=='$videoIndexerAppRoleName']" --output json | ConvertFrom-Json
+        if (-not $assignment) {
+            az role assignment create --assignee-object-id $appService_SystemManagedIdentity_ObjectId --assignee-principal-type ServicePrincipal `
+                --role "$videoIndexerAppRoleName" --scope "$videoIndexerResourceId" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Failed to grant '$videoIndexerAppRoleName' on Video Indexer to the App Service managed identity."
+            }
+        }
+    } else {
+        Write-Warning "Azure Video Indexer or App Service identity could not be resolved. Grant the App Service managed identity '$videoIndexerAppRoleName' on the Video Indexer account manually."
     }
 }
 

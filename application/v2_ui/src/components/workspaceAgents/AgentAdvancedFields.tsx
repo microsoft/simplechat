@@ -10,6 +10,7 @@ import {
     secretValueAt, selectedAgentModel, setAgentSecret,
 } from '../../lib/workspaceAgentAuthoring';
 import { GlassButton } from '../ui/primitives';
+import { EditorGroup } from '../workspace/EditorLayout';
 import { AgentField, AgentNotice, AgentSecretField } from './AgentFields';
 
 export function agentAdvancedError(
@@ -46,7 +47,7 @@ export function AgentAdvancedFields({
     return (
         <div className="space-y-4">
             {draft.agent_type === 'local' ? (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="min-w-0">
                     <AgentField id="agent-completion-tokens" label="Completion token limit" help="-1 uses the model default. Zero is retained as an explicit value. Maximum: 512000.">
                         <input id="agent-completion-tokens" type="number" min={-1} max={512000} step={1} required
                             value={typeof draft._editor_completion_text === 'string' ? draft._editor_completion_text : draft.max_completion_tokens}
@@ -70,8 +71,8 @@ export function AgentAdvancedFields({
                         </select>
                     </AgentField>
                 </div>
-            ) : <p className="text-sm text-text-3">Token and reasoning behavior are managed by the selected Foundry resource. Saved local values remain intact.</p>}
-            <AgentField id="agent-additional-settings" label="Additional settings JSON"
+            ) : <p className="text-[0.8125rem] text-text-3">Token and reasoning behavior are managed by the selected Foundry resource. Saved local values remain intact.</p>}
+            <AgentField id="agent-additional-settings" label="Additional settings JSON" width="full"
                 help="This is the same draft used by the structured controls. Managed action, knowledge and provider siblings are preserved when omitted from a pasted object. Explicit values, including false, zero and empty arrays, are retained.">
                 <textarea id="agent-additional-settings" rows={16} value={rawSettings} spellCheck={false}
                     aria-invalid={Boolean(error)} className={`${AGENT_INPUT_CLASS} font-mono text-xs`}
@@ -100,15 +101,14 @@ export function AgentAdvancedFields({
                 </AgentNotice>
             ) : null}
             {original?.secret_paths.length ? (
-                <details className="rounded-xl border border-edge p-3">
-                    <summary className="cursor-pointer text-sm font-medium text-text-2">Stored credentials and custom secret fields</summary>
-                    <fieldset disabled={Boolean(error)} className="mt-3 space-y-4">
+                <EditorGroup summary="Stored credentials and custom secret fields">
+                    <fieldset disabled={Boolean(error)} className="min-w-0">
                         <legend className="sr-only">Secret field changes</legend>
                         {original.secret_paths.map((path) => <AgentSecretField key={path} label={path}
                             value={secretValueAt(draft, path)} original={secretValueAt(original.record, path)}
                             onChange={(value) => setDraft((current) => setAgentSecret(current, path, value))} />)}
                     </fieldset>
-                </details>
+                </EditorGroup>
             ) : null}
             <p className="text-xs text-text-3">Ownership and the stable ID are not editable JSON settings. {agentText(draft.id) ? `Agent ID: ${draft.id}` : 'A stable ID is allocated on save.'}</p>
         </div>

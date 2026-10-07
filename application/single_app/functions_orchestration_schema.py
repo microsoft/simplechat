@@ -1738,6 +1738,10 @@ FAILURE_MESSAGES = {
     'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
     'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
     'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
+    'integration_unavailable': (
+        "This step's agent or action isn't available to you right now, so it didn't run. Check "
+        'that it still exists, is enabled and is shared with you, then retry.'
+    ),
     'external_session_required': (
         'This step continued in the background, where your sign-in is not available to confirm '
         'access to web search, web pages, deep research, agents or actions, or to start a saved '
@@ -1858,6 +1862,8 @@ M365_STEP_FAILURE_CODES = frozenset({
 })
 # Failures an exception may carry by code, through its ``orchestration_failure_code``.
 EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {'external_session_required'}
+# Steps that hand work to one of the user's agents or actions; they take no retained inputs.
+INTEGRATION_CAPABILITIES = frozenset({'action_invoke', 'agent_invoke'})
 
 
 def build_failure(
@@ -1916,17 +1922,21 @@ def failure_from_exception(exc, *, answering=False, _depth=0):
     return build_failure('model_failed' if answering else 'step_failed')
 
 
-def access_failure(exc, *, _depth=0):
+def access_failure(exc, *, capability_id=None, _depth=0):
     """Explain a refused retained source, naming a missing signed-in session when that was why.
 
-    Only the refusal's stable reason code is read, never exception text.
+    An agent or action step takes no retained inputs, so a refusal there is about the agent
+    or action itself, not a saved result. Only the refusal's stable reason code is read,
+    never exception text.
     """
     for reason in (getattr(exc, 'authority_reason', None), getattr(exc, 'code', None)):
         if type(reason) is str and reason == EXTERNAL_SESSION_UNAVAILABLE_REASON:
             return build_failure('external_session_required')
     cause = getattr(exc, '__cause__', None)
     if cause is not None and cause is not exc and _depth < 3:
-        return access_failure(cause, _depth=_depth + 1)
+        return access_failure(cause, capability_id=capability_id, _depth=_depth + 1)
+    if capability_id in INTEGRATION_CAPABILITIES:
+        return build_failure('integration_unavailable')
     return build_failure('result_unavailable')
 
 

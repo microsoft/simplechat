@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GlassButton } from '../ui/primitives';
 import { EDITOR_SECRET_MASK, isRecord } from '../../lib/workspaceAuthoring';
+import { EditorFieldRow, type EditorFieldWidth } from '../workspace/EditorLayout';
 
 export const ACTION_INPUT_CLASS =
     'w-full min-w-0 rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:opacity-60';
 
 export function ActionField({
-    id, label, help, error, children, required,
+    id, label, help, error, children, required, width,
 }: {
     id: string;
     label: string;
@@ -16,16 +17,13 @@ export function ActionField({
     error?: string;
     children: ReactNode;
     required?: boolean;
+    width?: EditorFieldWidth;
 }) {
     return (
-        <div className="min-w-0 space-y-1.5">
-            <label htmlFor={id} className="block text-sm font-medium text-text-1">
-                {label}{required ? <span aria-hidden="true" className="ml-1 text-danger">*</span> : null}
-            </label>
+        <EditorFieldRow htmlFor={id} label={label} required={required} help={help} helpId={`${id}-help`}
+            error={error} errorId={`${id}-error`} width={width}>
             {children}
-            {help ? <p id={`${id}-help`} className="break-words text-xs leading-relaxed text-text-3">{help}</p> : null}
-            {error ? <p id={`${id}-error`} role="alert" className="break-words text-sm text-danger">{error}</p> : null}
-        </div>
+        </EditorFieldRow>
     );
 }
 
@@ -45,7 +43,7 @@ export function ActionSecretInput({
     const configured = value === EDITOR_SECRET_MASK;
     const hadSecret = storedValue === EDITOR_SECRET_MASK;
     return (
-        <ActionField id={id} label={label} error={error} help={help}>
+        <ActionField id={id} label={label} error={error} help={help} width={multiline ? 'full' : 'wide'}>
             {multiline ? <textarea id={id} rows={7} autoComplete="off" spellCheck={false}
                 value={configured ? '' : typeof value === 'string' ? value : ''}
                 placeholder={configured ? 'Stored securely — paste a replacement' : 'Paste the complete value, including line breaks'}
@@ -123,7 +121,7 @@ export function ActionJsonInput({
 
     };
     return (
-        <ActionField id={id} label={label} error={parseError || error}
+        <ActionField id={id} label={label} error={parseError || error} width="full"
             help={[help, protectArraySecrets
                 ? 'Stored array credentials are tied to their saved positions, not entry names or IDs. Use structured fields, or replace/clear those credentials before editing this JSON.'
                 : ''].filter(Boolean).join(' ')}>

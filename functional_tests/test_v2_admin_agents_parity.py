@@ -2,8 +2,9 @@
 # test_v2_admin_agents_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Agents & Actions group.
-Version: 0.261.122
+Version: 0.261.271
 Implemented in: 0.261.074
+Global Agents and Global Actions sections: 0.261.271
 
 The V2 React admin surface renders from ``admin_settings_fields.py``. A setting
 present in a V1 pane but absent from that schema does not fail anything: it
@@ -45,6 +46,7 @@ GROUP_ID = "agents-actions"
 DECLARED_PANES = {
     "agents": (
         "agents-config",
+        "organization-agents-section",
         "agent-toggles-card",
         "agents-page-customization-card",
         "agent-template-approvals-section",
@@ -66,10 +68,9 @@ PANES_PENDING_DECLARATION = {}
 # Declared sections that hold no settings, because what belongs in them is a
 # table rather than a field. The V2 surface skips a section with nothing in it,
 # so this is not a broken heading; the entry records why and is checked for
-# staleness once the section is filled.
-SECTIONS_AWAITING_A_COMPONENT = {
-    "actions-config": "Phase 5 -- the global actions table",
-}
+# staleness once the section is filled. The global agents and actions lists now
+# fill the two that were waiting, so none remain.
+SECTIONS_AWAITING_A_COMPONENT = {}
 
 FIELD_NAME_RE = re.compile(r'\sname="([^"]+)"')
 JINJA_RE = re.compile(r"\{\{|\{%")

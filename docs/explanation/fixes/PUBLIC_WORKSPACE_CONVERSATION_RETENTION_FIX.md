@@ -2,7 +2,7 @@
 
 ## Header Information
 
-- **Fixed in version:** **0.261.260**
+- **Fixed in version:** **0.261.272**
 - **Area:** Retention policy for public workspaces, and retention scheduling from the V2
   admin surface
 - **Related feature:** [V2 Admin Data Lifecycle Settings](../features/V2_ADMIN_DATA_LIFECYCLE_SETTINGS.md)
@@ -69,7 +69,7 @@ every workspace having been deleted and removing chats under the wrong policy.
 | `application/single_app/admin_settings_fields.py` | `compute_retention_next_run` and `_apply_retention_schedule`, applied to valid V2 saves; the run hour validated and stored as an int |
 | `functional_tests/test_retention_policy_conversation_scope_coverage.py` | Public matrix rows, chats from deleted workspaces returning to personal policy, failed-listing safety, public deletion and logging, notification privacy |
 | `functional_tests/test_v2_admin_data_lifecycle_parity.py` | Rescheduling against the classic rule, hour normalization |
-| `application/single_app/config.py` | Version `0.261.260` |
+| `application/single_app/config.py` | Version `0.261.272` |
 
 ### Notification Privacy
 
@@ -115,8 +115,8 @@ run.
   (including chats from deleted workspaces and a failed listing), the end-to-end personal run
   over live, deleted and ungrounded workspaces, public-grounded deletion and logging, and
   notification privacy pass. Three collaboration cleanup tests in the same file fail
-  identically before and after this change, because the harness cannot import
-  `functions_saved_analysis`; they are unrelated to retention scope.
+  identically before and after this change, because the test harness cannot import every
+  module `functions_collaboration` depends on; they are unrelated to retention scope.
 - `functional_tests/test_v2_admin_data_lifecycle_parity.py`: 10 of 10 pass, including
   rescheduling compared with the classic rule across hours and dates.
 

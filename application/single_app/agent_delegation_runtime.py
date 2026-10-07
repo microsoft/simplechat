@@ -1,8 +1,9 @@
 # agent_delegation_runtime.py
 """Isolated asynchronous agent calls.
 
-Version: 0.261.127
+Version: 0.261.270
 Implemented in: 0.261.093
+Optional step scope entered inside the agent's bridge in: 0.261.270
 
 Provider and loader imports are deliberately lazy: plugin discovery imports the
 Call agent class before the application's Semantic Kernel loader is initialized.
@@ -301,8 +302,13 @@ async def _target_messages(target, task, context, frame, settings):
     return messages, citations
 
 
-async def execute_target(target, task, context, frame):
-    """Invoke precisely this canonical target; never select a default or by name."""
+async def execute_target(target, task, context, frame, *, scope=None):
+    """Invoke precisely this canonical target; never select a default or by name.
+
+    ``scope``, when given, returns a context manager entered inside the target's own bridge,
+    so request state it installs, such as an orchestration step's Microsoft 365 context,
+    reaches the agent's tools.
+    """
     active = current_agent_execution()
     if active is not None and active.invocation_capture is not None and (
         frame.invocation_capture is not active.invocation_capture
@@ -320,7 +326,7 @@ async def execute_target(target, task, context, frame):
     _prepare_captured_agent(target, frame.invocation_settings, frame.identity, frame.invocation_capture)
     bridge = frame.identity.bridge(target) if frame.identity.bridge else nullcontext()
     kernel = None
-    with bridge:
+    with bridge, (scope(target) if scope is not None else nullcontext()):
         _check_cancelled(frame)
         _preflight_captured_agent(target, frame)
         settings = deepcopy(frame.invocation_settings) if frame.invocation_settings is not None else get_settings()
@@ -632,8 +638,12 @@ def prepare_agent_execution(agent, reference, *, user_id, settings, conversation
 
 async def invoke_scoped_agent(
     reference, task, *, identity, budget, cancel_requested=None, settings=None, invocation_capture=None,
+    scope=None,
 ):
-    """Worker-safe root execution; Flask compatibility belongs to the captured bridge."""
+    """Worker-safe root execution; Flask compatibility belongs to the captured bridge.
+
+    ``scope`` is passed to ``execute_target`` and entered inside the agent's bridge.
+    """
     parent = current_agent_execution()
     if parent is not None and parent.invocation_capture is not None:
         parent.invocation_capture.refuse()
@@ -651,7 +661,12 @@ async def invoke_scoped_agent(
         invocation_settings=deepcopy(settings) if invocation_capture is not None and settings is not None else None,
     )
     with agent_execution(frame) as frame:
-        result = await await_agent_operation(execute_target(canonical, task, "", frame), frame)
+        # The existing call shape is kept when no scope is supplied.
+        target = (
+            execute_target(canonical, task, "", frame, scope=scope) if scope is not None
+            else execute_target(canonical, task, "", frame)
+        )
+        result = await await_agent_operation(target, frame)
         if frame.invocation_capture is not None:
             frame.invocation_capture.require_valid(captured=True)
         return result

@@ -1,24 +1,44 @@
 // workflowRunLink.ts
-// The workflow, and optionally the run, that a workflows-section URL names.
+// The workflow, and optionally the run, that a workflows-section URL names, and the addresses of
+// the Workflows section and its editor.
 //
-// `?workflow_id=<id>` has always opened that workflow. Adding `&run_id=<id>` opens the
-// workflow's run history instead, with that run expanded. Document provenance links use the
-// run form; the server builds them (functions_document_provenance.workflow_origin_href). The
-// links to runs a chat plan started use it too, built by `workflowRunHref`, and so do the
-// notices and alerts that name a run (notificationLinks.ts v2WorkflowRunPath). This module is
-// the one place the client builds or reads them.
+// `?workflow_id=<id>` selects that workflow in the Workflows workbench and shows its Overview.
+// Adding `&run_id=<id>` opens the workflow's Runs tab instead, with that run expanded. Document
+// provenance links use the run form; the server builds them
+// (functions_document_provenance.workflow_origin_href). The links to runs a chat plan started use
+// it too, built by `workflowRunHref`, and so do the notices and alerts that name a run
+// (notificationLinks.ts v2WorkflowRunPath). This module is the one place the client builds or
+// reads them.
 //
 // The run link is this query form on the workspace's Workflows section. There is no separate
 // `/runs/:runId` route: the section opens the run inspector from the query in both personal
-// and group workspaces (WorkflowsSection.tsx).
+// and group workspaces (WorkflowsSection.tsx). The editor is a path of its own,
+// `/workflows/<id>` or `/workflows/new`, built by `workflowEditorHref`.
 
 import type { WorkflowScope } from './workflowEditor';
 import { groupWorkspacePath } from './groupWorkspaceNavigation';
 
 export const WORKFLOW_LINK_PARAM = 'workflow_id';
 export const WORKFLOW_RUN_LINK_PARAM = 'run_id';
+/** The editor path segment that creates a workflow rather than editing one. */
+export const NEW_WORKFLOW_RESOURCE = 'new';
 
 const PERSONAL_SCOPE: WorkflowScope = { type: 'personal' };
+
+function workflowsBasePath(scope: WorkflowScope): string {
+    return scope.type === 'group' ? groupWorkspacePath(scope.groupId, 'workflows') : '/workspace/workflows';
+}
+
+/** The Workflows section of a scope's workspace, with one workflow selected when one is named. */
+export function workflowListHref(scope: WorkflowScope = PERSONAL_SCOPE, workflowId: string | null = null): string {
+    const base = workflowsBasePath(scope);
+    return workflowId ? `${base}?${new URLSearchParams({ [WORKFLOW_LINK_PARAM]: workflowId })}` : base;
+}
+
+/** A workflow's editor page, or the page that creates one when no workflow is named. */
+export function workflowEditorHref(scope: WorkflowScope, workflowId: string | null): string {
+    return `${workflowsBasePath(scope)}/${encodeURIComponent(workflowId ?? NEW_WORKFLOW_RESOURCE)}`;
+}
 
 export interface WorkflowRunLink {
     workflowId: string;

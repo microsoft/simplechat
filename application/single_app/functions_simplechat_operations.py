@@ -20,7 +20,7 @@ from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFo
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from flask import current_app, has_app_context, session
 
-from collaboration_models import normalize_collaboration_user
+from collaboration_models import is_shared_conversation_backing, normalize_collaboration_user
 from conversation_memory_lifecycle import clone_owned_memory, delete_referenced_conversation_memory, remap_memory_references
 from functions_conversation_memory import ConversationMemoryStore, MemoryContext, is_conversation_memory_blob_path
 from config import (
@@ -1157,6 +1157,9 @@ def add_conversation_message_for_current_user(
             partition_key=normalized_conversation_id,
         )
     except CosmosResourceNotFoundError:
+        conversation_item = None
+    # Orchestrate's backing record shares its shared conversation's id; posts go to the thread.
+    if is_shared_conversation_backing(conversation_item):
         conversation_item = None
 
     if conversation_item is not None:
