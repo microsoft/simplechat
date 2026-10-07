@@ -1,7 +1,7 @@
 # test_v2_control_center_public_workspaces.py
 """
 Functional tests for V2 Control Center public workspace management.
-Version: 0.261.286
+Version: 0.261.285
 Implemented in: 0.261.283
 
 Execute real query builders, guarded status writes, authentication, approval
