@@ -1,9 +1,9 @@
 # test_v2_orchestration_dependency_plans.py
 """
 Real-component tests for version-aware orchestration plans and durable waiting.
-Version: 0.261.291
+Version: 0.261.292
 Implemented in: 0.261.127
-Server chart and diagram checks in the plan panel added in: 0.261.291
+Server chart and diagram checks in the plan panel added in: 0.261.292
 Refs: microsoft/simplechat#1509
 
 Uses the existing local/Azure Playwright fixture, real React components, production
@@ -312,7 +312,7 @@ def test_deliverable_states_follow_their_steps(editor_ui):
 
 @pytest.mark.parametrize("width", [1440, 390])
 def test_the_servers_chart_check_wins_over_its_steps_status(editor_ui, width):
-    """Version 0.261.291: a chart its step finished without showing is listed as not delivered."""
+    """Version 0.261.292: a chart its step finished without showing is listed as not delivered."""
     page, api = editor_ui
     page.set_viewport_size({"width": width, "height": 900})
     plan = _deliverables_plan()

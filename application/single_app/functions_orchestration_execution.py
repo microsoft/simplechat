@@ -1,10 +1,10 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.291
+Version: 0.261.292
 Implemented in: 0.261.127
 Shared conversation answers mirrored into the shared thread in: 0.261.270
-Charts gather steps drew are shown, and chart and diagram delivery is checked, in: 0.261.291
+Charts gather steps drew are shown, and chart and diagram delivery is checked, in: 0.261.292
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
 legacy contract is refused before any preparation. The ``Harness*`` names below are the

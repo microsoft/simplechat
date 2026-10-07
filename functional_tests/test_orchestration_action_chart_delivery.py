@@ -2,8 +2,8 @@
 # test_orchestration_action_chart_delivery.py
 """
 Functional test for orchestration charts that an action draws reaching the user.
-Version: 0.261.291
-Implemented in: 0.261.291
+Version: 0.261.292
+Implemented in: 0.261.292
 
 This test ensures that a request such as "Plot BatteryVoltage1 over the last 15 minutes"
 never ends with a chart that was drawn and then thrown away:
@@ -35,7 +35,7 @@ from test_support.orchestration_harness_execution import compose_step, input_bin
 from test_support.versioning import assert_app_version_at_least
 
 
-IMPLEMENTED_IN = "0.261.291"
+IMPLEMENTED_IN = "0.261.292"
 ACTION = {
     "action_ref": "action:v1:global:simulation", "id": "simulation", "name": "simulation",
     "display_name": "Simulation", "scope_label": "Global", "type": "yamcs",

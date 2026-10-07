@@ -1,9 +1,9 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.291
+Version: 0.261.292
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
-Charts drawn upstream reach the model as their placement tokens in: 0.261.291
+Charts drawn upstream reach the model as their placement tokens in: 0.261.292
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
 Answer-writing steps receive saved memory, the resolved conversation references, the

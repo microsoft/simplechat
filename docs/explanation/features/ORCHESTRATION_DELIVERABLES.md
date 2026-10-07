@@ -1,10 +1,10 @@
 # Orchestration deliverables
 
-**Version: 0.261.291** (tracked in `application/single_app/config.py`)
+**Version: 0.261.292** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.138**
 **Requested visual styles and reference images for planned images added in version: 0.261.192**
-**Gathered results and charts must reach the user, with chart delivery checks, added in version: 0.261.291**
+**Gathered results and charts must reach the user, with chart delivery checks, added in version: 0.261.292**
 
 Deliverables shipped in the React V2 branch as 0.261.138. The V2 shared workspaces branch had already assigned 0.261.138 to its native group agents, so there deliverables arrive with the React V2 base merge in version **0.261.181**.
 
@@ -135,7 +135,7 @@ While planning, the server truth is also enforced:
   A plan revision may remove those images at the user's request; the revised plan then
   carries a review warning instead of failing.
 - Image options must be values the configured image model supports.
-- Since **0.261.291**, what a plan gathers must reach the user. Following the plan's named
+- Since **0.261.292**, what a plan gathers must reach the user. Following the plan's named
   input bindings, every enabled gather step except `workflow_run` must lead to the
   `final_response` step, an enabled `render_file` step or a `generate_image` step (rule
   `gather_not_used`). Every planned chart or diagram must come from the `final_response`
@@ -168,7 +168,7 @@ everything you asked to receive."
 - **Visuals.** Chart, diagram, and suggested-image deliverables become the step's structured
   `visuals` (`chart`, `diagram`, `image_proposal`). The composer's Image control no longer
   forces proposal cards in these plans; it makes the user's images explicit deliverables.
-- **Charts from gather steps.** Since **0.261.291**, finalization reads the saved result of
+- **Charts from gather steps.** Since **0.261.292**, finalization reads the saved result of
   each completed `action_invoke` or `agent_invoke` step whose `visuals` include `chart`, and
   adds each chart the answer doesn't already show, once, after the answer, the way
   generated images are added. A compose step that reads such a step receives each chart as
@@ -209,14 +209,14 @@ everything you asked to receive."
   answer and the files summary, a deterministic **Delivery notes** list names each explicit
   deliverable that was not delivered or is unavailable, such as "Not delivered: An image of
   each president. 2 of 3 images were generated."
-- **Charts and diagrams.** Since **0.261.291**, `visual_delivery` checks each explicit,
+- **Charts and diagrams.** Since **0.261.292**, `visual_delivery` checks each explicit,
   planned chart and diagram meant for the answer. One the answer doesn't show gets a
   delivery note: "The chart could not be created from the retrieved data.", "The answer did
   not include it." or "The step that makes it did not finish." A run that otherwise
   completed is then partial, with the failure `visual_not_delivered`. The run saves these
   checks as `deliverable_states`, and the steps a retry runs again to make the missing
   visual as `redraw_step_ids`. A chart or diagram that only goes into a file isn't checked.
-- **Gathered without answering.** A plan saved before 0.261.291 whose gather steps nothing
+- **Gathered without answering.** A plan saved before 0.261.292 whose gather steps nothing
   reads replies "The information was gathered, but this plan had no step that writes an
   answer from it. Ask again to get an answer." instead of "The requested content is
   prepared."

@@ -1,8 +1,8 @@
 # Orchestration Action Chart Not Delivered Fix
 
-**Version: 0.261.291**
+**Version: 0.261.292**
 
-Fixed in version: **0.261.291**, recorded in
+Fixed in version: **0.261.292**, recorded in
 `application/single_app/config.py`.
 
 ## Issue
@@ -123,7 +123,7 @@ Four problems combined.
 | `application/single_app/functions_orchestration_recovery.py` | Rerun `redraw_step_ids` in a new attempt, confirm a rerun action or agent step, and public `deliverable_states`. |
 | `application/single_app/functions_orchestration_schema.py` | The `visual_not_delivered` failure message. |
 | `application/single_app/functions_orchestration_results.py` | Save JSON values in 16,384-character records. |
-| `application/single_app/config.py` | Version `0.261.291`. |
+| `application/single_app/config.py` | Version `0.261.292`. |
 | `application/v2_ui/src/lib/orchestration.ts`, `orchestrationPlan.ts`, `components/chat/OrchestrationDeliverables.tsx`, `OrchestrationRunView.tsx` | The plan panel uses the server's chart and diagram checks. |
 | `functional_tests/test_orchestration_action_chart_delivery.py` | New regression test. |
 | `functional_tests/test_v2_orchestration_deliverables.mjs` | The server's chart check wins over step status, and `deliverable_states` normalization. |
