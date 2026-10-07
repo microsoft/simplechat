@@ -147,6 +147,19 @@ export function sameEditorValue(left: unknown, right: unknown): boolean {
 
 const MANAGED_FIELDS = new Set(['user_id', 'last_updated', 'modified_at', 'modified_by', 'created_at', 'created_by', 'is_global', 'is_group', 'group_id']);
 
+/**
+ * Fields the server stamps on a stored record and never accepts back, in `updates` or
+ * `removed_paths`. Global records carry the ones the classic global saves write. The global editor
+ * adapters strip them from both sides of the diff, so no editor change can emit them.
+ */
+const SERVER_STAMPED_FIELDS = ['scope', 'scope_id', 'scope_type', 'updated_at', 'updated_by', 'owner_id', 'owner_user_id'];
+
+export function withoutServerStampedFields<T extends object>(record: T): T {
+    const clone = { ...(record as Record<string, unknown>) };
+    for (const field of SERVER_STAMPED_FIELDS) delete clone[field];
+    return clone as T;
+}
+
 /** Array changes replace the array; object changes name only changed leaves. */
 export function buildEditorWrite<T extends Record<string, unknown>>(
     draft: T,
@@ -211,6 +224,16 @@ function validPathIdentifier(segment: string): boolean {
         !/[/\\\u0000-\u001f\u007f]/.test(identifier);
 }
 
+/** The return-path scope for global agents edited from Admin Settings. */
+export const GLOBAL_AGENT_RETURN_SCOPE = { kind: 'global' } as const;
+
+/** A group id, or the global scope; absent means personal. */
+export type AgentEditorReturnScope = string | typeof GLOBAL_AGENT_RETURN_SCOPE;
+
+/** The SPA routes the administrator's global agent and action editors live under. */
+export const GLOBAL_AGENTS_BASE_PATH = '/admin/agents';
+export const GLOBAL_ACTIONS_BASE_PATH = '/admin/actions';
+
 /**
  * Only a known agent editor can receive a just-created action.
  *
@@ -218,16 +241,19 @@ function validPathIdentifier(segment: string): boolean {
  * callers and links are byte-identical. A group caller passes its group id, and only that group's
  * `/groups/<id>/agents/<id>` path is accepted -- an action created for group A can never hand back
  * into group B, and a personal path is refused in group scope and the reverse. The group id is
- * matched by its encoded spelling, the same spelling `workspaceBasePath` writes into the URL.
+ * matched by its encoded spelling, the same spelling `workspaceBasePath` writes into the URL. The
+ * global scope accepts only the Admin Settings agent editor, `/admin/agents/<id>`.
  */
-export function agentEditorReturnPath(value: string | null, groupId?: string): string | null {
+export function agentEditorReturnPath(value: string | null, scope?: AgentEditorReturnScope): string | null {
     if (!value) return null;
     let identifierSegment: string | undefined;
-    if (typeof groupId === 'string') {
-        const prefix = `/groups/${encodeURIComponent(groupId)}/agents/`;
+    if (typeof scope === 'string') {
+        const prefix = `/groups/${encodeURIComponent(scope)}/agents/`;
         if (!value.startsWith(prefix)) return null;
         const rest = value.slice(prefix.length);
         identifierSegment = /^[^/?#]+$/.test(rest) ? rest : undefined;
+    } else if (scope?.kind === 'global') {
+        identifierSegment = value.match(/^\/admin\/agents\/([^/?#]+)$/)?.[1];
     } else {
         identifierSegment = value.match(/^\/workspace\/agents\/([^/?#]+)$/)?.[1];
     }
@@ -235,18 +261,19 @@ export function agentEditorReturnPath(value: string | null, groupId?: string): s
 }
 
 /**
- * Whether a path is any agent editor, personal or group. Used only by the editor frame's
+ * Whether a path is any agent editor, personal, group or global. Used only by the editor frame's
  * navigation blocker, which recognises the agent<->action handoff without knowing the group id --
  * the returnTo linkage the blocker also checks ties the two halves together. Stricter callers pass
- * an explicit group id to `agentEditorReturnPath` instead.
+ * an explicit scope to `agentEditorReturnPath` instead.
  */
 export function isAgentEditorPath(value: string | null): boolean {
-    if (agentEditorReturnPath(value)) return true;
+    if (agentEditorReturnPath(value) || agentEditorReturnPath(value, GLOBAL_AGENT_RETURN_SCOPE)) return true;
     const identifierSegment = value?.match(/^\/groups\/[^/?#]+\/agents\/([^/?#]+)$/)?.[1];
     return Boolean(identifierSegment && validPathIdentifier(identifierSegment));
 }
 
-/** Whether a path is a new-action editor, personal or group. Used by the editor frame blocker. */
+/** Whether a path is a new-action editor, personal, group or global. Used by the editor frame blocker. */
 export function isActionEditorNewPath(value: string): boolean {
-    return value === '/workspace/actions/new' || /^\/groups\/[^/?#]+\/actions\/new$/.test(value);
+    return value === '/workspace/actions/new' || value === `${GLOBAL_ACTIONS_BASE_PATH}/new`
+        || /^\/groups\/[^/?#]+\/actions\/new$/.test(value);
 }

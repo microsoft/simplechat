@@ -1,8 +1,8 @@
 // test_v2_admin_help_logic.ts
 //
 // Runtime test for the V2 Admin Settings Help group.
-// Version: 0.261.260
-// Implemented in: 0.261.260
+// Version: 0.261.273
+// Implemented in: 0.261.273
 //
 // The Help group's judgement calls are invisible in a screenshot: which announcements are
 // shared when the stored map is incomplete, where an admin shortcut lands, which URLs may
@@ -223,13 +223,13 @@ check('a mailto draft accepts one plain address and encodes everything else', ()
 check('feedback and registration drafts are worded as the classic page words them', () => {
     const fields = { name: ' Ada ', email: 'ada@contoso.com', organization: 'Contoso', details: 'It broke.' };
     assert.equal(
-        feedbackDraftBody('bug_report', fields, '0.261.260'),
+        feedbackDraftBody('bug_report', fields, '0.261.273'),
         [
             'Feedback Type: Bug Report',
             'Name: Ada',
             'Email: ada@contoso.com',
             'Organization: Contoso',
-            'App Version: 0.261.260',
+            'App Version: 0.261.273',
             '',
             'Details:',
             'It broke.',
@@ -298,7 +298,7 @@ check('the publication card offers the way to the Support settings only when it 
     assert.doesNotMatch(on, /Open Support settings/);
 });
 
-check('an empty required text field is flagged, and a related section is linked', () => {
+check('an empty required text field is flagged while its section needs configuration', () => {
     const recipient: AdminField = {
         key: 'support_feedback_recipient_email',
         type: 'text',
@@ -326,19 +326,6 @@ check('an empty required text field is flagged, and a related section is linked'
     assert.match(inSection('incomplete'), />Required</);
     assert.doesNotMatch(inSection('off'), />Required</);
     assert.doesNotMatch(inSection('blocked'), />Required</);
-
-    const destination: AdminField = {
-        key: 'enable_support_latest_features',
-        type: 'switch',
-        label: 'Enable Latest Features Destination',
-        related_section: { id: 'user-facing-latest-features-section', label: 'Choose which announcements users see' },
-    };
-    const linked = renderToStaticMarkup(
-        createElement(SettingField, { field: destination, value: true, onChange: () => undefined, onNavigate: () => undefined }),
-    );
-    assert.match(linked, /Choose which announcements users see/);
-    const unlinked = renderToStaticMarkup(createElement(SettingField, { field: destination, value: true, onChange: () => undefined }));
-    assert.doesNotMatch(unlinked, /Choose which announcements users see/);
 });
 
 check('admin announcements open by release, and shortcuts know where they land', () => {
@@ -426,7 +413,7 @@ check('the Send Feedback cards prefill the administrator and link to the Support
             field: { type: 'component', component: 'send-feedback-feature-request', label: 'Request a Feature' },
             defaultName: 'Ada Admin',
             defaultEmail: 'ada@contoso.com',
-            appVersion: '0.261.260',
+            appVersion: '0.261.273',
         }),
     );
     assert.match(form, /value="Ada Admin"/);
@@ -452,7 +439,7 @@ check('the registration badge reads the stored registration', () => {
                 settings: { release_notifications_registered: registered },
                 defaultName: 'Ada',
                 defaultEmail: 'ada@contoso.com',
-                appVersion: '0.261.260',
+                appVersion: '0.261.273',
                 onRegistered: () => undefined,
             }),
         );

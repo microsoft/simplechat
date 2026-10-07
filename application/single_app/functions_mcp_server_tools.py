@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
-from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED
+from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED, is_shared_conversation_backing
 from config import (
     cosmos_conversations_container,
     cosmos_messages_container,
@@ -256,6 +256,9 @@ def _authorize_personal_conversation_read(delegated_user_id, conversation_id):
             partition_key=normalized_conversation_id,
         )
     except CosmosResourceNotFoundError:
+        conversation_item = None
+    # Orchestrate's backing record shares its shared conversation's id and is part of it.
+    if is_shared_conversation_backing(conversation_item):
         conversation_item = None
 
     if conversation_item is not None:

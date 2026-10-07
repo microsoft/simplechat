@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "6424966352943684170"
+      "templateHash": "3025497095812405668"
     }
   },
   "parameters": {
@@ -448,6 +448,14 @@
       "metadata": {
         "description": "Enable deployment of Azure Video Indexer service and related resources.\n- Default is false"
       }
+    },
+    "videoIndexerLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]",
+      "minLength": 1,
+      "metadata": {
+        "description": "Optional Azure region override for Azure Video Indexer.\n- Defaults to the deployment location.\n- Use when the primary app region does not offer Video Indexer, for example northcentralus.\n- A region that differs from the deployment location gets a dedicated Video Indexer storage account in that region.\n- Set this before the first deployment that enables Video Indexer; an existing account cannot move regions."
+      }
     }
   },
   "variables": {
@@ -505,6 +513,9 @@
     "resolvedVideoIndexerEndpoint": "[if(equals(variables('scCloudEnvironment'), 'usgovernment'), 'https://api.videoindexer.ai.azure.us', if(and(equals(variables('scCloudEnvironment'), 'custom'), not(empty(parameters('customVideoIndexerEndpoint')))), parameters('customVideoIndexerEndpoint'), 'https://api.videoindexer.ai'))]",
     "videoIndexerSupportsOpenAiIntegration": "[equals(variables('resolvedVideoIndexerArmApiVersion'), '2025-04-01')]",
     "videoIndexerSupportsPrivateEndpoints": "[equals(variables('resolvedVideoIndexerArmApiVersion'), '2025-04-01')]",
+    "normalizedVideoIndexerLocation": "[toLower(replace(parameters('videoIndexerLocation'), ' ', ''))]",
+    "videoIndexerUsesDedicatedStorage": "[not(equals(variables('normalizedVideoIndexerLocation'), variables('normalizedLocation')))]",
+    "videoIndexerAppRoleDefinitionId": "[if(equals(variables('scCloudEnvironment'), 'public'), '3f99eaab-6f59-4877-adf5-1cacd22e20b0', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
     "hasExistingAppServiceSubnetId": "[not(empty(parameters('existingAppServiceSubnetId')))]",
     "hasExistingPrivateEndpointSubnetId": "[not(empty(parameters('existingPrivateEndpointSubnetId')))]",
     "inferredVirtualNetworkId": "[if(variables('hasExistingAppServiceSubnetId'), split(parameters('existingAppServiceSubnetId'), '/subnets/')[0], if(variables('hasExistingPrivateEndpointSubnetId'), split(parameters('existingPrivateEndpointSubnetId'), '/subnets/')[0], ''))]",
@@ -5909,7 +5920,7 @@
         "mode": "Incremental",
         "parameters": {
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[parameters('videoIndexerLocation')]"
           },
           "appName": {
             "value": "[parameters('appName')]"
@@ -5929,6 +5940,9 @@
           "storageAccount": {
             "value": "[reference('storageAccount').outputs.name.value]"
           },
+          "useDedicatedStorageAccount": {
+            "value": "[variables('videoIndexerUsesDedicatedStorage')]"
+          },
           "openAiServiceName": {
             "value": "[reference('openAI').outputs.openAIName.value]"
           },
@@ -5946,7 +5960,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "16333309402800302725"
+              "templateHash": "6695969075326641477"
             }
           },
           "parameters": {
@@ -5977,14 +5991,86 @@
             "videoIndexerArmApiVersion": {
               "type": "string"
             },
+            "useDedicatedStorageAccount": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Create a storage account in the Video Indexer region instead of using the application storage account.\n- Set when Video Indexer is deployed to a different region than the application."
+              }
+            },
             "enablePrivateNetworking": {
               "type": "bool"
             }
           },
           "variables": {
+            "dedicatedStorageAccountName": "[toLower(format('{0}{1}vi', parameters('appName'), parameters('environment')))]",
+            "videoIndexerStorageAccountId": "[if(parameters('useDedicatedStorageAccount'), resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName')), resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount')))]",
             "useLegacyVideoIndexerApi": "[equals(parameters('videoIndexerArmApiVersion'), '2024-01-01')]"
           },
           "resources": [
+            {
+              "condition": "[parameters('useDedicatedStorageAccount')]",
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2022-09-01",
+              "name": "[variables('dedicatedStorageAccountName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "accessTier": "Hot",
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "publicNetworkAccess": "Enabled",
+                "networkAcls": {
+                  "bypass": "AzureServices",
+                  "defaultAction": "[if(parameters('enablePrivateNetworking'), 'Deny', 'Allow')]"
+                }
+              },
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "condition": "[parameters('useDedicatedStorageAccount')]",
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('dedicatedStorageAccountName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), parameters('useDedicatedStorageAccount'))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]",
+              "name": "[format('{0}-diagnostics', variables('dedicatedStorageAccountName'))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": [],
+                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.transactionMetricsCategories.value]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), parameters('useDedicatedStorageAccount'))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('dedicatedStorageAccountName'), 'default')]",
+              "name": "[format('{0}-blob-diagnostics', variables('dedicatedStorageAccountName'))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardLogCategories.value]",
+                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.transactionMetricsCategories.value]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('dedicatedStorageAccountName'), 'default')]"
+              ]
+            },
             {
               "condition": "[not(variables('useLegacyVideoIndexerApi'))]",
               "type": "Microsoft.VideoIndexer/accounts",
@@ -5997,13 +6083,16 @@
               "properties": {
                 "publicNetworkAccess": "[if(parameters('enablePrivateNetworking'), 'Disabled', 'Enabled')]",
                 "storageServices": {
-                  "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]"
+                  "resourceId": "[variables('videoIndexerStorageAccountId')]"
                 },
                 "openAiServices": {
                   "resourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiServiceName'))]"
                 }
               },
-              "tags": "[parameters('tags')]"
+              "tags": "[parameters('tags')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
             },
             {
               "condition": "[variables('useLegacyVideoIndexerApi')]",
@@ -6016,10 +6105,13 @@
               },
               "properties": {
                 "storageServices": {
-                  "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]"
+                  "resourceId": "[variables('videoIndexerStorageAccountId')]"
                 }
               },
-              "tags": "[parameters('tags')]"
+              "tags": "[parameters('tags')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
             },
             {
               "condition": "[and(parameters('enableDiagLogging'), not(variables('useLegacyVideoIndexerApi')))]",
@@ -6186,6 +6278,14 @@
             "videoIndexerAccountId": {
               "type": "string",
               "value": "[if(variables('useLegacyVideoIndexerApi'), reference(resourceId('Microsoft.VideoIndexer/accounts', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment')))), '2024-01-01').accountId, reference(resourceId('Microsoft.VideoIndexer/accounts', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment')))), '2025-04-01').accountId)]"
+            },
+            "videoIndexerLocation": {
+              "type": "string",
+              "value": "[toLower(replace(parameters('location'), ' ', ''))]"
+            },
+            "videoIndexerStorageAccountName": {
+              "type": "string",
+              "value": "[if(parameters('useDedicatedStorageAccount'), variables('dedicatedStorageAccountName'), parameters('storageAccount'))]"
             }
           }
         }
@@ -6255,6 +6355,10 @@
           },
           "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
           "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
+          "videoIndexerStorageAccountName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerStorageAccountName.value), createObject('value', ''))]",
+          "videoIndexerAppRoleDefinitionId": {
+            "value": "[variables('videoIndexerAppRoleDefinitionId')]"
+          },
           "videoIndexerSupportsOpenAiIntegration": {
             "value": "[variables('videoIndexerSupportsOpenAiIntegration')]"
           }
@@ -6266,7 +6370,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "7465815465274830093"
+              "templateHash": "12563751307025747079"
             }
           },
           "parameters": {
@@ -6336,6 +6440,20 @@
             },
             "videoIndexerName": {
               "type": "string"
+            },
+            "videoIndexerStorageAccountName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Storage account that holds the Video Indexer media.\n- Defaults to the application storage account."
+              }
+            },
+            "videoIndexerAppRoleDefinitionId": {
+              "type": "string",
+              "defaultValue": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+              "metadata": {
+                "description": "Role definition ID granted to the web app identity on the Video Indexer account."
+              }
             },
             "videoIndexerSupportsOpenAiIntegration": {
               "type": "bool",
@@ -6552,18 +6670,6 @@
               }
             },
             {
-              "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
-              "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
-              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-storage-blob-data-contributor')]",
-              "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-                "principalId": "[reference(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), '2024-01-01', 'full').identity.principalId]",
-                "principalType": "ServicePrincipal"
-              }
-            },
-            {
               "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(variables('useExternalOpenAIResource'))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
@@ -6755,6 +6861,91 @@
                   ]
                 }
               }
+            },
+            {
+              "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "setVideoIndexerPermissions",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "videoIndexerName": {
+                    "value": "[parameters('videoIndexerName')]"
+                  },
+                  "videoIndexerStorageAccountName": "[if(empty(parameters('videoIndexerStorageAccountName')), createObject('value', parameters('storageAccountName')), createObject('value', parameters('videoIndexerStorageAccountName')))]",
+                  "webAppName": {
+                    "value": "[parameters('webAppName')]"
+                  },
+                  "webAppRoleDefinitionId": {
+                    "value": "[parameters('videoIndexerAppRoleDefinitionId')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "17195091449059813838"
+                    }
+                  },
+                  "parameters": {
+                    "videoIndexerName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the Video Indexer account."
+                      }
+                    },
+                    "videoIndexerStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the storage account that holds the Video Indexer media."
+                      }
+                    },
+                    "webAppName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the web app whose system-assigned identity calls the Video Indexer generateAccessToken API."
+                      }
+                    },
+                    "webAppRoleDefinitionId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Role definition ID granted to the web app identity on the Video Indexer account.\n- Video Indexer Account Contributor (3f99eaab-6f59-4877-adf5-1cacd22e20b0) in Azure Commercial\n- Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) where that role has not been confirmed"
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName'))]",
+                      "name": "[guid(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'video-indexer-app-access', parameters('webAppRoleDefinitionId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('webAppRoleDefinitionId'))]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('videoIndexerStorageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('videoIndexerStorageAccountName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-storage-blob-data-contributor')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                        "principalId": "[reference(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), '2024-01-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
             }
           ]
         }
@@ -6825,7 +7016,11 @@
           "redisCacheKind": {
             "value": "[parameters('redisCacheKind')]"
           },
-          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]"
+          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
+          "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
+          "videoIndexerAppRoleDefinitionId": {
+            "value": "[variables('videoIndexerAppRoleDefinitionId')]"
+          }
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -6834,7 +7029,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "6086980005977117487"
+              "templateHash": "13981557879151195852"
             }
           },
           "parameters": {
@@ -6895,6 +7090,17 @@
             },
             "contentSafetyName": {
               "type": "string"
+            },
+            "videoIndexerName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "videoIndexerAppRoleDefinitionId": {
+              "type": "string",
+              "defaultValue": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+              "metadata": {
+                "description": "Role definition ID granted to the native web app identity on the Video Indexer account."
+              }
             }
           },
           "variables": {
@@ -7028,6 +7234,18 @@
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'content-safety-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName'))]",
+              "name": "[guid(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'video-indexer-app-access', parameters('videoIndexerAppRoleDefinitionId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('videoIndexerAppRoleDefinitionId'))]",
                 "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
                 "principalType": "ServicePrincipal"
               }
@@ -7218,7 +7436,8 @@
         "searchService",
         "setPermissions",
         "speechService",
-        "storageAccount"
+        "storageAccount",
+        "videoIndexerService"
       ]
     },
     "privateNetworking": {
@@ -10468,6 +10687,10 @@
     "var_videoIndexerEndpoint": {
       "type": "string",
       "value": "[variables('resolvedVideoIndexerEndpoint')]"
+    },
+    "var_videoIndexerLocation": {
+      "type": "string",
+      "value": "[if(parameters('deployVideoIndexerService'), reference('videoIndexerService').outputs.videoIndexerLocation.value, '')]"
     },
     "var_videoIndexerName": {
       "type": "string",

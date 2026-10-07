@@ -1,7 +1,8 @@
 # test_v2_workflow_calendar_schedules.py
 """
 UI tests for calendar schedules in the native V2 workflow editor, in both workflow scopes.
-Version: 0.261.202
+Version: 0.261.271
+The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.193
 
 These tests use the real V2 SPA bundle with the closed workflow fixture, whose save routes validate
@@ -54,6 +55,14 @@ from test_v2_group_workflow_file_sync import (  # noqa: E402  (shared record and
     workflow_post,
 )
 
+from ui_tests.fixtures.workflow_workbench import (  # noqa: E402
+    CREATE_WORKFLOW,
+    create_workflow,
+    edit_workflow,
+    select_workflow,
+    workflow_editor,
+)
+
 
 pytestmark = pytest.mark.ui
 MONDAYS_NEW_YORK = {
@@ -102,8 +111,7 @@ def open_scope(ui, scope):
 
 def start_workflow(page, name):
     """Open a new workflow with a valid runner and task, on the Interval trigger."""
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    create_workflow(page)
     labelled(page, "Workflow name").fill(name)
     labelled(page, "Model").select_option(label="Workspace GPT · aoai")
     labelled(page, "Instructions").first.fill("Summarize this week's updates.")
@@ -116,8 +124,12 @@ def preview(page, label):
 
 
 def listed(page, label):
-    """The workflow list's reading of a schedule."""
-    return page.get_by_text(f"Schedule: {label}", exact=True)
+    """The selected workflow's schedule, exactly as the workbench Overview reads it.
+
+    Until 0.261.271 the workflow list showed it as "Schedule: <label>"; the Overview's
+    Trigger and schedule fact now carries the same label.
+    """
+    return page.get_by_role("tabpanel", name="Overview", exact=True).get_by_text(label, exact=True)
 
 
 def day(page, name):
@@ -158,7 +170,7 @@ def test_mondays_at_eight_in_new_york_saves_lists_and_reopens(workflow_ui, scope
     expect(preview(page, "Mondays 08:00 America/New_York")).to_be_visible()
 
     save(page)
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     write = workflow_post(ui)
     assert write.path == ("/api/group/workflows" if scope == "group" else "/api/user/workflows")
     if scope == "group":
@@ -167,9 +179,7 @@ def test_mondays_at_eight_in_new_york_saves_lists_and_reopens(workflow_ui, scope
     assert write.body["schedule"] == MONDAYS_NEW_YORK
     expect(listed(page, "Mondays 08:00 America/New_York")).to_be_visible()
 
-    page.get_by_role("button", name="Edit Monday digest", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
-    expect(dialog).to_be_visible()
+    dialog = edit_workflow(page, "Monday digest")
     expect(labelled(page, "Trigger")).to_have_value("interval")
     expect(labelled(page, "Repeats")).to_have_value("weekly")
     expect_days(page, {"Monday"})
@@ -210,11 +220,10 @@ def test_a_stored_calendar_schedule_opens_as_saved_and_resaves_unchanged(workflo
         name, listing, cadence = "Quarterly review workflow", "Monthly on day 31 (or last day), 18:00 Asia/Tokyo", "monthly"
         reading, zone, at = listing, "Asia/Tokyo", "18:00"
     open_scope(ui, scope)
+    select_workflow(page, name)
     expect(listed(page, listing)).to_be_visible()
 
-    page.get_by_role("button", name=f"Edit {name}", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
-    expect(dialog).to_be_visible()
+    dialog = edit_workflow(page, name)
     expect(labelled(page, "Repeats")).to_have_value(cadence)
     expect(labelled(page, "Time")).to_have_value(at)
     expect(labelled(page, "Time zone")).to_have_value(zone)
@@ -261,7 +270,7 @@ def test_a_browser_zone_the_server_does_not_list_starts_in_utc_with_a_note(workf
     zone.fill("Europe/Paris")
     expect(status(page, SCHEDULE_TIMEZONE_ERROR)).to_have_count(0)
     save(page)
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     assert workflow_post(ui).body["schedule"] == {
         "kind": "calendar", "frequency": "daily", "days_of_week": [], "day_of_month": None,
         "time_of_day": "09:00", "timezone": "Europe/Paris",
@@ -295,7 +304,7 @@ def test_calendar_problems_are_named_before_saving_with_the_server_messages(work
     labelled(page, "Time zone").fill("America/New_York")
     expect(status(page, SCHEDULE_TIMEZONE_ERROR)).to_have_count(0)
     save(page)
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     assert workflow_post(ui).body["schedule"] == {
         **MONDAYS_NEW_YORK, "days_of_week": ["friday"], "time_of_day": "17:45",
     }
@@ -311,8 +320,8 @@ def test_the_minimum_leaves_a_saved_interval_alone_but_refuses_a_changed_one(wor
     open_scope(ui, "personal")
     expect(listed(page, "Every 30 minutes")).to_be_visible()
 
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    edit_workflow(page, "Quarterly review workflow")
+    dialog = workflow_editor(page)
     expect(labelled(page, "Interval value")).to_have_value("30")
     labelled(page, "Description").first.fill("Still every 30 minutes.")
     expect(status(page, HOURLY_MINIMUM)).to_have_count(0)
@@ -320,7 +329,7 @@ def test_the_minimum_leaves_a_saved_interval_alone_but_refuses_a_changed_one(wor
     expect(dialog).to_have_count(0)
     assert workflow_post(ui).body["schedule"] == {"unit": "minutes", "value": 30}
 
-    page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+    edit_workflow(page, "Quarterly review workflow")
     labelled(page, "Interval value").fill("45")
     expect(status(page, HOURLY_MINIMUM)).to_be_visible()
     save(page)
@@ -352,7 +361,7 @@ def test_the_minimum_refuses_a_new_group_interval_but_not_a_calendar_schedule(wo
     expect(status(page, HOURLY_MINIMUM)).to_have_count(0)
     expect(preview(page, "Weekdays 09:00 America/New_York")).to_be_visible()
     save(page)
-    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    expect(workflow_editor(page, CREATE_WORKFLOW)).to_have_count(0)
     body = workflow_post(ui).body
     assert body["group_id"] == GROUP_ID
     assert body["schedule"] == {**WEEKDAYS_LONDON, "time_of_day": "09:00", "timezone": "America/New_York"}
@@ -375,9 +384,7 @@ def test_a_schedule_the_editor_does_not_support_opens_read_only_and_is_kept(work
         name = "Quarterly review workflow"
     open_scope(ui, scope)
 
-    page.get_by_role("button", name=f"Edit {name}", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
-    expect(dialog).to_be_visible()
+    dialog = edit_workflow(page, name)
     expect(dialog.get_by_role("alert").filter(has_text=UNSUPPORTED_REASON)).to_be_visible()
     expect(status(page, UNSUPPORTED_NOTE)).to_be_visible()
     # Neither kind's fields are shown, so nothing can stand in for the stored schedule.

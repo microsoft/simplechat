@@ -1,8 +1,8 @@
 # test_v2_admin_help_settings.py
 """
 Browser coverage for the V2 Admin Settings Help group.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 Exercise the built application with the real Help field schema, the real Latest
 Features catalogues and intercepted APIs. Check the four Help cards and the
@@ -120,8 +120,9 @@ def test_support_saves_without_a_recipient_and_says_why(help_ui):
         "Unlike the classic form, turning the menu on must not switch Send Feedback off."
     )
 
-    # The destination leads to the announcements users are shown.
-    support.get_by_role("button", name="Choose which announcements users see").click()
+    # The destination says where the announcements it publishes are chosen.
+    expect(support.get_by_text("Shown in Help", exact=False)).to_be_visible()
+    support.get_by_role("button", name="Go to User-Facing Latest Features").click()
     expect(page.get_by_role("heading", name="User-Facing Latest Features", level=2)).to_be_focused()
 
 

@@ -5,7 +5,7 @@ description: "Agents & Actions controls the Semantic Kernel runtime, agent marke
 section: "Administration"
 audience: admin
 admin_tab: agents-actions
-version: "0.261.093"
+version: "0.261.271"
 redirect_from:
   - /admin/agents/
 ---
@@ -93,6 +93,56 @@ with the rest of the page.
 | Multi-Agent Orchestration | Reports whether the runtime coordinates several agents. Follows the orchestration mode rather than being set directly. | Off | `enable_multi_agent_orchestration`; derived |
 | Max Rounds Per Agent | Caps how many turns each agent takes in a multi-agent conversation, which bounds the model calls one message can trigger. | 1 | `max_rounds_per_agent`; forced to 1 outside multi-agent modes |
 
+### Global Agents {#organization-agents-section}
+
+The agents your organisation provides. While Workspace Mode is off they are the
+only agents there are, and everyone chats with the **default agent** you choose
+here. With Workspace Mode on they appear beside people's own agents only when
+**Add Global Agents and Actions to Workspaces** is on.
+
+Each row shows the agent's type, model, and how many actions it uses, with a badge
+for whether it is enabled and another on the default agent. The icons at the end of
+a row make the agent the default, enable or disable it, open it, and delete it. Each
+change on the list saves straight away, because these are records rather than
+settings, so the save bar is not involved. Opening an agent replaces this page, so
+if other settings here are unsaved you are asked to keep editing or discard them
+first:
+
+- **New agent** opens the same full-page agent editor people use in their
+  workspaces: identity, model and connection, actions, assigned knowledge,
+  instructions, advanced settings, and examples and templates. The editor is laid
+  out as this page is, a card per section with each setting's label and help beside
+  it, and it looks the same in My Workspace and group workspaces. Saving returns you
+  to this list.
+- **Start from a template** opens a new agent with the template gallery in view.
+  Applying a template copies its instructions, tags, and recommended actions into
+  an unsaved draft; connection credentials are never copied. Choose a model, then
+  save. The button appears while **Enable Agent Template Gallery** is on.
+- **Make default** (the star) chooses the agent that answers when nobody picks
+  one. A disabled agent cannot be the default.
+- **Disable** (the power icon) keeps an agent's configuration but stops offering it. Disabling the
+  default hands the default to another enabled agent, if there is one, and the
+  confirmation names which.
+- **Delete** (the bin) removes an agent after you confirm. The default agent
+  cannot be deleted; choose another default first.
+
+A few things differ from a workspace agent, because a global agent answers
+everyone:
+
+- **Assigned knowledge** can draw only on public workspaces, never on a person's
+  or a group's documents.
+- **Model & connection** offers the global model connections, and a global agent
+  may also carry its own connection, as the classic editor allowed.
+- **Actions** lists the global actions. **New action** creates one in Global
+  Actions and attaches it to the agent you came from.
+- **Publish as template** adds the agent's recipe to the approved gallery
+  straight away; an administrator's template needs no review.
+
+Stored credentials stay masked in the editor, and while Key Vault secret storage
+is on they are kept in the global Key Vault namespace. Two administrators editing
+the same agent cannot overwrite each other: the second save is refused until the
+latest version is loaded.
+
 ### Workspace Agent Permissions {#agent-toggles-card}
 
 Shown only in Workspace Mode, because outside it nothing reads these.
@@ -151,7 +201,7 @@ visible to them, so a promotion cannot leak an agent someone has no access to.
 
 Shown only while the Agent Template Gallery is enabled. Submissions are reviewed
 on the shared [approvals queue]({{ '/admin/governance/' | relative_url }}) rather
-than here.
+than here; the section links to it.
 
 #### Settings
 
@@ -190,8 +240,11 @@ agents only. Runtime checks do not trust the permissions held by the person who
 originally configured an action.
 
 Classic and V2 both provide focused authoring and attachment controls for
-personal, group, and global agents. V2 global resource changes use agent/action
-APIs independently of the Admin Settings save bar. See
+personal, group, and global agents. In V2 Admin Settings a global Call agent
+action is an ordinary global action: create it under **Global Actions** with the
+**Call agent** type, which offers only global agents as targets, then attach it in
+a global agent's editor. The separate **Global agent delegation** card was removed
+in **0.261.271**. See
 [Call another agent]({{ '/guides/call-another-agent/' | relative_url }}) for the
 workflow, context-sharing rules, and execution limits.
 
@@ -296,8 +349,24 @@ is set from this page.
 
 ### Global Actions {#actions-config}
 
-The actions published to everyone. Authoring them stays in the classic admin
-interface for now.
+The actions global agents can call: connections to APIs, databases, MCP servers,
+Microsoft services, and other agents. With Workspace Mode on, workspaces see them
+too when **Add Global Agents and Actions to Workspaces** is on.
+
+As with Global Agents, each change saves straight away:
+
+- **New action** opens the full-page action editor workspaces use, with the
+  connector catalogue the deployment provides, MCP presets and the global MCP
+  preconfigurations, connection tests, and Key Vault credential handling. Saving
+  returns you to this list.
+- **Disable** (the power icon) keeps an action's configuration without loading
+  it, and **Delete** (the bin) removes it after you confirm. Deleting an action
+  does not edit the agents that used it.
+
+Connection tests and MCP tool discovery run in the global scope, so a stored
+credential resolves from the global Key Vault namespace rather than your own. A
+**Call agent** action can target only global agents, because the server refuses
+any other target for a global action.
 
 ## Inbound MCP {#inbound-mcp}
 
@@ -391,8 +460,10 @@ request — and never prompts, document content, bearer tokens or secrets.
 ## Common tasks
 
 1. **Turn on governed agents.** Enable the runtime, choose allowed scopes, and create a test agent. Outcome to verify: Only approved agent scopes are available.
-2. **Limit document actions.** Review analyze and comparison limits, then run a small action. Outcome to verify: Document actions complete within configured caps.
-3. **Prepare inbound MCP.** Set delegated scope, roles, throttles, and sources, then connect a test client. Outcome to verify: Approved clients can reach tools and blocked sources fail cleanly.
+2. **Publish a global agent.** Under **Global Agents**, choose **New agent** or **Start from a template**, pick a model, attach global actions, and save. With Workspace Mode off, choose **Make default** so it answers chats. Outcome to verify: The agent appears in the list with the Default agent tag.
+3. **Let a global agent call a specialist.** Under **Global Actions**, create a **Call agent** action that targets the specialist, then attach it in the calling agent's editor. Outcome to verify: The action lists the target as a global agent, and the caller shows one more action.
+4. **Limit document actions.** Review analyze and comparison limits, then run a small action. Outcome to verify: Document actions complete within configured caps.
+5. **Prepare inbound MCP.** Set delegated scope, roles, throttles, and sources, then connect a test client. Outcome to verify: Approved clients can reach tools and blocked sources fail cleanly.
 
 ## Troubleshooting
 
@@ -401,6 +472,10 @@ request — and never prompts, document content, bearer tokens or secrets.
 | An action is missing from an agent | The built-in action toggle or workspace action permission is disabled. | Enable the action and confirm the agent scope allows it. |
 | The Agents page returns an error instead of the catalog | **Enable Agents** is off. That page is served behind it. | Turn on Enable Agents, or remove the link from navigation. |
 | An agent setting has no effect | Workspace Mode changes where agents come from, so a global agent is unused in Workspace Mode unless the merge setting is on. | Check Workspace Mode first, then the merge setting. |
+| A global agent has no Delete button | It is the default agent, which cannot be deleted. | Make another enabled agent the default, then delete it. |
+| A global agent cannot be saved after another administrator changed it | The editor refuses to overwrite a newer version. | Open the latest version, reapply your change, and save. |
+| A Call agent action lists no personal or group agents | Global actions call global agents only. | Choose a global agent, or create the action in the workspace that owns the target. |
+| The classic page cannot save a new key for a global agent or action whose classic-page key was later replaced in V2 | V2 stores a replaced key under a new Key Vault name and soft-deletes the old one, and Key Vault will not reuse a soft-deleted name. | Enter the new key in V2 Admin Settings, or purge the deleted secret in Key Vault. |
 | A document action ignores the limit you set | The value was outside the supported range and was clamped on save. | Re-open the setting to see the stored value. |
 | An MCP client is refused after the allowlist was updated | Every layer must pass, and a governance policy is still required after the allowlists. | Check the client app id, the tenant, the source, and the governance policy in that order. |
 

@@ -14,6 +14,7 @@ Workflow assistant policy coverage: 0.261.208
 Workflow result context policy coverage: 0.261.214
 Workflow run status policy coverage: 0.261.227
 Workflow hand-off policy coverage: 0.261.250
+Global agent and action editor policy coverage: 0.261.271
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -97,6 +98,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_users": ("login_required", "user_required"),
     "backend_v2": ("login_required", "user_required"),
     "backend_v2_admin": ("login_required", "admin_required"),
+    "backend_v2_admin_agents_actions": ("login_required", "admin_required"),
     "backend_workflows": ("login_required", "user_required"),
     "backend_workspace_identities": ("login_required",),
     "custom_pages": ("login_required",),
@@ -268,6 +270,20 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_retention_policy.py", "update_group_retention_settings"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_public_workspace_context"): ("login_required", "user_required", "enabled_required"),
+    # Global agent and action editors: the organisation's records, Admin role only.
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agents_list"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agents_create"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_options"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_read"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_update"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_delete"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_actions_list"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_actions_create"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_types"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_options"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_read"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_update"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_delete"): ("login_required", "admin_required"),
     ("route_backend_public_document_reads.py", "api_get_public_workspace_documents"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_reads.py", "api_get_public_workspace_document_facets"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_reads.py", "api_get_public_workspace_document_tags"): ("login_required", "user_required", "enabled_required"),

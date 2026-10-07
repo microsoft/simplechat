@@ -20,6 +20,7 @@ import { resolveWorkspaceSections } from '../lib/workspaceSections';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useGroupWorkspaceStore, WorkspaceRequestSuperseded } from '../stores/groupWorkspaceStore';
 import { WORKSPACE_SECTIONS_BY_ID } from './workspace/sections';
+import { WorkflowEditorPage } from './workspace/WorkflowEditorPage';
 import { WorkflowsSection } from './workspace/WorkflowsSection';
 import { GroupDocumentsSection } from './workspace/DocumentsSection';
 import { GroupTagsSection } from './workspace/TagsSection';
@@ -207,6 +208,9 @@ export function GroupWorkspacePage() {
     // action adapter, or stay dark when group actions are unavailable -- never falling back to a
     // personal action.
     const nativeAgents = Boolean(ready && section === 'agents' && selected?.enabled && context.sections.agents.enabled);
+    // Workflows lays out its own workbench and its editor page, and manages their scrolling, so it
+    // is full-bleed whenever the section is available, as the agent and action editors are.
+    const nativeWorkflows = Boolean(ready && section === 'workflows' && selected?.enabled);
     const groupAgentAdapter = useMemo(
         () => context?.sections.agents.enabled
             ? createGroupAgentWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.agent_management, groupActionAdapter)
@@ -279,10 +283,9 @@ export function GroupWorkspacePage() {
     }, [viewerId]);
 
     // A stray resource segment on a section that has no resource route -- every native group section,
-    // including the Manage sections, except the actions and agents editors -- must never fall through
-    // to a classic handoff. Once the context is loaded, drop the segment so the section itself
-    // renders, turning a /workflows/<id> deep link into the ?workflow_id= query the workflows section
-    // already understands. Actions and agents keep their editor route while that section is
+    // including the Manage sections, except the actions, agents and workflows editors -- must never
+    // fall through to a classic handoff. Once the context is loaded, drop the segment so the section
+    // itself renders. Actions, agents and workflows keep their editor route while that section is
     // available; when it is off they have no editor, so their stray segment is dropped too and the
     // section (or its lock) shows instead.
     useEffect(() => {
@@ -290,10 +293,8 @@ export function GroupWorkspacePage() {
             || !(isGroupWorkspaceSection(section) || isGroupManageSection(section))) return;
         if (section === 'actions' && context.sections.actions.enabled) return;
         if (section === 'agents' && context.sections.agents.enabled) return;
-        const target = section === 'workflows'
-            ? `${groupWorkspacePath(groupId, 'workflows')}?workflow_id=${encodeURIComponent(resourceId)}`
-            : groupWorkspacePath(groupId, section);
-        navigate(target, { replace: true });
+        if (section === 'workflows' && context.sections.workflows.enabled) return;
+        navigate(groupWorkspacePath(groupId, section), { replace: true });
     }, [context, groupId, section, resourceId, navigate]);
 
     const selectGroup = async (id: string) => {
@@ -414,7 +415,7 @@ export function GroupWorkspacePage() {
 
     const error = notice || state.error;
     return (
-        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts || nativeActions || nativeAgents}>
+        <WorkspaceShell header={header} basePath={basePath} sections={ready ? resolved : []} fullBleed={nativeDocuments || nativePrompts || nativeActions || nativeAgents || nativeWorkflows}>
             {error ? <div role="alert" className="mb-4 space-y-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
                 <p>{error}</p>
                 {state.needsReconciliation ? <GlassButton size="sm" disabled={state.loading || state.activating} onClick={() => void recover()}>Refresh workspace selection</GlassButton>
@@ -444,7 +445,7 @@ export function GroupWorkspacePage() {
                         <Compass size={14} />Browse the group directory</GlassButton>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
-                    className={nativeDocuments || nativePrompts || nativeActions || nativeAgents ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
+                    className={nativeDocuments || nativePrompts || nativeActions || nativeAgents || nativeWorkflows ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
                     {!section ? (
                         <>
                             <dl className="space-y-2 text-sm text-text-2">
@@ -475,10 +476,18 @@ export function GroupWorkspacePage() {
                                     onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
                                     : <EmptyState icon={<Lock size={28} />} title="Tags are not available" description="You do not have access to this group's documents." />
                             )
+                            : section === 'workflows' && resourceId ? <WorkflowEditorPage key={`${context.scope.id}:${resourceId}`}
+                                scope={{ type: 'group', groupId: context.scope.id }} resourceId={resourceId}
+                                allowManage={context.sections.workflows.can_manage} interactionDisabled={accessUnconfirmed}
+                                operations={context.workflow_management?.operations} scopeLabel={context.workspace.name}
+                                // The group page already guards every navigation and the switch to another
+                                // group, so the editor reports its draft here rather than guarding again.
+                                guardNavigation={false}
+                                onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
                             : section === 'workflows' && !resourceId ? <WorkflowsSection scope={{ type: 'group', groupId: context.scope.id }}
                                 allowManage={context.sections.workflows.can_manage} interactionDisabled={accessUnconfirmed}
                                 operations={context.workflow_management?.operations}
-                                onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
+                                onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
                                 : section === 'actions' && resourceId && groupActionAdapter ? (
                                     <ActionEditorPage adapter={groupActionAdapter} />
                                 ) : section === 'actions' && !resourceId && groupActionAdapter ? (

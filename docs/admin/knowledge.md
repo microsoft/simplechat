@@ -107,6 +107,16 @@ In the classic interface, opening Admin Settings checks the three indexes in seq
 
 Connection and permission failures stay visible rather than being hidden as if the index were healthy. Configure either the direct Search endpoint and authentication method, or the APIM endpoint and subscription key. Public Azure uses the Search audience `https://search.azure.com`; government and custom-cloud audiences remain separate. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
 
+#### Search result cache
+
+Workspace document searches, the retrieval step behind grounded chat answers, agents, and workflows, are cached in the `search_cache` Cosmos DB container. When the same search runs again against the same documents, SimpleChat reuses the earlier results instead of embedding the query and running the semantic-ranked hybrid queries against each workspace index again. Repeated questions come back faster and cite the same sources, and fewer embedding and semantic ranker requests are billed or counted against quota. The cache does not need Redis, and it does not apply to web search.
+
+A cached result is reused only while the query, scope, selected documents, tag filters, embedding model, and the documents in scope, including their versions and content screening state, all still match. Adding, deleting, re-sharing, or re-versioning a document therefore forces a fresh search straight away. Before cached results are returned, each one is re-checked against the requesting user's access and the document's current availability, and if any no longer qualifies the search runs fresh.
+
+Caching is on by default and should stay on. Turn it off only while troubleshooting search relevance, when every search needs to run fresh. The cache lifetime bounds how long other changes can take to appear, such as a document that finishes processing after a search ran, or an edit made directly in Azure AI Search outside SimpleChat.
+
+Both settings are edited in the V2 admin settings, in the **Search result cache** group of this section. The classic admin page has no control for them.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -117,6 +127,8 @@ Connection and permission failures stay visible rather than being hidden as if t
 | Search Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_ai_search_key` |
 | Azure APIM AI Search Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_ai_search_endpoint` |
 | Azure APIM AI Search Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_ai_search_subscription_key` |
+| Cache workspace search results | Reuses a recent identical workspace search instead of embedding the query and querying the indexes again. Cached results are re-checked against the user's access before they are returned. | On | `enable_search_result_caching`; V2 admin only |
+| Cache lifetime (seconds) | How long cached results can be reused, from 60 to 3,600 seconds. Shown while caching is on. | 300 | `search_cache_ttl_seconds`; V2 admin only |
 
 ## Document Extraction {#extraction}
 
@@ -128,31 +140,53 @@ Screening requires Enhanced Citations and is configured in Security so the polic
 
 ### Document Intelligence {#document-intelligence-section}
 
-Document Intelligence reads PDFs and images. Nothing else in this tab produces searchable
-text without it, so the tab leads with the connection: endpoint, authentication and a
-connection test, either directly or through API Management. Only the path in use is shown.
+Document Intelligence reads PDFs and images, and nothing else in this tab produces
+searchable text without it: Standard extraction is its Read model, and Enhanced extraction
+falls back to its Layout model. The section is the connection alone -- endpoint,
+authentication and a connection test, either directly or through API Management. Only the
+path in use is shown.
 
-Extraction behaviour follows. Standard uses Document Intelligence Read and is the fastest
-and cheapest path for plain text. Enhanced captures tables, page structure, forms and
-checkbox states, at roughly six times the cost per thousand pages. Auto inspects the
-opening pages of a PDF and picks: if it finds tables, selection marks or figures the whole
-document uses Enhanced, otherwise it finishes with Standard. Images always use Enhanced
-under Auto.
+### Enhanced Extraction {#enhanced-extraction-section}
 
-Formula extraction is a separately billed Document Intelligence add-on that captures
-equations as LaTeX instead of approximate OCR text. It applies to the Layout model only,
-so it has no effect while extraction is set to Standard.
+Enhanced extraction is for documents where structure matters: tables, page layout, forms,
+checkbox states and, with Content Understanding, figures and charts. The section is led by
+its switch, and every setting that only takes effect while Enhanced is on sits beneath it
+and is hidden while it is off -- the Content Understanding connection included, since
+Content Understanding is never called while Enhanced is off. With the switch off, every
+PDF and image uses Standard extraction.
 
-### Content Understanding {#content-understanding-section}
+The extraction mode decides what new uploads use. Standard uses Document Intelligence Read
+and is the fastest and cheapest path for plain text. Enhanced captures tables, page
+structure, forms and checkbox states, at roughly six times the cost per thousand pages.
+Auto inspects the opening pages of a PDF and picks: if it finds tables, selection marks or
+figures the whole document uses Enhanced, otherwise it finishes with Standard. Images
+always use Enhanced under Auto. Turning Enhanced on moves the mode from Standard to Auto,
+because Enhanced with the mode left on Standard would change nothing for new uploads. With
+Standard selected deliberately, people can still extract a document again as Enhanced from
+its workspace.
+
+Formula extraction is a separately billed add-on to the Document Intelligence Layout model
+that captures equations as LaTeX instead of approximate OCR text. It applies wherever
+Layout runs -- Auto's page sampling, and Enhanced extraction without Content
+Understanding -- so it has no effect on Standard extraction or on documents Content
+Understanding extracts.
+
+The section also names the engine Enhanced extraction will use with the settings on
+screen: Azure AI Content Understanding, or Document Intelligence Layout together with the
+reason Content Understanding is not in use. It judges configuration rather than
+connectivity; the connection test is what confirms the service answers.
+
+#### Content Understanding connection {#content-understanding-section}
 
 Azure AI Content Understanding is what backs Enhanced extraction where it is available. It
 returns tables, page structure, checkbox states and generated descriptions of figures and
-charts. Leave the endpoint blank and Enhanced falls back to Document Intelligence Layout,
-which still captures tables, structure, forms and checkbox states but not figure
+charts. It is optional: leave the endpoint blank and Enhanced uses Document Intelligence
+Layout, which still captures tables, structure, forms and checkbox states but not figure
 descriptions.
 
-Content Understanding is not offered in every Azure cloud. Where it is unavailable the tab
-says so and Enhanced uses the Layout fallback with nothing further to configure.
+Content Understanding is not offered in every Azure cloud. Where it is unavailable its
+connection is not shown, the section says Enhanced uses Document Intelligence Layout, and
+there is nothing further to configure.
 
 ### Images Inside Office Files {#office-embedded-image-section}
 
@@ -261,10 +295,10 @@ already captures the surrounding structure.
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |
 | Plan multiple web search queries | Narrows the admin list shown for plan multiple web search queries. | On | `deep_research_enable_query_planning` |
 | Save research ledger artifacts | Narrows the admin list shown for save research ledger artifacts. | On | `deep_research_enable_ledger_artifact` |
-| Enable Enhanced extraction | Enables the enhanced extraction path for richer PDF and image structure when the required services are configured. | Off | `enable_enhanced_extraction`; capability toggle |
+| Enable Enhanced extraction | Leads the Enhanced Extraction section. While it is off every PDF and image uses Standard extraction, and the extraction mode, formula extraction and Content Understanding connection are hidden because none of them can take effect. Turning it on moves a Standard mode to Auto. | Off | `enable_enhanced_extraction`; capability toggle |
 | PDF and Image Extraction Mode | Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected. | read | `document_intelligence_pdf_image_extraction_mode` |
 | Auto Sample Pages | Auto samples this many first PDF pages with Document Intelligence Layout. If it detects tables, selection marks, or figures, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mo | Not specified in defaults | `document_intelligence_auto_sample_pages` |
-| Extract mathematical formulas | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
+| Extract mathematical formulas | Captures equations as LaTeX through a billed add-on to the Document Intelligence Layout model, so it adds per-page cost wherever Layout runs: Auto's page sampling, and Enhanced extraction without Content Understanding. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
 | Foundry Endpoint | Your Microsoft Foundry resource endpoint, without a trailing path. | Empty | `azure_content_understanding_endpoint` |
 | Authentication Type | Managed identity requires the Cognitive Services User role on the Foundry resource. | key | `azure_content_understanding_authentication_type` |
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |
@@ -309,7 +343,10 @@ The endpoint comes first because the account details are read against it: use
 `https://api.videoindexer.ai` for Azure Public and `https://api.videoindexer.ai.azure.us`
 for Azure Government, and another value only for a non-standard deployment. The account id,
 name, location, resource group and subscription follow, and the indexing timeout bounds how
-long one file may take.
+long one file may take. All five account fields are required: the name, resource group and
+subscription identify the account when SimpleChat requests an access token, and the location
+and account id address its API. Video Indexer is not offered in every region, so the account
+can sit in a different region from SimpleChat; enter the account's own region as the location.
 
 ### AI Voice Conversations {#ai-voice-chat-section}
 
@@ -365,55 +402,89 @@ resource, so it lives with the other notification settings under
 
 ### File Sync {#file-sync-section}
 
-The File Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+File Sync lets a workspace pull documents from an external source on a schedule instead
+of relying on manual upload. In V2 Admin Settings everything that governs it is one
+card, read from the top down: whether File Sync is on, which workspace types may use it
+and who manages their sources, how much a single run may do, and which kinds of source
+can be added.
 
-### Visible Source Types {#file-sync-source-types-section}
+Sync runs need [Redis Cache](scale.md#redis-cache-section) switched on with its URL set,
+and its key when Redis uses key authentication. You can turn File Sync on and save its
+settings first, but runs stay inactive until Redis is ready. The V2 card warns while
+Redis Cache is switched off but does not check the URL or key, so confirm those under
+Redis Cache.
 
-The Visible Source Types section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+#### Workspace types
 
-### Personal Workspace Sync {#file-sync-personal-section}
+Turning File Sync on shows **Personal workspaces**, **Group workspaces**, and **Public
+workspaces** nested beneath it. A workspace type can sync only while both File Sync and
+its own switch are on, which is why the type switches are hidden while File Sync is
+off. Personal and group workspaces are on by default; public workspaces are off.
 
-The Personal Workspace Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Each workspace type that is on has an **Access** panel directly under its switch. Its
+rules decide who can open and manage that type's sources. Apart from the assignment
+lists, they do not stop sources that already exist: those keep syncing on their
+schedule.
 
-### Group Workspace Sync {#file-sync-group-section}
+- **Only administrators manage sources** stops anyone without the Admin role from
+  opening or changing that workspace type's sources. Documents that have already synced
+  stay.
+- **Require the PersonalFileSyncUser app role** (personal workspaces only) limits
+  opening and managing personal sources to holders of the `PersonalFileSyncUser` app
+  role. Create and assign the role in the Enterprise App first, or no user will be able
+  to manage their own personal sources. The requirement is also listed under
+  [App Role Requirements](security.md#app-role-requirements-section).
+- **Restrict to assigned groups** and **Restrict to assigned public workspaces** limit
+  File Sync to the workspaces chosen in the list that appears beneath the switch.
+  Workspaces left off the list can no longer manage their sources, and their scheduled
+  runs are skipped, so an empty list with the restriction on leaves no workspace of
+  that type able to manage or schedule a sync.
 
-The Group Workspace Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+None of these rules apply to administrators managing sources on a workspace's behalf.
+The classic admin page has a tool for that on its File Sync card: search for a user,
+group, or public workspace and manage its sources directly. V2 does not offer that tool
+yet.
 
-### Public Workspace Sync {#file-sync-public-section}
+#### Run limits
 
-The Public Workspace Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Run limits bound what a single workspace and a single run can do, and they apply to
+every workspace type. A run skips the files that would take it past its file or size
+limit rather than failing, and no new run starts while the concurrent run limit is
+reached. Start with low limits and a conservative schedule: a broad share can create
+many document versions in one run.
+
+#### Source types
+
+Source types decides which kinds of source the Add Source workflow offers. SMB Share,
+Azure Files, and Azure Blob Storage are available; OneDrive, on-premises SharePoint,
+and Google Workspace are listed as coming soon and cannot be selected yet. At least one
+source type must stay selected while File Sync is on. While the panel is closed, its
+header shows how many are selected.
+
+With Key Vault secret storage enabled and a Key Vault name set, a source's credentials
+are stored in Key Vault; otherwise they are stored with the source itself.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable File Sync | Enables the File Sync feature so configured external sources can import files into workspaces. | Off | `enable_file_sync`; capability toggle |
-| Max Sources | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `file_sync_max_sources_per_scope` |
-| Min Schedule Minutes | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 15 | `file_sync_min_schedule_interval_minutes` |
-| Max Files Per Run | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 1000 | `file_sync_max_files_per_run` |
-| Max GB Per Run | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 5 GB | `file_sync_max_gb_per_run` |
-| Max Concurrent Runs | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 2 | `file_sync_max_concurrent_runs` |
-| Allow Recursive Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `file_sync_allow_recursive_sources` |
-| SMB Share | Available now. | On | `file_sync_visible_source_types` |
-| OneDrive | Coming Soon. | Off | `file_sync_visible_source_type_onedrive` |
-| On-prem SharePoint | Coming Soon. | Off | `file_sync_visible_source_type_sharepoint_on_prem` |
-| Google Workspace | Coming Soon. | Off | `file_sync_visible_source_type_google_workspace` |
-| Enable personal sync | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_file_sync_personal`; capability toggle |
-| Admins manage sources only | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_personal_admin_only` |
-| Require PersonalFileSyncUser App Role | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_personal_require_app_role` |
-| Manage User Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Enable group sync | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_file_sync_group`; capability toggle |
-| Admins manage sources only | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_group_admin_only` |
-| Require Group Assignment to Use File Sync | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `require_group_assignment_for_file_sync` |
-| File Sync Allowed Group Ids | Lists the approved IDs, domains, groups, workspaces, or sources that may use this feature. | Empty list | `file_sync_allowed_group_ids` |
-| Manage Group Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Enable public sync | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_file_sync_public`; capability toggle |
-| Admins manage sources only | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_public_admin_only` |
-| Require Public Workspace Assignment to Use File Sync | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `require_public_workspace_assignment_for_file_sync` |
-| File Sync Allowed Public Workspace Ids | Lists the approved IDs, domains, groups, workspaces, or sources that may use this feature. | Empty list | `file_sync_allowed_public_workspace_ids` |
-| Manage Public Workspace Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Search Groups | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
-| Search Public Workspaces | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
+| Enable File Sync | Lets workspaces pull documents from a configured source on a schedule instead of relying on manual upload. | Off | `enable_file_sync`; capability toggle; runs need a configured Redis Cache |
+| Personal workspaces | Allows File Sync in personal workspaces while File Sync is on. | On | `enable_file_sync_personal` |
+| Group workspaces | Allows File Sync in group workspaces while File Sync is on. | On | `enable_file_sync_group` |
+| Public workspaces | Allows File Sync in public workspaces while File Sync is on. | Off | `enable_file_sync_public` |
+| Only administrators manage sources | Stops anyone without the Admin role from opening or changing that workspace type's sources. Existing sources keep syncing on their schedule. | Off | `file_sync_personal_admin_only`, `file_sync_group_admin_only`, `file_sync_public_admin_only`; one in each Access panel |
+| Require the PersonalFileSyncUser app role | Limits opening and managing personal sources to holders of the `PersonalFileSyncUser` app role. Existing sources keep syncing on their schedule. | Off | `file_sync_personal_require_app_role` |
+| Restrict to assigned groups | Limits group File Sync to the groups in Assigned groups; scheduled runs for other groups are skipped. | Off | `require_group_assignment_for_file_sync` |
+| Assigned groups | The groups that may use File Sync while the restriction is on. An empty list allows none. | Empty list | `file_sync_allowed_group_ids` |
+| Restrict to assigned public workspaces | Limits public File Sync to the workspaces in Assigned public workspaces; scheduled runs for other public workspaces are skipped. | Off | `require_public_workspace_assignment_for_file_sync` |
+| Assigned public workspaces | The public workspaces that may use File Sync while the restriction is on. An empty list allows none. | Empty list | `file_sync_allowed_public_workspace_ids` |
+| Max Sources per Workspace | The most sync sources one workspace can hold; adding another is refused. | 10 | `file_sync_max_sources_per_scope`; 1–100 |
+| Minimum Schedule Interval | The shortest gap a workspace may schedule between runs. | 15 minutes | `file_sync_min_schedule_interval_minutes`; 5–1440 |
+| Max Files per Run | The most files one run imports; files past the limit are skipped in that run. | 1000 | `file_sync_max_files_per_run`; 1–100000 |
+| Max Size per Run | The most data one run imports; a file that would exceed it is skipped in that run. Entered in gigabytes, stored in bytes. | 5 GB | `file_sync_max_bytes_per_run`; 1–1024 GB |
+| Max Concurrent Runs | How many sync runs may be queued or running at once across the whole deployment; no new run starts while the limit is reached. | 2 | `file_sync_max_concurrent_runs`; 1–25 |
+| Allow recursive sources | Lets a source include subfolders rather than only its top level. | On | `file_sync_allow_recursive_sources` |
+| Source types offered when adding a source | Which source types the Add Source workflow offers. | SMB Share, Azure Files | `file_sync_visible_source_types`; at least one while File Sync is on |
 
 ## Common tasks
 
@@ -426,6 +497,7 @@ The Public Workspace Sync section belongs to the File Sync tab. Use it with the 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A synced file is not searchable | The source ran but extraction or indexing failed later. | Check sync state, extraction settings, and Azure AI Search before rerunning. |
+| A repeated question still returns the old sources after a change made directly in Azure AI Search | The search result cache is reusing results from before the change, which it cannot detect. | Wait for the cache lifetime to pass. To check the change sooner, rephrase the question, because different wording is a separate cache entry. |
 
 ## Related
 

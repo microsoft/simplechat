@@ -34,6 +34,7 @@ from admin_settings_fields import (
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
     SECRET_REDACTED_VALUE,
+    get_admin_section_guides,
     get_admin_section_status,
     get_admin_settings_fields,
     get_secret_field_keys,
@@ -53,7 +54,7 @@ from config import (
     ensure_custom_logo_file_exists,
     get_allowed_extension_categories,
 )
-from functions_appinsights import log_event
+from functions_appinsights import get_appinsights_runtime_state, log_event
 from functions_branding_images import (
     ALLOWED_FAVICON_EXTENSIONS,
     ALLOWED_LOGO_EXTENSIONS,
@@ -141,6 +142,7 @@ from functions_settings import (
     is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
     is_chat_workflow_results_enabled_for_user,
+    is_content_understanding_supported_environment,
     is_user_workflows_enabled_for_user,
     is_workflow_assistant_enabled_for_user,
     merge_model_endpoint_payload,
@@ -194,7 +196,7 @@ from functions_model_endpoint_validation import (
 )
 from functions_documents import get_audio_runtime_capabilities
 from config import VERSION
-from swagger_wrapper import get_auth_security, swagger_route
+from swagger_wrapper import are_swagger_routes_registered, get_auth_security, swagger_route
 
 logger = logging.getLogger(__name__)
 
@@ -1297,7 +1299,64 @@ def register_route_backend_v2_admin(bp):
                 "message": "Audio runtime support could not be checked.",
             }
 
+        readouts["appinsights_connection"] = _build_appinsights_connection_readout()
+
         return readouts
+
+    def _build_appinsights_connection_readout():
+        """Say whether Application Insights has anywhere to send telemetry.
+
+        Global logging is a switch on this page, but the destination is an App Service
+        application setting. Turning the switch on without one does nothing at all,
+        and nothing else on the page would say so.
+        """
+        state = get_appinsights_runtime_state()
+        if not state["connection_configured"]:
+            return {
+                "ok": False,
+                "message": (
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING is not set on this App "
+                    "Service, so nothing reaches Application Insights whatever the "
+                    "switch above says."
+                ),
+            }
+        if not state["exporter_configured"]:
+            return {
+                "ok": False,
+                "message": (
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING is set, but the exporter did "
+                    "not start. Check the application's startup log."
+                ),
+            }
+        return {
+            "ok": True,
+            "message": (
+                "Connected through the APPLICATIONINSIGHTS_CONNECTION_STRING App "
+                "Service setting."
+            ),
+        }
+
+    def _build_runtime_flags():
+        """Server-resolved flags the admin surface reads but cannot set.
+
+        ``mcp_ui_enabled`` gates a navigation section on an App Service application
+        setting. ``content_understanding_supported`` says whether this Azure cloud
+        offers Content Understanding, which only the server's AZURE_ENVIRONMENT can
+        say. The rest describe how this process was started -- whether Application
+        Insights has a destination, whether its global logging is live and whether
+        the Swagger routes were registered -- so a section can say when a saved
+        change is still waiting for a restart.
+        """
+        appinsights = get_appinsights_runtime_state()
+        return {
+            "mcp_ui_enabled": is_mcp_ui_enabled(),
+            "content_understanding_supported": (
+                is_content_understanding_supported_environment()
+            ),
+            "appinsights_connection_configured": appinsights["connection_configured"],
+            "appinsights_global_logging_active": appinsights["global_logging_active"],
+            "swagger_routes_registered": are_swagger_routes_registered(current_app),
+        }
 
     def _build_endpoint_readouts(settings):
         """Readouts derived from the settings document rather than from the host."""
@@ -1384,7 +1443,8 @@ def register_route_backend_v2_admin(bp):
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
         not been described yet keep working. ``suppressed_capabilities`` names the keys
         that scan must skip because they are derived or are staged rollout flags with no
-        administrator control.
+        administrator control. ``section_guides`` names the in-app guide a section header
+        offers, for settings that depend on work done outside SimpleChat.
 
         The application release status is deliberately not part of this response. A
         release check can contact GitHub, so it is served by ``v2_admin_get_update_status``
@@ -1400,6 +1460,7 @@ def register_route_backend_v2_admin(bp):
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "section_status": get_admin_section_status(),
+                        "section_guides": get_admin_section_guides(),
                         "app_role_requirements": get_app_role_requirements(),
                         "branding_assets": _build_branding_assets(settings),
                         "status_readouts": {
@@ -1408,10 +1469,9 @@ def register_route_backend_v2_admin(bp):
                         },
                         "model_catalog": _build_model_catalog(settings),
                         # Navigation sections may be conditional on a runtime flag
-                        # rather than a stored setting. Inbound MCP is gated by an
-                        # App Service application setting, so its value cannot be
-                        # read out of the settings document the SPA already holds.
-                        "runtime_flags": {"mcp_ui_enabled": is_mcp_ui_enabled()},
+                        # rather than a stored setting, and Operations reports how
+                        # the running process was started. See _build_runtime_flags.
+                        "runtime_flags": _build_runtime_flags(),
                         "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
                     }

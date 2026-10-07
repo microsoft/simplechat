@@ -10,8 +10,8 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, ArrowRight, Check, CheckCircle2, Info, KeyRound, Lock, RotateCcw } from 'lucide-react';
-import { useContext, useState, type ReactNode } from 'react';
+import { AlertCircle, Check, CheckCircle2, Info, KeyRound, LocateFixed, Lock, RotateCcw } from 'lucide-react';
+import { useContext, useMemo, useState, type ReactNode } from 'react';
 import {
     asBoolean,
     asNumber,
@@ -21,6 +21,12 @@ import {
     SECRET_PLACEHOLDER,
     type AdminField,
 } from '../../lib/adminFields';
+import {
+    formatUtcOffset,
+    isKnownTimeZone,
+    listTimeZones,
+    viewerTimeZone,
+} from '../../lib/adminOperations';
 import { Toggle } from '../ui/primitives';
 import { SectionStatusContext } from './sectionStatusContext';
 
@@ -60,35 +66,6 @@ export function FieldNotice({ field }: { field: AdminField }) {
             <Icon size={13} className="mt-0.5 shrink-0" />
             <span>{field.notice}</span>
         </div>
-    );
-}
-
-/**
- * An in-page jump to the section a field leads to, declared with `related_section`.
- *
- * Drawn only when the page can navigate, so a field rendered somewhere without that
- * ability omits the link rather than offering a control that does nothing.
- */
-export function RelatedSectionLink({
-    field,
-    onNavigate,
-}: {
-    field: AdminField;
-    onNavigate?: (sectionId: string) => void;
-}) {
-    const related = field.related_section;
-    if (!related || !onNavigate) {
-        return null;
-    }
-    return (
-        <button
-            type="button"
-            onClick={() => onNavigate(related.id)}
-            className="mt-1.5 inline-flex items-center gap-1 rounded text-xs font-medium text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-            {related.label}
-            <ArrowRight size={12} aria-hidden="true" />
-        </button>
     );
 }
 
@@ -135,7 +112,6 @@ export function FieldShell({
     trailing,
     width = 'wide',
     missing = false,
-    onNavigate,
 }: {
     field: AdminField;
     error?: string;
@@ -146,8 +122,6 @@ export function FieldShell({
     width?: FieldWidth;
     /** A required field that is still empty; see `RequiredMark`. */
     missing?: boolean;
-    /** Follows the field's `related_section`, when the page can navigate. */
-    onNavigate?: (sectionId: string) => void;
 }) {
     const requiredMark = missing ? <RequiredMark /> : null;
     return (
@@ -178,8 +152,6 @@ export function FieldShell({
 
                 <FieldNotice field={field} />
 
-                <RelatedSectionLink field={field} onNavigate={onNavigate} />
-
                 {warning ? (
                     <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
                         <AlertCircle size={13} className="mt-0.5 shrink-0" />
@@ -208,15 +180,28 @@ export interface FieldControlProps {
     warning?: string;
     disabled?: boolean;
     onChange: (next: unknown) => void;
-    /** Moves the page to another section; follows a field's `related_section`. */
-    onNavigate?: (sectionId: string) => void;
 }
 
-function TextControl({ field, value, error, warning, disabled, onChange, onNavigate }: FieldControlProps) {
-    const id = `admin-field-${field.key}`;
+function TextControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
     // Marked only while the section asks for configuration: blank fields under a
     // capability that is off, or behind a missing prerequisite, are not the next step.
+    // Read before the timezone branch so the hook runs on every render.
     const sectionStatus = useContext(SectionStatusContext);
+    if (field.input_type === 'timezone') {
+        return (
+            <TimezoneControl
+                field={field}
+                value={value}
+                error={error}
+                warning={warning}
+                disabled={disabled}
+                onChange={onChange}
+            />
+        );
+    }
+
+    const id = `admin-field-${field.key}`;
+    const isTime = field.input_type === 'time';
     const missing =
         Boolean(field.required) &&
         !asString(value).trim() &&
@@ -228,7 +213,7 @@ function TextControl({ field, value, error, warning, disabled, onChange, onNavig
             warning={warning}
             htmlFor={id}
             missing={missing}
-            onNavigate={onNavigate}
+            width={isTime ? 'compact' : 'wide'}
         >
             <input
                 id={id}
@@ -240,6 +225,67 @@ function TextControl({ field, value, error, warning, disabled, onChange, onNavig
                 disabled={disabled}
                 onChange={(event) => onChange(event.target.value)}
             />
+        </FieldShell>
+    );
+}
+
+/**
+ * An IANA timezone, typed or picked from the zones this browser knows.
+ *
+ * A free list of four hundred names is unusable as a select, so this is a text box with
+ * suggestions, plus the one choice most administrators want: their own zone. The server
+ * validates the name on save, so a typo is reported rather than silently replaced.
+ */
+function TimezoneControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const listId = `${id}-zones`;
+    const zones = useMemo(() => listTimeZones(), []);
+    const viewerZone = useMemo(() => viewerTimeZone(), []);
+    const current = asString(value, asString(field.default));
+    const known = isKnownTimeZone(current);
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
+            <div className="flex flex-wrap items-center gap-2">
+                <input
+                    id={id}
+                    type="text"
+                    list={listId}
+                    className={clsx(inputClass, 'min-w-0 flex-1 basis-48')}
+                    value={current}
+                    maxLength={field.max_length}
+                    spellCheck={false}
+                    autoComplete="off"
+                    disabled={disabled}
+                    aria-describedby={`${id}-offset`}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+                <datalist id={listId}>
+                    {zones.map((zone) => (
+                        <option key={zone} value={zone} />
+                    ))}
+                </datalist>
+                {viewerZone && viewerZone !== current ? (
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onChange(viewerZone)}
+                        className={clsx(
+                            'inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-edge px-3 py-2',
+                            'text-sm text-text-2 transition-colors',
+                            disabled ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <LocateFixed size={14} aria-hidden="true" />
+                        Use my timezone ({viewerZone})
+                    </button>
+                ) : null}
+            </div>
+            <p id={`${id}-offset`} className={clsx('mt-1.5 text-xs', known ? 'text-text-3' : 'text-warn')}>
+                {known
+                    ? `Currently ${formatUtcOffset(current, new Date())}.`
+                    : 'Not a timezone this browser recognises. Pick one from the suggestions.'}
+            </p>
         </FieldShell>
     );
 }
@@ -491,7 +537,7 @@ function SelectControl({ field, value, error, warning, disabled, onChange }: Fie
     );
 }
 
-function SwitchControl({ field, value, error, warning, disabled, onChange, onNavigate }: FieldControlProps) {
+function SwitchControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
     return (
         <div className="admin-switch-row py-1">
             <Toggle
@@ -508,11 +554,6 @@ function SwitchControl({ field, value, error, warning, disabled, onChange, onNav
             {field.notice ? (
                 <div className="ml-14">
                     <FieldNotice field={field} />
-                </div>
-            ) : null}
-            {field.related_section && onNavigate ? (
-                <div className="ml-14 -mt-1 pb-1">
-                    <RelatedSectionLink field={field} onNavigate={onNavigate} />
                 </div>
             ) : null}
             {warning ? (

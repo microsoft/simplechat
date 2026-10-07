@@ -1,7 +1,7 @@
 # test_public_document_fixture_parity.py
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
-Version: 0.261.230
+Version: 0.261.268
 Implemented in: 0.261.179
 A generated artifact awaiting publication is held for managers and absent for everyone else
 (decision 27): 0.261.183
@@ -10,6 +10,7 @@ file_downloads_enabled is False and a download the workspace no longer offers is
 with the server's downloads-unavailable sentence: 0.261.186
 A released screened document's metadata change applies directly and returns the ordinary
 receipt: 0.261.230
+Metadata and re-tag receipts report the background search sync in `search_sync`: 0.261.268
 
 The V2 public Documents explorer mocks the network with three closed HTTP fixtures, which predate the
 per-route parity rule:
@@ -496,8 +497,8 @@ def test_manager_tags_read_shape_parity(manage):
 
 @pytest.mark.parametrize("scenario", ["updated", "propagation_incomplete"])
 def test_metadata_receipt_parity(manage, scenario):
-    """A saved change names its fields in request order; a change whose projections failed after the
-    document saved is a coded 500."""
+    """A saved change names its fields in request order and reports its background search sync; a
+    change whose required projection failed after the document saved is a coded 500."""
     env = manage
     body = {"title": "Changed title", "keywords": ["alpha", "beta"]}
     expected, status = metadata_result("same-document", body), 200

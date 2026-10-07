@@ -1,12 +1,13 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.260
+Version: 0.261.273
 Implemented in: 0.261.093
 Separate release check boundary: 0.261.133
 The rail's notification count is answered: 0.261.195
 Selectable sections, Model Catalog, and AI Connections stubs: 0.261.258
-Help group: catalogue tabs, Latest Features, Send Feedback and registration stubs: 0.261.260
+Seeded user preferences on open: 0.261.267
+Help group: catalogue tabs, Latest Features, Send Feedback and registration stubs: 0.261.273
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in
@@ -368,7 +369,7 @@ class AdminSettingsFixture:
         route.fulfill(json=self._catalog_payload(admin=True))
 
     def open(self, theme="light", width=1440, font_size="m", *, wait_until="networkidle",
-             height=1000, ready_region="Agent Runtime"):
+             height=1000, ready_region="Agent Runtime", preferences=None):
         if not SPA_INDEX.is_file():
             pytest.fail("Build the V2 SPA first: npm --prefix application/v2_ui run build")
         source_root = REPO_ROOT / "application" / "v2_ui" / "src"
@@ -382,6 +383,8 @@ class AdminSettingsFixture:
             "darkModeEnabled": theme == "dark",
             "v2RailCollapsed": width < 1024,
             "fontSizePreference": font_size,
+            # Saved user preferences the page should start from, e.g. a collapsed rail.
+            **(preferences or {}),
         }
         self.page.set_viewport_size({"width": width, "height": height})
         # A held release check keeps a request open, which networkidle would wait on.

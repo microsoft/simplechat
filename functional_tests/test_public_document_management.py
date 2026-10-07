@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace document management.
-Version: 0.261.186
+Version: 0.261.268
 Implemented in: 0.261.133
 Guarded tag vocabulary (R5.8): the lost patch answers one coded conflict: 0.261.173
 The revision delete double returns the real delete_document_revision's shape, deleted_mode included: 0.261.179
 Reader downloads: a reader may download when downloads are enabled; management stays manager-only: 0.261.186
+Metadata and re-tag receipts report the background search sync in `search_sync`: 0.261.268
 
 The real public management/access/policy modules and the scoped management route
 family run in the isolated Flask app built by the M3A read fixture. The workspace
@@ -36,6 +37,7 @@ from test_public_document_read_apis import (  # noqa: F401  (environment is a fi
     workspace,
 )
 from test_support.agent_delegation import module_stub
+from test_support.document_search_sync import load_document_search_sync_definitions
 from test_support.versioning import assert_app_version_at_least
 
 # The V2 public Documents explorer mocks the network with the closed fixture below; the R5.8
@@ -64,6 +66,17 @@ class StoreFailure(Exception):
 
 class DocumentMutationPropagationError(Exception):
     """Stand-in matching the class the management module imports and re-checks."""
+
+
+# The metadata fields the search chunks mirror (DOCUMENT_SEARCH_METADATA_FIELD_MAP).
+SEARCH_SYNCED_FIELDS = {"title", "authors", "file_name", "document_classification", "tags"}
+
+
+def document_search_sync_definitions():
+    """The real search sync definitions, so receipts are summarized by the production helper."""
+    namespace = {}
+    load_document_search_sync_definitions(namespace)
+    return namespace
 
 
 class DocumentRevisionDeleteError(Exception):
@@ -192,6 +205,7 @@ def management(environment):
     env.app.extensions["executor"] = env.executor
 
     env.propagation_fail = False
+    env.search_sync_revisions = {}
 
     def fake_allowed_file(name):
         return "." in name and name.rsplit(".", 1)[-1].lower() in {"pdf", "png", "txt", "csv", "docx"}
@@ -208,7 +222,9 @@ def management(environment):
         })
 
     def fake_update_document(*, document_id, user_id, public_workspace_id, strict=False,
-                             expected_etag=None, operation_guard=None, **changes):
+                             expected_etag=None, operation_guard=None, return_search_sync=False, **changes):
+        """The real update_document's contract: a strict save requests a background search sync for
+        every mirrored field it is sent, and reports it when return_search_sync is set."""
         if operation_guard:
             operation_guard()
         current = env.source.read_item(document_id, document_id)
@@ -216,8 +232,13 @@ def management(environment):
             document_id, {**current, **changes}, etag=expected_etag, match_condition="match",
         )
         if env.propagation_fail:
-            raise DocumentMutationPropagationError("chunk propagation incomplete")
-        return saved
+            raise DocumentMutationPropagationError("access index propagation incomplete")
+        fields = sorted(field for field, value in changes.items() if field in SEARCH_SYNCED_FIELDS and value is not None)
+        search_sync = {"status": "not_required"}
+        if fields:
+            revision = env.search_sync_revisions[document_id] = env.search_sync_revisions.get(document_id, 0) + 1
+            search_sync = {"status": "pending", "revision": revision, "fields": fields}
+        return (saved, search_sync) if return_search_sync else saved
 
     def fake_delete_document_revision(*, user_id, document_id, public_workspace_id,
                                       delete_mode, family_documents=None, strict=False, operation_guard=None):
@@ -265,6 +286,7 @@ def management(environment):
         "DocumentRevisionDeleteError": DocumentRevisionDeleteError,
         "get_document_blob_storage_info": fake_blob_storage_info,
         "_blob_exists": fake_blob_exists,
+        "summarize_document_search_sync": document_search_sync_definitions()["summarize_document_search_sync"],
     }
     for name, value in updates.items():
         setattr(functions_documents, name, value)
@@ -467,6 +489,7 @@ def test_metadata_receipt_carries_public_workspace_id(management):
     assert body == {
         "message": "Public document metadata updated.", "document_id": "document-a",
         "public_workspace_id": "public-a", "updated_fields": ["authors", "title"], "status": "updated",
+        "search_sync": {"status": "pending", "revision": 1, "fields": ["authors", "title"]},
     }
     stored = env.source.records["document-a"]
     assert stored["title"] == "Renamed" and stored["authors"] == ["Writer"]
@@ -531,6 +554,24 @@ def test_tag_rename_reports_vocabulary_and_carries_workspace_id(management):
     assert body["documents_updated"] == expected and expected >= 1
     assert any(entry["document_id"] == "document-a" for entry in body["success"])
     assert "renamed" in env.workspaces["public-a"]["tag_definitions"]
+    assert body["search_sync"] == {"status": "pending", "document_count": expected}
+
+
+def test_retag_receipts_summarize_the_background_search_sync(management):
+    """Saved tags reach the search chunks through a background sync; each receipt says how many
+    documents are still syncing, and a colour change syncs nothing."""
+    env = management
+    tagged = env.client.post(f"{ROOT}/bulk-tag", json={
+        "document_ids": ["document-a", "document-b"], "action": "add_tags", "tags": ["new-tag"],
+    })
+    assert tagged.status_code == 200, tagged.get_json()
+    assert tagged.get_json()["search_sync"] == {"status": "pending", "document_count": 2}
+    abstract_only = env.client.patch(f"{ROOT}/document-a", json={"abstract": "No mirrored field changed."})
+    assert abstract_only.status_code == 200, abstract_only.get_json()
+    assert abstract_only.get_json()["search_sync"] == {"status": "not_required"}
+    recoloured = env.client.patch(f"{ROOT}/tags/new-tag", json={"color": "#123456"})
+    assert recoloured.status_code == 200, recoloured.get_json()
+    assert recoloured.get_json()["search_sync"] == {"status": "not_required"}
 
 
 def test_bulk_delete_dedupes_and_reports_requested_ids(management):

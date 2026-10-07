@@ -22,6 +22,37 @@ export interface ActionTestGroupScope {
     name?: string;
 }
 
+/**
+ * A global action's test, discovery and validation run in the global scope, which the server opens
+ * only to administrators and resolves stored credentials from the global Key Vault namespace.
+ */
+export interface ActionTestGlobalScope {
+    global: true;
+}
+
+/** The scope a connector command runs in; absent for personal actions. */
+export type ActionTestScope = ActionTestGroupScope | ActionTestGlobalScope;
+
+export const GLOBAL_ACTION_TEST_SCOPE: ActionTestGlobalScope = { global: true };
+
+export function isGlobalActionTestScope(scope?: ActionTestScope): scope is ActionTestGlobalScope {
+    return Boolean(scope && 'global' in scope && scope.global === true);
+}
+
+export function isGroupActionTestScope(scope?: ActionTestScope): scope is ActionTestGroupScope {
+    return Boolean(scope && 'id' in scope && typeof scope.id === 'string');
+}
+
+/** The `action_scope` a connector payload names. */
+export function actionTestScopeName(scope?: ActionTestScope): 'personal' | 'group' | 'global' {
+    return isGlobalActionTestScope(scope) ? 'global' : isGroupActionTestScope(scope) ? 'group' : 'personal';
+}
+
+/** The scope a connector command should run in, from the editor's connector props. */
+export function connectorTestScope(props: Pick<ActionConnectorProps, 'groupScope' | 'globalScope'>): ActionTestScope | undefined {
+    return props.groupScope ?? (props.globalScope ? GLOBAL_ACTION_TEST_SCOPE : undefined);
+}
+
 export interface ActionConnectorProps {
     draft: ActionConfiguration;
     original: AuthoringResource<ActionConfiguration> | null;
@@ -40,6 +71,11 @@ export interface ActionConnectorProps {
     identitiesResolvable: boolean;
     /** Set when the action belongs to a group, so connector tests send the group test payload. */
     groupScope?: ActionTestGroupScope;
+    /**
+     * Set when an administrator edits a global action, so connector commands run in the global
+     * scope and MCP preconfigurations are read for global actions.
+     */
+    globalScope?: boolean;
 }
 
 export interface ActionFieldDescriptor {

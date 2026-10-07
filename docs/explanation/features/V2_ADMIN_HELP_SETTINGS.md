@@ -1,6 +1,6 @@
 # V2 Admin Help Settings
 
-**Implemented in version: 0.261.260**
+**Implemented in version: 0.261.273**
 
 ## Overview
 
@@ -59,12 +59,14 @@ Other schema additions:
 
 ### `related_section`
 
-`related_section` is a new field descriptor, `{"id", "label"}`, drawn as an
-in-page jump beneath the control. It is the opposite direction to `requires`:
-instead of naming a prerequisite, it names the follow-up a switch leads to.
-**Enable Latest Features Destination** links to User-Facing Latest Features.
-`test_v2_admin_settings_schema.py` requires every target to be a navigation
-section.
+**Enable Latest Features Destination** declares
+`{"section_id": "user-facing-latest-features-section", "label": "User-Facing Latest Features"}`.
+This reuses the descriptor the Operations parity work introduced for the DAI
+diagnostics switch. The card says where the announcements it publishes are chosen,
+**Shown in Help › User-Facing Latest Features › User-Facing Latest Features**, and
+offers **Go to User-Facing Latest Features**. `classic_only` is not set, because
+V2 draws that card itself. `test_v2_admin_settings_schema.py` requires every
+target to be a navigation section.
 
 ### Required flag
 
@@ -148,7 +150,7 @@ narrows the cards to the matches.
 | `application/v2_ui/src/components/admin/SendFeedback.tsx` | Overview and feedback forms |
 | `application/v2_ui/src/components/admin/ReleaseNotificationsBadge.tsx` | Registration badge and dialog |
 | `application/v2_ui/src/components/admin/latestFeatureIcons.ts` | Catalog icon names to Lucide |
-| `application/v2_ui/src/components/admin/fields.tsx` | `related_section` link, Required flag |
+| `application/v2_ui/src/components/admin/fields.tsx` | Required flag |
 | `application/v2_ui/src/components/admin/sectionStatusContext.ts` | Section status for field controls |
 | `application/v2_ui/src/components/admin/SettingsSection.tsx` | Header `badge` slot, status context |
 | `application/v2_ui/src/pages/AdminSettingsPage.tsx` | Catalog fetch, synthetic card, search, rail marker, banner |

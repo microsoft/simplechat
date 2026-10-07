@@ -139,6 +139,7 @@ def _install_route_import_stubs():
     config_module.cosmos_messages_container = None
     config_module.CosmosResourceNotFoundError = DummyNotFoundError
     config_module.CLIENTS = {}
+    config_module.SECRET_KEY = 'test-secret-key'
     stub_modules['config'] = config_module
 
     appinsights_module = types.ModuleType('functions_appinsights')
@@ -218,6 +219,73 @@ def _install_route_import_stubs():
     notifications_module.mark_chat_response_notifications_read_for_conversation = lambda *args, **kwargs: None
     stub_modules['functions_notifications'] = notifications_module
 
+    pending_actions_module = types.ModuleType('functions_msgraph_pending_actions')
+    pending_actions_module.hydrate_m365_pending_action_cards = lambda messages, *args, **kwargs: messages
+    stub_modules['functions_msgraph_pending_actions'] = pending_actions_module
+
+    azure_maps_module = types.ModuleType('functions_azure_maps')
+    azure_maps_module.refresh_azure_maps_message_citations = lambda messages, *args, **kwargs: messages
+    stub_modules['functions_azure_maps'] = azure_maps_module
+
+    orchestration_recovery_module = types.ModuleType('functions_orchestration_recovery')
+    orchestration_recovery_module.cleanup_conversation_checkpoints = lambda *args, **kwargs: None
+    stub_modules['functions_orchestration_recovery'] = orchestration_recovery_module
+
+    orchestration_artifacts_module = types.ModuleType('functions_orchestration_artifacts')
+    orchestration_artifacts_module.ORCHESTRATION_ARTIFACT_KIND = 'orchestration_output'
+    orchestration_artifacts_module.ORCHESTRATION_ARTIFACT_KEY_PREFIX = 'orchestration-output:v1:'
+    orchestration_artifacts_module.authorize_orchestration_output_artifact = lambda *args, **kwargs: None
+    orchestration_artifacts_module.is_orchestration_artifact_source = lambda *args, **kwargs: False
+    orchestration_artifacts_module.is_retained_orchestration_file = lambda *args, **kwargs: False
+    orchestration_artifacts_module.load_orchestration_artifact_binding = lambda *args, **kwargs: None
+    orchestration_artifacts_module.load_orchestration_output_history = lambda *args, **kwargs: []
+    orchestration_artifacts_module.validate_orchestration_artifact_binding = lambda *args, **kwargs: None
+    stub_modules['functions_orchestration_artifacts'] = orchestration_artifacts_module
+
+    orchestration_external_configuration_module = types.ModuleType('functions_orchestration_external_configuration')
+    orchestration_external_configuration_module.ExternalConfigurationServiceError = RuntimeError
+    stub_modules['functions_orchestration_external_configuration'] = orchestration_external_configuration_module
+
+    orchestration_external_identity_module = types.ModuleType('functions_orchestration_external_identity')
+    orchestration_external_identity_module.ExternalIdentityServiceError = RuntimeError
+    stub_modules['functions_orchestration_external_identity'] = orchestration_external_identity_module
+
+    orchestration_output_store_module = types.ModuleType('functions_orchestration_output_store')
+    orchestration_output_store_module.OutputConflictError = RuntimeError
+    orchestration_output_store_module.OutputError = RuntimeError
+    orchestration_output_store_module.OutputStorageError = RuntimeError
+    orchestration_output_store_module.OutputUnavailableError = RuntimeError
+    stub_modules['functions_orchestration_output_store'] = orchestration_output_store_module
+
+    orchestration_result_contracts_module = types.ModuleType('functions_orchestration_result_contracts')
+    orchestration_result_contracts_module.RESULT_MANIFEST_VERSION = 1
+    orchestration_result_contracts_module.RESULT_RECEIPT_VERSION = 1
+    orchestration_result_contracts_module.ResultContractError = RuntimeError
+    orchestration_result_contracts_module.canonical_digest = lambda *args, **kwargs: 'digest'
+    orchestration_result_contracts_module.result_receipt_binding = lambda *args, **kwargs: {}
+    stub_modules['functions_orchestration_result_contracts'] = orchestration_result_contracts_module
+
+    workflow_result_masking_module = types.ModuleType('functions_workflow_result_masking')
+    workflow_result_masking_module.message_asks_about_workflow_result = lambda *args, **kwargs: False
+    workflow_result_masking_module.message_uses_workflow_result = lambda *args, **kwargs: False
+    stub_modules['functions_workflow_result_masking'] = workflow_result_masking_module
+
+    workflow_result_reader_module = types.ModuleType('functions_workflow_result_reader')
+    workflow_result_reader_module.WorkflowResultUnavailable = RuntimeError
+    workflow_result_reader_module.workflow_result_error_payload = (
+        lambda *args, **kwargs: ({'error': 'workflow_result_unavailable'}, 400)
+    )
+    stub_modules['functions_workflow_result_reader'] = workflow_result_reader_module
+
+    workflow_chat_delivery_module = types.ModuleType('functions_workflow_chat_delivery')
+    workflow_chat_delivery_module.DELIVERY_EDIT_UNSUPPORTED = 'delivery_edit_unsupported'
+    workflow_chat_delivery_module.DELIVERY_RETRY_UNSUPPORTED = 'delivery_retry_unsupported'
+    workflow_chat_delivery_module.is_workflow_delivery_message = lambda *args, **kwargs: False
+    workflow_chat_delivery_module.workflow_delivery_refusal_payload = (
+        lambda *args, **kwargs: ({'error': 'workflow_delivery_unavailable'}, 400)
+    )
+    stub_modules['functions_workflow_chat_delivery'] = workflow_chat_delivery_module
+
     debug_module = types.ModuleType('functions_debug')
     debug_module.debug_print = lambda *args, **kwargs: None
     stub_modules['functions_debug'] = debug_module
@@ -244,6 +312,13 @@ def _install_route_import_stubs():
     simplechat_operations_module.derive_conversation_title_from_message = lambda *args, **kwargs: ''
     simplechat_operations_module.fork_personal_conversation_for_user = lambda *args, **kwargs: {}
     stub_modules['functions_simplechat_operations'] = simplechat_operations_module
+
+    saved_analysis_module = types.ModuleType('functions_saved_analysis')
+    saved_analysis_module.cleanup_chat_analysis_conversation = lambda *args, **kwargs: None
+    saved_analysis_module.cleanup_chat_analysis_messages = lambda *args, **kwargs: None
+    saved_analysis_module.is_saved_analysis_unavailable = lambda *args, **kwargs: False
+    saved_analysis_module.sanitize_saved_analysis_messages = lambda messages, *args, **kwargs: messages
+    stub_modules['functions_saved_analysis'] = saved_analysis_module
 
     swagger_module = types.ModuleType('swagger_wrapper')
     swagger_module.swagger_route = lambda **kwargs: (lambda func: func)

@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.260
+Version: 0.261.273
 Implemented in: 0.261.039
-related_section targets checked: 0.261.260
+Content Understanding runtime flag recognised in: 0.261.265
+related_section targets checked: 0.261.273
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
@@ -45,8 +46,9 @@ fields_module = import_app_module("admin_settings_fields")
 
 # Runtime flags the settings API sends alongside the schema. A field may depend on
 # one of these instead of on another field, for a capability gated outside the
-# settings document.
-RUNTIME_FLAGS = {"mcp_ui_enabled"}
+# settings document: Inbound MCP by an App Service setting, Content Understanding
+# by whether the Azure cloud offers it.
+RUNTIME_FLAGS = {"mcp_ui_enabled", "content_understanding_supported"}
 
 # Properties every field type must carry beyond the common ones, because the
 # renderer cannot draw the control without them.
@@ -623,10 +625,10 @@ def test_declared_defaults_match_the_application():
 
 
 def test_related_sections_point_at_real_sections():
-    """A related-section link to an unknown id would jump nowhere."""
+    """A related-section link to an unknown id would point nowhere."""
     print("\nTesting related_section targets...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.273")
 
     section_ids = set(get_section_ids())
     problems = []
@@ -637,15 +639,24 @@ def test_related_sections_point_at_real_sections():
             continue
         checked += 1
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
-        if not isinstance(related, dict) or set(related) != {"id", "label"}:
-            problems.append(f"{identity}: related_section must be {{'id', 'label'}}")
+        if (
+            not isinstance(related, dict)
+            or not {"section_id", "label"} <= set(related)
+            or not set(related) <= {"section_id", "label", "classic_only"}
+        ):
+            problems.append(
+                f"{identity}: related_section must be {{'section_id', 'label'}} "
+                "with an optional 'classic_only'"
+            )
             continue
-        if related["id"] not in section_ids:
-            problems.append(f"{identity}: {related['id']!r} is not a navigation section")
-        elif related["id"] == section_id:
+        if related["section_id"] not in section_ids:
+            problems.append(f"{identity}: {related['section_id']!r} is not a navigation section")
+        elif related["section_id"] == section_id:
             problems.append(f"{identity}: points at its own section")
         if not str(related["label"]).strip():
             problems.append(f"{identity}: related_section has no label")
+        if "classic_only" in related and not isinstance(related["classic_only"], bool):
+            problems.append(f"{identity}: classic_only must be a boolean")
 
     assert not problems, "These related_section links are broken:\n  " + "\n  ".join(problems)
     assert checked, "No related_section links were found; the extraction likely broke."

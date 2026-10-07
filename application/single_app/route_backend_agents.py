@@ -1344,6 +1344,67 @@ def _prepare_group_agent_payload(user_id, group_id, agent, settings, existing):
     return cleaned_agent, None
 
 
+def _prepare_global_agent_payload(user_id, agent, settings, existing):
+    """Clean, enrich and validate one global agent for the V2 admin editor routes.
+
+    Applies the rules the classic ``/api/admin/agents`` routes apply: the payload is
+    sanitized and marked global, assigned knowledge resolves in global scope with the
+    administrator's access, the schema validates, and Call agent attachments validate
+    against the global scope. Returns ``(cleaned_agent, error_response)`` with exactly
+    one set; the signature matches ``apply_global_agent_write``.
+    """
+    action = 'create' if existing is None else 'edit'
+    # A refusal carries a fixed message and keeps the reason in the server log, so no
+    # exception text reaches a response (CodeQL py/stack-trace-exposure).
+    try:
+        cleaned_agent = sanitize_agent_payload(agent)
+    except AgentPayloadError as exc:
+        log_event(
+            "Global agent save refused: invalid payload",
+            level=logging.WARNING,
+            extra={"scope": "global", "action": action, "error": str(exc)},
+        )
+        return None, (jsonify({'error': 'Invalid agent configuration.'}), 400)
+
+    cleaned_agent['is_global'] = True
+    cleaned_agent['is_group'] = False
+
+    try:
+        if existing is None or (
+            cleaned_agent.get('other_settings', {}).get('assigned_knowledge')
+            != (existing.get('other_settings') or {}).get('assigned_knowledge')
+        ):
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='global',
+                is_admin=True,
+            )
+    except AssignedKnowledgeError as exc:
+        log_event(
+            "Global agent save refused: assigned knowledge",
+            level=logging.WARNING,
+            extra={"scope": "global", "action": action, "error": str(exc)},
+        )
+        return None, (jsonify({'error': 'Invalid assigned knowledge configuration.'}), 400)
+
+    validation_error = validate_agent(cleaned_agent)
+    if validation_error:
+        return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
+
+    try:
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type='global', scope_id='global',
+            settings=settings, existing_agent=existing,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)
+    except (ValueError, LookupError):
+        return None, (jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400)
+
+    return cleaned_agent, None
+
+
 def _create_personal_agent(user_id, payload):
     """Create one personal agent from an object body."""
     try:

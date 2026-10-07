@@ -2239,7 +2239,11 @@ def mirror_source_message_to_collaboration(
     if source_role == 'image':
         message_metadata['last_message_preview'] = '[Uploaded image]' if bool(source_metadata.get('is_user_upload')) else '[Generated image]'
 
-    return (*_save_collaboration_message_doc(conversation_doc, collaboration_message), True)
+    saved_message, saved_conversation = _save_collaboration_message_doc(
+        conversation_doc,
+        collaboration_message,
+    )
+    return saved_message, saved_conversation, True
 
 
 def _refresh_collaboration_conversation_message_summary(conversation_doc):
@@ -2814,6 +2818,20 @@ def _delete_collaboration_conversation_records(
         conversation_doc = live_conversation_doc
 
     _cancel_collaboration_pending_deliveries(conversation_doc)
+
+    # Orchestrate's backing record, stored under this shared conversation's id, goes with it.
+    # Removed first, so a failure leaves the shared conversation intact for a retry.
+    from functions_orchestration_collaboration import delete_orchestration_backing
+    delete_orchestration_backing(
+        conversation_doc,
+        archiving_enabled=archiving_enabled,
+        expected_user_id=expected_source_user_id,
+        conversation_container=cosmos_conversations_container,
+        message_container=cosmos_messages_container,
+        archived_conversation_container=cosmos_archived_conversations_container if archiving_enabled else None,
+        archived_message_container=cosmos_archived_messages_container if archiving_enabled else None,
+        not_found_error=CosmosResourceNotFoundError,
+    )
 
     if is_personal_collaboration_conversation(conversation_doc):
         revocation_conversation_doc = deepcopy(conversation_doc)

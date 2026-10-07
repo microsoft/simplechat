@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.260)**
+### **(v0.261.273)**
 
 #### New Features
 
@@ -19,6 +19,194 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Application Title No Longer Doubles in Latest Features**
     *   An application title containing "SimpleChat", such as "SimpleChat Contoso", was substituted twice in Latest Features copy and showed up as "SimpleChat Contoso Contoso". The title is now applied once, on both the classic pages and V2.
     *   (Ref: `support_menu_config.py`, `test_v2_admin_latest_features_api.py`)
+
+### **(v0.261.271)**
+
+#### New Features
+
+*   **Global Agents and Global Actions in V2 Admin Settings**
+    *   Admin Settings › Agents & Actions now lists the organisation's global agents and actions. From the lists you can create, edit, enable, disable and delete them, and choose the default agent. Each change saves on its own rather than through the settings save bar, and Admin Settings asks before opening an editor would drop settings you have not saved.
+    *   Agents and actions open in the same full-page editors My Workspace uses. A global agent's assigned knowledge is limited to public workspaces, its actions are the global actions, and **New action** creates one and attaches it to the agent you came from. Action connection tests and MCP tool discovery run in the global scope.
+    *   **Start from a template** opens a new agent with the approved gallery in view, and **Publish as template** adds a global agent's recipe to the gallery straight away. Agent Template Approvals now links to the approvals queue.
+    *   The separate **Global agent delegation** card is gone. A Call agent action is now an ordinary global action: create it under Global Actions with the **Call agent** type, which lists only global agents as targets, then attach it in a global agent's editor.
+    *   Thirteen admin-only routes under `/api/v2/admin/agents` and `/api/v2/admin/actions` serve the editors through the shared authoring engine, with masked credentials, global Key Vault names, case-insensitive name checks, and revision checks that refuse to overwrite another administrator's save. The classic page can still edit and delete agents and actions saved in V2.
+    *   (Ref: `route_backend_v2_admin_agents_actions.py`, `functions_global_editor_access.py`, `functions_workspace_authoring.py`, `functions_global_agents.py`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminGlobalEditorPages.tsx`, `agentWorkbench.ts`, `actionWorkbench.ts`, `test_v2_admin_global_agents_actions.py`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Choosing a Settings Category Starts at Its Top**
+    *   Choosing a category in the V2 Admin Settings rail, or in the category list on a phone, kept the scroll position of the category you left, so leaving Knowledge near its end opened Security near its end. A category now always opens at its first section, including when you choose the one already shown, and the **On this page** list marks that section.
+    *   (Ref: `AdminSettingsPage.tsx` `selectCategory`, `test_v2_admin_global_agents_actions.py`, [V2 Admin Category Scroll Reset Fix](fixes/V2_ADMIN_CATEGORY_SCROLL_RESET_FIX.md))
+
+*   **Call Agent Targets Come From the Action's Workspace**
+    *   The V2 Call agent target picker always listed the signed-in person's personal targets. It now asks for the targets of the workspace the action belongs to: global agents for a global action, and for a group action the group's agents plus any permitted global ones, which matches what the server accepts when the action is saved.
+    *   (Ref: `CallAgentActionConfiguration.tsx`, `/api/plugins/agent-targets`)
+
+#### User Interface Enhancements
+
+*   **Agent and Action Editors Share the Admin Settings Design**
+    *   The full-page agent and action editors, the same ones in My Workspace, group workspaces and Admin Settings, are now laid out as Admin Settings is. Each section is a card headed by an icon, its title and what it holds. Settings are rows with the label and help beside the control on a wide screen, stacked on a narrow one. A setting others depend on, such as **Restrict to assigned knowledge** or **Track secret expiration**, is highlighted with the settings it controls indented beneath it, and collapsible groups and panels match Admin Settings.
+    *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll or start editing.
+    *   The Global Agents and Global Actions lists now match AI Connections: an Enabled or Disabled badge, a Default agent badge, and icon buttons to make an agent the default, enable or disable, edit, and delete.
+    *   (Ref: `EditorLayout.tsx`, `WorkspaceEditorFrame.tsx`, `theme.css` `.editor-field`, `AgentFields.tsx`, `ActionFields.tsx`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminListPill.tsx`, [V2 Admin Global Agents and Actions](features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+### **(v0.261.270)**
+
+#### Bug Fixes
+
+*   **Orchestrate Action and Agent Steps Work Again, Including Microsoft 365**
+    *   With **Orchestrate** on, "what are my emails" failed with "A required retained result is unavailable or changed" in personal and shared chats, while the same request worked with Orchestrate off. Agent and action steps now trust the signed-in session the way manual chat does: access to the conversation, run and exact agent or action is checked, and the step runs without comparing configuration. Web search, linked-page reading and deep research keep their configuration checks.
+    *   Local agents now run as plan steps. An agent that uses Microsoft 365 actions gets a Microsoft 365 request for its own actions, with the same read-only and signed-in-user rules as an action step.
+    *   An @agent or @model tag in an Orchestrate message now chooses that agent or model, like the pickers do.
+    *   Editing an agent or action no longer invalidates results it already produced. A result stays readable until the user loses access to that agent or action.
+    *   (Ref: #1660, #1661, `functions_orchestration_external_sources.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_adapters.py`, `functions_orchestration_m365.py`, `agent_delegation_runtime.py`, `Composer.tsx`, [Session-Trusted Action and Agent Steps Fix](fixes/ORCHESTRATION_SESSION_TRUSTED_ACTION_AGENT_STEPS_FIX.md))
+
+*   **Orchestrate Respects Shared Conversations**
+    *   In a shared conversation with Orchestrate on, a message that addresses only people, such as "@person hey", is now posted to them instead of being sent to the model, as it is with Orchestrate off.
+    *   Only the person who started the shared conversation plans in it. Their question and the run's answer are posted to the shared thread, where every participant sees them arrive. Plans run in a hidden conversation with the shared conversation's ID and workspace lock instead of a private copy, and earlier private copies no longer appear in conversation lists. Other participants' requests are answered the classic way.
+    *   Reopening the shared conversation, and its images, summaries, exports, uploads and Microsoft 365 action cards, keep using the shared conversation for every participant. An answer that finishes later, for example after a waiting step, updates its shared copy. Nothing is posted once the person who started the conversation has left it, and deleting the shared conversation deletes its plans.
+    *   Asking for your own Microsoft 365 data in a shared conversation is now your consent to share what that request reads, in chat and in plans, recorded in your audit history without a prompt. Sharing earlier answers' history and workflow Run as approvals still ask.
+    *   (Ref: #1659, `functions_orchestration_collaboration.py`, `route_backend_orchestration.py`, `collaboration_models.py`, `route_backend_conversations.py`, `functions_m365_approvals.py`, `functions_m365_runtime.py`, `mentions.ts`, `chatStore.ts`, [Shared Conversations Fix](fixes/ORCHESTRATION_SHARED_CONVERSATIONS_FIX.md))
+
+### **(v0.261.269)**
+
+#### New Features
+
+*   **V2 Operations Settings Match the Classic Page**
+    *   All seven Operations sections are now described in V2 Admin Settings, so none fall back to guessed switches named after their settings keys. Automatic Data Refresh, Health Check, and API Documentation appear in V2 for the first time.
+    *   Automatic Data Refresh shows the next refresh in the schedule's timezone and in yours, when it last ran, and what a change would schedule before you save. **Use my timezone** sets the schedule to your browser's zone, and V2 refuses a time or timezone it cannot read instead of quietly falling back to the default.
+    *   Debug and file processing logs nest their automatic turnoff under the switch it belongs to, state each unit's limit, and show the turnoff time in your own timezone. Turnoff times are now stored in UTC; timers set before the upgrade still end when they were meant to.
+    *   Control Center Access shows who can open the dashboard and the management features under the switches as they stand, unsaved changes included, with role values to copy.
+    *   Health Check and API Documentation list each endpoint as a full, copyable address for the deployment, with its sign-in requirement and whether it answers now. Application Insights global logging and Swagger say when a restart is still needed, and Application Insights reports whether its connection string is set.
+    *   File Process Logging can delete stored logs by age or all at once, after a confirmation that states exactly what will be removed.
+    *   **Document Access Index diagnostics** (`enable_dai_debug`) can now be switched on from Debug Logging, with a description and a link to the DAI Metrics card it affects. The classic page has no control for it, and V2 previously showed it only as an unexplained "Dai debug" switch.
+    *   (Ref: `admin_settings_fields.py`, `functions_logging_timers.py`, `functions_control_center_schedule.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminOperations.ts`, `test_v2_admin_operations_settings.py`, [V2 Admin Operations Settings](features/V2_ADMIN_OPERATIONS_SETTINGS.md))
+
+*   **In-App Setup Guides for Operations**
+    *   The classic page's role setup, health check configuration, and "Why enable Swagger?" dialogs are available from the matching V2 section headers, with values to copy and a link to the documentation.
+    *   The V2 guides correct three statements the classic dialogs make: health checks return the server time as text or a two-field JSON status, not per-dependency results or HTTP 503; Swagger is open to any signed-in user, not only admins; and ControlCenterAdmin does not also require the Admin role.
+    *   (Ref: `components/admin/guides/`, `docs/admin/operations.md`)
+
+#### Bug Fixes
+
+*   **ControlCenterDashboardReader Described Correctly in App Role Requirements**
+    *   The app role registry said the dashboard reader role only worked alongside the ControlCenterAdmin requirement. It works on its own, and the description now says so.
+    *   (Ref: `admin_app_roles.py`, `control_center_required`)
+
+### **(v0.261.268)**
+
+#### Bug Fixes
+
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, file names, or classification no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Saves on large documents no longer time out with "invalid JSON" errors in the personal, group, or public workspaces.
+    *   The search index update sends only the changed fields instead of re-reading every chunk with its embedding and writing it back one chunk at a time. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with a similar drop in Cosmos write-fence operations, which sharply reduces Search and Cosmos load for everyone on the server.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   Group and public metadata edits through the V2 explorer no longer fail with "propagation incomplete" on documents with more than one search chunk.
+    *   What users will notice: saves and tag changes finish right away, and a brief notice says that search and chat results will reflect the change once the search index finishes updating. That usually takes seconds, and up to a minute or two on very large documents. Failed or interrupted updates retry automatically until every chunk matches the document, so chat tag filters and citation titles converge instead of staying partly stale.
+    *   When the background sync finishes, it clears cached search results for the document's workspace and for every user or group with an approved share, so a search that ran during the sync does not keep returning the old values for the search cache lifetime (5 minutes by default).
+    *   (Ref: `update_document()`, `run_document_search_metadata_sync()`, `background_tasks.py`, document metadata routes and native document APIs, `documentOperations.ts`, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657, #1658, #1673)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share through the classic workspace now updates the search index. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Revocations are enforced in the search index before they are saved. When the index cannot apply a sharing change, users get a clear, retryable error instead of a silent success.
+    *   Personal share approvals and unshares also update the search index before they are saved.
+    *   Approving a share that is already approved now repairs its search access, so a share whose search update failed can be completed by approving it again.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, `reproject_document_search_acl()`, group and personal sharing routes, `functions_group_document_collaboration.py`, #1657)
+
+### **(v0.261.267)**
+
+#### User Interface Enhancements
+
+*   **Collapsible Category List in V2 Admin Settings**
+    *   The category list on the left of V2 Admin Settings can now collapse to a strip of icons, as the workspace section rail does, giving its width to the settings cards. **Collapse** sits at the top of the list. Collapsed, each icon still switches category, shows its name as a tooltip, and is announced by name to screen readers.
+    *   The choice is remembered per administrator in a new `v2AdminRailCollapsed` user preference, kept separate from the workspace section rail and the main navigation so collapsing one leaves the others alone. Narrower windows keep the category drop-down.
+    *   (Ref: `AdminSettingsPage.tsx`, `userSettings.ts`, `route_backend_users.py`, `test_v2_admin_settings_rail_collapse.py`, `ui_tests/test_v2_admin_settings_rail_collapse.py`, [V2 Admin Settings Rail Collapse](features/V2_ADMIN_SETTINGS_RAIL_COLLAPSE.md))
+
+### **(v0.261.265)**
+
+#### User Interface Enhancements
+
+*   **Enhanced Extraction Leads Its Own Admin Section**
+    *   In V2 Admin Settings, **Enable Enhanced extraction** now leads a new **Enhanced Extraction** section under Knowledge › Document Extraction instead of sitting in a collapsed group of the Document Intelligence card. The extraction mode, Auto sample pages, formula extraction and the Azure AI Content Understanding connection sit beneath it and are hidden while it is off, so Content Understanding can no longer be filled in while it could never run. Document Intelligence now holds only its connection.
+    *   The section names the engine Enhanced extraction will use with the settings on screen: Azure AI Content Understanding, or Document Intelligence Layout with the reason. The Content Understanding connection opens on its own while Enhanced is on and no endpoint is set.
+    *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `SettingsSection.tsx`, `EnhancedExtractionEngine.tsx`, `enhancedExtraction.ts`, [V2 Enhanced Extraction Admin Section](features/V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md))
+
+#### Bug Fixes
+
+*   **Turning On Enhanced Extraction in V2 Now Takes Effect**
+    *   Turning Enhanced extraction on in V2 left the extraction mode on Standard, so new uploads never used Enhanced and Content Understanding never ran. Turning it on now moves a Standard mode to Auto, as the classic page always has. The change shows on screen before saving, and the server applies it to a save that omits the mode. An explicit Standard choice is kept.
+    *   Content Understanding settings are hidden in Azure clouds that do not offer it, matching the classic page, through a new `content_understanding_supported` runtime flag. V2 cards now receive runtime flags, so settings gated on one, including the Inbound MCP settings, are no longer dropped by the card's own visibility check.
+    *   The Document Intelligence connection test sends the extraction mode only while Enhanced is on, so with Enhanced off it tests Read, which is what documents then use.
+    *   (Ref: `on_enable`, `_apply_enable_defaults`, `applyEnableEffect`, `route_backend_v2.py`, `test_v2_admin_enhanced_extraction_section.py`, `ui_tests/test_v2_admin_enhanced_extraction_section.py`)
+
+### **(v0.261.264)**
+
+#### Bug Fixes
+
+*   **Video Indexer Deploys Outside the App Region and Works Without Manual Role Grants**
+    *   Azure Video Indexer is not offered in every region. The azd, Terraform, and Azure CLI deployers now accept a separate Video Indexer region (`VIDEO_INDEXER_LOCATION`, `param_video_indexer_location`, `$param_VideoIndexerLocation`) and pair it with a storage account in that region. Previously, enabling Video Indexer in a region such as North Central US failed the whole deployment. The azd preprovision hook now stops before provisioning and lists the supported regions.
+    *   Deployer-created Video Indexer accounts now grant the App Service identity **Video Indexer Account Contributor** (**Contributor** in Azure Government and custom clouds), so video processing works without adding a role by hand.
+    *   Post-provision configuration writes the Video Indexer settings only when the deployment created the account, and records the account's own region. Previously, any provision without Video Indexer blanked the account name and ID and reset the location, which left **AI Video Intelligence** showing *Needs configuration*.
+    *   Terraform now reads the Video Indexer identity from the azapi 2.x `output` object directly instead of passing it through `jsondecode()`.
+    *   (Ref: #1666, `videoIndexer.bicep`, `setVideoIndexerPermissions.bicep`, `postconfig.py`, `validate_azd_prerequisites.py`, `main.tf`, `deploy-simplechat.ps1`, deployer version 1.0.33, [Video Indexer Deployment Region and Permissions Fix](fixes/VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md))
+
+### **(v0.261.263)**
+
+#### User Interface Enhancements
+
+*   **Search Result Cache Explained Under Azure AI Search**
+    *   V2 Admin Settings now shows the workspace search result cache in a **Search result cache** group under **Knowledge › Search Index › Azure AI Search**. The group explains what is cached, what forces a fresh search, and why the cache should stay on. Previously the fallback scan matched the word "search" and placed it under Web Search as a bare switch labelled with its key, `enable_search_result_caching`.
+    *   **Cache lifetime (seconds)** can now be changed, from 60 to 3,600 seconds with a default of 300. It appears only while caching is on. Caching stays on by default, and a value an administrator saved as off is kept.
+    *   (Ref: `admin_settings_fields.py`, `test_search_result_cache_admin_setting.py`, `test_v2_admin_search_result_cache.py`, [Search Result Cache Admin Setting Fix](fixes/SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md))
+
+### **(v0.261.262)**
+
+#### User Interface Enhancements
+
+*   **Media Galleries in V2 Replies**
+    *   Two or more images or clips in a row now show as a gallery of tiles, three to a row, each with its caption underneath, instead of one full-width card each. A short caption line above an image or clip becomes its caption. In a list, the clip and still at the end of each item sit side by side under the item's text. A single image keeps its full-width card, and recordings keep their player bar.
+    *   A clip tile shows its first frame and length, and plays where it is. **View larger** continues it in the viewer.
+    *   Grouping happens on the parsed markdown: raw HTML stays disabled and react-markdown's URL checks still apply to every image and link.
+    *   (Ref: `mediaGallery.ts`, `MediaGallery.tsx`, `MediaTiles.tsx`, `AssistantMarkdown.tsx`, [V2 Media Galleries and Viewer](features/V2_MEDIA_GALLERIES_AND_VIEWER.md))
+
+*   **Media Viewer**
+    *   Opening an image or clip shows it large, with **Previous** and **Next** buttons and the arrow keys stepping through the gallery, its position ("3 of 15"), View at actual size, Download and Open in a new tab. Focus returns to the tile when it closes.
+    *   (Ref: `MediaViewer.tsx`, `mediaDownload.ts`, `useMediaDownload.ts`)
+
+*   **Drawer Media Section Groups Images, Videos and Audio**
+    *   The Documents drawer now lists media under **Images**, **Videos** and **Audio** with counts. Clips show as tiles with their first frame instead of text rows, and images and clips open one viewer across all of them, with **Show in conversation** to scroll to the message.
+    *   Recordings play in the drawer, with play, stop, seek, volume, speed, Download and Show in conversation.
+    *   (Ref: `DrawerAssets.tsx`, `ConversationDrawer.tsx`, `InlineAudioPlayer.tsx`)
+
+*   **Download for Recordings, Clips and Images**
+    *   Recordings, clips and images can be saved from the player and the viewer, under the file name in their link. When a host does not let the page read its files, the file opens in a new tab instead, where the browser can save it. An expired link reports that it has expired.
+    *   (Ref: `mediaDownload.ts`, `InlineAudioPlayer.tsx`, `MediaViewer.tsx`)
+
+#### Bug Fixes
+
+*   **Escape in a Drawer Dialog No Longer Closes the Drawer**
+    *   Pressing Escape in a dialog opened from the conversation drawer, such as a document preview or the media viewer, also closed the drawer. Escape now closes only the dialog, and a second Escape closes the drawer.
+    *   (Ref: `ConversationDrawer.tsx`, `test_v2_media_galleries.py`)
+
+### **(v0.261.261)**
+
+#### Bug Fixes
+
+*   **Always-On Tabular Switches Removed From V2 Admin Settings**
+    *   V2 Admin Settings no longer shows an unlabelled **Tabular search shared preflight** switch under Workspaces › Files & Sharing › Shared Conversation File Approvals. It landed there only because its key contains the word "shared". It also no longer shows `enable_tabular_analyze_durable_preflight` or `enable_tabular_hierarchical_analysis` under Other capabilities.
+    *   All three flags send exhaustive row-by-row requests against CSV and XLSX files to a durable background job that covers every row, instead of a foreground answer that truncates. They are always on: settings loading resets them to on every time, so the switches reverted after every save. Behavior is unchanged, and the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable is still the emergency off switch.
+    *   The capability placement test now fails if any flag that settings loading resets is drawn as a switch, or if a guessed switch lands in the Workspaces group.
+    *   (Ref: `admin_settings_fields.SUPPRESSED_CAPABILITY_KEYS`, `TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS`, `test_v2_admin_capability_placement.py`, [V2 Admin Tabular Preflight Switch Fix](fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md))
+
+### **(v0.261.260)**
+
+#### Bug Fixes
+
+*   **V2 Web Search Test Uses the Saved Foundry Connection**
+    *   **Test web search** in V2 Admin Settings reported "Foundry Project Endpoint is required", "Foundry API Version is required" and "Foundry Agent ID is required" for a saved connection whose values were on screen. The Foundry connection is saved inside `web_search_agent`, but the test read each field as a top-level setting, so it only worked before the values were saved. It now reads the saved values, including a service principal's authentication type and masked client secret, which the server swaps for the stored secret.
+    *   The same fix shows **Managed Identity Type**, or the service principal fields, for the saved authentication type, and marks a saved connection as configured. Clearing a saved client secret now shows the removal warning and **Undo**.
+    *   The **Document action capabilities** card now shows the chat and workflow limits for Analyze, Comparison and Merge while that action is enabled. The section card used to hide them once the setting was saved.
+    *   (Ref: `adminFields.ts` `readSettingValue` and `buildConnectionTestPayload`, `adminSections.ts`, `ConnectionTest.tsx`, `SettingsSection.tsx`, `AdminSettingsPage.tsx`, `test_v2_admin_nested_setting_reads.py`, [V2 Admin Web Search Nested Settings Fix](fixes/V2_ADMIN_WEB_SEARCH_NESTED_SETTINGS_FIX.md))
 
 ### **(v0.261.259)**
 

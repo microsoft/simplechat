@@ -88,9 +88,11 @@ Classic configuration extends the shared plugin and agent modal steppers.
 Call agent has a target picker and summary rather than external endpoint or
 credential inputs.
 
-V2 uses focused reusable delegation controls in personal Actions/Agents, group
-delegation management, and the admin Agents & Actions area. These controls do
-not replace unrelated connector, model, or full group-management interfaces.
+V2 uses focused reusable delegation controls in group delegation management.
+Personal workspaces and, since **0.261.271**, V2 Admin Settings author Call agent
+as an ordinary action in the full-page action and agent editors; a global Call
+agent action's target picker lists only global agents. These controls do not
+replace unrelated connector, model, or full group-management interfaces.
 
 See [Call another agent](../../guides/call-another-agent.md) for a workflow and
 [Call agent](../../reference/actions/agent.md) for permissions and troubleshooting.

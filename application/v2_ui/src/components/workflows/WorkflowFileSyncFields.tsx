@@ -2,8 +2,19 @@
 // Workflow File Sync authoring for both scopes: the Monitor File Sync changes trigger and File Sync before run.
 
 import { useEffect, useId, useState } from 'react';
-import { GlassButton, Toggle } from '../ui/primitives';
+import { FolderSync } from 'lucide-react';
+import { GlassButton } from '../ui/primitives';
+import { SectionCard } from '../ui/SectionCard';
 import { Pill } from '../workspace/primitives';
+import {
+    WorkflowCardHelp,
+    WorkflowField,
+    WorkflowFieldEmphasis,
+    WorkflowFieldList,
+    WorkflowSwitch,
+    workflowFieldInputClass,
+    type WorkflowCardFrame,
+} from './WorkflowField';
 import {
     fetchWorkflowFileSyncSources,
     workflowFileSyncConfig,
@@ -19,8 +30,6 @@ import {
     type WorkflowFileSyncWaitMode,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
-
-const selectClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none';
 
 export interface WorkflowFileSyncSourceList {
     status: 'idle' | 'loading' | 'ready' | 'failed';
@@ -92,12 +101,15 @@ export function WorkflowFileSyncFields({
     workflow,
     sourceList,
     disabled,
+    card,
     onChange,
 }: {
     scope: WorkflowScope;
     workflow: WorkflowDefinition;
     sourceList: WorkflowFileSyncSourceList;
     disabled: boolean;
+    /** The File Sync card's place in the editor and how it reads at a glance. */
+    card: WorkflowCardFrame;
     /** Receives an updater so consecutive edits apply to the latest draft, not this render's copy. */
     onChange: (update: (config: WorkflowFileSyncConfig) => WorkflowFileSyncConfig) => void;
 }) {
@@ -143,134 +155,142 @@ export function WorkflowFileSyncFields({
     };
 
     return (
-        <section aria-labelledby={`${baseId}-title`} className="space-y-3 rounded-2xl border border-edge p-4">
-            <div>
-                <h3 id={`${baseId}-title`} className="text-base font-semibold text-text-1">File Sync</h3>
-                <p className="mt-0.5 text-xs text-text-3">
-                    {monitored
-                        ? 'Monitor workflows check the selected sources on the schedule above and run only when files changed.'
-                        : personal
-                            ? 'Optionally sync the selected sources before each run.'
-                            : 'Optionally sync the selected group sources before each run.'}
-                </p>
-            </div>
-            <Toggle
-                label="Run File Sync before each run"
-                checked={active}
-                disabled={disabled || monitored || groupFileSyncOff && !active}
-                onChange={(checked) => update({ enabled: checked })}
-                description={monitored ? 'Required by the Monitor File Sync changes trigger.' : undefined}
-            />
-            <fieldset disabled={disabled || !active} className="min-w-0 space-y-2">
-                <legend className="text-sm text-text-2">File Sync sources</legend>
-                {sourceList.status === 'loading' ? (
-                    <p role="status" className="text-xs text-text-3">
-                        {personal ? 'Loading your File Sync sources…' : "Loading this group's File Sync sources…"}
-                    </p>
-                ) : null}
-                {sourceList.status === 'failed' ? (
-                    <div role="alert" className="space-y-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                        <p>
-                            {personal ? 'Could not load your File Sync sources.' : "Could not load this group's File Sync sources."}
-                            {' Your selection is kept, but it cannot be checked.'}
+        <SectionCard id={card.id} title="File Sync" icon={FolderSync} status={card.status} meta={card.meta}
+            headingLevel={card.headingLevel}>
+            <WorkflowCardHelp className="mb-3">
+                {monitored
+                    ? 'Monitor workflows check the selected sources on the schedule above and run only when files changed.'
+                    : personal
+                        ? 'Optionally sync the selected sources before each run.'
+                        : 'Optionally sync the selected group sources before each run.'}
+            </WorkflowCardHelp>
+            <WorkflowFieldEmphasis emphasis="primary">
+                <WorkflowSwitch
+                    label="Run File Sync before each run"
+                    checked={active}
+                    disabled={disabled || monitored || groupFileSyncOff && !active}
+                    onChange={(checked) => update({ enabled: checked })}
+                    description={monitored ? 'Required by the Monitor File Sync changes trigger.' : undefined}
+                />
+            </WorkflowFieldEmphasis>
+            <WorkflowFieldEmphasis emphasis="dependent">
+                <WorkflowFieldList>
+                    <fieldset disabled={disabled || !active} className="admin-field min-w-0 py-3" data-field-width="full">
+                        <legend className="sr-only">File Sync sources</legend>
+                        <p aria-hidden="true" className="admin-field-heading text-sm font-semibold text-text-1">Sources</p>
+                        <p className="admin-field-help text-[0.8125rem] leading-relaxed text-text-3">
+                            Choose up to {WORKFLOW_FILE_SYNC_MAX_SOURCES} sources.
                         </p>
-                        <GlassButton type="button" size="sm" onClick={sourceList.retry}>Retry File Sync sources</GlassButton>
-                    </div>
-                ) : null}
-                {groupFileSyncOff ? (
-                    <p role="status" className="text-xs text-text-3">
-                        Group File Sync is not enabled, so this group&apos;s sources cannot be listed.
-                        {config.sources.length ? ' Your selection is kept, but it cannot be checked.' : ''}
-                    </p>
-                ) : null}
-                {personalFileSyncOff ? (
-                    <p role="status" className="text-xs text-text-3">
-                        File Sync is not enabled for your personal workspace, so your own sources cannot be listed.
-                    </p>
-                ) : null}
-                {ready && !groupFileSyncOff && !listed.length ? (
-                    <p role="status" className="text-xs text-text-3">
-                        {personal ? 'No File Sync sources are available to you.' : 'No File Sync sources are available to this group.'}
-                    </p>
-                ) : null}
-                <ul className="space-y-1" aria-label="File Sync sources">
-                    {listed.map((source) => {
-                        const key = workflowFileSyncSourceKey(source);
-                        const checked = selected.has(key);
-                        return (
-                            <li key={key}>
-                                <label className="flex items-center gap-2 text-sm text-text-1">
-                                    <input
-                                        type="checkbox"
-                                        className="accent-[var(--accent)]"
-                                        aria-label={`Use File Sync source ${source.label}`}
-                                        checked={checked}
-                                        disabled={!checked && atLimit}
-                                        onChange={(event) => toggleSource(source, event.target.checked)}
-                                    />
-                                    <span className="min-w-0 break-words">{source.label}</span>
-                                    {source.source_type ? <Pill>{source.source_type}</Pill> : null}
-                                    {!source.enabled ? <Pill tone="warn">Disabled</Pill> : null}
-                                </label>
-                            </li>
-                        );
-                    })}
-                    {[...unavailable.map((source) => ({ source, gone: true })), ...unverified.map((source) => ({ source, gone: false }))]
-                        .map(({ source, gone }) => (
-                            <li key={workflowFileSyncSourceKey(source)}>
-                                <label className="flex items-center gap-2 text-sm text-text-1">
-                                    <input
-                                        type="checkbox"
-                                        className="accent-[var(--accent)]"
-                                        aria-label={`Use File Sync source ${sourceName(source, personal)}`}
-                                        checked
-                                        onChange={(event) => toggleSource(source, event.target.checked)}
-                                    />
-                                    <span className="min-w-0 break-words">{sourceName(source, personal)}</span>
-                                    {gone ? <Pill tone="warn">No longer available</Pill> : null}
-                                </label>
-                            </li>
-                        ))}
-                </ul>
-                {atLimit ? (
-                    <p className="text-xs text-text-3">A workflow can use up to {WORKFLOW_FILE_SYNC_MAX_SOURCES} File Sync sources.</p>
-                ) : null}
-            </fieldset>
-            <div className="grid gap-3 md:grid-cols-2">
-                <label className="text-sm text-text-2">
-                    Wait for File Sync
-                    <select
-                        className={`${selectClass} mt-1`}
-                        aria-label="Wait for File Sync"
-                        value={monitored ? 'complete' : config.wait_mode}
-                        disabled={disabled || !active || monitored}
-                        onChange={(event) => update({ wait_mode: event.target.value as WorkflowFileSyncWaitMode })}
-                    >
-                        <option value="complete">Until sync completes</option>
-                        <option value="queued">Queue only</option>
-                    </select>
-                </label>
-                <label className="text-sm text-text-2">
-                    Continue the workflow
-                    <select
-                        className={`${selectClass} mt-1`}
-                        aria-label="Continue the workflow"
-                        value={monitored ? 'changed' : config.continue_mode}
-                        disabled={disabled || !active || monitored}
-                        onChange={(event) => update({ continue_mode: event.target.value as WorkflowFileSyncContinueMode })}
-                    >
-                        <option value="always">Always continue</option>
-                        <option value="changed">Only when files changed</option>
-                    </select>
-                </label>
-            </div>
-            <Toggle
-                label="Use changed files as Analyze targets"
-                checked={config.use_changed_documents}
-                disabled={disabled || !active}
-                onChange={(checked) => update({ use_changed_documents: checked })}
-                description="Analyze tasks without selected documents, and Merge files tasks set to merge the files File Sync changed, run on the files this sync changed."
-            />
-        </section>
+                        <div className="admin-field-control min-w-0 space-y-2">
+                            {sourceList.status === 'loading' ? (
+                                <p role="status" className="text-xs text-text-3">
+                                    {personal ? 'Loading your File Sync sources…' : "Loading this group's File Sync sources…"}
+                                </p>
+                            ) : null}
+                            {sourceList.status === 'failed' ? (
+                                <div role="alert" className="space-y-2 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-warn">
+                                    <p>
+                                        {personal ? 'Could not load your File Sync sources.' : "Could not load this group's File Sync sources."}
+                                        {' Your selection is kept, but it cannot be checked.'}
+                                    </p>
+                                    <GlassButton type="button" size="sm" onClick={sourceList.retry}>Retry File Sync sources</GlassButton>
+                                </div>
+                            ) : null}
+                            {groupFileSyncOff ? (
+                                <p role="status" className="text-xs text-text-3">
+                                    Group File Sync is not enabled, so this group&apos;s sources cannot be listed.
+                                    {config.sources.length ? ' Your selection is kept, but it cannot be checked.' : ''}
+                                </p>
+                            ) : null}
+                            {personalFileSyncOff ? (
+                                <p role="status" className="text-xs text-text-3">
+                                    File Sync is not enabled for your personal workspace, so your own sources cannot be listed.
+                                </p>
+                            ) : null}
+                            {ready && !groupFileSyncOff && !listed.length ? (
+                                <p role="status" className="text-xs text-text-3">
+                                    {personal ? 'No File Sync sources are available to you.' : 'No File Sync sources are available to this group.'}
+                                </p>
+                            ) : null}
+                            <ul className="space-y-1" aria-label="File Sync sources">
+                                {listed.map((source) => {
+                                    const key = workflowFileSyncSourceKey(source);
+                                    const checked = selected.has(key);
+                                    return (
+                                        <li key={key}>
+                                            <label className="flex min-h-8 items-center gap-2 text-sm text-text-1">
+                                                <input
+                                                    type="checkbox"
+                                                    className="accent-[var(--accent)]"
+                                                    aria-label={`Use File Sync source ${source.label}`}
+                                                    checked={checked}
+                                                    disabled={!checked && atLimit}
+                                                    onChange={(event) => toggleSource(source, event.target.checked)}
+                                                />
+                                                <span className="min-w-0 break-words">{source.label}</span>
+                                                {source.source_type ? <Pill>{source.source_type}</Pill> : null}
+                                                {!source.enabled ? <Pill tone="warn">Disabled</Pill> : null}
+                                            </label>
+                                        </li>
+                                    );
+                                })}
+                                {[...unavailable.map((source) => ({ source, gone: true })), ...unverified.map((source) => ({ source, gone: false }))]
+                                    .map(({ source, gone }) => (
+                                        <li key={workflowFileSyncSourceKey(source)}>
+                                            <label className="flex min-h-8 items-center gap-2 text-sm text-text-1">
+                                                <input
+                                                    type="checkbox"
+                                                    className="accent-[var(--accent)]"
+                                                    aria-label={`Use File Sync source ${sourceName(source, personal)}`}
+                                                    checked
+                                                    onChange={(event) => toggleSource(source, event.target.checked)}
+                                                />
+                                                <span className="min-w-0 break-words">{sourceName(source, personal)}</span>
+                                                {gone ? <Pill tone="warn">No longer available</Pill> : null}
+                                            </label>
+                                        </li>
+                                    ))}
+                            </ul>
+                            {atLimit ? (
+                                <p className="text-xs text-text-3">A workflow can use up to {WORKFLOW_FILE_SYNC_MAX_SOURCES} File Sync sources.</p>
+                            ) : null}
+                        </div>
+                    </fieldset>
+                    <WorkflowField label="Wait for File Sync" htmlFor={`${baseId}-wait`} width="standard">
+                        <select
+                            id={`${baseId}-wait`}
+                            className={workflowFieldInputClass}
+                            aria-label="Wait for File Sync"
+                            value={monitored ? 'complete' : config.wait_mode}
+                            disabled={disabled || !active || monitored}
+                            onChange={(event) => update({ wait_mode: event.target.value as WorkflowFileSyncWaitMode })}
+                        >
+                            <option value="complete">Until sync completes</option>
+                            <option value="queued">Queue only</option>
+                        </select>
+                    </WorkflowField>
+                    <WorkflowField label="Continue the workflow" htmlFor={`${baseId}-continue`} width="standard">
+                        <select
+                            id={`${baseId}-continue`}
+                            className={workflowFieldInputClass}
+                            aria-label="Continue the workflow"
+                            value={monitored ? 'changed' : config.continue_mode}
+                            disabled={disabled || !active || monitored}
+                            onChange={(event) => update({ continue_mode: event.target.value as WorkflowFileSyncContinueMode })}
+                        >
+                            <option value="always">Always continue</option>
+                            <option value="changed">Only when files changed</option>
+                        </select>
+                    </WorkflowField>
+                    <WorkflowSwitch
+                        label="Use changed files as Analyze targets"
+                        checked={config.use_changed_documents}
+                        disabled={disabled || !active}
+                        onChange={(checked) => update({ use_changed_documents: checked })}
+                        description="Analyze tasks without selected documents, and Merge files tasks set to merge the files File Sync changed, run on the files this sync changed."
+                    />
+                </WorkflowFieldList>
+            </WorkflowFieldEmphasis>
+        </SectionCard>
     );
 }

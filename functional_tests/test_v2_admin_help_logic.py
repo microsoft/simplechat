@@ -2,8 +2,8 @@
 # test_v2_admin_help_logic.py
 """
 Functional test runner for the V2 Admin Settings Help group logic.
-Version: 0.261.260
-Implemented in: 0.261.260
+Version: 0.261.273
+Implemented in: 0.261.273
 
 The Help group's behavioural rules live in TypeScript: which announcements are
 shared when the stored map is incomplete, where an admin shortcut lands, which
@@ -35,7 +35,7 @@ def test_help_logic_checks_pass():
     """Execute the TypeScript checks, skipping when the front-end toolchain is absent."""
     print("Testing Help group logic (TypeScript)...")
 
-    assert_app_version_at_least("0.261.260")
+    assert_app_version_at_least("0.261.273")
 
     if not (V2_DIR / "node_modules").exists():
         print("  skip  application/v2_ui/node_modules is absent; run npm install to include")

@@ -151,6 +151,10 @@ ADMIN_NAV = [
                 "icon": "bi-robot",
                 "sections": [
                     {"id": "agents-config", "label": "Agent Runtime", "icon": "bi-robot"},
+                    # The organisation's own agents: created, edited and chosen as the
+                    # default here. V1 draws this as the Global Agents table inside the
+                    # Agent Runtime card; V2 gives it a section of its own.
+                    {"id": "organization-agents-section", "label": "Global Agents", "icon": "bi-stars"},
                     {"id": "agent-toggles-card", "label": "Workspace Agent Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
                     {"id": "agents-page-customization-card", "label": "Agents Page", "icon": "bi-palette"},
                     {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},
@@ -278,11 +282,15 @@ ADMIN_NAV = [
                 "icon": "bi-file-earmark-text",
                 "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
-                    # These two cards have always existed in the extraction pane but
-                    # were absent from this list, so neither interface could
-                    # navigate to them. Their ids are the ones already in the
-                    # markup, so the server-rendered sidebar resolves them as-is.
-                    {"id": "content-understanding-section", "label": "Content Understanding", "icon": "bi-stars"},
+                    # Enhanced extraction and the Content Understanding connection
+                    # that backs it are one section, led by the switch. Content
+                    # Understanding used to be a section of its own, which let it be
+                    # configured while Enhanced was off and it could never run.
+                    {"id": "enhanced-extraction-section", "label": "Enhanced Extraction", "icon": "bi-stars"},
+                    # This card has always existed in the extraction pane but was
+                    # absent from this list, so neither interface could navigate to
+                    # it. Its id is the one already in the markup, so the
+                    # server-rendered sidebar resolves it as-is.
                     {"id": "office-embedded-image-section", "label": "Images Inside Office Files", "icon": "bi-images"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
                     # The upload ceiling belongs with the extraction pipeline it
@@ -309,10 +317,6 @@ ADMIN_NAV = [
                 "icon": "bi-arrow-repeat",
                 "sections": [
                     {"id": "file-sync-section", "label": "File Sync", "icon": "bi-arrow-repeat"},
-                    {"id": "file-sync-source-types-section", "label": "Visible Source Types", "icon": "bi-sliders"},
-                    {"id": "file-sync-personal-section", "label": "Personal Workspace Sync", "icon": "bi-person"},
-                    {"id": "file-sync-group-section", "label": "Group Workspace Sync", "icon": "bi-people"},
-                    {"id": "file-sync-public-section", "label": "Public Workspace Sync", "icon": "bi-globe"},
                 ],
             },
         ],
