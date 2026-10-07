@@ -7,8 +7,9 @@
 // remaining classic preferences are deliberately left to that page until V2 implements the
 // behaviour behind them.
 //
-// Cards are arranged in groups (Appearance, Chat, Notifications and alerts, Diagrams and
-// charts) so the page index on the right can list them the way Admin Settings does.
+// Cards are arranged in groups (Appearance, Chat, Voice and audio, Notifications and alerts,
+// Data and privacy, Diagrams and charts) so the page index on the right can list them the way
+// Admin Settings does.
 
 import { useEffect, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
@@ -19,7 +20,6 @@ import {
     Siren,
     Tags,
     Type,
-    Volume2,
     Workflow,
 } from 'lucide-react';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
@@ -39,6 +39,8 @@ import {
 } from '../../lib/userSettings';
 import { Toggle, Skeleton } from '../ui/primitives';
 import { SettingsCard, SettingsGroup } from './SettingsCard';
+import { CompletionAudioCard, MicrophoneCard, SpokenRepliesCard } from './VoiceAudioCards';
+import { RetentionCard } from './RetentionCard';
 import { VISUAL_STYLE_SETTING_KEYS } from '../../lib/blockVisualStyle';
 import {
     DEFAULT_VISUAL_STYLE,
@@ -56,17 +58,6 @@ import {
     setWorkflowAlertSoundsDeviceEnabled,
     useWorkflowAlertDevicePreference,
 } from '../../lib/workflowAlertDevicePreferences';
-
-/** Voices offered for spoken replies, matching what the speech endpoint accepts. */
-const TTS_VOICES = [
-    { id: '', label: 'Deployment default' },
-    { id: 'en-US-AriaNeural', label: 'Aria (US)' },
-    { id: 'en-US-GuyNeural', label: 'Guy (US)' },
-    { id: 'en-US-JennyNeural', label: 'Jenny (US)' },
-    { id: 'en-GB-SoniaNeural', label: 'Sonia (UK)' },
-    { id: 'en-GB-RyanNeural', label: 'Ryan (UK)' },
-    { id: 'en-AU-NatashaNeural', label: 'Natasha (AU)' },
-];
 
 function FontSizeChoice({
     value,
@@ -320,7 +311,7 @@ export function PreferencesTab() {
                 </SettingsCard>
             </SettingsGroup>
 
-            {(enabled('enable_conversation_contents_drawer') || enabled('enable_text_to_speech')) && (
+            {enabled('enable_conversation_contents_drawer') && (
                 <SettingsGroup
                     id="chat"
                     label="Chat"
@@ -342,28 +333,24 @@ export function PreferencesTab() {
                         </SettingsCard>
                     )}
 
-                    {enabled('enable_text_to_speech') && (
-                        <SettingsCard
-                            title="Spoken replies"
-                            Icon={Volume2}
-                            description="The voice used when you play an assistant message aloud."
-                        >
-                            <label className="block">
-                                <span className="block text-sm font-medium text-text-1">Voice</span>
-                                <select
-                                    value={String(settings.ttsVoice ?? '')}
-                                    onChange={(event) => update({ ttsVoice: event.target.value })}
-                                    className="mt-1.5 w-full max-w-xs rounded-lg border border-edge bg-surface-solid px-2.5 py-2 text-sm text-text-1"
-                                >
-                                    {TTS_VOICES.map((voice) => (
-                                        <option key={voice.id} value={voice.id}>
-                                            {voice.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                        </SettingsCard>
+                </SettingsGroup>
+            )}
+
+            {(enabled('enable_chat_completion_audio_cues')
+                || enabled('enable_text_to_speech')
+                || enabled('enable_speech_to_text_input')) && (
+                <SettingsGroup
+                    id="voice-audio"
+                    label="Voice and audio"
+                    description="Sounds when replies finish, spoken replies, and the microphone used for voice input."
+                >
+                    {enabled('enable_chat_completion_audio_cues') && (
+                        <CompletionAudioCard settings={settings} update={update} />
                     )}
+                    {enabled('enable_text_to_speech') && (
+                        <SpokenRepliesCard settings={settings} update={update} />
+                    )}
+                    {enabled('enable_speech_to_text_input') && <MicrophoneCard />}
                 </SettingsGroup>
             )}
 
@@ -420,6 +407,16 @@ export function PreferencesTab() {
                     </div>
                 </SettingsCard>
             </SettingsGroup>
+
+            {enabled('enable_retention_policy_personal') && (
+                <SettingsGroup
+                    id="data-privacy"
+                    label="Data and privacy"
+                    description="What happens to your own conversations and documents over time."
+                >
+                    <RetentionCard settings={settings} />
+                </SettingsGroup>
+            )}
 
             <SettingsGroup
                 id="visuals"

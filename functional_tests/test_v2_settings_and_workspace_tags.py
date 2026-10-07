@@ -225,8 +225,10 @@ def test_only_settings_this_interface_honours_are_offered():
             f"The {size!r} text scale has no rule, so choosing it would do nothing"
         )
 
+    # Message playback goes through the shared reader, which reads the chosen voice and speed.
     actions = _read(V2_SRC / "components" / "chat" / "MessageActions.tsx")
-    assert "settings.ttsVoice" in actions, (
+    playback = _read(V2_SRC / "lib" / "speechPlayback.ts")
+    assert "speechPlayback" in actions and "settings.ttsVoice" in playback, (
         "The chosen voice must reach the speech call, or the picker does nothing"
     )
 

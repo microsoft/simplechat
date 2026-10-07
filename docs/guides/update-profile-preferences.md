@@ -56,8 +56,27 @@ at its top. The rail stays collapsed until you expand it again, on any device.
 
 Each tab is laid out as cards. On wide screens an **On this page** index on the right
 lists them, so you can jump straight to a card. Preferences are grouped under
-**Appearance**, **Chat**, **Notifications and alerts**, and **Diagrams and charts**, and
-changes save as soon as you make them.
+**Appearance**, **Chat**, **Voice and audio**, **Notifications and alerts**, **Data and
+privacy**, and **Diagrams and charts**. Most changes save as soon as you make them.
+
+Under **Voice and audio**, which cards appear depends on what your administrator has
+turned on:
+
+- **Completion sounds** plays a short sound when a reply finishes while you are looking at
+  something else, such as another conversation, another page, or another window. Pick a
+  sound and volume, and use **Preview** to hear it. **Mute for now** silences it without losing
+  your choice.
+- **Spoken replies** sets the voice and speed used when a reply is read aloud, with a
+  sample you can play. Turn on **Read replies aloud automatically** to hear each reply in
+  the open conversation as soon as it finishes.
+- **Microphone** shows whether this browser lets the site use your microphone for voice
+  input, and lets you allow it.
+
+Under **Data and privacy**, **Retention** sets how long your own conversations and
+documents are kept. You can follow your organization's default, keep them indefinitely, or
+pick a period. Select **Save** to apply it: items older than the period are deleted at the
+next retention run, and deleted conversations are archived first if your organization has
+archiving turned on.
 
 **Violations** is always listed. If content safety is off for your application, the tab
 says so instead of showing an empty list.
