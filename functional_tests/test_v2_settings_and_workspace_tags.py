@@ -183,9 +183,15 @@ def test_gated_tabs_are_hidden_rather_than_empty():
         "enable_group_workspaces",
         "enable_public_workspaces",
         "enable_user_feedback",
-        "enable_content_safety",
     ):
         assert flag in tabs, f"The tab registry should gate on {flag}"
+
+    # Violations is always listed, as on the classic profile page. Its tab explains that
+    # content safety is off instead of calling endpoints that would refuse the request.
+    assert "enable_content_safety" not in tabs, "The Violations tab should not be hidden"
+    violations = _read(V2_SRC / "components" / "settings" / "ViolationsTab.tsx")
+    for flag in ("enable_content_safety", "enable_content_screening"):
+        assert flag in violations, f"The Violations tab should check {flag} before loading"
 
     page = _read(V2_SRC / "pages" / "SettingsPage.tsx")
     assert re.search(r"SETTINGS_TABS\.filter\((.|\n)*?features\[tab\.feature\] === true", page), (

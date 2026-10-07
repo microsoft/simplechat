@@ -5,12 +5,18 @@
 // records and nothing else — status, action and the reviewer's notes are set by an
 // administrator, and PATCHing a record belonging to someone else is refused with a 403. The
 // interface reflects that rather than offering controls the server will reject.
+//
+// The tab is always listed, as it is on the classic profile page. When neither content
+// safety nor content screening is on, its endpoints refuse every request, so the tab says
+// that plainly instead of fetching and showing an error.
 
 import { useCallback, useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, Loader2, PieChart, ShieldAlert } from 'lucide-react';
 import { api, apiUrl, ApiError } from '../../lib/apiClient';
 import { GlassPanel, Skeleton } from '../ui/primitives';
+import { SettingsCard } from './SettingsCard';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 const PAGE_SIZE = 10;
 
@@ -129,6 +135,11 @@ function UserNotes({ log, onSaved }: { log: SafetyLog; onSaved: () => void }) {
 }
 
 export function ViolationsTab() {
+    const available = useBootstrapStore(
+        (state) =>
+            state.data?.features?.enable_content_safety === true ||
+            state.data?.features?.enable_content_screening === true,
+    );
     const [logs, setLogs] = useState<SafetyLog[]>([]);
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [page, setPage] = useState(1);
@@ -185,156 +196,193 @@ export function ViolationsTab() {
     );
 
     useEffect(() => {
-        void load(1);
-    }, [load]);
+        if (available) {
+            void load(1);
+        }
+    }, [available, load]);
 
     const lastPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-    return (
-        <div className="space-y-3">
-            {stats && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <StatCard label="Total" value={stats.total_count ?? 0} />
-                    <StatCard label="New" value={stats.new_count ?? 0} />
-                    <StatCard label="Resolved" value={stats.resolved_count ?? 0} />
-                    <StatCard label="Last 30 days" value={stats.recent_30_day_count ?? 0} />
-                </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-2">
-                <select
-                    value={status}
-                    onChange={(event) => setStatus(event.target.value)}
-                    className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
-                >
-                    <option value="">Any status</option>
-                    {STATUSES.map((value) => (
-                        <option key={value} value={value}>
-                            {value}
-                        </option>
-                    ))}
-                </select>
-                <select
-                    value={action}
-                    onChange={(event) => setAction(event.target.value)}
-                    className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
-                >
-                    <option value="">Any action</option>
-                    {ACTIONS.map((value) => (
-                        <option key={value} value={value}>
-                            {value}
-                        </option>
-                    ))}
-                </select>
-                <a
-                    href={apiUrl(`/api/safety/logs/my/export?${params(1)}`)}
-                    className="ml-auto rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1 hover:bg-surface-2"
-                >
-                    Export CSV
-                </a>
-            </div>
-
-            {error ? (
-                <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
-                    {error}
+    if (!available) {
+        return (
+            <SettingsCard
+                title="Your violations"
+                Icon={ShieldAlert}
+                status="off"
+                description="Messages content safety flagged on your account."
+            >
+                <p className="text-sm text-text-2">
+                    Content safety is not turned on for this application, so nothing is checked or
+                    recorded against your account.
                 </p>
-            ) : loading ? (
-                <div className="space-y-2">
-                    <Skeleton className="h-24 w-full" />
-                    <Skeleton className="h-24 w-full" />
-                </div>
-            ) : logs.length === 0 ? (
-                <GlassPanel className="p-6 text-center">
-                    <p className="text-sm text-text-2">
-                        {status || action
-                            ? 'No violations match these filters.'
-                            : 'Nothing has been flagged on your account.'}
-                    </p>
-                </GlassPanel>
-            ) : (
-                <ul className="space-y-2">
-                    {logs.map((log) => (
-                        <li key={log.id}>
-                            <GlassPanel className="p-3">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <span
-                                        className={clsx(
-                                            'rounded-full px-2 py-0.5 text-[11px] font-medium',
-                                            STATUS_TONE[log.status ?? ''] ??
-                                                'bg-surface-2 text-text-3',
-                                        )}
-                                    >
-                                        {log.status || 'Unknown'}
-                                    </span>
-                                    {log.action && log.action !== 'None' && (
-                                        <span className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-text-2">
-                                            {log.action}
-                                        </span>
-                                    )}
-                                    {log.created_at && (
-                                        <span className="text-[11px] text-text-3">
-                                            {new Date(log.created_at).toLocaleString()}
-                                        </span>
-                                    )}
-                                </div>
+            </SettingsCard>
+        );
+    }
 
-                                {log.message && (
-                                    <p className="mt-1.5 text-sm break-words text-text-1">
-                                        {log.message}
-                                    </p>
-                                )}
-
-                                {(log.triggered_categories ?? []).length > 0 && (
-                                    <p className="mt-1 text-xs text-text-3">
-                                        {(log.triggered_categories ?? [])
-                                            .filter((entry) => entry?.category)
-                                            .map(
-                                                (entry) =>
-                                                    `${entry.category} (severity ${entry.severity ?? '?'})`,
-                                            )
-                                            .join(', ')}
-                                    </p>
-                                )}
-
-                                {log.admin_notes && (
-                                    <p className="mt-1.5 rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-text-2">
-                                        <span className="font-medium">Reviewer: </span>
-                                        {log.admin_notes}
-                                    </p>
-                                )}
-
-                                <UserNotes log={log} onSaved={() => void load(page)} />
-                            </GlassPanel>
-                        </li>
-                    ))}
-                </ul>
-            )}
-
-            {totalCount > PAGE_SIZE && (
-                <div className="flex items-center justify-between text-xs text-text-3">
-                    <span>
-                        Page {page} of {lastPage} · {totalCount} records
-                    </span>
-                    <div className="flex gap-1.5">
-                        <button
-                            type="button"
-                            disabled={page <= 1 || loading}
-                            onClick={() => void load(page - 1)}
-                            className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
-                        >
-                            Previous
-                        </button>
-                        <button
-                            type="button"
-                            disabled={page >= lastPage || loading}
-                            onClick={() => void load(page + 1)}
-                            className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
-                        >
-                            Next
-                        </button>
+    return (
+        <div className="space-y-4">
+            <SettingsCard
+                title="Summary"
+                Icon={PieChart}
+                description="Counts across the filters below."
+            >
+                {stats ? (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <StatCard label="Total" value={stats.total_count ?? 0} />
+                        <StatCard label="New" value={stats.new_count ?? 0} />
+                        <StatCard label="Resolved" value={stats.resolved_count ?? 0} />
+                        <StatCard label="Last 30 days" value={stats.recent_30_day_count ?? 0} />
                     </div>
+                ) : loading ? (
+                    <Skeleton className="h-16 w-full" />
+                ) : (
+                    <p className="text-xs text-text-3">The summary could not be loaded.</p>
+                )}
+            </SettingsCard>
+
+            <SettingsCard
+                title="Your violations"
+                Icon={ShieldAlert}
+                description="Messages content safety flagged on your account. You can add a note to any of them for the reviewer."
+                actions={
+                    <a
+                        href={apiUrl(`/api/safety/logs/my/export?${params(1)}`)}
+                        className="rounded-lg border border-edge-strong bg-surface-solid px-2.5 py-1.5 text-xs font-medium text-text-1 hover:bg-surface-sunken"
+                    >
+                        Export CSV
+                    </a>
+                }
+                bodyClassName="space-y-3"
+            >
+                <div className="flex flex-wrap items-center gap-2">
+                    <select
+                        value={status}
+                        onChange={(event) => setStatus(event.target.value)}
+                        className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
+                    >
+                        <option value="">Any status</option>
+                        {STATUSES.map((value) => (
+                            <option key={value} value={value}>
+                                {value}
+                            </option>
+                        ))}
+                    </select>
+                    <select
+                        value={action}
+                        onChange={(event) => setAction(event.target.value)}
+                        className="rounded-lg border border-edge bg-surface-solid px-2.5 py-1.5 text-sm text-text-1"
+                    >
+                        <option value="">Any action</option>
+                        {ACTIONS.map((value) => (
+                            <option key={value} value={value}>
+                                {value}
+                            </option>
+                        ))}
+                    </select>
                 </div>
-            )}
+
+                {error ? (
+                    <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                        {error}
+                    </p>
+                ) : loading ? (
+                    <div className="space-y-2">
+                        <Skeleton className="h-24 w-full" />
+                        <Skeleton className="h-24 w-full" />
+                    </div>
+                ) : logs.length === 0 ? (
+                    <GlassPanel className="p-6 text-center">
+                        <p className="text-sm text-text-2">
+                            {status || action
+                                ? 'No violations match these filters.'
+                                : 'Nothing has been flagged on your account.'}
+                        </p>
+                    </GlassPanel>
+                ) : (
+                    <ul className="space-y-2">
+                        {logs.map((log) => (
+                            <li key={log.id}>
+                                <GlassPanel className="p-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span
+                                            className={clsx(
+                                                'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                                                STATUS_TONE[log.status ?? ''] ??
+                                                    'bg-surface-2 text-text-3',
+                                            )}
+                                        >
+                                            {log.status || 'Unknown'}
+                                        </span>
+                                        {log.action && log.action !== 'None' && (
+                                            <span className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-text-2">
+                                                {log.action}
+                                            </span>
+                                        )}
+                                        {log.created_at && (
+                                            <span className="text-[11px] text-text-3">
+                                                {new Date(log.created_at).toLocaleString()}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {log.message && (
+                                        <p className="mt-1.5 text-sm break-words text-text-1">
+                                            {log.message}
+                                        </p>
+                                    )}
+
+                                    {(log.triggered_categories ?? []).length > 0 && (
+                                        <p className="mt-1 text-xs text-text-3">
+                                            {(log.triggered_categories ?? [])
+                                                .filter((entry) => entry?.category)
+                                                .map(
+                                                    (entry) =>
+                                                        `${entry.category} (severity ${entry.severity ?? '?'})`,
+                                                )
+                                                .join(', ')}
+                                        </p>
+                                    )}
+
+                                    {log.admin_notes && (
+                                        <p className="mt-1.5 rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-text-2">
+                                            <span className="font-medium">Reviewer: </span>
+                                            {log.admin_notes}
+                                        </p>
+                                    )}
+
+                                    <UserNotes log={log} onSaved={() => void load(page)} />
+                                </GlassPanel>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+
+                {totalCount > PAGE_SIZE && (
+                    <div className="flex items-center justify-between text-xs text-text-3">
+                        <span>
+                            Page {page} of {lastPage} · {totalCount} records
+                        </span>
+                        <div className="flex gap-1.5">
+                            <button
+                                type="button"
+                                disabled={page <= 1 || loading}
+                                onClick={() => void load(page - 1)}
+                                className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                type="button"
+                                disabled={page >= lastPage || loading}
+                                onClick={() => void load(page + 1)}
+                                className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </SettingsCard>
         </div>
     );
 }

@@ -83,6 +83,12 @@ export interface UserSettings {
     v2AdminRailCollapsed?: boolean;
 
     /**
+     * Whether the User Settings sections rail shows icons only. Its own key for the same
+     * reason the admin and workspace rails have theirs.
+     */
+    v2UserSettingsRailCollapsed?: boolean;
+
+    /**
      * How the workspace documents explorer is presented, and the views pinned in its rail.
      *
      * Namespaced like the shell preferences above. The classic interface stores its own
@@ -220,6 +226,8 @@ export const WRITABLE_USER_SETTING_KEYS = [
     // Whether the Admin Settings categories rail is showing icons only. Separate from the
     // shell and workspace rails for the same reason they are separate from each other.
     'v2AdminRailCollapsed',
+    // Whether the User Settings sections rail is showing icons only.
+    'v2UserSettingsRailCollapsed',
     // Workspace documents explorer: how the list is presented, and the saved filter
     // combinations pinned in its navigation rail.
     'v2DocumentsPrefs',

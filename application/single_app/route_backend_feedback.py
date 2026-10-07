@@ -708,7 +708,7 @@ def register_route_backend_feedback(bp):
         try:
             page = int(request.args.get('page', 1))
             page_size = int(request.args.get('page_size', 10))
-            filter_type, filter_ack_bool = _parse_feedback_filters()
+            filter_type, filter_ack_bool, _ = _parse_feedback_filters()
             items = _query_feedback_items(
                 user_id=user_id,
                 filter_type=filter_type,
@@ -739,7 +739,7 @@ def register_route_backend_feedback(bp):
             return jsonify({"error": "No user ID found in session"}), 403
 
         try:
-            filter_type, filter_ack_bool = _parse_feedback_filters()
+            filter_type, filter_ack_bool, _ = _parse_feedback_filters()
             items = _query_feedback_items(
                 user_id=user_id,
                 filter_type=filter_type,
@@ -761,7 +761,7 @@ def register_route_backend_feedback(bp):
             return jsonify({"error": "No user ID found in session"}), 403
 
         try:
-            filter_type, filter_ack_bool = _parse_feedback_filters()
+            filter_type, filter_ack_bool, _ = _parse_feedback_filters()
             items = _query_feedback_items(
                 user_id=user_id,
                 filter_type=filter_type,

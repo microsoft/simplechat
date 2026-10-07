@@ -47,6 +47,21 @@ Profile preferences are for personal comfort and control: font size, navigation 
 6. If shown, configure **Desktop Conversation Notifications**, **Fact Memory**, retention settings, microphone permission, or text-to-speech settings.
 7. In **Workflow Alert Sounds**, choose whether workflow alerts can play sounds in this browser. The switch takes effect at once and applies only to this browser, so a shared operations screen and your own laptop can differ. See [Alerts that need acknowledgment]({{ '/guides/manage-notifications/#alerts-that-need-acknowledgment' | relative_url }}).
 
+## In the new interface
+
+In the new interface, open **User Settings** from the account menu. The left rail lists
+**Preferences**, **Stats**, **Groups**, **Public workspaces**, **Feedback**, and
+**Violations**. To give the settings more room, collapse the rail to icons with the button
+at its top. The rail stays collapsed until you expand it again, on any device.
+
+Each tab is laid out as cards. On wide screens an **On this page** index on the right
+lists them, so you can jump straight to a card. Preferences are grouped under
+**Appearance**, **Chat**, **Notifications and alerts**, and **Diagrams and charts**, and
+changes save as soon as you make them.
+
+**Violations** is always listed. If content safety is off for your application, the tab
+says so instead of showing an empty list.
+
 ## Microsoft 365 data preferences
 
 Calendar, Email, OneDrive, and SharePoint have independent sharing preferences,
