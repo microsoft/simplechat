@@ -597,8 +597,8 @@ check('distinct subsection presentation preserves collapsed defaults and counts'
 
 check('a card keeps fields gated on a runtime flag the server sent', () => {
     // Regression: the card re-filtered its fields without the runtime flags. With the Inbound
-    // MCP preview on, it dropped every configuration field and kept the "preview disabled"
-    // notice in their place.
+    // MCP preview on, it dropped every setting the page had already judged visible, because
+    // all of them are gated on the preview, and the card rendered empty.
     const gated: AdminField[] = [
         {
             type: 'component',

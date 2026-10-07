@@ -24,7 +24,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 #### Bug Fixes
 
 *   **Inbound MCP Settings Show With the Preview Enabled**
-    *   With the Inbound MCP preview enabled, the V2 card hid every Inbound MCP setting and showed the "preview disabled" notice instead, because the card checked field visibility without the server's runtime flags. The card now uses the same flags as the page.
+    *   With the Inbound MCP preview enabled, the V2 Inbound MCP card rendered with no settings in it. The card checked field visibility a second time without the server's runtime flags, which dropped every setting gated on the preview. The card now uses the same flags as the page.
     *   (Ref: `SettingsSection.tsx`, `test_v2_admin_section_logic.ts`)
 
 ### **(v0.261.259)**
