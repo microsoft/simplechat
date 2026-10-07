@@ -2,11 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.273
+Version: 0.261.274
 Implemented in: 0.261.084
 Runtime flag evaluation, open_until_set and on_enable added in: 0.261.265
 Anchored group coverage added in: 0.261.266
-label_variants and requires.when coverage added in: 0.261.273
+label_variants and requires.when coverage added in: 0.261.274
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed
@@ -380,7 +380,7 @@ def test_label_variants_and_conditional_requirements_are_well_formed():
     """A condition naming the wrong key never holds, and the label never changes."""
     print("\nTesting label_variants and requires.when descriptors...")
 
-    assert_app_version_at_least("0.261.273")
+    assert_app_version_at_least("0.261.274")
 
     declared_keys = {
         field["key"] for _section_id, field in fields_module.iter_fields() if field.get("key")

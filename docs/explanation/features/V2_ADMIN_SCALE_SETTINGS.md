@@ -16,7 +16,7 @@ the per-container workbench.
 This work describes all seven Scale sections, builds native panels over the existing admin APIs,
 enforces the throughput policy rules on the V2 save, and adds two generic schema descriptors.
 
-**Implemented in version:** 0.261.273
+**Implemented in version:** 0.261.274
 
 **Dependencies:** `admin_settings_nav.py` for section ids; the existing admin APIs under
 `/api/admin/settings/redis-monitoring`, `/redis-explorer`, `/app-maintenance`, and

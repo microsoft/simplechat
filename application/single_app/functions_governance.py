@@ -50,6 +50,24 @@ DEFAULT_ITEM_POLICY_ENTITY_TYPES = {
 INBOUND_MCP_SYSTEM_SOURCE_POLICY_ID = "system-allow-all-sources"
 
 
+# Settings whose changes belong in the governance audit log. The server-rendered save
+# path records the same keys in its own `governance_feature_toggles_updated` entry; the
+# V2 settings PATCH reads this list so a change made there leaves the same record.
+GOVERNANCE_AUDITED_SETTING_KEYS = (
+    "governance_user_endpoints",
+    "governance_group_endpoints",
+    "governance_global_endpoints",
+    "governance_user_agents",
+    "governance_group_agents",
+    "governance_global_agents_usage",
+    "governance_user_actions",
+    "governance_group_actions",
+    "governance_global_actions_usage",
+    "enable_mcp_destination_governance",
+    "mcp_block_unsafe_destinations",
+)
+
+
 ACTION_TYPE_POLICY_ENTITY_TYPES = {
     "personal": "personal_action_type",
     "user": "personal_action_type",
@@ -972,14 +990,65 @@ def list_item_policies(entity_type: Optional[str] = None) -> List[Dict[str, Any]
             normalized_rows_by_key[row_key] = normalized_row
 
     normalized_rows = list(normalized_rows_by_key.values())
-    return sorted(
-        normalized_rows,
-        key=lambda item: (
-            str(item.get("entity_type") or ""),
-            str(item.get("resource_label") or item.get("item_id") or ""),
-            str(item.get("policy_name") or ""),
-        ),
+    return sorted(normalized_rows, key=_item_policy_list_sort_key)
+
+
+def _item_policy_list_sort_key(item: Dict[str, Any]) -> Tuple[str, str, str]:
+    return (
+        str(item.get("entity_type") or ""),
+        str(item.get("resource_label") or item.get("item_id") or ""),
+        str(item.get("policy_name") or ""),
     )
+
+
+def normalize_item_policy_entity_type_filter(raw_value: Any) -> Tuple[List[str], List[str]]:
+    """Split a comma-separated entity type filter into ``(known, unknown)`` types.
+
+    The review endpoint takes one type or several, so a list embedded in a section can
+    show every MCP destination scope at once. Each value goes through the legacy alias
+    table first, so ``endpoint`` still selects ``global_endpoint``. Unknown values are
+    returned rather than dropped, because silently ignoring a misspelled filter would
+    answer with every policy instead of the ones that were asked for.
+    """
+    known: List[str] = []
+    unknown: List[str] = []
+    for raw_part in str(raw_value or "").split(","):
+        candidate = raw_part.strip().lower()
+        if not candidate:
+            continue
+        normalized = _normalize_item_policy_entity_type(candidate)
+        if normalized not in DEFAULT_ITEM_POLICY_ENTITY_TYPES:
+            if candidate not in unknown:
+                unknown.append(candidate)
+            continue
+        if normalized not in known:
+            known.append(normalized)
+    return known, unknown
+
+
+def list_item_policies_for_entity_types(entity_types: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Return item policies for any of several entity types, ordered like ``list_item_policies``."""
+    normalized_entity_types: List[str] = []
+    for entity_type in entity_types or []:
+        normalized = _normalize_item_policy_entity_type(entity_type)
+        if normalized and normalized not in normalized_entity_types:
+            normalized_entity_types.append(normalized)
+
+    if not normalized_entity_types:
+        return list_item_policies()
+    if len(normalized_entity_types) == 1:
+        return list_item_policies(entity_type=normalized_entity_types[0])
+
+    rows_by_key: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for entity_type in normalized_entity_types:
+        for policy in list_item_policies(entity_type=entity_type):
+            row_key = (
+                str(policy.get("entity_type") or ""),
+                str(policy.get("item_id") or ""),
+                str(policy.get("policy_id") or ""),
+            )
+            rows_by_key[row_key] = policy
+    return sorted(rows_by_key.values(), key=_item_policy_list_sort_key)
 
 
 def list_item_policies_by_policy_id(policy_id: str) -> List[Dict[str, Any]]:

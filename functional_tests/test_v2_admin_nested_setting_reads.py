@@ -2,9 +2,9 @@
 # test_v2_admin_nested_setting_reads.py
 """
 Functional test for V2 admin reads of settings saved at a nested path.
-Version: 0.261.273
+Version: 0.261.274
 Implemented in: 0.261.260
-Section status may take arguments after the field index, such as runtime flags: 0.261.273
+Section status may take arguments after the field index, such as runtime flags: 0.261.274
 
 The V2 Admin Settings page keys unsaved edits by each field's flat key, but a few
 settings are saved inside a nested object. The Web Search Foundry connection is the

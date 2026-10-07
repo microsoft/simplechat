@@ -1,8 +1,8 @@
 # test_v2_admin_scale_settings.py
 """
 Browser coverage for the V2 Admin Settings Scale group.
-Version: 0.261.273
-Implemented in: 0.261.273
+Version: 0.261.274
+Implemented in: 0.261.274
 
 Exercise the built application with the real field schema and in-memory admin
 APIs. Check that the Redis connection reads the way the server-rendered page does

@@ -4672,6 +4672,13 @@ ADMIN_SETTINGS_FIELDS = {
                 "unavailable while it is off."
             ),
             "default": False,
+            # Shown beneath the switch with each one's current state and a link to it,
+            # because who may use what this switch makes available is decided under
+            # Governance, two categories away.
+            "related_settings": [
+                {"key": "governance_global_agents_usage", "label": "Govern Global Agents"},
+                {"key": "governance_global_actions_usage", "label": "Govern Global Actions"},
+            ],
         },
         {
             "key": "per_user_semantic_kernel",
@@ -4763,6 +4770,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "personal agent governance policy when only some of them should."
             ),
             "default": False,
+            "related_settings": [
+                {"key": "governance_user_agents", "label": "Govern Personal Agents"},
+            ],
         },
         {
             "key": "allow_group_agents",
@@ -4773,6 +4783,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "also be enabled under Workspaces, or the agents stay invisible."
             ),
             "default": False,
+            "related_settings": [
+                {"key": "governance_group_agents", "label": "Govern Group Agents"},
+            ],
         },
         {
             "key": "allow_user_custom_endpoints",
@@ -4784,6 +4797,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "This lets model traffic leave the endpoints you administer."
             ),
             "default": False,
+            "related_settings": [
+                {"key": "governance_user_endpoints", "label": "Govern Personal Endpoints"},
+            ],
         },
         {
             "key": "allow_group_custom_endpoints",
@@ -4794,6 +4810,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "enabled under Workspaces."
             ),
             "default": False,
+            "related_settings": [
+                {"key": "governance_group_endpoints", "label": "Govern Group Endpoints"},
+            ],
         },
         {
             "key": "enable_agent_template_gallery",
@@ -5173,6 +5192,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "longer limited to destinations you configured."
             ),
             "default": False,
+            "related_settings": [
+                {"key": "governance_user_actions", "label": "Govern Personal Actions"},
+            ],
         },
         {
             "key": "allow_group_plugins",
@@ -5183,6 +5205,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "be enabled under Workspaces."
             ),
             "default": False,
+            "related_settings": [
+                {"key": "governance_group_actions", "label": "Govern Group Actions"},
+            ],
         },
     ],
     "gpt-config": [
@@ -5374,6 +5399,19 @@ ADMIN_SETTINGS_FIELDS = {
             "component": "inbound-mcp-disabled-notice",
             "label": "Inbound MCP preview",
             "depends_on": {"flag": "mcp_ui_enabled", "equals": False},
+        },
+        {
+            # Ungrouped so it leads the section: a request that passes every check
+            # below still gets no tools until a source governance policy allows the
+            # person, and that is the step administrators miss.
+            "type": "component",
+            "component": "inbound-mcp-governance-shortcut",
+            "label": "Who can use inbound MCP",
+            "help": (
+                "Passing every check below still returns no tools until an inbound MCP "
+                "source policy under Governance allows the person."
+            ),
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
         },
         {
             "key": "enable_inbound_mcp_server",
@@ -6190,6 +6228,295 @@ ADMIN_SETTINGS_FIELDS = {
             "rows": 5,
             "max_length": RATE_LIMIT_MESSAGE_MAX_LENGTH,
             "depends_on": {"key": "enable_custom_rate_limit_message", "equals": True},
+        },
+    ],
+    # Governance. Each switch turns on enforcement for one class of capability, and the
+    # matching feature policy then decides who passes. A switch keeps its value while
+    # the feature it governs is off, so turning a feature off and on again cannot
+    # silently drop the governance an administrator configured for it. That is why each
+    # prerequisite below warns rather than blocks: the switch is saved now and applies
+    # as soon as the feature is turned on.
+    #
+    # Rows pair the personal and group switch for one resource, so on a wide card the
+    # left column reads as personal scope and the right as group scope.
+    "governance-feature-toggles-section": [
+        {
+            "type": "component",
+            "component": "governance-overview",
+            "label": "How governance works",
+            "help": (
+                "Feature policies decide who may use a kind of capability; delegated "
+                "item policies decide who may use one specific resource. Block lists "
+                "always win."
+            ),
+        },
+        {
+            "key": "governance_user_endpoints",
+            "type": "switch",
+            "label": "Govern Personal Endpoints",
+            "help": (
+                "Checks the Personal Endpoints feature policy before someone adds, "
+                "tests, or chats through a model endpoint in their own workspace."
+            ),
+            "default": False,
+            "requires": {
+                "key": "allow_user_custom_endpoints",
+                "label": "Allow Personal Custom Endpoints",
+                "mode": "warn",
+                "target_section": "agent-toggles-card",
+                "description": (
+                    "Govern Personal Endpoints is kept, and applies as soon as people "
+                    "may add their own endpoints under Agents & Actions > Workspace "
+                    "Agent Permissions."
+                ),
+            },
+        },
+        {
+            "key": "governance_group_endpoints",
+            "type": "switch",
+            "label": "Govern Group Endpoints",
+            "help": (
+                "Checks the Group Endpoints feature policy before someone adds, tests, "
+                "or chats through a model endpoint in a group workspace."
+            ),
+            "default": False,
+            "requires": {
+                "key": "allow_group_custom_endpoints",
+                "label": "Allow Group Custom Endpoints",
+                "mode": "warn",
+                "target_section": "agent-toggles-card",
+                "description": (
+                    "Govern Group Endpoints is kept, and applies as soon as groups may "
+                    "add their own endpoints under Agents & Actions > Workspace Agent "
+                    "Permissions."
+                ),
+            },
+        },
+        {
+            "key": "governance_user_agents",
+            "type": "switch",
+            "label": "Govern Personal Agents",
+            "help": (
+                "Checks the Personal Agents feature policy before someone creates, "
+                "edits, or chats with an agent in their own workspace."
+            ),
+            "default": False,
+            "requires": {
+                "key": "allow_user_agents",
+                "label": "Allow Personal Agents",
+                "mode": "warn",
+                "target_section": "agent-toggles-card",
+                "description": (
+                    "Govern Personal Agents is kept, and applies as soon as personal "
+                    "agents are allowed under Agents & Actions > Workspace Agent "
+                    "Permissions."
+                ),
+            },
+        },
+        {
+            "key": "governance_group_agents",
+            "type": "switch",
+            "label": "Govern Group Agents",
+            "help": (
+                "Checks the Group Agents feature policy before someone uses or manages "
+                "the agents a group workspace shares."
+            ),
+            "default": False,
+            "requires": {
+                "key": "allow_group_agents",
+                "label": "Allow Group Agents",
+                "mode": "warn",
+                "target_section": "agent-toggles-card",
+                "description": (
+                    "Govern Group Agents is kept, and applies as soon as group agents "
+                    "are allowed under Agents & Actions > Workspace Agent Permissions."
+                ),
+            },
+        },
+        {
+            "key": "governance_user_actions",
+            "type": "switch",
+            "label": "Govern Personal Actions",
+            "help": (
+                "Checks the Personal Actions feature policy, and any personal "
+                "action-type policy, before someone creates or runs an action in their "
+                "own workspace."
+            ),
+            "default": False,
+            "requires": {
+                "key": "allow_user_plugins",
+                "label": "Allow Personal Actions",
+                "mode": "warn",
+                "target_section": "plugin-feature-toggles",
+                "description": (
+                    "Govern Personal Actions is kept, and applies as soon as personal "
+                    "actions are allowed under Agents & Actions > Workspace Action "
+                    "Permissions."
+                ),
+            },
+        },
+        {
+            "key": "governance_group_actions",
+            "type": "switch",
+            "label": "Govern Group Actions",
+            "help": (
+                "The same check for actions in group workspaces, using the Group "
+                "Actions feature policy and group action-type policies."
+            ),
+            "default": False,
+            "requires": {
+                "key": "allow_group_plugins",
+                "label": "Allow Group Actions",
+                "mode": "warn",
+                "target_section": "plugin-feature-toggles",
+                "description": (
+                    "Govern Group Actions is kept, and applies as soon as group actions "
+                    "are allowed under Agents & Actions > Workspace Action Permissions."
+                ),
+            },
+        },
+        {
+            # Always on: the server-rendered save writes True on every save, and the
+            # runtime filters the shared AI connections through this check. A switch
+            # here could only ever be turned on, so it is reported, not offered.
+            "key": "governance_global_endpoints",
+            "type": "switch",
+            "label": "Govern Global Endpoints",
+            "help": (
+                "Always enforced. People who pass the Global Endpoints feature policy "
+                "can use the shared AI connections, and a delegated item policy can "
+                "narrow one connection to particular people or groups."
+            ),
+            "default": True,
+            "readonly": True,
+            "managed_by": "SimpleChat, which always enforces it",
+        },
+        {
+            "key": "governance_global_agents_usage",
+            "type": "switch",
+            "label": "Govern Global Agents",
+            "help": (
+                "Checks the Global Agents feature policy before someone selects or "
+                "chats with an agent the organization publishes, then any delegated "
+                "item policy on that agent."
+            ),
+            "default": False,
+            "requires": {
+                "key": "enable_semantic_kernel",
+                "label": "Agents",
+                "mode": "warn",
+                "target_section": "agents-config",
+                "description": (
+                    "Global agent and action governance is kept, and applies as soon "
+                    "as Enable Agents is turned on under Agents & Actions > Agent Runtime."
+                ),
+            },
+        },
+        {
+            "key": "governance_global_actions_usage",
+            "type": "switch",
+            "label": "Govern Global Actions",
+            "help": (
+                "Checks the Global Actions feature policy and global action-type "
+                "policies before an agent uses an action the organization publishes, "
+                "then any delegated item policy on that action."
+            ),
+            "default": False,
+            "requires": {
+                "key": "enable_semantic_kernel",
+                "label": "Agents",
+                "mode": "warn",
+                "target_section": "agents-config",
+                "description": (
+                    "Global agent and action governance is kept, and applies as soon "
+                    "as Enable Agents is turned on under Agents & Actions > Agent Runtime."
+                ),
+            },
+        },
+    ],
+    # Feature and item policies live in their own Cosmos containers rather than the
+    # settings document, so each is a component that saves through the governance API
+    # as soon as a policy is applied, separately from the page's Save bar.
+    "governance-feature-policies-section": [
+        {
+            "type": "component",
+            "component": "governance-feature-policies",
+            "label": "Feature policies",
+            "help": (
+                "Who passes each governance switch. Block lists are checked first and "
+                "always win; then Allow all, or the people and groups you list, decide. "
+                "With Allow all off and nobody listed, nobody passes."
+            ),
+        },
+    ],
+    "governance-item-policies-section": [
+        {
+            "type": "component",
+            "component": "governance-item-policies",
+            "label": "Delegated item policies",
+            "help": (
+                "Who may use one specific global endpoint, agent, or action, one "
+                "action type, one MCP destination pattern, or one inbound MCP source. "
+                "When a resource has several policies, passing any one of them is "
+                "enough, and a block list in any of them denies."
+            ),
+        },
+    ],
+    "governance-mcp-destination-section": [
+        {
+            "key": "enable_mcp_destination_governance",
+            "type": "switch",
+            "role": "capability",
+            "label": "Enforce MCP Destination Allowlist",
+            "help": (
+                "Remote MCP actions may only connect to destinations a policy below "
+                "allows for the action's scope and the person running it, checked on "
+                "save, discovery, connection tests, and every tool call. Create policies "
+                "for the servers people already use before turning this on."
+            ),
+            "default": False,
+        },
+        {
+            # Deliberately not gated on the allowlist: refusing unsafe addresses is
+            # worth having on its own, before any allowlist exists.
+            "key": "mcp_block_unsafe_destinations",
+            "type": "switch",
+            "label": "Block Private and Local IP Destinations",
+            "help": (
+                "Refuses endpoints written as a loopback, private, link-local, or cloud "
+                "metadata IP address, or a localhost name. Works with or without the "
+                "allowlist."
+            ),
+            "default": False,
+        },
+        {
+            "type": "status",
+            "status_source": "mcp_destination_environment_policy",
+            "label": "Deployment Restrictions",
+            "help": (
+                "App Service settings can require enforcement or blocking for the "
+                "whole deployment, and nothing on this page can turn those off."
+            ),
+        },
+        {
+            "type": "component",
+            "component": "governance-mcp-destination-policies",
+            "label": "Destination policies",
+            "help": (
+                "Which remote MCP servers each scope may reach, and for whom. A policy "
+                "names a destination pattern and the people or groups it applies to."
+            ),
+        },
+    ],
+    "governance-inbound-mcp-section": [
+        {
+            "type": "component",
+            "component": "governance-inbound-mcp-policies",
+            "label": "Inbound MCP source policies",
+            "help": (
+                "Who may use SimpleChat as an inbound MCP server, and from which "
+                "accepted source. Requests are denied until a policy allows the person."
+            ),
         },
     ],
     # ------------------------------------------------------------------

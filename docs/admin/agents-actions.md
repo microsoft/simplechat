@@ -82,6 +82,12 @@ orchestration mode. This build ships a single mode, single-agent, so the control
 is not shown. Orchestration settings save through their own endpoint rather than
 with the rest of the page.
 
+**Enable Agents** also shows the state of **Govern Global Agents** and **Govern
+Global Actions**, with a **Review** link to each under
+[Governance]({{ '/admin/governance/' | relative_url }}#governance-feature-toggles-section).
+Those switches decide who may use the agents and actions you publish, and they
+keep their value while Enable Agents is off.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -151,6 +157,14 @@ Custom endpoints deserve particular attention: they let an agent send prompts to
 a model endpoint that the agent's owner configured, rather than one you
 administer. Enable them when teams genuinely need their own models, and pair them
 with an endpoint governance policy when only some of them should.
+
+These permissions decide whether a capability exists; governance decides who may
+use it. Each of the four shows its governance switch underneath, such as **Govern
+Personal Agents** under Allow Personal Agents, with whether it is on and a
+**Review** link to it under
+[Governance]({{ '/admin/governance/' | relative_url }}#governance-feature-toggles-section).
+A governance switch keeps its value while its permission is off and starts checking
+as soon as the permission is turned on.
 
 A personal or group endpoint that authenticates with managed identity uses the
 application's own identity, so its owner doesn't get to decide where that token
@@ -307,6 +321,13 @@ these are on, the traffic an agent can generate is no longer limited to the
 destinations you configured. Pair them with an action governance policy when only
 some people should have that.
 
+Each permission shows **Govern Personal Actions** or **Govern Group Actions**
+underneath with a **Review** link. Action-type policies under
+[Delegated Item Policies]({{ '/admin/governance/' | relative_url }}#governance-item-policies-section)
+can narrow one type, such as MCP, to fewer people, and
+[MCP destination governance]({{ '/admin/governance/' | relative_url }}#governance-mcp-destination-section)
+limits which remote MCP servers those actions may reach.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -389,6 +410,14 @@ A request is served only if **all** of these hold:
 Today the tool surface is personal tools only, and every one of them needs a
 delegated user token. The app-only role is reserved for future service tools and
 grants nothing.
+
+The fifth layer is the one most often missed, so the card opens with it: **Who
+can use inbound MCP** says how many
+[inbound MCP source policies]({{ '/admin/governance/' | relative_url }}#governance-inbound-mcp-section)
+exist, warns when there are none, and offers **Create a policy for any source**
+(or **Create a source policy** once source IDs are listed) and **Review in
+Governance**. A new source policy starts with nobody allowed, so name the people
+or groups who should connect before creating it.
 
 #### If the settings are not shown
 
@@ -482,5 +511,6 @@ request — and never prompts, document content, bearer tokens or secrets.
 ## Related
 
 - [Administration settings overview]({{ '/admin/' | relative_url }})
+- [Governance settings]({{ '/admin/governance/' | relative_url }})
 - [Workspaces settings]({{ '/admin/workspaces/' | relative_url }})
 - [AI Models settings]({{ '/admin/ai-models/' | relative_url }})

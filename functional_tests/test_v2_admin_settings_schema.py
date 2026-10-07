@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.265
+Version: 0.261.273
 Implemented in: 0.261.039
 Content Understanding runtime flag recognised in: 0.261.265
+Read-only governance_global_endpoints allowed without a writable owner in: 0.261.273
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
@@ -245,8 +246,14 @@ def test_setting_keys_have_one_owner():
             if field.get("readonly") and field.get("key") and field["key"] not in writable
             # A derived key has no editable declaration anywhere, because
             # something else computes it. Those are named in the mirror's help.
+            # governance_global_endpoints is pinned on: the server-rendered save
+            # writes True on every save, so there is nothing to set.
             and field["key"]
-            not in {"enable_tabular_processing_plugin", "enable_multi_agent_orchestration"}
+            not in {
+                "enable_tabular_processing_plugin",
+                "enable_multi_agent_orchestration",
+                "governance_global_endpoints",
+            }
         }
     )
     assert not orphaned, (

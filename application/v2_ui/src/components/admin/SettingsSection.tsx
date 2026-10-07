@@ -136,12 +136,10 @@ export interface SettingsSectionProps {
      */
     runtimeFlags?: Record<string, boolean>;
     /**
-     * Moves the page to another section, for prerequisite links and "Used by". Absent, a
-     * prerequisite links to the classic page instead.
+     * Move the page to another section, for prerequisite links and "Used by". Without it
+     * a prerequisite links to the classic page, and "Used by" names sections unlinked.
      */
     onNavigate?: (sectionId: string) => void;
-    /** Whether a section is drawn on this page, so a link can stay on it. */
-    isSectionAvailable?: (sectionId: string) => boolean;
     /** Sections whose settings rely on this one. */
     dependents?: SectionDependent[];
     children?: ReactNode;
@@ -154,7 +152,6 @@ function RequirementNotice({
 }: {
     requirement: NonNullable<AdminField['requires']>;
     satisfied: boolean;
-    /** Present when the target section is on this page, so the link can stay in it. */
     onNavigate?: (sectionId: string) => void;
 }) {
     if (satisfied) {
@@ -162,7 +159,7 @@ function RequirementNotice({
     }
 
     const blocking = (requirement.mode ?? 'block') === 'block';
-    const target = requirement.target_section;
+    const targetSection = requirement.target_section;
 
     return (
         <div
@@ -187,17 +184,19 @@ function RequirementNotice({
                 {requirement.description ? (
                     <p className="mt-0.5 text-text-3">{requirement.description}</p>
                 ) : null}
-                {target && onNavigate ? (
+                {/* Within the page when the page can take the reader there; the classic
+                    page otherwise, which is where these links always used to lead. */}
+                {targetSection && onNavigate ? (
                     <button
                         type="button"
+                        onClick={() => onNavigate(targetSection)}
                         className="mt-1 inline-block text-accent underline"
-                        onClick={() => onNavigate(target)}
                     >
                         Configure {requirement.label}
                     </button>
-                ) : target ? (
+                ) : targetSection ? (
                     <a
-                        href={`/admin/settings#${encodeURIComponent(target)}`}
+                        href={`/admin/settings#${encodeURIComponent(targetSection)}`}
                         className="mt-1 inline-block text-accent underline"
                     >
                         Configure {requirement.label}
@@ -391,7 +390,6 @@ export function SettingsSection({
     guide,
     runtimeFlags,
     onNavigate,
-    isSectionAvailable,
     dependents,
     children,
 }: SettingsSectionProps) {
@@ -456,9 +454,6 @@ export function SettingsSection({
         }
         return placeAnchoredGroups(groups, rendered, (key) => labels.get(key));
     }, [capability, groups, hierarchyFields, fields, settings, draft, fieldsByKey, runtimeFlags]);
-
-    const navigateWithin = (sectionId: string | undefined) =>
-        Boolean(sectionId && onNavigate && (isSectionAvailable?.(sectionId) ?? true));
 
     const presentation = presentSectionStatus(status);
     const SectionIcon = appearance?.Icon ?? icon ?? FALLBACK_SECTION_ICON;
@@ -626,7 +621,7 @@ export function SettingsSection({
                         key={requirement.key}
                         requirement={requirement}
                         satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
-                        onNavigate={navigateWithin(requirement.target_section) ? onNavigate : undefined}
+                        onNavigate={onNavigate}
                     />
                 ))}
 

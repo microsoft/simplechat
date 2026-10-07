@@ -67,6 +67,7 @@ def patch_handler(settings, *, write_succeeds=True, validation_error=None):
         "get_admin_settings_api_secret_fields": lambda: set(),
         "get_secret_field_keys": lambda: set(),
         "_seed_connections_on_first_enable": Mock(),
+        "_log_governance_setting_changes": Mock(),
         "validate_content_screening_settings": validator,
         "update_settings": writes,
         "_refresh_branding_static_files": Mock(),

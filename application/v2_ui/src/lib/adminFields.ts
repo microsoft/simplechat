@@ -324,6 +324,20 @@ export interface AdminField {
     endpoints?: AdminEndpointLink[];
     /** Another section this setting acts on, offered as a link beneath it. */
     related_section?: AdminRelatedSection;
+    /**
+     * Settings owned by another section that decide how this one is used, shown beneath
+     * the control with their current state and a link to them.
+     *
+     * Who may use what Enable Agents makes available is decided under Governance, two
+     * categories away; this keeps that answer next to the switch it qualifies.
+     */
+    related_settings?: AdminRelatedSetting[];
+}
+
+/** One entry of `related_settings`. The section is found from where the key is declared. */
+export interface AdminRelatedSetting {
+    key: string;
+    label: string;
 }
 
 /** Mirrors one entry of `LOGGING_TIMERS` in `functions_logging_timers.py`. */

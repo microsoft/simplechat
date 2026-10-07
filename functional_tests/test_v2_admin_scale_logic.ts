@@ -1,8 +1,8 @@
 // test_v2_admin_scale_logic.ts
 //
 // Runtime test for the browser logic behind the Admin Settings Scale group.
-// Version: 0.261.273
-// Implemented in: 0.261.273
+// Version: 0.261.274
+// Implemented in: 0.261.274
 //
 // The Scale panels explain themselves before anything is sent: the throughput rules a save
 // must pass, the RU/s a manual scale will land on, which capacity actions apply, and what a

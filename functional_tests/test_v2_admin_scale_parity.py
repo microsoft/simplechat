@@ -2,8 +2,8 @@
 # test_v2_admin_scale_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Scale group.
-Version: 0.261.273
-Implemented in: 0.261.273
+Version: 0.261.274
+Implemented in: 0.261.274
 
 Before this, the Scale group had no declared fields. Its two tabs drew whatever
 ``enable_*`` booleans the fallback scan matched by word stems, so the Redis
@@ -330,7 +330,7 @@ def test_scale_panes_match_navigation():
     """The panes this test reads must be the ones ADMIN_NAV puts in the group."""
     print("Testing Scale pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.273")
+    assert_app_version_at_least("0.261.274")
 
     group = next((g for g in ADMIN_NAV if g["id"] == SCALE_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines a 'scale' group."

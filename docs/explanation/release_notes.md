@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.273)**
+### **(v0.261.274)**
 
 #### New Features
 
@@ -17,7 +17,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 #### User Interface Enhancements
 
 *   **Settings Cards Show What Depends on Them**
-    *   A section other sections rely on now lists them under **Used by**. Redis Cache, for example, lists Conversation Cache, Redis Metrics, and File Sync. The list follows the same rules as the prerequisite notices on those cards, and both link within the page when the other section is shown.
+    *   A section other sections rely on now lists them under **Used by**. Redis Cache, for example, lists Conversation Cache, Redis Metrics, and File Sync. The list follows the same rules as the prerequisite notices on those cards, and each entry moves the page to that section.
     *   A field's label can follow another setting, and a prerequisite can apply to one configuration only. The schema descriptors are `label_variants` and `requires.when`.
     *   (Ref: `SettingsSection.tsx`, `adminSections.ts`, `adminFields.ts`, `admin_settings_fields.py`)
 

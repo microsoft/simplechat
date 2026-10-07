@@ -2,8 +2,8 @@
 # test_v2_admin_scale_logic.py
 """
 Functional test for the browser logic behind the Admin Settings Scale group.
-Version: 0.261.273
-Implemented in: 0.261.273
+Version: 0.261.274
+Implemented in: 0.261.274
 
 The Scale panels mirror two pieces of ``functions_cosmos_throughput.py`` so they can
 explain a change before it is sent: the throughput policy rules a save must pass,
@@ -362,7 +362,7 @@ def test_generated_cases_exercise_every_rule():
     """A mirror check over cases that never break a rule proves very little."""
     print("Testing the generated mirror cases...")
 
-    assert_app_version_at_least("0.261.273")
+    assert_app_version_at_least("0.261.274")
 
     cases = build_mirror_cases()
 
