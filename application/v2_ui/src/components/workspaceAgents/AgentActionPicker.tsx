@@ -56,7 +56,7 @@ export function AgentActionPicker({
                         <ul className="list-inside list-disc text-sm text-text-3">
                             {draft.actions_to_load.map((reference) => {
                                 const action = resolveAgentAction(reference, actions);
-                                return <li key={reference}>{action ? agentActionLabel(action) : reference}</li>;
+                                return <li key={reference}>{action ? agentActionLabel(action) : 'Unavailable action'}</li>;
                             })}
                         </ul>
                         {!readOnly ? confirmDetach ? (
@@ -127,9 +127,8 @@ export function AgentActionPicker({
                                             : action.is_global ? <Pill tone="accent">Provided</Pill> : <Pill>Personal</Pill>}
                                     </span>
                                     <span className="mt-1 block break-words text-xs text-text-3">{action.description}</span>
-                                    <span className="mt-1 block break-all text-[11px] text-text-3">ID: {action.id}</span>
                                     {action.type === 'agent' && target ? (
-                                        <span className="mt-1 block break-words text-xs text-text-2">Calls {targetDetails?.display_name || targetDetails?.name || target.id} · {target.scope_type}</span>
+                                        <span className="mt-1 block break-words text-xs text-text-2">Calls {targetDetails?.display_name || targetDetails?.name || 'another agent'} · {target.scope_type}</span>
                                     ) : null}
                                     {reason ? <span className="mt-1 block text-xs text-warn">{reason}{checked ? ' This saved reference remains until you remove it.' : ''}</span> : null}
                                 </span>
@@ -156,10 +155,10 @@ export function AgentActionPicker({
             {unresolved.length ? (
                 <EditorPanel tone="warn" title="Saved references to review"
                     description="Unlisted, ambiguous, and legacy references are kept during unrelated edits. Remove one only when you no longer want it assigned.">
-                    {unresolved.map((reference) => (
+                    {unresolved.map((reference, index) => (
                         <div key={reference} className="flex flex-wrap items-center justify-between gap-2 text-sm text-text-2">
-                            <code className="min-w-0 break-all">{reference}</code>
-                            {!readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove action reference ${reference}`}
+                            <span className="min-w-0 break-words">Unavailable action {unresolved.length > 1 ? index + 1 : ''}</span>
+                            {!readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove unavailable action${unresolved.length > 1 ? ` ${index + 1}` : ''}`}
                                 onClick={() => setDraft((current) => ({ ...current, actions_to_load: current.actions_to_load.filter((item) => item !== reference) }))}>
                                 <Trash2 size={13} />Remove reference
                             </GlassButton> : null}

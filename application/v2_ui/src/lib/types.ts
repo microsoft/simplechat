@@ -922,6 +922,12 @@ export interface AdminNavTab {
     label: string;
     icon?: string;
     sections: AdminNavSection[];
+    /**
+     * Names a tab drawn from something other than its sections. `latest_features` is
+     * the Admin Latest Features tab, whose content is generated from the release
+     * catalogue, so it declares no sections at all.
+     */
+    render?: string;
 }
 
 export interface AdminNavGroup {
@@ -1057,6 +1063,15 @@ export interface BootstrapFeatures extends Record<string, boolean | undefined> {
     enable_workflow_alert_sounds?: boolean;
 }
 
+export interface ControlCenterCapabilities {
+    can_view_dashboard: boolean;
+    can_manage_users: boolean;
+    can_manage_groups: boolean;
+    can_manage_workspaces: boolean;
+    can_view_activity_logs: boolean;
+    can_run_maintenance: boolean;
+}
+
 export interface BootstrapPayload {
     version: string;
     user: {
@@ -1097,6 +1112,7 @@ export interface BootstrapPayload {
         external_links: NavGroup<ExternalLinkNavItem>;
     };
     features: BootstrapFeatures;
+    control_center: ControlCenterCapabilities;
     /**
      * What the deployment can do, where the answer is not an `enable_*` settings flag.
      *

@@ -210,6 +210,8 @@ export interface AgentModelChoice {
     key: string;
     id: string;
     endpointId: string;
+    /** The connection's display name, shown instead of its identifier. */
+    endpointName: string;
     provider: string;
     deployment: string;
     modelName: string;
@@ -232,10 +234,11 @@ export function agentModelChoices(options: AgentEditorOptions): AgentModelChoice
                 key: JSON.stringify([endpoint.id, id]),
                 id,
                 endpointId: endpoint.id,
+                endpointName: agentText(endpoint.name),
                 provider: agentText(endpoint.provider) || 'aoai',
                 deployment,
                 modelName: agentText(model.modelName || model.name || id),
-                label: `${agentText(model.displayName) || deployment} · ${endpoint.name || endpoint.id}`,
+                label: `${agentText(model.displayName) || deployment} · ${endpoint.name || 'Unnamed connection'}`,
                 apim: false,
             });
         }
@@ -244,7 +247,7 @@ export function agentModelChoices(options: AgentEditorOptions): AgentModelChoice
     const settings = options.settings;
     if (settings.enable_gpt_apim === true) {
         return agentText(settings.azure_apim_gpt_deployment).split(',').map((item) => item.trim()).filter(Boolean).map((id) => ({
-            key: JSON.stringify(['apim', id]), id, endpointId: '', provider: '',
+            key: JSON.stringify(['apim', id]), id, endpointId: '', endpointName: '', provider: '',
             deployment: id, modelName: id, label: id, apim: true,
         }));
     }
@@ -254,7 +257,7 @@ export function agentModelChoices(options: AgentEditorOptions): AgentModelChoice
         const id = agentText(model.id || model.deploymentName || model.deployment || model.modelName || model.name);
         if (!id) continue;
         choices.push({
-            key: JSON.stringify(['legacy', id]), id, endpointId: '', provider: '',
+            key: JSON.stringify(['legacy', id]), id, endpointId: '', endpointName: '', provider: '',
             deployment: agentText(model.deploymentName || model.deployment || id),
             modelName: agentText(model.modelName || model.name || id),
             label: agentText(model.display_name || model.displayName || model.deploymentName || model.deployment || id),

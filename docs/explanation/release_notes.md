@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.278)**
+
+#### New Features
+
+*   **V2 Control Center Foundation**
+    *   Adds the permission-aware V2 Control Center pane, reusable management primitives, and a manually invoked activity-log data-health check and backfill.
+    *   The classic page no longer scans for migration status on every visit; the retained backfill skips existing activity events and uses stable IDs for reruns.
+    *   (Ref: `ControlCenterPage.tsx`, `functions_authentication.py`, `route_backend_v2.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md), [Activity Log Migration Prompt Fix](fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
+### **(v0.261.277)**
+
+#### User Interface Enhancements
+
+*   **Agent Editor No Longer Shows GUIDs**
+    *   The agent editor for personal, group and global agents no longer shows internal identifiers. The header shows the agent's own icon, such as the Microsoft 365 logo, and its description instead of a stable ID.
+    *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
+    *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
+    *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
+
 ### **(v0.261.276)**
 
 #### New Features
@@ -23,6 +42,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   MCP actions now require discovery approval before saving new or changed server manifests, runtime calls block changed tools, and Actions/Agents lists flag drift with a "Tools changed — review" badge.
     *   OpenAPI actions show the chosen spec file name, offer explicit operation enablement, and reject disabled operations before an HTTP request is sent.
     *   (Ref: `functions_mcp_tool_pinning.py`, `mcp_plugin_factory.py`, `openapi_plugin.py`, `ActionsSection.tsx`, `AgentsSection.tsx`)
+
+*   **V2 Admin Help Group Matches the Classic Page**
+    *   **Support** now offers the Menu Name, the Send Feedback destination and its Support Recipient Email, nested under the Support menu switch. The card reads **Needs configuration** while Send Feedback is on with no recipient, and the empty recipient field is marked **Required**. A malformed address is refused beside the field instead of being cleared, and turning the menu on no longer switches Send Feedback off.
+    *   **Send Feedback** has an Overview and the **Report a Bug** and **Request a Feature** forms. They prefill your name and email, check each field, record the submission, and open a text-only email draft to the SimpleChat team, with a link to open it again. The overview explains how this differs from your users' own Send Feedback and links to the Support settings.
+    *   **User-Facing Latest Features** lists every announcement by release, with a share checkbox, **Share all** and **Hide all**, and a preview of exactly what users see, including screenshots and the shortcuts your unsaved choices would show. It stays editable while Support is off, so you can prepare announcements before publishing. A **Publication** notice says whether users can reach the page and links to the Support settings.
+    *   **Admin Latest Features** is now a V2 card marked **New**, and the Help category carries the same marker. Each release opens to details, why it matters, rollout notes, screenshots, and shortcuts. Shortcuts jump to the matching V2 card, or open the classic tab when V2 does not show it yet. Page search finds announcements by their content.
+    *   The **Registered** / **Unregistered** release notifications badge now sits beside the version in V2 and opens the registration dialog.
+    *   (Ref: `admin_settings_fields.py`, `functions_support_latest_features.py`, `GET /api/v2/admin/latest-features`, `AdminSettingsPage.tsx`, `SendFeedback.tsx`, `LatestFeaturesVisibility.tsx`, `AdminLatestFeatures.tsx`, `ReleaseNotificationsBadge.tsx`, [V2 Admin Help Settings](features/V2_ADMIN_HELP_SETTINGS.md))
 
 ### **(v0.261.275)**
 

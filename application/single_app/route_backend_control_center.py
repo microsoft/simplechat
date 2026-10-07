@@ -6208,13 +6208,18 @@ def register_route_backend_control_center(bp):
             results = {
                 'conversations_migrated': 0,
                 'conversations_failed': 0,
+                'conversations_skipped_existing': 0,
                 'personal_documents_migrated': 0,
                 'personal_documents_failed': 0,
+                'personal_documents_skipped_existing': 0,
                 'group_documents_migrated': 0,
                 'group_documents_failed': 0,
+                'group_documents_skipped_existing': 0,
                 'public_documents_migrated': 0,
                 'public_documents_failed': 0,
+                'public_documents_skipped_existing': 0,
                 'total_migrated': 0,
+                'total_skipped_existing': 0,
                 'total_failed': 0,
                 'errors': []
             }
@@ -6236,9 +6241,21 @@ def register_route_backend_control_center(bp):
                 
                 for conv in conversations:
                     try:
+                        if has_activity_log_for_resource(
+                            conv.get('user_id'), 'conversation_creation', conv.get('id')
+                        ):
+                            conv['added_to_activity_log'] = True
+                            cosmos_conversations_container.upsert_item(conv)
+                            results['conversations_skipped_existing'] += 1
+                            continue
+
                         # Create activity log directly to preserve original timestamp
                         activity_log = {
-                            'id': str(uuid.uuid4()),
+                            'id': build_activity_log_id(
+                                'conversation_creation',
+                                conv.get('user_id'),
+                                f"backfill:{conv.get('id')}",
+                            ),
                             'activity_type': 'conversation_creation',
                             'user_id': conv.get('user_id'),
                             'timestamp': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
@@ -6288,9 +6305,21 @@ def register_route_backend_control_center(bp):
                 
                 for doc in personal_docs:
                     try:
+                        if has_activity_log_for_resource(
+                            doc.get('user_id'), 'document_creation', doc.get('id'), 'personal'
+                        ):
+                            doc['added_to_activity_log'] = True
+                            cosmos_user_documents_container.upsert_item(doc)
+                            results['personal_documents_skipped_existing'] += 1
+                            continue
+
                         # Create activity log directly to preserve original timestamp
                         activity_log = {
-                            'id': str(uuid.uuid4()),
+                            'id': build_activity_log_id(
+                                'document_creation',
+                                doc.get('user_id'),
+                                f"backfill:personal:{doc.get('id')}",
+                            ),
                             'user_id': doc.get('user_id'),
                             'activity_type': 'document_creation',
                             'workspace_type': 'personal',
@@ -6354,9 +6383,21 @@ def register_route_backend_control_center(bp):
                 
                 for doc in group_docs:
                     try:
+                        if has_activity_log_for_resource(
+                            doc.get('user_id'), 'document_creation', doc.get('id'), 'group'
+                        ):
+                            doc['added_to_activity_log'] = True
+                            cosmos_group_documents_container.upsert_item(doc)
+                            results['group_documents_skipped_existing'] += 1
+                            continue
+
                         # Create activity log directly to preserve original timestamp
                         activity_log = {
-                            'id': str(uuid.uuid4()),
+                            'id': build_activity_log_id(
+                                'document_creation',
+                                doc.get('user_id'),
+                                f"backfill:group:{doc.get('id')}",
+                            ),
                             'user_id': doc.get('user_id'),
                             'activity_type': 'document_creation',
                             'workspace_type': 'group',
@@ -6422,9 +6463,21 @@ def register_route_backend_control_center(bp):
                 
                 for doc in public_docs:
                     try:
+                        if has_activity_log_for_resource(
+                            doc.get('user_id'), 'document_creation', doc.get('id'), 'public'
+                        ):
+                            doc['added_to_activity_log'] = True
+                            cosmos_public_documents_container.upsert_item(doc)
+                            results['public_documents_skipped_existing'] += 1
+                            continue
+
                         # Create activity log directly to preserve original timestamp
                         activity_log = {
-                            'id': str(uuid.uuid4()),
+                            'id': build_activity_log_id(
+                                'document_creation',
+                                doc.get('user_id'),
+                                f"backfill:public:{doc.get('id')}",
+                            ),
                             'user_id': doc.get('user_id'),
                             'activity_type': 'document_creation',
                             'workspace_type': 'public',
@@ -6482,7 +6535,14 @@ def register_route_backend_control_center(bp):
                 results['group_documents_migrated'] +
                 results['public_documents_migrated']
             )
-            
+
+            results['total_skipped_existing'] = (
+                results['conversations_skipped_existing'] +
+                results['personal_documents_skipped_existing'] +
+                results['group_documents_skipped_existing'] +
+                results['public_documents_skipped_existing']
+            )
+
             results['total_failed'] = (
                 results['conversations_failed'] +
                 results['personal_documents_failed'] +
