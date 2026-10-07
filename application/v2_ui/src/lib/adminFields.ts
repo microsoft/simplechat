@@ -182,6 +182,13 @@ export interface AdminField {
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
+    /**
+     * Extra words the page search matches on.
+     *
+     * A component can hold a whole workbench behind one label, so these name what is
+     * inside it -- "retention" finds the backup schedule that contains it.
+     */
+    keywords?: string[];
     /** Connection test components only: which `test_connection` branch to call. */
     test_type?: string;
     /**
@@ -821,6 +828,7 @@ export function fieldSearchText(field: AdminField): string {
         field.help ?? '',
         field.notice ?? '',
         field.component ?? '',
+        ...(field.keywords ?? []),
     ]
         .join(' ')
         .toLowerCase();

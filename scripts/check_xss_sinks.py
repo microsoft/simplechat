@@ -601,6 +601,9 @@ TS_SAME_ORIGIN_URL_BUILDERS = frozenset({
     'generatedArtifactDownloadUrl',
     'groupWorkspaceDocumentPath',
     'groupWorkspacePath',
+    # apiUrl() over the literal '/api/admin/data-management/jobs/' prefix, an
+    # encodeURIComponent job id and a literal, encoded status query.
+    'migrationManifestUrl',
     'publicWorkspaceDocumentPath',
     'publicWorkspacePath',
     'sameSiteAddress',

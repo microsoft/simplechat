@@ -25,12 +25,14 @@
 // saving per keystroke would mint a version per character.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBlocker } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Loader2, Network, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { AppRoleRoster } from '../components/admin/AppRoleRoster';
@@ -59,6 +61,15 @@ import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { OrchestrationPlannerModelPicker } from '../components/admin/OrchestrationPlannerModelPicker';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
+import { DataManagementBackupInventory } from '../components/admin/dataManagement/DataManagementBackupInventory';
+import { DataManagementBackupRuns } from '../components/admin/dataManagement/DataManagementBackupRuns';
+import { DataManagementCosmosEditor } from '../components/admin/dataManagement/DataManagementCosmosEditor';
+import { DataManagementEncryption } from '../components/admin/dataManagement/DataManagementEncryption';
+import { DataManagementJobs } from '../components/admin/dataManagement/DataManagementJobs';
+import { DataManagementMigration } from '../components/admin/dataManagement/DataManagementMigration';
+import { DataManagementReadiness } from '../components/admin/dataManagement/DataManagementReadiness';
+import { DataManagementSchedule } from '../components/admin/dataManagement/DataManagementSchedule';
+import { DataManagementStorage } from '../components/admin/dataManagement/DataManagementStorage';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -95,9 +106,16 @@ import {
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
 import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
+import { dmDirtyKeys } from '../lib/dataManagementLogic';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
 import { modelConnectionsChanged, requestConnectionFocus } from '../stores/modelConnectionsStore';
+import {
+    selectCosmosEditorDirty,
+    useDataManagementStore,
+    useDmDirtyCount,
+    useDmSectionStatuses,
+} from '../stores/dataManagementStore';
 import type { CatalogConnectionTarget } from '../lib/modelCatalog';
 import type { AdminNavGroup, Json } from '../lib/types';
 
@@ -247,6 +265,19 @@ export function AdminSettingsPage() {
     const searchRef = useRef<HTMLInputElement>(null);
     /** The pane the cards scroll inside; the page index watches it to mark the current section. */
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Backup & Recovery settings are a separate document with their own API. Their unsaved
+    // edits count in the Save bar and are saved after the main settings, so the page holds
+    // one save model for both. See `dataManagementStore.ts`.
+    const dmDirtyCount = useDmDirtyCount();
+    const dmSaving = useDataManagementStore((state) => state.saving);
+    const dmPendingRequests = useDataManagementStore((state) => state.pendingRequests);
+    const dmCosmosDirty = useDataManagementStore(selectCosmosEditorDirty);
+    const dmSectionStatuses = useDmSectionStatuses();
+
+    // Everything Backup & Recovery holds lives for as long as this page does, as the main
+    // draft does: leaving the page discards it, and the navigation guard asks first.
+    useEffect(() => () => useDataManagementStore.getState().reset(), []);
 
     useEffect(() => {
         if (!isAdmin) {
@@ -481,23 +512,26 @@ export function AdminSettingsPage() {
      * Each section's status, read from the whole section rather than a search's matches.
      *
      * The card chip and the page index both show this, so they cannot disagree, and
-     * narrowing the page with a search does not change what a section reports.
+     * narrowing the page with a search does not change what a section reports. Backup &
+     * Recovery sections are components over a separate settings document, so their status
+     * comes from that document rather than from fields.
      */
     const statusBySection = useMemo(() => {
         const statuses = new Map<string, SectionStatus>();
         for (const section of sections) {
             statuses.set(
                 section.sectionId,
-                computeSectionStatus(
-                    section.allFields,
-                    settings,
-                    draft,
-                    sectionStatus[section.sectionId],
-                ),
+                dmSectionStatuses[section.sectionId] ??
+                    computeSectionStatus(
+                        section.allFields,
+                        settings,
+                        draft,
+                        sectionStatus[section.sectionId],
+                    ),
             );
         }
         return statuses;
-    }, [sections, settings, draft, sectionStatus]);
+    }, [sections, settings, draft, sectionStatus, dmSectionStatuses]);
 
     /** The page index follows the same filters as the cards. */
     const indexEntries = useMemo<SettingsIndexEntry[]>(
@@ -623,69 +657,137 @@ export function AdminSettingsPage() {
         setDraft({});
         setFieldErrors({});
         setFieldWarnings({});
+        useDataManagementStore.getState().discard();
     }, []);
 
+    /**
+     * Save everything the Save bar counts: main settings first, then Backup & Recovery.
+     *
+     * The order matters. Backup storage is validated against the Enhanced Citations storage
+     * in the saved main settings, so the main save has to land first. A failed main save
+     * stops there, leaving both drafts on screen; a failed Backup & Recovery save after a
+     * successful main save is reported as the partial save it is, with only that draft left.
+     * Resolves true when nothing is left unsaved.
+     */
     const save = useCallback(async () => {
-        if (!Object.keys(draft).length) {
-            return;
+        const dmState = useDataManagementStore.getState();
+        const mainDirty = Object.keys(draft).length > 0;
+        const dmDirty = dmState.settings ? dmDirtyKeys(dmState.settings, dmState.draft).length > 0 : false;
+        if (!mainDirty && !dmDirty) {
+            return true;
         }
         setSaving(true);
         setError(null);
         setFieldErrors({});
 
+        let mainSaved = 0;
+        let warningCount = 0;
         try {
-            const response = await api.patch<AdminSettingsPatchResponse>(
-                '/api/v2/admin/settings',
-                { settings: draft },
-            );
+            if (mainDirty) {
+                try {
+                    const response = await api.patch<AdminSettingsPatchResponse>(
+                        '/api/v2/admin/settings',
+                        { settings: draft },
+                    );
 
-            setData((current) =>
-                current
-                    ? { ...current, settings: { ...current.settings, ...response.settings } }
-                    : current,
-            );
-            setFieldWarnings(response.warnings ?? {});
-            setDraft({});
-            if (response.updated_keys.includes('enable_content_screening')) {
-                setScreeningConfigurationVersion((version) => version + 1);
+                    setData((current) =>
+                        current
+                            ? { ...current, settings: { ...current.settings, ...response.settings } }
+                            : current,
+                    );
+                    setFieldWarnings(response.warnings ?? {});
+                    setDraft({});
+                    // Published now rather than after the next render: an action waiting on
+                    // "Save all" checks these keys again as soon as this save resolves.
+                    useDataManagementStore.getState().setMainDirtyKeys([]);
+                    if (response.updated_keys.includes('enable_content_screening')) {
+                        setScreeningConfigurationVersion((version) => version + 1);
+                    }
+                    void refreshBootstrap();
+
+                    // Enabling connections carries the classic chat endpoint into the connection
+                    // list server-side. That write happens here rather than in the connections
+                    // section, so nothing else would tell it, or the default model picker, that
+                    // the list they are showing is no longer what is stored.
+                    if (
+                        response.updated_keys.includes('model_endpoints') ||
+                        response.updated_keys.includes('enable_multi_model_endpoints')
+                    ) {
+                        modelConnectionsChanged();
+                    }
+
+                    mainSaved = response.updated_keys.length;
+                    warningCount = Object.keys(response.warnings ?? {}).length;
+                } catch (saveError) {
+                    const errors =
+                        saveError instanceof ApiError ? extractFieldErrors(saveError.payload) : {};
+                    if (Object.keys(errors).length) {
+                        // Keep the draft so the rejected values stay on screen next to their errors.
+                        setFieldErrors(errors);
+                        toast.error('Some settings could not be saved.');
+                    } else {
+                        setError(
+                            saveError instanceof Error ? saveError.message : 'Failed to save settings.',
+                        );
+                    }
+                    return false;
+                }
             }
-            void refreshBootstrap();
 
-            // Enabling connections carries the classic chat endpoint into the connection
-            // list server-side. That write happens here rather than in the connections
-            // section, so nothing else would tell it, or the default model picker, that
-            // the list they are showing is no longer what is stored.
-            if (
-                response.updated_keys.includes('model_endpoints') ||
-                response.updated_keys.includes('enable_multi_model_endpoints')
-            ) {
-                modelConnectionsChanged();
+            if (dmDirty) {
+                const outcome = await useDataManagementStore.getState().save();
+                if (!outcome.ok) {
+                    const reason = outcome.error ?? 'Backup & Recovery settings could not be saved.';
+                    toast.error(
+                        mainDirty
+                            ? `Saved ${mainSaved} setting${mainSaved === 1 ? '' : 's'}, but Backup & Recovery settings were not saved. ${reason}`
+                            : reason,
+                    );
+                    return false;
+                }
             }
 
-            const warningCount = Object.keys(response.warnings ?? {}).length;
+            const mainText = `${mainSaved} setting${mainSaved === 1 ? '' : 's'}`;
             toast.success(
                 warningCount
                     ? `Saved with ${warningCount} warning${warningCount === 1 ? '' : 's'}.`
-                    : `Saved ${response.updated_keys.length} setting${
-                          response.updated_keys.length === 1 ? '' : 's'
-                      }.`,
+                    : dmDirty && mainDirty
+                        ? `Saved ${mainText} and Backup & Recovery settings.`
+                        : dmDirty
+                            ? 'Saved Backup & Recovery settings.'
+                            : `Saved ${mainText}.`,
             );
-        } catch (saveError) {
-            const errors =
-                saveError instanceof ApiError ? extractFieldErrors(saveError.payload) : {};
-            if (Object.keys(errors).length) {
-                // Keep the draft so the rejected values stay on screen next to their errors.
-                setFieldErrors(errors);
-                toast.error('Some settings could not be saved.');
-            } else {
-                setError(
-                    saveError instanceof Error ? saveError.message : 'Failed to save settings.',
-                );
-            }
+            return true;
         } finally {
             setSaving(false);
         }
     }, [draft, refreshBootstrap]);
+
+    // The Backup & Recovery cards ask the page to save everything before an action that has
+    // to run against saved settings, and need to know which main settings are unsaved.
+    useEffect(() => {
+        useDataManagementStore.getState().registerSaveAll(save);
+    }, [save]);
+    useEffect(() => {
+        useDataManagementStore.getState().setMainDirtyKeys(dirtyKeys);
+    }, [dirtyKeys]);
+
+    /**
+     * Ask before leaving the page with work that would be lost.
+     *
+     * The Save bar's unload prompt only covers closing the tab; moving to another page of the
+     * app is a client-side navigation it never sees, and used to drop every unsaved edit
+     * silently. A backup, restore or migration request still in flight is included: leaving
+     * does not stop it, and the administrator should know to check Job history.
+     */
+    const leaveGuard = useRef({ unsaved: false, sending: false });
+    leaveGuard.current = {
+        unsaved: dirtyKeys.length > 0 || dmDirtyCount > 0 || dmCosmosDirty || delegationDirty,
+        sending: saving || dmSaving || dmPendingRequests > 0,
+    };
+    const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+        (leaveGuard.current.unsaved || leaveGuard.current.sending) &&
+        (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search));
 
     const onBrandingUploaded = useCallback(
         (target: string, result: BrandingUploadResponse) => {
@@ -1079,6 +1181,26 @@ export function AdminSettingsPage() {
                             help={field.help}
                         />
                     );
+                // Backup & Recovery. Each is a card over the data-management API; their
+                // settings save through the Save bar with everything else (see `save`).
+                case 'data-management-readiness':
+                    return <DataManagementReadiness key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-backup-runs':
+                    return <DataManagementBackupRuns key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-schedule':
+                    return <DataManagementSchedule key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-storage':
+                    return <DataManagementStorage key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-encryption':
+                    return <DataManagementEncryption key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-migration':
+                    return <DataManagementMigration key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-backup-inventory':
+                    return <DataManagementBackupInventory key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-cosmos-editor':
+                    return <DataManagementCosmosEditor key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
+                case 'data-management-jobs':
+                    return <DataManagementJobs key={key} help={field.help} onNavigate={goToSection} disabled={saving} />;
                 default:
                     return null;
             }
@@ -1356,7 +1478,9 @@ export function AdminSettingsPage() {
 
                                 {!loading && !showDelegationManager && visibleSections.length === 0 && (
                                     <p className="py-12 text-center text-sm text-text-3">
-                                        No settings match “{query}”.
+                                        {query.trim()
+                                            ? `No settings match “${query.trim()}”.`
+                                            : 'This category has no settings to show.'}
                                     </p>
                                 )}
 
@@ -1427,8 +1551,8 @@ export function AdminSettingsPage() {
                                 )}
 
                                 <SaveBar
-                                    dirtyCount={dirtyKeys.length}
-                                    saving={saving}
+                                    dirtyCount={dirtyKeys.length + dmDirtyCount}
+                                    saving={saving || dmSaving}
                                     onSave={() => void save()}
                                     onDiscard={discard}
                                 />
@@ -1489,6 +1613,27 @@ export function AdminSettingsPage() {
                         {pendingAck.requires_acknowledgement.message}
                     </p>
                 </AdminModal>
+            ) : null}
+
+            {blocker.state === 'blocked' ? (
+                <ConfirmDialog
+                    title="Leave Admin settings?"
+                    description={
+                        leaveGuard.current.sending
+                            ? 'A save or a backup, restore or migration request is still being sent. Leaving does not stop it.'
+                            : 'Unsaved changes on this page will be lost.'
+                    }
+                    confirmLabel="Leave"
+                    cancelLabel="Stay"
+                    onConfirm={() => blocker.proceed()}
+                    onClose={() => blocker.reset()}
+                >
+                    <p className="text-xs text-text-2">
+                        {leaveGuard.current.sending
+                            ? 'Check Job history when you come back before trying the request again.'
+                            : 'This includes unsaved Backup & Recovery settings and any open Cosmos DB editor changes.'}
+                    </p>
+                </ConfirmDialog>
             ) : null}
 
             {saving ? (

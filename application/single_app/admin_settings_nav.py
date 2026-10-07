@@ -500,7 +500,7 @@ ADMIN_NAV = [
                 "label": "Restore",
                 "icon": "bi-box-seam",
                 "sections": [
-                    {"id": "data-management-backup-inventory-section", "label": "Backup Inventory &amp; Restore", "icon": "bi-box-seam"},
+                    {"id": "data-management-backup-inventory-section", "label": "Backup Inventory & Restore", "icon": "bi-box-seam"},
                 ],
             },
             {

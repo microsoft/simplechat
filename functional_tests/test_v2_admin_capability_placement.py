@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
+Backup & Recovery added to the fully described groups in: 0.261.260
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -68,7 +69,15 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
+# Backup & Recovery is described by one component per section (0.261.260); its
+# settings live in a separate document, so no settings-document key belongs there.
+FULLY_DESCRIBED_GROUP_IDS = (
+    APPEARANCE_GROUP_ID,
+    "chat",
+    "security",
+    "agents-actions",
+    "backup-recovery",
+)
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart

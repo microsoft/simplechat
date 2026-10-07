@@ -30,27 +30,41 @@ These settings protect the data plane during maintenance and incidents. A backup
 - Review restore collision policy with data owners.
 - Limit Cosmos editor use to operators who understand partition keys and ETags.
 
+## How saving works
+
+Backup & Recovery settings are kept in their own settings document, separate from the rest of Admin Settings. In the V2 admin experience they still share the page's Save bar: an edit in any Backup & Recovery card counts as an unsaved change, **Save changes** saves the other Admin Settings first and then the Backup & Recovery settings, and **Discard** drops both.
+
+Several actions run against the saved settings, because the server reads them again and checks review fingerprints against them. Queueing a backup, running retention cleanup, reviewing or queueing a restore, and starting a migration save pending Backup & Recovery changes first, and their buttons say so, for example **Save and queue full backup**. Retrying or resuming a job never saves settings: a backup resumes into the storage it started with, and is refused if the saved storage settings have since moved it somewhere else.
+
+Backup storage is validated against the saved Enhanced Citations storage, and a new encryption key is stored where the saved Key Vault settings say. When one of those settings has an unsaved edit, the action asks to **Save all and continue** instead of checking against a value that is about to change. Leaving the page with unsaved changes, or while a Backup & Recovery request is still being sent, asks for confirmation first.
+
 ## Backup {#backup}
 
 ### Start Here {#data-management-readiness-section}
 
-The Start Here section belongs to the Backup tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Start Here is the readiness view for the whole group. It checks backup storage, the encryption key, the schedule, the latest full backup, and the restore and migration destination, and each item opens the section that resolves it. It also holds short guides to setup, backups, migration, restore, and RU Boost permissions.
 
 ### Backup {#data-management-backup-section}
 
-The Backup section belongs to the Backup tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Queue a full or partial backup on demand and see the latest completed full and partial backups. A backup runs against the saved settings, so unsaved Backup & Recovery changes are saved before it is queued.
+
+The performance settings set how many Cosmos DB batches and source-file transfers run in parallel, the transfer chunk size, and how many times a failed operation is retried. Source RU Boost temporarily raises eligible throughput on the source Cosmos DB account, up to 10,000 RU/s, and restores the original setting after the backup completes, fails, is canceled, or recovers. It can increase Azure charges and needs Azure Resource Manager permission on the source account.
 
 ### Schedule {#data-management-schedule-section}
 
-The Schedule section belongs to the Backup tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Scheduled backups take a full backup at the chosen frequency and UTC start time, with optional daily partial backups in between. A partial backup captures changed items; restoring one brings back the latest captured state and does not replay deletions.
+
+The retention window sets how long backups are kept. Retention cleanup deletes finished backups older than the window but always keeps the newest successful full backup, and each run deletes at most 25 backups. While scheduled backups are on, cleanup also runs on its own. The backup scope chooses what each backup includes: Cosmos DB, AI Search, and Enhanced Citation source files.
 
 ### Storage {#data-management-storage-section}
 
-The Storage section belongs to the Backup tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Backups are written to a container in an Azure Storage account dedicated to backups, under the path prefix. SimpleChat signs in with managed identity or a connection string. While Enhanced Citations is on, saving is refused if backup storage uses the same connection string or Blob endpoint as Enhanced Citations storage.
+
+Test storage checks the values on screen without saving them, and creates the container when it does not exist. Each backup records the container, path prefix, and storage identity it was written with, and restore review rejects a backup when those no longer match.
 
 ### Encryption {#data-management-encryption-section}
 
-The Encryption section belongs to the Backup tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Backup artifacts are encrypted with a generated backup key before they are written. The key is stored in Key Vault when Key Vault secret storage is configured, and otherwise in the Backup & Recovery settings. Restore review checks each backup against the encryption mode and key it was written with: turning encryption on or off, or replacing a key stored in settings, makes earlier backups fail review until the settings match again. Backups encrypted with a Key Vault key keep the secret version they used.
 
 #### Settings
 
@@ -101,7 +115,9 @@ The Encryption section belongs to the Backup tab. Use it with the adjacent setti
 
 ### Migration {#data-management-migration-section}
 
-The Migration section belongs to the Migrate tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Migration copies selected users, groups, and public workspaces, and optionally their documents, into another SimpleChat environment. It runs in six steps: connect the destination Cosmos DB, AI Search, and Enhanced Citation storage; choose the scope; choose the run mode, optional surfaces, and performance limits; run the server preflight review; confirm; and follow progress.
+
+There are three run modes. **Copy missing items only** never updates or deletes existing destination data. **Catch up changed items** also updates changed items that an earlier migration created, and keeps data that exists only in the destination. **Make destination match source** additionally deletes destination items that earlier migrations created and the source no longer has, and requires typing `MAKE DESTINATION MATCH SOURCE`. A migration starts only from a current review: changing the plan or the destination settings afterwards means running the review again. Restore writes into the same destination.
 
 #### Settings
 
@@ -133,7 +149,9 @@ The Migration section belongs to the Migrate tab. Use it with the adjacent setti
 
 ### Backup Inventory & Restore {#data-management-backup-inventory-section}
 
-The Backup Inventory & Restore section belongs to the Restore tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Backup Inventory lists backups with their type, contents, warnings, and encryption, filtered by status, run type, and creation date. Selecting a backup shows its manifest and storage details, and the Restore and Delete actions. **Run retention cleanup** applies the retention window on demand.
+
+Restore writes into the destination configured in Migration and is available for completed backups that recorded a manifest. **Create only** is non-destructive: items that already exist in the destination are skipped and reported as collisions. **Overwrite existing** can replace destination data and requires typing `RESTORE WITH OVERWRITE`. A restore is queued only after a passing review that is still current and an acknowledgement; the review authorization expires after 15 minutes.
 
 #### Settings
 
@@ -150,7 +168,7 @@ The Backup Inventory & Restore section belongs to the Restore tab. Use it with t
 
 ### Cosmos Editor {#data-management-cosmos-editor-section}
 
-The Cosmos Editor section belongs to the Cosmos Editor tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+The Cosmos Editor repairs one document at a time in a known SimpleChat Cosmos DB container. It stays locked until an administrator acknowledges the risk, and the acknowledgement, queries, document opens, and saves are recorded in activity logs. A blank query browses the first 100 documents; a custom `SELECT` query can page further. The editor refuses changes to a document's id or partition key, and a save requires typing `I understand this can damage system data`. Saves use the ETag from when the document was opened, so a document changed by someone else in the meantime is not overwritten.
 
 #### Settings
 
@@ -167,7 +185,7 @@ The Cosmos Editor section belongs to the Cosmos Editor tab. Use it with the adja
 
 ### Jobs {#data-management-jobs-section}
 
-The Jobs section belongs to the Jobs tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Jobs is the history of backup, restore, migration, and dry-run jobs, newest first, filtered by operation, status, run type, and creation date. Opening a job shows its progress, timeline, artifacts, manifest, and warnings, and follows a running job until it finishes. Retry and Resume continue from durable checkpoints. Cancellation is cooperative: the worker stops at its next durable checkpoint. Migration jobs also offer their manifest, and a manifest of only the failed, missing, and colliding items, for download.
 
 #### Settings
 
@@ -192,6 +210,10 @@ The Jobs section belongs to the Jobs tab. Use it with the adjacent settings in t
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A restore cannot be queued | Preflight found target access, manifest, or collision-policy problems. | Resolve the reported check before queueing. |
+| Saving reports that backup storage must use a dedicated Azure Storage account | Enhanced Citations is on and backup storage uses its connection string or Blob endpoint. | Point backup storage at a separate storage account. |
+| An action asks to **Save all and continue** | Enhanced Citations storage or Key Vault settings have unsaved edits that the action is checked against. | Save all changes, or discard those edits, then run the action. |
+| Restore review rejects an older backup | The backup storage container, path prefix, storage identity, encryption mode, or a settings-stored key changed after the backup was written. | Change the settings back, or restore from a backup written with the current settings. |
+| **Start migration** is unavailable, or returns to the Review step | The plan or destination settings changed after the review, or the review's 15-minute authorization expired. | Run the preflight review again, then confirm. |
 
 ## Related
 

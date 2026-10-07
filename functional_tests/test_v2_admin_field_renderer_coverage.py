@@ -2,8 +2,9 @@
 # test_v2_admin_field_renderer_coverage.py
 """
 Functional test that the V2 admin UI renders every field the schema can declare.
-Version: 0.261.039
+Version: 0.261.260
 Implemented in: 0.261.039
+Remote-asset scan extended to component subfolders in: 0.261.260
 
 The V2 admin surface is driven by ``admin_settings_fields.py``. That indirection has one
 silent failure mode: the schema can declare a field type, or name a bespoke component,
@@ -130,18 +131,20 @@ def test_admin_components_use_no_remote_assets():
     )
 
     offenders = []
-    for path in sorted(ADMIN_COMPONENTS_DIR.glob("*.tsx")):
+    # Subfolders too: the Backup & Recovery cards live in components/admin/dataManagement.
+    component_files = sorted(ADMIN_COMPONENTS_DIR.rglob("*.tsx"))
+    for path in component_files:
         content = path.read_text(encoding="utf-8")
         for line_number, line in enumerate(content.splitlines(), start=1):
             if forbidden.search(line):
-                offenders.append(f"{path.name}:{line_number}: {line.strip()[:100]}")
+                offenders.append(f"{path.relative_to(ADMIN_COMPONENTS_DIR)}:{line_number}: {line.strip()[:100]}")
 
     assert not offenders, (
         "These admin components reference a remote asset. Browser assets must be "
         "vendored locally under static/:\n  " + "\n  ".join(offenders)
     )
 
-    checked = len(list(ADMIN_COMPONENTS_DIR.glob("*.tsx")))
+    checked = len(component_files)
     print(f"  {checked} admin component file(s) reference only local assets.")
     return True
 
