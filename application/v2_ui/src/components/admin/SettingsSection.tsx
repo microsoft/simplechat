@@ -133,21 +133,29 @@ export interface SettingsSectionProps {
      * card even though the page decided to show it.
      */
     runtimeFlags?: Record<string, boolean>;
+    /**
+     * Move the page to another section, for prerequisite links. Without it those links
+     * open the classic page.
+     */
+    onNavigate?: (sectionId: string) => void;
     children?: ReactNode;
 }
 
 function RequirementNotice({
     requirement,
     satisfied,
+    onNavigate,
 }: {
     requirement: NonNullable<AdminField['requires']>;
     satisfied: boolean;
+    onNavigate?: (sectionId: string) => void;
 }) {
     if (satisfied) {
         return null;
     }
 
     const blocking = (requirement.mode ?? 'block') === 'block';
+    const targetSection = requirement.target_section;
 
     return (
         <div
@@ -172,9 +180,19 @@ function RequirementNotice({
                 {requirement.description ? (
                     <p className="mt-0.5 text-text-3">{requirement.description}</p>
                 ) : null}
-                {requirement.target_section ? (
+                {/* Within the page when the page can take the reader there; the classic
+                    page otherwise, which is where these links always used to lead. */}
+                {targetSection && onNavigate ? (
+                    <button
+                        type="button"
+                        onClick={() => onNavigate(targetSection)}
+                        className="mt-1 inline-block text-accent underline"
+                    >
+                        Configure {requirement.label}
+                    </button>
+                ) : targetSection ? (
                     <a
-                        href={`/admin/settings#${encodeURIComponent(requirement.target_section)}`}
+                        href={`/admin/settings#${encodeURIComponent(targetSection)}`}
                         className="mt-1 inline-block text-accent underline"
                     >
                         Configure {requirement.label}
@@ -329,6 +347,7 @@ export function SettingsSection({
     appearance,
     guide,
     runtimeFlags,
+    onNavigate,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -552,6 +571,7 @@ export function SettingsSection({
                         key={requirement.key}
                         requirement={requirement}
                         satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
+                        onNavigate={onNavigate}
                     />
                 ))}
 

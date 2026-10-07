@@ -23,6 +23,7 @@ import {
     RefreshCw,
     Search,
     Server,
+    ShieldCheck,
     Trash2,
     Zap,
 } from 'lucide-react';
@@ -1420,6 +1421,7 @@ export function ModelConnectionsManager({
     help,
     adapter = ADMIN_MODEL_CONNECTIONS_ADAPTER,
     landmark = true,
+    onManageAccess,
 }: {
     help?: string;
     adapter?: ModelConnectionsAdapter;
@@ -1429,6 +1431,11 @@ export function ModelConnectionsManager({
      * nested inside it would only repeat the landmark for screen reader users.
      */
     landmark?: boolean;
+    /**
+     * Opens the governance policies for one connection. Only Admin Settings passes it:
+     * delegated item policies govern global connections, not a group's own endpoints.
+     */
+    onManageAccess?: (connection: ModelConnection) => void;
 }) {
     const [connections, setConnections] = useState<ModelConnection[]>([]);
     const [loading, setLoading] = useState(true);
@@ -1732,6 +1739,17 @@ export function ModelConnectionsManager({
                                 </div>
 
                                 <div className="flex shrink-0 items-center gap-1">
+                                    {onManageAccess ? (
+                                        <button
+                                            type="button"
+                                            title="Manage access"
+                                            aria-label={`Manage access to ${connection.name ?? 'connection'}`}
+                                            onClick={() => onManageAccess(connection)}
+                                            className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                                        >
+                                            <ShieldCheck size={15} />
+                                        </button>
+                                    ) : null}
                                     {adapter.allows('enable', connection) ? (
                                         <button
                                             type="button"

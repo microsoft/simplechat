@@ -48,6 +48,8 @@ A connection records a resource's address, provider, authentication, and deploye
 
 In React V2, each connection is stored on its own: adding, editing, or deleting one takes effect when you save that connection. In the classic admin editor, **Save Endpoint** stages the change in the form; save the main settings form to persist it. Task defaults retain connection/model IDs, so equally named deployments on different resources are not confused.
 
+**Manage access**, the shield on each connection, lists the delegated item policies that narrow that connection and creates new ones without leaving the page. Global endpoint governance is always on: people must pass the Global Endpoints feature policy, then any one of the connection's policies if it has any. With no policy on a connection, everyone who passes the feature policy can use it. See [Governance settings]({{ '/admin/governance/' | relative_url }}#governance-item-policies-section) for how policies combine.
+
 For a task-oriented walkthrough, see [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
 
 ### Authentication and model discovery

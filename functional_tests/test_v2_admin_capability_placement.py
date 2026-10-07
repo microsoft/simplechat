@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.272
+Version: 0.261.273
 Implemented in: 0.261.047
 Operations described in full: 0.261.269
 Data Lifecycle added to the fully described groups in: 0.261.272
+Governance added to the fully described groups in: 0.261.273
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -29,10 +30,10 @@ without opening the page:
 Declaring a field is what takes a key out of that scan. This test holds five
 invariants so the misfiling cannot come back:
 
-  1. The Appearance, Chat, Security, Agents & Actions, Workspaces and Operations
-     groups are fully described by the schema, so they must receive *no* guessed
-     rows at all. A new undeclared key that lands in any of them fails here, and
-     the fix is to declare it in its real section.
+  1. The Appearance, Chat, Security, Governance, Agents & Actions, Workspaces, Data
+     Lifecycle and Operations groups are fully described by the schema, so they must
+     receive *no* guessed rows at all. A new undeclared key that lands in any of them
+     fails here, and the fix is to declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
@@ -105,6 +106,7 @@ FULLY_DESCRIBED_GROUP_IDS = (
     APPEARANCE_GROUP_ID,
     "chat",
     "security",
+    "governance",
     "agents-actions",
     "workspaces",
     "data-lifecycle",
@@ -161,6 +163,10 @@ RELOCATED_CAPABILITIES = {
     # global logging switch, which the scan had filed under Debug Logging on "logging".
     "enable_mixed_source_development_telemetry": ("application-insights-section", "logging"),
     "enable_appinsights_global_logging": ("application-insights-section", "logging"),
+    # Governance. The fallback scan happened to file this one correctly, but only as a
+    # bare switch named "Mcp destination governance"; it is now declared, labelled as
+    # the allowlist it enforces, and sits beside the policies it enforces.
+    "enable_mcp_destination_governance": ("governance-mcp-destination-section", "mcp-governance"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an

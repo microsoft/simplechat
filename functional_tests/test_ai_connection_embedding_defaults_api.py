@@ -251,6 +251,7 @@ class AdminApiHarness:
             "get_admin_settings_api_secret_fields": lambda: [],
             "get_secret_field_keys": lambda: set(),
             "_seed_connections_on_first_enable": lambda *_args: self.events.append("seed"),
+            "_log_governance_setting_changes": lambda *_args: None,
             "_refresh_branding_static_files": lambda: None,
             "_redact_admin_settings_for_v2": lambda updates: copy.deepcopy(updates),
         })
