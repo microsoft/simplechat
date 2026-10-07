@@ -5,6 +5,15 @@
 Fixed in version: **0.261.289**, recorded in
 `application/single_app/config.py`.
 
+> **Follow-up in 0.261.291:** after this fix, the same Ask an agent steps got past
+> this check and failed at a later one with
+> `sc_authority_reason=result_external_source_unavailable`. The provider required
+> the stored agent to be exactly a `dict`, and Cosmos DB returns a dictionary
+> subclass. The deployment check below confirmed the agent record's contents, not
+> the type the SDK returns. Before 0.261.291, turning agents on doesn't avoid the
+> failure; only a plan that uses an action instead of an agent works. See the
+> [agent document type fix](ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX.md).
+
 ## Issue
 
 A user picked their personal `m365` agent in the V2 composer, turned on Orchestrate and
@@ -144,6 +153,7 @@ plan uses the action directly, as it did in the user's own conversation.
 
 ## Related
 
+- [Agent document type fix](ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX.md), the follow-up in 0.261.291
 - [Retained orchestration external source access](../features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md)
 - [Orchestration session-trusted action and agent steps fix](ORCHESTRATION_SESSION_TRUSTED_ACTION_AGENT_STEPS_FIX.md)
 - [Actions and agents](../../admin/orchestration.md#actions-and-agents)
