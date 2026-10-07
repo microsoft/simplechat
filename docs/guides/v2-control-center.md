@@ -10,7 +10,15 @@ audience: admin
 
 The V2 Control Center is a separate administration pane for users assigned Control Center access. It is kept out of the primary workspace navigation and appears in **Account → Control Center** when at least one Control Center capability is available to you.
 
-The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. User and group management, public workspaces, and activity logs are being delivered in phases; open the classic Control Center from those sections' placeholders.
+The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. User management requires the user-management capability; Groups and Public Workspaces still link to the classic Control Center while those V2 sections are delivered.
+
+## Manage users
+
+Open **Users** to find accounts by email or display name, filter by access, upload permission, recent login, or document ownership, and sort usage columns. Filters and sorting are reflected in the URL, so a filtered view can be bookmarked or opened from a Dashboard drill-through. The list reports when its cached usage metrics were calculated and how many accounts on the current page have not yet received a metrics refresh.
+
+Select rows to allow or deny access or uploads. Selection can include all users matching the current filters across pages, with an option to exclude individual accounts. Restrictions may have an optional expiry. Open a user to review the account, recent activity, group and public-workspace memberships, and ownership. Changes reconcile against the server and report failures rather than leaving the list in an optimistic-only state.
+
+Deleting all documents for a user requires a reason and submits an approval request; it does not perform deletion immediately. **Export CSV** downloads the full filtered result set rather than only the current page. The Activity tab links to Activity Logs with the selected `user_id`.
 
 ## Review dashboard activity
 

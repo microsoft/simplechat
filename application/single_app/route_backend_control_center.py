@@ -3,10 +3,11 @@
 import csv
 import logging
 import math
+import re
 import time
 from io import StringIO
 
-from flask import make_response
+from flask import Response, make_response, stream_with_context
 
 from config import *
 from functions_authentication import *
@@ -1006,7 +1007,8 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
-                }
+                },
+                'token_metrics': {'total_tokens': 0}
             },
             'access_status': 'allow',  # default
             'file_upload_status': 'allow'  # default
@@ -1063,6 +1065,8 @@ def enhance_user_with_activity(user, force_refresh=False):
                         cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
                         # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
                         enhanced['activity']['document_metrics'] = cached_doc_metrics
+                    if 'token_metrics' in cached_metrics:
+                        enhanced['activity']['token_metrics'] = cached_metrics['token_metrics']
                     return enhanced
                 except Exception as cache_e:
                     debug_print(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
@@ -1357,6 +1361,25 @@ def enhance_user_with_activity(user, force_refresh=False):
                 
         except Exception as e:
             debug_print(f"Could not get document metrics for user {user.get('id')}: {e}")
+
+        try:
+            token_total_query = """
+                SELECT VALUE SUM(c.usage.total_tokens) FROM c
+                WHERE c.user_id = @user_id
+                AND c.activity_type = 'token_usage'
+                AND IS_DEFINED(c.usage.total_tokens)
+                AND IS_NUMBER(c.usage.total_tokens)
+            """
+            token_totals = list(cosmos_activity_logs_container.query_items(
+                query=token_total_query,
+                parameters=[{"name": "@user_id", "value": user_id}],
+                partition_key=user_id
+            ))
+            enhanced['activity']['token_metrics']['total_tokens'] = int(
+                token_totals[0] or 0
+            ) if token_totals else 0
+        except Exception as token_error:
+            debug_print(f"Could not get token metrics for user {user_id}: {token_error}")
         
         # Save calculated metrics to user settings for caching (only if we calculated fresh data)
         if force_refresh or not user.get('settings', {}).get('metrics', {}).get('calculated_at'):
@@ -1368,6 +1391,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat(),
                     'login_metrics': enhanced['activity']['login_metrics'],
                     'chat_metrics': enhanced['activity']['chat_metrics'],
+                    'token_metrics': enhanced['activity']['token_metrics'],
                     'document_metrics': {
                         'total_documents': enhanced['activity']['document_metrics']['total_documents'],
                         'ai_search_size': enhanced['activity']['document_metrics']['ai_search_size'],
@@ -1393,6 +1417,201 @@ def enhance_user_with_activity(user, force_refresh=False):
     except Exception as e:
         debug_print(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
+
+
+CONTROL_CENTER_USERS_MAX_BULK = 500
+CONTROL_CENTER_USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+CONTROL_CENTER_USER_SORTS = {
+    "name": "c.display_name",
+    "email": "c.email",
+    "last_login": "c.settings.metrics.login_metrics.last_login",
+    "conversations": "c.settings.metrics.chat_metrics.total_conversations",
+    "documents": "c.settings.metrics.document_metrics.total_documents",
+    "tokens": "c.settings.metrics.token_metrics.total_tokens",
+}
+
+
+def _control_center_validate_user_id(user_id):
+    """Reject malformed route/body identifiers before using them in lookups or links."""
+    normalized = str(user_id or "").strip()
+    if not CONTROL_CENTER_USER_ID_PATTERN.fullmatch(normalized):
+        raise ValueError("Invalid user ID.")
+    return normalized
+
+
+def _control_center_parse_user_filters(values, now=None):
+    """Normalize the shared Users list, export, and filter-selection query contract."""
+    current_time = now or datetime.now(timezone.utc)
+    search = str(values.get("search", "") or "").strip()
+    if len(search) > 200:
+        raise ValueError("Search text is too long.")
+
+    legacy_filter = str(values.get("filter", "") or "").strip().lower()
+    status = str(values.get("status", "") or "").strip().lower()
+    access_status = str(values.get("access_status", "all") or "all").strip().lower()
+    if status == "blocked":
+        access_status = "deny"
+    elif status in {"allow", "deny"} and not access_status:
+        access_status = status
+    if legacy_filter == "active" and not values.get("last_login"):
+        last_login = "30"
+    else:
+        last_login = str(values.get("last_login", "all") or "all").strip().lower()
+
+    upload_status = str(values.get("upload_status", "all") or "all").strip().lower()
+    has_documents = str(values.get("has_documents", "all") or "all").strip().lower()
+    sort = str(values.get("sort", "name") or "name").strip().lower()
+    direction = str(values.get("direction", "asc") or "asc").strip().lower()
+
+    if access_status not in {"all", "allow", "deny"}:
+        raise ValueError("Invalid access status filter.")
+    if upload_status not in {"all", "allow", "deny"}:
+        raise ValueError("Invalid file-upload status filter.")
+    if last_login not in {"all", "never", "7", "30", "90", "90_plus"}:
+        raise ValueError("Invalid last-login filter.")
+    if has_documents not in {"all", "yes", "no"}:
+        raise ValueError("Invalid document filter.")
+    if sort not in CONTROL_CENTER_USER_SORTS:
+        raise ValueError("Invalid user sort field.")
+    if direction not in {"asc", "desc"}:
+        raise ValueError("Invalid sort direction.")
+
+    return {
+        "search": search,
+        "access_status": access_status,
+        "upload_status": upload_status,
+        "last_login": last_login,
+        "has_documents": has_documents,
+        "sort": sort,
+        "direction": direction,
+        "now": current_time,
+    }
+
+
+def _control_center_user_where(filters):
+    """Build a parameterized Cosmos WHERE clause from normalized Users filters."""
+    clauses = []
+    parameters = []
+
+    def add_clause(clause, name, value):
+        clauses.append(clause)
+        parameters.append({"name": name, "value": value})
+
+    if filters["search"]:
+        add_clause(
+            "(CONTAINS(LOWER(c.email), @search) OR CONTAINS(LOWER(c.display_name), @search))",
+            "@search",
+            filters["search"].lower(),
+        )
+
+    now_iso = filters["now"].astimezone(timezone.utc).isoformat()
+    for field, value, parameter_prefix in (
+        ("access", filters["access_status"], "access"),
+        ("file_uploads", filters["upload_status"], "upload"),
+    ):
+        if value == "deny":
+            add_clause(
+                f"(c.settings.{field}.status = @{parameter_prefix}_status "
+                f"AND (NOT IS_DEFINED(c.settings.{field}.datetime_to_allow) "
+                f"OR IS_NULL(c.settings.{field}.datetime_to_allow) "
+                f"OR c.settings.{field}.datetime_to_allow > @{parameter_prefix}_now))",
+                f"@{parameter_prefix}_status",
+                "deny",
+            )
+            parameters.append({"name": f"@{parameter_prefix}_now", "value": now_iso})
+        elif value == "allow":
+            add_clause(
+                f"(NOT IS_DEFINED(c.settings.{field}.status) "
+                f"OR c.settings.{field}.status != 'deny' "
+                f"OR (IS_DEFINED(c.settings.{field}.datetime_to_allow) "
+                f"AND NOT IS_NULL(c.settings.{field}.datetime_to_allow) "
+                f"AND c.settings.{field}.datetime_to_allow <= @{parameter_prefix}_now))",
+                f"@{parameter_prefix}_now",
+                now_iso,
+            )
+
+    login_path = "c.settings.metrics.login_metrics.last_login"
+    if filters["last_login"] == "never":
+        clauses.append(
+            f"(NOT IS_DEFINED({login_path}) OR IS_NULL({login_path}) OR {login_path} = 'Never' OR {login_path} = '')"
+        )
+    elif filters["last_login"] in {"7", "30", "90", "90_plus"}:
+        days = 90 if filters["last_login"] == "90_plus" else int(filters["last_login"])
+        cutoff = (filters["now"] - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+        if filters["last_login"] == "90_plus":
+            clauses.append(
+                f"IS_DEFINED({login_path}) AND NOT IS_NULL({login_path}) "
+                f"AND {login_path} != 'Never' AND {login_path} < @last_login_cutoff"
+            )
+        else:
+            clauses.append(
+                f"IS_DEFINED({login_path}) AND {login_path} >= @last_login_cutoff"
+            )
+        parameters.append({"name": "@last_login_cutoff", "value": cutoff})
+
+    document_count_path = "c.settings.metrics.document_metrics.total_documents"
+    if filters["has_documents"] == "yes":
+        clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} > 0")
+    elif filters["has_documents"] == "no":
+        clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} = 0")
+
+    return (" AND ".join(clauses) if clauses else "1=1"), parameters
+
+
+def _control_center_effective_restriction(settings, setting_key, now=None):
+    """Return the effective allow/deny state and any stored expiry for one user setting."""
+    value = settings.get(setting_key, {})
+    if not isinstance(value, dict):
+        value = {}
+    expires_at = value.get("datetime_to_allow")
+    status = "deny" if value.get("status") == "deny" else "allow"
+    if status == "deny" and expires_at:
+        try:
+            expiry = datetime.fromisoformat(
+                str(expires_at).replace("Z", "+00:00")
+            )
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= (now or datetime.now(timezone.utc)):
+                status = "allow"
+        except (TypeError, ValueError):
+            pass
+    return {"status": status, "expires_at": expires_at}
+
+
+def _control_center_user_row(user, now=None):
+    """Project a user document onto the non-sensitive Users table response shape."""
+    settings = user.get("settings", {})
+    if not isinstance(settings, dict):
+        settings = {}
+    metrics = settings.get("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+    login_metrics = metrics.get("login_metrics", {})
+    chat_metrics = metrics.get("chat_metrics", {})
+    document_metrics = metrics.get("document_metrics", {})
+    token_metrics = metrics.get("token_metrics", {})
+    return {
+        "id": user.get("id", ""),
+        "email": user.get("email", ""),
+        "display_name": user.get("display_name", ""),
+        "access": _control_center_effective_restriction(settings, "access", now),
+        "file_uploads": _control_center_effective_restriction(settings, "file_uploads", now),
+        "last_login": login_metrics.get("last_login"),
+        "total_logins": login_metrics.get("total_logins"),
+        "conversations": chat_metrics.get("total_conversations"),
+        "documents": document_metrics.get("total_documents"),
+        "tokens": token_metrics.get("total_tokens"),
+        "metrics_calculated_at": metrics.get("calculated_at"),
+    }
+
+
+def _control_center_csv_safe_cell(value):
+    """Prevent formula execution in spreadsheet applications for every CSV cell type."""
+    serialized = "" if value is None else str(value)
+    if serialized.startswith(("=", "+", "-", "@")):
+        return f"'{serialized}"
+    return serialized
 
 def enhance_public_workspace_with_activity(workspace, force_refresh=False):
     """
@@ -3423,6 +3642,415 @@ def register_route_backend_control_center(bp):
         except Exception as e:
             debug_print(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
+
+    # V2 User Management APIs
+    @bp.route('/api/v2/control-center/users', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users():
+        """Return filtered user rows with cached activity metrics and explicit freshness."""
+        try:
+            filters = _control_center_parse_user_filters(request.args)
+            page, per_page = parse_control_center_management_pagination(request.args)
+            where_clause, parameters = _control_center_user_where(filters)
+
+            count_result = list(cosmos_user_settings_container.query_items(
+                query=f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}",
+                parameters=parameters,
+                enable_cross_partition_query=True,
+            ))
+            total = int(count_result[0] or 0) if count_result else 0
+            total_pages = get_control_center_total_pages(total, per_page)
+            page = clamp_control_center_page(page, total_pages)
+            sort_expression = CONTROL_CENTER_USER_SORTS[filters["sort"]]
+            query = (
+                "SELECT c.id, c.email, c.display_name, c.settings FROM c "
+                f"WHERE {where_clause} ORDER BY {sort_expression} {filters['direction'].upper()}, c.id ASC "
+                "OFFSET @offset LIMIT @limit"
+            )
+            paged_parameters = parameters + [
+                {"name": "@offset", "value": (page - 1) * per_page},
+                {"name": "@limit", "value": per_page},
+            ]
+            user_docs = list(cosmos_user_settings_container.query_items(
+                query=query,
+                parameters=paged_parameters,
+                enable_cross_partition_query=True,
+            ))
+            users = [_control_center_user_row(user, filters["now"]) for user in user_docs]
+            metric_times = sorted(
+                user["metrics_calculated_at"] for user in users
+                if isinstance(user.get("metrics_calculated_at"), str)
+            )
+            return jsonify({
+                "users": users,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total_items": total,
+                    "total_pages": total_pages,
+                    "has_prev": page > 1,
+                    "has_next": page < total_pages,
+                },
+                "metrics_freshness": {
+                    "oldest_calculated_at": metric_times[0] if metric_times else None,
+                    "newest_calculated_at": metric_times[-1] if metric_times else None,
+                    "missing_count": sum(not user.get("metrics_calculated_at") for user in users),
+                    "source": "user metrics refresh cache",
+                },
+            }), 200
+        except ValueError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user list query failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve users."}), 500
+
+    @bp.route('/api/v2/control-center/users/<user_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_user_detail(user_id):
+        """Return a user's profile, cached usage, recent activity and workspace memberships."""
+        try:
+            normalized_user_id = _control_center_validate_user_id(user_id)
+            exists = list(cosmos_user_settings_container.query_items(
+                query="SELECT VALUE COUNT(1) FROM c WHERE c.id = @user_id",
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            if not exists or not exists[0]:
+                return jsonify({"error": "User not found."}), 404
+
+            user_doc = read_user_settings_snapshot(
+                normalized_user_id,
+                allow_cross_user=True,
+            )
+            settings = user_doc.get("settings", {})
+            metrics = settings.get("metrics", {}) if isinstance(settings, dict) else {}
+            login_metrics = metrics.get("login_metrics", {})
+            chat_metrics = metrics.get("chat_metrics", {})
+            document_metrics = metrics.get("document_metrics", {})
+            token_metrics = metrics.get("token_metrics", {})
+
+            activity_items = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT TOP 20 c.id, c.timestamp, c.created_at, c.activity_type, "
+                    "c.resource_name, c.workspace_type, c.token_type, c.status, c.usage "
+                    "FROM c WHERE c.user_id = @user_id "
+                    "ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                partition_key=normalized_user_id,
+            ))
+
+            group_docs = list(cosmos_groups_container.query_items(
+                query=(
+                    "SELECT c.id, c.name, c.owner, c.admins, c.documentManagers, c.users "
+                    "FROM c WHERE c.owner.id = @user_id "
+                    "OR ARRAY_CONTAINS(c.admins, @user_id) "
+                    "OR ARRAY_CONTAINS(c.documentManagers, @user_id) "
+                    "OR EXISTS (SELECT VALUE member FROM member IN c.users WHERE member.userId = @user_id)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            group_memberships = []
+            for group in group_docs:
+                if (group.get("owner") or {}).get("id") == normalized_user_id:
+                    role = "Owner"
+                elif normalized_user_id in (group.get("admins") or []):
+                    role = "Admin"
+                elif normalized_user_id in (group.get("documentManagers") or []):
+                    role = "DocumentManager"
+                else:
+                    role = "User"
+                group_memberships.append({
+                    "id": group.get("id", ""),
+                    "name": group.get("name", ""),
+                    "role": role,
+                    "owned": role == "Owner",
+                })
+
+            public_docs = list(cosmos_public_workspaces_container.query_items(
+                query=(
+                    "SELECT c.id, c.name, c.owner, c.admins, c.documentManagers "
+                    "FROM c WHERE c.owner.userId = @user_id "
+                    "OR ARRAY_CONTAINS(c.admins, @user_id) "
+                    "OR EXISTS (SELECT VALUE manager FROM manager IN c.documentManagers "
+                    "WHERE manager.userId = @user_id OR manager = @user_id)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            public_memberships = []
+            for workspace in public_docs:
+                owner_id = (workspace.get("owner") or {}).get("userId")
+                is_admin = normalized_user_id in (workspace.get("admins") or [])
+                is_manager = any(
+                    manager == normalized_user_id
+                    or isinstance(manager, dict) and manager.get("userId") == normalized_user_id
+                    for manager in (workspace.get("documentManagers") or [])
+                )
+                role = "Owner" if owner_id == normalized_user_id else "Admin" if is_admin else "DocumentManager" if is_manager else "Member"
+                public_memberships.append({
+                    "id": workspace.get("id", ""),
+                    "name": workspace.get("name", ""),
+                    "role": role,
+                    "owned": role == "Owner",
+                })
+
+            activity_tokens = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT VALUE SUM(c.usage.total_tokens) FROM c "
+                    "WHERE c.user_id = @user_id AND c.activity_type = 'token_usage' "
+                    "AND IS_DEFINED(c.usage.total_tokens) AND IS_NUMBER(c.usage.total_tokens)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                partition_key=normalized_user_id,
+            ))
+            total_tokens = (
+                activity_tokens[0]
+                if activity_tokens and activity_tokens[0] is not None
+                else token_metrics.get("total_tokens")
+            )
+
+            return jsonify({
+                "user": {
+                    "id": normalized_user_id,
+                    "email": user_doc.get("email", ""),
+                    "display_name": user_doc.get("display_name", ""),
+                    "access": _control_center_effective_restriction(settings, "access"),
+                    "file_uploads": _control_center_effective_restriction(settings, "file_uploads"),
+                },
+                "usage": {
+                    "last_login": login_metrics.get("last_login"),
+                    "total_logins": login_metrics.get("total_logins"),
+                    "conversations": chat_metrics.get("total_conversations"),
+                    "documents": document_metrics.get("total_documents"),
+                    "tokens": total_tokens,
+                    "metrics_calculated_at": metrics.get("calculated_at"),
+                },
+                "activity": [
+                    {
+                        "id": item.get("id", ""),
+                        "activity_type": item.get("activity_type", ""),
+                        "timestamp": item.get("timestamp") or item.get("created_at"),
+                        "resource_name": item.get("resource_name"),
+                        "workspace_type": item.get("workspace_type"),
+                        "token_type": item.get("token_type"),
+                        "status": item.get("status"),
+                        "usage": item.get("usage"),
+                    }
+                    for item in activity_items
+                ],
+                "memberships": {
+                    "groups": group_memberships,
+                    "public_workspaces": public_memberships,
+                },
+            }), 200
+        except ValueError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user detail query failed.",
+                extra={"user_id": str(user_id), "error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve user details."}), 500
+
+    @bp.route('/api/v2/control-center/users/bulk-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users_bulk_action():
+        """Apply one access or upload setting to at most 500 explicitly or filter-selected users."""
+        try:
+            data = request.get_json(silent=True) or {}
+            action_type = data.get("action_type")
+            action_settings = data.get("settings")
+            if action_type not in {"access", "file_uploads"} or not isinstance(action_settings, dict):
+                return jsonify({"error": "Choose an access or file-upload action."}), 400
+            status = action_settings.get("status")
+            if status not in {"allow", "deny"}:
+                return jsonify({"error": "Status must be allow or deny."}), 400
+            expires_at = action_settings.get("datetime_to_allow")
+            if expires_at:
+                try:
+                    parsed_expiry = datetime.fromisoformat(
+                        str(expires_at).replace("Z", "+00:00")
+                    )
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Expiry must be an ISO 8601 datetime."}), 400
+                if parsed_expiry.tzinfo is None:
+                    parsed_expiry = parsed_expiry.replace(tzinfo=timezone.utc)
+                expires_at = parsed_expiry.astimezone(timezone.utc).isoformat()
+
+            if isinstance(data.get("user_ids"), list):
+                user_ids = [
+                    _control_center_validate_user_id(value)
+                    for value in data["user_ids"]
+                ]
+                user_ids = list(dict.fromkeys(user_ids))
+            elif isinstance(data.get("filter"), dict):
+                filters = _control_center_parse_user_filters(data["filter"])
+                where_clause, parameters = _control_center_user_where(filters)
+                excluded = data.get("exclude_ids", [])
+                if not isinstance(excluded, list) or len(excluded) > CONTROL_CENTER_USERS_MAX_BULK:
+                    return jsonify({"error": "The exclusion list is too large."}), 400
+                excluded_ids = list(dict.fromkeys(
+                    _control_center_validate_user_id(value) for value in excluded
+                ))
+                if excluded_ids:
+                    exclusion_params = []
+                    placeholders = []
+                    for index, excluded_id in enumerate(excluded_ids):
+                        name = f"@excluded_{index}"
+                        placeholders.append(name)
+                        exclusion_params.append({"name": name, "value": excluded_id})
+                    where_clause += f" AND c.id NOT IN ({', '.join(placeholders)})"
+                    parameters += exclusion_params
+                bounded_query = (
+                    "SELECT c.id FROM c WHERE "
+                    f"{where_clause} OFFSET 0 LIMIT @selection_limit"
+                )
+                selected_rows = list(cosmos_user_settings_container.query_items(
+                    query=bounded_query,
+                    parameters=parameters + [{
+                        "name": "@selection_limit",
+                        "value": CONTROL_CENTER_USERS_MAX_BULK + 1,
+                    }],
+                    enable_cross_partition_query=True,
+                ))
+                if len(selected_rows) > CONTROL_CENTER_USERS_MAX_BULK:
+                    return jsonify({
+                        "error": f"Bulk actions are limited to {CONTROL_CENTER_USERS_MAX_BULK} users."
+                    }), 400
+                user_ids = [
+                    _control_center_validate_user_id(item.get("id"))
+                    for item in selected_rows
+                ]
+            else:
+                return jsonify({"error": "Provide user_ids or a filter with optional exclude_ids."}), 400
+
+            if not user_ids:
+                return jsonify({"error": "Select at least one user."}), 400
+            if len(user_ids) > CONTROL_CENTER_USERS_MAX_BULK:
+                return jsonify({
+                    "error": f"Bulk actions are limited to {CONTROL_CENTER_USERS_MAX_BULK} users."
+                }), 400
+
+            setting_value = {
+                "status": status,
+                "datetime_to_allow": expires_at,
+            }
+            successful_ids = []
+            failed_ids = []
+            for target_user_id in user_ids:
+                try:
+                    updated = update_user_settings(
+                        target_user_id,
+                        {action_type: setting_value},
+                        allow_cross_user=True,
+                    )
+                    (successful_ids if updated else failed_ids).append(target_user_id)
+                except Exception as update_error:
+                    debug_print(
+                        f"[CONTROL_CENTER] Bulk user update failed for {target_user_id}: "
+                        f"{type(update_error).__name__}"
+                    )
+                    failed_ids.append(target_user_id)
+
+            admin_user = session.get("user", {})
+            log_event("[CONTROL_CENTER] Bulk User Action", {
+                "admin_user": admin_user.get("preferred_username", "unknown"),
+                "action_type": action_type,
+                "user_count": len(user_ids),
+                "success_count": len(successful_ids),
+                "failed_count": len(failed_ids),
+                "settings": setting_value,
+            })
+            return jsonify({
+                "success_count": len(successful_ids),
+                "failed_count": len(failed_ids),
+                "failed_user_ids": failed_ids,
+            }), 200
+        except ValueError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 bulk user action failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to complete the bulk user action."}), 500
+
+    @bp.route('/api/v2/control-center/users/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users_export():
+        """Stream a CSV export of users matching the same filters as the Users list."""
+        try:
+            filters = _control_center_parse_user_filters(request.args)
+            where_clause, parameters = _control_center_user_where(filters)
+            sort_expression = CONTROL_CENTER_USER_SORTS[filters["sort"]]
+            query = (
+                "SELECT c.id, c.email, c.display_name, c.settings FROM c "
+                f"WHERE {where_clause} ORDER BY {sort_expression} {filters['direction'].upper()}, c.id ASC"
+            )
+            user_docs = cosmos_user_settings_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True,
+            )
+
+            def stream_csv():
+                buffer = StringIO()
+                writer = csv.writer(buffer)
+                headers = (
+                    "id", "display_name", "email", "access_status", "access_expires_at",
+                    "file_upload_status", "file_upload_expires_at", "last_login",
+                    "conversations", "documents", "tokens", "metrics_calculated_at",
+                )
+                writer.writerow(headers)
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                for user_doc in user_docs:
+                    row = _control_center_user_row(user_doc, filters["now"])
+                    values = (
+                        row["id"], row["display_name"], row["email"],
+                        row["access"]["status"], row["access"]["expires_at"],
+                        row["file_uploads"]["status"], row["file_uploads"]["expires_at"],
+                        row["last_login"], row["conversations"], row["documents"],
+                        row["tokens"], row["metrics_calculated_at"],
+                    )
+                    writer.writerow(_control_center_csv_safe_cell(value) for value in values)
+                    yield buffer.getvalue()
+                    buffer.seek(0)
+                    buffer.truncate(0)
+
+            response = Response(
+                stream_with_context(stream_csv()),
+                mimetype="text/csv",
+                headers={"Content-Disposition": 'attachment; filename="control-center-users.csv"'},
+            )
+            response.headers["Cache-Control"] = "private, no-store"
+            return response
+        except ValueError as ex:
+            return jsonify({"error": str(ex)}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user export query failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to export users."}), 500
 
     # Group Management APIs
     @bp.route('/api/admin/control-center/groups', methods=['GET'])

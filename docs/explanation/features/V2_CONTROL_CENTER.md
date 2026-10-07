@@ -4,6 +4,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 
 **Dashboard implemented in version:** 0.261.279
 **Foundation implemented in version:** 0.261.278
+**Users implemented in version:** 0.261.280
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
 
@@ -15,7 +16,7 @@ The Control Center is a distinct React route (`/control-center` and `/control-ce
 
 ## Dashboard
 
-Users, Groups, Public Workspaces, and Activity Logs remain permission-gated placeholders until their V2 implementations are delivered. They link to the classic Control Center at `/admin/control-center`.
+Groups and Public Workspaces remain permission-gated placeholders until their V2 implementations are delivered. They link to the classic Control Center at `/admin/control-center`. Users management is available to users with `can_manage_users`.
 
 The Dashboard is available to users with `can_view_dashboard`, including users assigned the configured ControlCenterDashboardReader role. `GET /api/v2/control-center/dashboard/summary` returns counts and period comparisons; `GET /api/v2/control-center/dashboard/insights` returns grouped chart data. Both use a 90-second in-process cache keyed by the date range and token filters. Pass `force_refresh=1` to bypass it.
 
@@ -36,6 +37,16 @@ Dashboard drill-through links set these parameters for the management sections b
 
 Section paths are `/control-center/users`, `/control-center/groups`, `/control-center/public-workspaces`, and `/control-center/activity-logs`. IDs and parameter values are URL-encoded. `date` is a UTC calendar date; `start_date` and `end_date` are inclusive UTC dates.
 
+## Users
+
+The Users section supports server-side search by email or display name, access and file-upload status filters, last-login windows, document-ownership filtering, sortable usage columns, and paging. It accepts the Dashboard drill-through contract: `user_id` opens that user's detail drawer, `filter=active` selects users active within 30 days, and `status=blocked` selects denied accounts. Direct filters are `access_status`, `upload_status`, `last_login`, and `has_documents`; `search`, `page`, `per_page`, `sort`, and `direction` control search and result ordering. The API validates filter and sort values and binds query values as parameters.
+
+`GET /api/v2/control-center/users` returns cached login, conversation, document, and token metrics with their calculation timestamps. Its response includes the oldest and newest metric timestamps and the count of users on the current page without a cached metric snapshot so administrators can judge freshness. `GET /api/v2/control-center/users/<user_id>` returns the profile and current access/upload restrictions, usage summary, the most recent activity records, and group/public-workspace memberships and ownership.
+
+Administrators can change access or upload restrictions for one user, or select explicit users and users matching the current filters across pages. Filter-based bulk selection supports exclusions and is capped at 500 accounts. Bulk changes use the existing user settings update path so established activity and audit behavior remains in effect. Deleting a user's documents creates an approval request; it does not directly delete the documents.
+
+`GET /api/v2/control-center/users/export.csv` exports all users matching the current filters. CSV cells beginning with `=`, `+`, `-`, or `@` are prefixed to prevent spreadsheet formula execution. The Activity tab's link carries `user_id` into the Activity Logs section.
+
 ## Data health
 
 Data health is available to users with `can_run_maintenance`. Its Check button calls `GET /api/admin/control-center/migrate/status` only when requested. Run backfill requires confirmation and calls `POST /api/admin/control-center/migrate/all`. The legacy-flag counts do not prove that activity logs are missing: normal application writers already record activity, so the backfill is normally unnecessary. The backfill checks for a matching resource creation record in the user's activity-log partition and uses stable per-resource IDs to avoid duplicate writes on repeated or concurrent runs.
@@ -50,4 +61,4 @@ Functional checks cover dashboard status normalization, period deltas, cache exp
 
 ## Version tracking
 
-The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278** and the dashboard in **0.261.279**.
+The application version is defined by `VERSION` in `application/single_app/config.py`. The foundation was added in **0.261.278**, the dashboard in **0.261.279**, and user management in **0.261.280**.

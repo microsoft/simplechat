@@ -56,6 +56,7 @@ INBOUND_MCP_BEARER_PATH_PREFIXES = (
 ADMIN_PATH_PREFIXES = (
     "/admin/",
     "/api/admin/",
+    "/api/v2/control-center/",
     "/api/semantic-kernel/plugins",
 )
 

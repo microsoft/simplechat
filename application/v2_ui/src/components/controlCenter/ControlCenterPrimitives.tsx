@@ -22,6 +22,7 @@ export function useCrossPageSelection() {
     }>(() => ({ allMatchingSelected: false, includedIds: new Set(), excludedIds: new Set() }));
     return {
         selectedIds: selection.includedIds,
+        excludedIds: selection.excludedIds,
         allMatchingSelected: selection.allMatchingSelected,
         isSelected: (id: string) => selection.allMatchingSelected
             ? !selection.excludedIds.has(id)
@@ -280,8 +281,27 @@ export function ApprovalSubmittedNotice({ children }: { children: ReactNode }) {
     </GlassPanel>;
 }
 
-export function ExportButton({ filename, rows }: { filename: string; rows: Record<string, unknown>[] }) {
+export function ExportButton({
+    filename,
+    rows,
+    serverQuery,
+}: {
+    filename: string;
+    rows?: Record<string, unknown>[];
+    serverQuery?: string;
+}) {
+    if (serverQuery !== undefined) {
+        return (
+            <a className="inline-flex items-center gap-2 rounded-xl border border-edge bg-surface-1 px-3 py-1.5 text-xs font-medium text-text-1 hover:bg-surface-2"
+                href={`/api/v2/control-center/users/export.csv${serverQuery ? `?${serverQuery}` : ''}`}
+                download={filename}>
+                <Download size={14} aria-hidden="true" />Export CSV
+            </a>
+        );
+    }
+
     const exportCsv = () => {
+        if (!rows) return;
         const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))];
         const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
         const csv = [headers.map(escape).join(','), ...rows.map((row) => headers.map((key) => escape(row[key])).join(','))].join('\r\n');
