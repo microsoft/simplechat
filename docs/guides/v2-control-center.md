@@ -10,7 +10,7 @@ audience: admin
 
 The V2 Control Center is a separate administration pane for users assigned Control Center access. It is kept out of the primary workspace navigation and appears in **Account → Control Center** when at least one Control Center capability is available to you.
 
-The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users and Groups have native V2 management; Public Workspaces still links to the classic Control Center while that V2 section is delivered.
+The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users, Groups and Public Workspaces have native V2 management.
 
 ## Manage users
 
@@ -41,6 +41,20 @@ Use **Add member** to search the directory, or **Import CSV** to add up to 1,000
 Changing member roles, removing members and saving retention still require group Owner/Admin membership; full Control Center access alone is not enough. The UI explains unavailable controls. Retention additionally requires enabled group retention and accepts organization defaults, no automatic deletion, or a permitted day count.
 
 Requesting group deletion, deleting all group documents, taking ownership, or transferring ownership to a member requires a reason and creates an approval request. Nothing is deleted and ownership remains unchanged at submission. Follow **View approval requests** in the result notice to the approvals page.
+
+## Manage public workspaces
+
+Public workspace management was implemented in **0.261.283**. Open **Public Workspaces** to find knowledge spaces by name/description, responsible owner and status. Sort and page on the server, bookmark the filtered URL or export matching records (up to 10,000). The list displays recorded metric refresh times. Unavailable metrics are not zero; refresh reloads stored snapshots, while opening details computes live document and token totals.
+
+Managers include the owner, administrators and document managers, not everyone who can read the public collection. Add or import only Admin and DocumentManager roles. Public readers are implicit. Verify CSV identities before import, and review each import outcome.
+
+Select up to 500 workspaces across pages to change status. Locked and inactive changes require a reason. Active both unlocks the workspace and enables uploads; upload-disabled blocks uploads, while inactive makes the workspace unavailable. Failed items stay visible after the list refresh.
+
+The detail drawer shares the Groups tabs and supports status history, recent activity/raw JSON/export, ownership requests and document summaries. Member removal/role changes and retention edits still require workspace Owner/Admin membership. The existing public retention API supports `none` or a permitted numeric day count: inherited fields are left unchanged, and resetting a custom value to organization defaults is not available here.
+
+Individual document deletion, workspace deletion, take-ownership and transfer-to-member workflows request approval on the existing server routes. A submission notice means **requested**, not executed. Its link opens the particular approval with workspace scope. The existing document-deletion executor can report successful deletions while other documents fail; workspace deletion can then proceed after partial cleanup. Review execution logs/results rather than treating the submitted request as completed cleanup.
+
+Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links retain public workspace scope for Phase 6.
 
 ## Check activity-log data health
 

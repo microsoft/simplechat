@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.285)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   List, detail, bulk status, individual status, and export validation failures return stable messages instead of exception text, preserving HTTP 400 and input bounds.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+### **(v0.261.284)**
+
+#### New Features
+
+*   **V2 Control Center Public Workspace Management**
+    *   Adds query-level search/status/owner filters, server sorting and pagination, bounded cross-page bulk status changes, and injection-safe filtered CSV export.
+    *   Reuses detail tabs for ownership, supported manager roles/CSV, status history, retention, recent activity and document totals. Missing recorded metrics remain unavailable, not zero.
+    *   Preserves existing approval semantics and native membership permissions; public retention cannot reset custom values to defaults through its existing save API.
+    *   (Ref: `PublicWorkspacesSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_public_workspaces.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
+
 ### **(v0.261.283)**
 
 #### Bug Fixes
