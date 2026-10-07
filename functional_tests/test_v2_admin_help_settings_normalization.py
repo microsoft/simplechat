@@ -2,8 +2,8 @@
 # test_v2_admin_help_settings_normalization.py
 """
 Functional test for how the V2 settings PATCH validates the Help group.
-Version: 0.261.273
-Implemented in: 0.261.273
+Version: 0.261.274
+Implemented in: 0.261.274
 
 The server-rendered Support Menu form quietly repairs bad input: a malformed
 recipient is cleared and Send Feedback is switched off, and Send Feedback is also
@@ -40,7 +40,7 @@ def test_malformed_recipients_are_refused():
     """A typo is caught where it is typed, not in a user's draft."""
     print("Testing recipient validation...")
 
-    assert_app_version_at_least("0.261.273")
+    assert_app_version_at_least("0.261.274")
 
     for value in (
         "support",

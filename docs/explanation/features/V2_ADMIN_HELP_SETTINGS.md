@@ -1,6 +1,6 @@
 # V2 Admin Help Settings
 
-**Implemented in version: 0.261.273**
+**Implemented in version: 0.261.274**
 
 ## Overview
 

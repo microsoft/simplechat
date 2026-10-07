@@ -2,8 +2,8 @@
 # test_v2_admin_help_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Help group.
-Version: 0.261.273
-Implemented in: 0.261.273
+Version: 0.261.274
+Implemented in: 0.261.274
 
 The V2 admin surface renders the Help group from ``admin_settings_fields.py``,
 while the server-rendered page renders it from ``templates/admin/_panes/``. Before
@@ -113,7 +113,7 @@ def test_help_panes_match_navigation():
     """The panes read here must be the ones ADMIN_NAV puts in the Help group."""
     print("Testing Help pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.273")
+    assert_app_version_at_least("0.261.274")
 
     group = next((item for item in ADMIN_NAV if item["id"] == HELP_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines a 'help' group."
