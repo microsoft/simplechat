@@ -61,6 +61,18 @@ import { OrchestrationPlannerModelPicker } from '../components/admin/Orchestrati
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
+import { GovernanceDialogHost } from '../components/admin/governance/GovernanceDialogHost';
+import { GovernanceFeaturePolicies } from '../components/admin/governance/GovernanceFeaturePolicies';
+import { GovernanceItemPolicyManager } from '../components/admin/governance/GovernanceItemPolicyManager';
+import {
+    GovernanceInboundMcpPolicies,
+    GovernanceMcpDestinationPolicies,
+} from '../components/admin/governance/GovernanceMcpSections';
+import { GovernanceOverview } from '../components/admin/governance/GovernanceOverview';
+import { InboundMcpGovernanceShortcut } from '../components/admin/governance/InboundMcpGovernanceShortcut';
+import { RelatedSettingsLinks } from '../components/admin/governance/RelatedSettingsLinks';
+import { newItemPolicyDraft } from '../lib/governance';
+import { openGovernanceResourceAccess } from '../stores/governanceStore';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
@@ -235,6 +247,10 @@ export function AdminSettingsPage() {
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
     const [delegationDirty, setDelegationDirty] = useState(false);
+    // An inline feature policy edit lives in its section, so leaving the category or
+    // searching it away would discard it, for the same reason as Call agent edits.
+    const [governanceDirty, setGovernanceDirty] = useState(false);
+    const navigationLocked = delegationDirty || governanceDirty;
 
     const [draft, setDraft] = useState<Json>({});
     const [saving, setSaving] = useState(false);
@@ -352,6 +368,27 @@ export function AdminSettingsPage() {
     // A gate may live inside a nested settings object, so resolving a dependency
     // needs the schema rather than the key alone.
     const fieldsByKey = useMemo(() => buildFieldIndex(schema), [schema]);
+
+    /**
+     * The section that owns each settings key.
+     *
+     * Links that name a setting rather than a section -- the governance state under an
+     * Agents & Actions switch, or the section a hidden one is enabled from -- resolve
+     * through here. A writable declaration wins over a read-only mirror of the same key.
+     */
+    const sectionOfKey = useMemo(() => {
+        const owners = new Map<string, string>();
+        for (const writableOnly of [true, false]) {
+            for (const [sectionId, fields] of Object.entries(schema)) {
+                for (const field of fields) {
+                    if (field.key && !owners.has(field.key) && (!writableOnly || !field.readonly)) {
+                        owners.set(field.key, sectionId);
+                    }
+                }
+            }
+        }
+        return owners;
+    }, [schema]);
 
     const suppressedKeys = useMemo(
         () => new Set(data?.suppressed_capabilities ?? []),
@@ -720,16 +757,20 @@ export function AdminSettingsPage() {
         if (!shown) {
             const target = sections.find((section) => section.sectionId === sectionId);
             const nextGroup = !target ? null : activeGroup && target.groupId !== activeGroup ? target.groupId : activeGroup;
-            if (nextGroup !== activeGroup && delegationDirty) {
-                // Changing category would unmount the delegation manager and its edits.
-                toast.error('Save or cancel Call agent changes before changing settings categories.');
+            if (nextGroup !== activeGroup && navigationLocked) {
+                // Changing category would unmount an editor holding unsaved edits.
+                toast.error(
+                    delegationDirty
+                        ? 'Save or cancel Call agent changes before changing settings categories.'
+                        : 'Save or discard the feature policy you are editing before changing settings categories.',
+                );
                 return;
             }
             setQuery('');
             setActiveGroup(nextGroup);
         }
         setPendingScroll(sectionId);
-    }, [visibleSections, sections, activeGroup, delegationDirty]);
+    }, [visibleSections, sections, activeGroup, navigationLocked, delegationDirty]);
 
     useEffect(() => {
         if (!pendingScroll) {
@@ -761,6 +802,33 @@ export function AdminSettingsPage() {
         },
         [goToSection],
     );
+
+    /**
+     * Move to a section named by a link, or to where it is switched on when it is hidden.
+     *
+     * A section can be conditional -- the workspace permissions only exist while Workspace
+     * Mode is on -- and a link to it then has nothing to scroll to. It leads instead to the
+     * section owning the condition, which is where the reader can make the target appear.
+     */
+    const navigateToSetting = useCallback(
+        (sectionId: string) => {
+            if (!sections.some((section) => section.sectionId === sectionId)) {
+                const condition = (data?.admin_nav ?? [])
+                    .flatMap((group) => group.tabs.flatMap((tab) => tab.sections))
+                    .find((section) => section.id === sectionId)?.condition;
+                const owner = condition ? sectionOfKey.get(condition) : undefined;
+                if (owner && owner !== sectionId) {
+                    goToSection(owner);
+                    return;
+                }
+            }
+            goToSection(sectionId);
+        },
+        [sections, data, sectionOfKey, goToSection],
+    );
+
+    /** Settings with unsaved edits applied, for governance dialogs that list configured values. */
+    const effectiveSettings = useMemo<Json>(() => ({ ...settings, ...draft }), [settings, draft]);
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
@@ -897,9 +965,76 @@ export function AdminSettingsPage() {
                     return <OrchestrationCard key={key} help={field.help} />;
                 case 'inbound-mcp-disabled-notice':
                     return <InboundMcpNotice key={key} />;
+                case 'inbound-mcp-governance-shortcut':
+                    return (
+                        <InboundMcpGovernanceShortcut
+                            key={key}
+                            label={field.label}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                            onNavigate={navigateToSetting}
+                        />
+                    );
+                case 'governance-overview':
+                    return <GovernanceOverview key={key} />;
+                case 'governance-feature-policies':
+                    return (
+                        <GovernanceFeaturePolicies
+                            key={key}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                            onNavigate={navigateToSetting}
+                            onDirtyChange={setGovernanceDirty}
+                        />
+                    );
+                case 'governance-item-policies':
+                    return (
+                        <div key={key} className="py-3">
+                            {field.help ? (
+                                <p className="mb-3 max-w-[72ch] text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
+                            ) : null}
+                            <GovernanceItemPolicyManager
+                                newPolicy={() => newItemPolicyDraft({ entity_type: 'global_agent' })}
+                                emptyText="No delegated item policies yet. Every global endpoint, agent, and action is open to everyone who passes its feature policy until a policy here narrows it."
+                                label="Delegated item policies"
+                            />
+                        </div>
+                    );
+                case 'governance-mcp-destination-policies':
+                    return (
+                        <GovernanceMcpDestinationPolicies
+                            key={key}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                        />
+                    );
+                case 'governance-inbound-mcp-policies':
+                    return (
+                        <GovernanceInboundMcpPolicies
+                            key={key}
+                            help={field.help}
+                            settings={settings}
+                            draft={draft}
+                            mcpUiEnabled={Boolean(runtimeFlags.mcp_ui_enabled)}
+                        />
+                    );
                 case 'model-connections-manager':
                     // The section card is already the "AI Connections" region.
-                    return <ModelConnectionsManager key={key} help={field.help} landmark={false} />;
+                    return (
+                        <ModelConnectionsManager
+                            key={key}
+                            help={field.help}
+                            landmark={false}
+                            onManageAccess={(connection) => openGovernanceResourceAccess({
+                                entityType: 'global_endpoint',
+                                itemId: connection.id,
+                                label: connection.name || connection.id,
+                            })}
+                        />
+                    );
                 case 'model-catalog-manager':
                     return (
                         <ModelCatalogManager
@@ -1131,6 +1266,21 @@ export function AdminSettingsPage() {
             );
         }
 
+        if (field.related_settings?.length) {
+            return (
+                <div key={key}>
+                    {control}
+                    <RelatedSettingsLinks
+                        related={field.related_settings}
+                        read={(relatedKey) =>
+                            readFieldValue(fieldsByKey.get(relatedKey) ?? READ_ONLY_REF(relatedKey), settings, draft)}
+                        sectionOf={(relatedKey) => sectionOfKey.get(relatedKey)}
+                        onNavigate={navigateToSetting}
+                    />
+                </div>
+            );
+        }
+
         return <div key={key}>{control}</div>;
     };
 
@@ -1239,7 +1389,7 @@ export function AdminSettingsPage() {
                                 <button
                                     key={category.id ?? '__all'}
                                     type="button"
-                                    disabled={delegationDirty}
+                                    disabled={navigationLocked}
                                     aria-pressed={active}
                                     onClick={() => setActiveGroup(category.id)}
                                     className={clsx(
@@ -1267,7 +1417,7 @@ export function AdminSettingsPage() {
                         <div className="mx-auto w-full max-w-[112rem]">
                             <div className="mb-3 max-w-md lg:hidden">
                                 <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
-                                <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
+                                <select id="admin-settings-category" value={activeGroup ?? ''} disabled={navigationLocked}
                                     onChange={(event) => setActiveGroup(event.target.value || null)}
                                     className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
                                     <option value="">All settings</option>
@@ -1288,7 +1438,7 @@ export function AdminSettingsPage() {
                                     onChange={(event) => setQuery(event.target.value)}
                                     placeholder="Search every setting…  (press / to focus)"
                                     aria-label="Search settings"
-                                    disabled={delegationDirty}
+                                    disabled={navigationLocked}
                                     className={clsx(
                                         'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
                                         'text-sm text-text-1 placeholder:text-text-3',
@@ -1380,6 +1530,8 @@ export function AdminSettingsPage() {
                                         renderField={renderField}
                                         renderCapability={renderField}
                                         appearance={agentSectionAppearances[section.sectionId]}
+                                        runtimeFlags={runtimeFlags}
+                                        onNavigate={navigateToSetting}
                                         // While a search is filtering, a match inside a
                                         // collapsed group has to be shown or the card would
                                         // appear empty.
@@ -1499,6 +1651,9 @@ export function AdminSettingsPage() {
                     </span>
                 </div>
             ) : null}
+
+            {/* Governance dialogs open from several sections, so one host serves them all. */}
+            {data ? <GovernanceDialogHost settings={effectiveSettings} /> : null}
         </>
     );
 }

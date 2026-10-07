@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
@@ -68,7 +68,7 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
+FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions", "governance")
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -111,6 +111,10 @@ RELOCATED_CAPABILITIES = {
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
     "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
+    # Governance. The fallback scan happened to file this one correctly, but only as a
+    # bare switch named "Mcp destination governance"; it is now declared, labelled as
+    # the allowlist it enforces, and sits beside the policies it enforces.
+    "enable_mcp_destination_governance": ("governance-mcp-destination-section", "mcp-governance"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an

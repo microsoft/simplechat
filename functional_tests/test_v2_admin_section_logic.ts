@@ -1,10 +1,11 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.258
+// Version: 0.261.260
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
 // Every-section presentation and schema-derived hierarchy added in: 0.261.258
+// Runtime-flag field visibility and governance appearance added in: 0.261.260
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -477,11 +478,13 @@ check('a declared status rule wins over the derived one', () => {
     assert.equal(computeSectionStatus(fields, { enable_thing: true, enable_declared: true }, {}, rule), 'ready');
 });
 
-check('only the workspace-permission cues remain declared by hand', () => {
-    assert.deepEqual(Object.keys(agentSectionAppearances), ['agent-toggles-card']);
-    for (const field of Object.values(agentSectionAppearances['agent-toggles-card']?.fields ?? {})) {
-        assert.equal(field?.emphasis, undefined, 'emphasis is derived from the schema now');
-        assert.ok(field?.Icon, 'each permission keeps its person or group cue');
+check('only the scope cues remain declared by hand', () => {
+    assert.deepEqual(Object.keys(agentSectionAppearances), ['agent-toggles-card', 'governance-feature-toggles-section']);
+    for (const sectionId of Object.keys(agentSectionAppearances)) {
+        for (const field of Object.values(agentSectionAppearances[sectionId]?.fields ?? {})) {
+            assert.equal(field?.emphasis, undefined, 'emphasis is derived from the schema now');
+            assert.ok(field?.Icon, 'each setting keeps its person, group, or everyone cue');
+        }
     }
 });
 
@@ -592,6 +595,35 @@ check('distinct subsection presentation preserves collapsed defaults and counts'
     assert.match(markup, /2 settings/);
     assert.doesNotMatch(markup, /Hero Title|Hero Subtitle/);
     assert.deepEqual(calls, []);
+});
+
+check('a field gated on a runtime flag renders when the server sends that flag', () => {
+    const fields: AdminField[] = [
+        { type: 'component', component: 'disabled-notice', label: 'Preview notice', depends_on: { flag: 'mcp_ui_enabled', equals: false } },
+        { key: 'enable_inbound_mcp_server', type: 'switch', label: 'Enable Inbound MCP Server', depends_on: { flag: 'mcp_ui_enabled', equals: true } },
+    ];
+    const render = (runtimeFlags?: Record<string, boolean>) => {
+        const calls: string[] = [];
+        renderToStaticMarkup(createElement(SettingsSection, {
+            sectionId: 'inbound-mcp-configuration',
+            label: 'Inbound MCP',
+            groupLabel: 'Agents & Actions',
+            tabLabel: 'Inbound MCP',
+            fields,
+            settings: {},
+            draft: {},
+            runtimeFlags,
+            renderField: (field) => {
+                calls.push(field.key ?? field.component ?? '');
+                return createElement('span', { key: field.key ?? field.component }, field.label);
+            },
+            renderCapability: () => null,
+        }));
+        return calls;
+    };
+    // The page filters on the same flags, so the section must not drop what it was given.
+    assert.deepEqual(render({ mcp_ui_enabled: true }), ['enable_inbound_mcp_server']);
+    assert.deepEqual(render({ mcp_ui_enabled: false }), ['disabled-notice']);
 });
 
 let passed = 0;

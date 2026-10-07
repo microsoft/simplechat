@@ -514,8 +514,8 @@ mcp-governance:
   name: "MCP destination governance"
   area: "Agents and actions"
   audience: "Admins"
-  summary: "Adds governance controls for Model Context Protocol destinations used by agent actions."
-  why: "Use this when MCP tools are available and admins need to restrict unsafe or unapproved destinations. It is a governance guardrail, not a tool by itself, so pair it with action access policies."
+  summary: "Limits which remote MCP servers personal, group, and global actions may reach, using destination policies that name a server, host, URL, preset, or transport and the people they apply to."
+  why: "Use this once remote MCP actions are allowed and people should only reach servers you have approved. Write policies for the servers already in use before enforcing, because with enforcement on and no matching policy every remote MCP action is refused."
   default_state: "Disabled"
   admin_tab: governance
   setting_keys:
@@ -523,6 +523,8 @@ mcp-governance:
   reference:
     - title: "Actions reference"
       url: /reference/actions/
+    - title: "MCP action"
+      url: /reference/actions/mcp/
 content-safety:
   name: "Content safety"
   area: "Governance and safety"

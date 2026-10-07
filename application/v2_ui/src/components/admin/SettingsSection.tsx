@@ -106,21 +106,34 @@ export interface SettingsSectionProps {
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * Flags the server resolves outside the settings document, such as whether inbound MCP
+     * is enabled for the deployment. A field gated on one is hidden without them.
+     */
+    runtimeFlags?: Record<string, boolean>;
+    /**
+     * Move the page to another section, for prerequisite links. Without it those links
+     * open the classic page.
+     */
+    onNavigate?: (sectionId: string) => void;
     children?: ReactNode;
 }
 
 function RequirementNotice({
     requirement,
     satisfied,
+    onNavigate,
 }: {
     requirement: NonNullable<AdminField['requires']>;
     satisfied: boolean;
+    onNavigate?: (sectionId: string) => void;
 }) {
     if (satisfied) {
         return null;
     }
 
     const blocking = (requirement.mode ?? 'block') === 'block';
+    const targetSection = requirement.target_section;
 
     return (
         <div
@@ -145,9 +158,19 @@ function RequirementNotice({
                 {requirement.description ? (
                     <p className="mt-0.5 text-text-3">{requirement.description}</p>
                 ) : null}
-                {requirement.target_section ? (
+                {/* Within the page when the page can take the reader there; the classic
+                    page otherwise, which is where these links always used to lead. */}
+                {targetSection && onNavigate ? (
+                    <button
+                        type="button"
+                        onClick={() => onNavigate(targetSection)}
+                        className="mt-1 inline-block text-accent underline"
+                    >
+                        Configure {requirement.label}
+                    </button>
+                ) : targetSection ? (
                     <a
-                        href={`/admin/settings#${encodeURIComponent(requirement.target_section)}`}
+                        href={`/admin/settings#${encodeURIComponent(targetSection)}`}
                         className="mt-1 inline-block text-accent underline"
                     >
                         Configure {requirement.label}
@@ -287,6 +310,8 @@ export function SettingsSection({
     renderCapability,
     forceExpanded,
     appearance,
+    runtimeFlags,
+    onNavigate,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -316,8 +341,8 @@ export function SettingsSection({
     const requirements = useMemo(() => collectRequirements(fields, settings, draft), [fields, settings, draft]);
 
     const groups = useMemo(
-        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft))),
-        [bodyFields, settings, draft],
+        () => groupFields(bodyFields.filter((field) => isFieldVisible(field, settings, draft, undefined, runtimeFlags))),
+        [bodyFields, settings, draft, runtimeFlags],
     );
 
     const presentation = presentSectionStatus(status);
@@ -433,6 +458,7 @@ export function SettingsSection({
                         key={requirement.key}
                         requirement={requirement}
                         satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
+                        onNavigate={onNavigate}
                     />
                 ))}
 
