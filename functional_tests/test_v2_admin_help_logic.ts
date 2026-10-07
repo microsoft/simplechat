@@ -1,8 +1,8 @@
 // test_v2_admin_help_logic.ts
 //
 // Runtime test for the V2 Admin Settings Help group.
-// Version: 0.261.274
-// Implemented in: 0.261.274
+// Version: 0.261.275
+// Implemented in: 0.261.275
 //
 // The Help group's judgement calls are invisible in a screenshot: which announcements are
 // shared when the stored map is incomplete, where an admin shortcut lands, which URLs may
@@ -223,13 +223,13 @@ check('a mailto draft accepts one plain address and encodes everything else', ()
 check('feedback and registration drafts are worded as the classic page words them', () => {
     const fields = { name: ' Ada ', email: 'ada@contoso.com', organization: 'Contoso', details: 'It broke.' };
     assert.equal(
-        feedbackDraftBody('bug_report', fields, '0.261.274'),
+        feedbackDraftBody('bug_report', fields, '0.261.275'),
         [
             'Feedback Type: Bug Report',
             'Name: Ada',
             'Email: ada@contoso.com',
             'Organization: Contoso',
-            'App Version: 0.261.274',
+            'App Version: 0.261.275',
             '',
             'Details:',
             'It broke.',
@@ -413,7 +413,7 @@ check('the Send Feedback cards prefill the administrator and link to the Support
             field: { type: 'component', component: 'send-feedback-feature-request', label: 'Request a Feature' },
             defaultName: 'Ada Admin',
             defaultEmail: 'ada@contoso.com',
-            appVersion: '0.261.274',
+            appVersion: '0.261.275',
         }),
     );
     assert.match(form, /value="Ada Admin"/);
@@ -439,7 +439,7 @@ check('the registration badge reads the stored registration', () => {
                 settings: { release_notifications_registered: registered },
                 defaultName: 'Ada',
                 defaultEmail: 'ada@contoso.com',
-                appVersion: '0.261.274',
+                appVersion: '0.261.275',
                 onRegistered: () => undefined,
             }),
         );

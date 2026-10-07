@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.274
+Version: 0.261.275
 Implemented in: 0.261.047
 Operations described in full: 0.261.269
 Data Lifecycle added to the fully described groups in: 0.261.272
 Governance added to the fully described groups in: 0.261.273
-Help group described in full: 0.261.274
+Scale described in full: 0.261.274
+Help group described in full: 0.261.275
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -32,9 +33,9 @@ Declaring a field is what takes a key out of that scan. This test holds five
 invariants so the misfiling cannot come back:
 
   1. The Appearance, Chat, Security, Governance, Agents & Actions, Workspaces, Data
-     Lifecycle, Operations and Help groups are fully described by the schema, so they
-     must receive *no* guessed rows at all. A new undeclared key that lands in any of
-     them fails here, and the fix is to declare it in its real section.
+     Lifecycle, Operations, Scale and Help groups are fully described by the schema,
+     so they must receive *no* guessed rows at all. A new undeclared key that lands
+     in any of them fails here, and the fix is to declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
@@ -80,6 +81,10 @@ the cross-format Compare pair fell into "Other capabilities". Two of them did no
 on their own. The derived ones are now suppressed, the two real choices are declared
 where they belong, and ``test_mixed_source_keys_are_never_guessed`` keeps it that way.
 
+Scale was described after that. The scan had drawn switches for the four always-on
+Document Access Index flags, which ``get_settings`` forces back to True on every
+read, so each would appear to save and then revert. All four are now suppressed.
+
 The Help group was described next. Its last guessed row was
 ``enable_support_send_feedback``, which matched "send" and "feedback" in
 ``send-feedback-overview-card`` and so appeared as a bare switch on the Send
@@ -118,6 +123,7 @@ FULLY_DESCRIBED_GROUP_IDS = (
     "workspaces",
     "data-lifecycle",
     "operations",
+    "scale",
     "help",
 )
 
@@ -196,6 +202,12 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_tabular_search_shared_preflight",
     "enable_tabular_analyze_durable_preflight",
     "enable_tabular_hierarchical_analysis",
+    # Forced to True by normalize_document_access_index_required_settings on every
+    # settings read and write.
+    "enable_document_access_index_container",
+    "enable_document_access_index_write_through",
+    "enable_document_access_index_reads",
+    "enable_startup_document_access_index_backfill",
 )
 
 # Every mixed-source key the settings document still carries. Each must be declared
