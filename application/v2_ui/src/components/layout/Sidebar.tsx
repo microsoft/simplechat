@@ -39,7 +39,6 @@ import {
     Users,
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
-import { safeSameOriginUrl } from '../../lib/adminOperations';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
@@ -83,6 +82,17 @@ const NAV_ITEMS: NavItem[] = [
     { to: '/approvals', label: 'Approval requests', icon: CheckCircle2, hint: 'Approve or deny requests waiting on you' },
     { to: '/content-review', label: 'Content review', icon: ShieldCheck, hint: 'Review screened knowledge, including existing holds when new scanning is disabled' },
 ];
+
+/**
+ * A rail destination, kept as a path relative to the router's `/v2` base.
+ *
+ * It must never become a full URL. React Router treats an absolute URL outside the `/v2`
+ * basename as an external link and renders a plain anchor, so every rail link would reload
+ * the classic page at that path instead of routing within V2 (#1698).
+ */
+function safeNavHref(value: string): string {
+    return NAV_ITEMS.some((item) => item.to === value) ? value : '/chat';
+}
 
 function BrandMark({ collapsed }: { collapsed: boolean }) {
     const branding = useBootstrapStore((state) => state.data?.branding);
@@ -491,7 +501,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                                 const label = item.to === '/public' ? publicLabels.plural : item.label;
                                 return (
                             <NavLink
-                                to={safeSameOriginUrl(item.to, window.location.origin) ?? '/'}
+                                to={safeNavHref(item.to)}
                                 onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                                 title={collapsed ? label : item.hint}
                                 className={({ isActive }) =>
