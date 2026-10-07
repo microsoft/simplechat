@@ -1,10 +1,11 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.258
+// Version: 0.261.260
 // Implemented in: 0.261.084
 // Agents-only visual hierarchy coverage added in: 0.261.093
 // Every-section presentation and schema-derived hierarchy added in: 0.261.258
+// Retention workspace-type cues added in: 0.261.260
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -477,11 +478,26 @@ check('a declared status rule wins over the derived one', () => {
     assert.equal(computeSectionStatus(fields, { enable_thing: true, enable_declared: true }, {}, rule), 'ready');
 });
 
-check('only the workspace-permission cues remain declared by hand', () => {
-    assert.deepEqual(Object.keys(agentSectionAppearances), ['agent-toggles-card']);
+check('hand-declared cues stay limited to icons and one sanctioned opt-out', () => {
+    assert.deepEqual(
+        Object.keys(agentSectionAppearances).sort(),
+        ['agent-toggles-card', 'retention-policy-section'],
+    );
     for (const field of Object.values(agentSectionAppearances['agent-toggles-card']?.fields ?? {})) {
         assert.equal(field?.emphasis, undefined, 'emphasis is derived from the schema now');
         assert.ok(field?.Icon, 'each permission keeps its person or group cue');
+    }
+    // The three retention workspace types are peers. The derived hierarchy would promote the
+    // first one switched on to the card's primary switch, so that one alone opts out.
+    const retention = agentSectionAppearances['retention-policy-section']?.fields ?? {};
+    assert.deepEqual(Object.keys(retention).sort(), [
+        'enable_retention_policy_group',
+        'enable_retention_policy_personal',
+        'enable_retention_policy_public',
+    ]);
+    for (const [key, field] of Object.entries(retention)) {
+        assert.ok(field?.Icon, `${key} keeps its workspace-type icon`);
+        assert.equal(field?.emphasis, key === 'enable_retention_policy_personal' ? 'none' : undefined);
     }
 });
 

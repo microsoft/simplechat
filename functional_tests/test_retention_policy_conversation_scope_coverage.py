@@ -1,16 +1,20 @@
 # test_retention_policy_conversation_scope_coverage.py
 """
 Functional test for retention policy conversation scope coverage.
-Version: 0.261.038
+Version: 0.261.260
 Implemented in: 0.250.103
+Public workspace conversation retention added in: 0.261.260
 
 This test verifies the retention ownership matrix, timestamp safeguards,
-collaboration cleanup, archival behavior, race handling, and new-group defaults.
+collaboration cleanup, archival behavior, race handling, new-group defaults, and
+that chats grounded in a public workspace follow that workspace's policy while it
+exists, return to their owner's policy once it is deleted, and never reach anyone
+but their owner by title.
 """
 
 import ast
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 import types
@@ -141,8 +145,6 @@ def build_retention_namespace():
         'cosmos_group_conversations_container',
         'cosmos_group_messages_container',
         'cosmos_collaboration_conversations_container',
-        'cosmos_public_conversations_container',
-        'cosmos_public_messages_container',
     )
     namespace = {
         'datetime': datetime,
@@ -159,9 +161,12 @@ def build_retention_namespace():
             '_parse_retention_timestamp',
             '_get_primary_group_id',
             '_is_group_single_user_conversation',
+            '_get_primary_public_workspace_id',
+            '_is_governed_by_public_workspace',
             '_is_converted_conversation_source',
             '_is_aged_conversation',
             '_build_group_scope_query',
+            '_build_public_scope_query',
             '_build_conversation_retention_sources',
         },
         assignment_names={
@@ -235,6 +240,92 @@ def test_policy_matrix_and_retention_values():
     assert group_sources['group_multi_user']['matches_scope'](group_multi)
     assert group_sources['legacy_group']['matches_scope'](legacy_group)
 
+    # A chat grounded in a public workspace is a personal conversation that follows
+    # the workspace's policy, the way a group-grounded chat follows its group's.
+    public_sources = namespace['_build_conversation_retention_sources'](
+        'public',
+        cutoff.isoformat(),
+        public_workspace_id='public-1',
+    )
+    assert [source['name'] for source in public_sources] == ['public_single_user']
+    public_source = public_sources[0]
+    assert public_source['container'] is namespace['cosmos_conversations_container']
+    assert public_source['messages_container'] is namespace['cosmos_messages_container']
+    assert "context_item.scope = 'public'" in public_source['query']
+    assert {'name': '@scope_id', 'value': 'public-1'} in public_source['parameters']
+
+    public_single = {
+        'id': 'public-single',
+        'user_id': 'user-1',
+        'chat_type': 'public',
+        'last_updated': '2025-01-01T00:00:00Z',
+        'context': [
+            {'type': 'primary', 'scope': 'public', 'id': 'public-1'},
+            {'type': 'secondary', 'scope': 'personal', 'id': 'user-1'},
+        ],
+    }
+    other_public = copy.deepcopy(public_single)
+    other_public['context'][0]['id'] = 'public-2'
+    assert public_source['matches_scope'](public_single)
+    assert not public_source['matches_scope'](other_public)
+    assert not public_source['matches_scope'](personal_single)
+    assert not public_source['matches_scope'](group_single)
+    assert not personal_sources['personal_single_user']['matches_scope'](public_single)
+    assert not group_sources['group_single_user']['matches_scope'](public_single)
+
+    converted_public = dict(public_single)
+    converted_public['collaboration_conversation_id'] = 'personal-multi'
+    assert not public_source['matches_scope'](converted_public)
+
+    # A grounded chat with no workspace id stays under its owner's personal policy rather
+    # than falling outside every policy.
+    unresolved_public = {
+        'id': 'unresolved-public',
+        'user_id': 'user-1',
+        'chat_type': 'public',
+        'last_updated': '2025-01-01T00:00:00Z',
+        'context': [{'type': 'primary', 'scope': 'public', 'id': ''}],
+    }
+    assert personal_sources['personal_single_user']['matches_scope'](unresolved_public)
+    assert not public_source['matches_scope'](unresolved_public)
+
+    # A grounded chat follows its workspace only while the workspace exists. Deleting the
+    # workspace returns the chat to its owner's personal policy, since no public run will
+    # ever reach it again. When the workspaces could not be listed, the personal run
+    # leaves every grounded chat alone rather than risk the wrong policy.
+    orphaned_public = copy.deepcopy(public_single)
+    orphaned_public['id'] = 'orphaned-public'
+    orphaned_public['context'][0]['id'] = 'public-deleted'
+
+    def personal_single_source(existing_public_workspace_ids):
+        return next(
+            source
+            for source in namespace['_build_conversation_retention_sources'](
+                'personal',
+                cutoff.isoformat(),
+                user_id='user-1',
+                existing_public_workspace_ids=existing_public_workspace_ids,
+            )
+            if source['name'] == 'personal_single_user'
+        )
+
+    listed = personal_single_source(frozenset({'public-1'}))
+    assert not listed['matches_scope'](public_single)
+    assert listed['matches_scope'](orphaned_public)
+    assert listed['matches_scope'](personal_single)
+    assert listed['matches_scope'](unresolved_public)
+    assert not listed['matches_scope'](group_single)
+    assert not public_source['matches_scope'](orphaned_public)
+
+    every_workspace_deleted = personal_single_source(frozenset())
+    assert every_workspace_deleted['matches_scope'](public_single)
+
+    listing_failed = personal_single_source(None)
+    assert not listing_failed['matches_scope'](public_single)
+    assert not listing_failed['matches_scope'](orphaned_public)
+    assert listing_failed['matches_scope'](personal_single)
+    assert listing_failed['matches_scope'](unresolved_public)
+
     converted_personal = dict(personal_single)
     converted_personal['collaboration_conversation_id'] = 'personal-multi'
     converted_group = dict(legacy_group)
@@ -263,9 +354,11 @@ def test_policy_matrix_and_retention_values():
     settings = {
         'default_retention_conversation_personal': '30',
         'default_retention_conversation_group': '90',
+        'default_retention_conversation_public': '60',
     }
     assert resolve_value('default', 'personal', 'conversation', settings) == 30
     assert resolve_value(None, 'group', 'conversation', settings) == 90
+    assert resolve_value('default', 'public', 'conversation', settings) == 60
     assert resolve_value('7', 'personal', 'conversation', settings) == 7
     assert resolve_value('none', 'group', 'conversation', settings) == 'none'
     return True
@@ -670,6 +763,414 @@ def test_new_groups_persist_default_retention_values():
     return True
 
 
+def test_public_grounded_deletion_logs_the_governing_workspace():
+    """A public-grounded chat is archived, logged against its workspace, and owned."""
+    conversation_item = {
+        'id': 'public-chat-1',
+        'user_id': 'owner-a',
+        'title': 'Benefits questions',
+        'chat_type': 'public',
+        'last_updated': '2025-01-01T00:00:00Z',
+        'context': [{'type': 'primary', 'scope': 'public', 'id': 'public-1'}],
+        'tags': [],
+    }
+    message_item = {
+        'id': 'public-chat-1-message-1',
+        'conversation_id': 'public-chat-1',
+        'role': 'user',
+        'content': 'What is the leave policy?',
+    }
+    conversations = FakeContainer([conversation_item])
+    messages = FakeContainer([message_item])
+    archived_conversations = FakeContainer()
+    archived_messages = FakeContainer()
+    effects = {'archival_logs': [], 'deletion_logs': [], 'archived_thoughts': []}
+
+    namespace = {
+        'datetime': datetime,
+        'timezone': timezone,
+        'CosmosResourceNotFoundError': FakeCosmosResourceNotFoundError,
+        'cosmos_conversations_container': conversations,
+        'cosmos_messages_container': messages,
+        'cosmos_group_conversations_container': FakeContainer(),
+        'cosmos_group_messages_container': FakeContainer(),
+        'cosmos_collaboration_conversations_container': FakeContainer(),
+        'cosmos_archived_conversations_container': archived_conversations,
+        'cosmos_archived_messages_container': archived_messages,
+        'cancel_m365_conversation_deliveries': lambda conversation_id: None,
+        'log_conversation_archival': (
+            lambda **kwargs: effects['archival_logs'].append(copy.deepcopy(kwargs))
+        ),
+        'log_conversation_deletion': (
+            lambda **kwargs: effects['deletion_logs'].append(copy.deepcopy(kwargs))
+        ),
+        'delete_blob_backed_chat_message_files': lambda *args, **kwargs: None,
+        'archive_thoughts_for_conversation': (
+            lambda conversation_id, user_id, **kwargs: effects['archived_thoughts'].append(
+                (conversation_id, user_id)
+            )
+        ),
+        'delete_thoughts_for_conversation': lambda *args, **kwargs: None,
+        'invalidate_conversation_cache_for_item': lambda item, reason: None,
+        'debug_print': lambda *args, **kwargs: None,
+    }
+    loaded = load_source_members(
+        RETENTION_FILE,
+        {
+            '_parse_retention_timestamp',
+            '_get_primary_group_id',
+            '_is_group_single_user_conversation',
+            '_get_primary_public_workspace_id',
+            '_is_governed_by_public_workspace',
+            '_is_converted_conversation_source',
+            '_is_aged_conversation',
+            '_build_group_scope_query',
+            '_build_public_scope_query',
+            '_build_conversation_retention_sources',
+            '_delete_standard_conversation_for_retention',
+        },
+        assignment_names={
+            'GROUP_SINGLE_USER_CHAT_TYPES',
+            'PERSONAL_MULTI_USER_CHAT_TYPE',
+            'GROUP_MULTI_USER_CHAT_TYPE',
+        },
+        namespace=namespace,
+    )
+
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    source = loaded['_build_conversation_retention_sources'](
+        'public',
+        cutoff.isoformat(),
+        public_workspace_id='public-1',
+    )[0]
+    detail = loaded['_delete_standard_conversation_for_retention'](
+        copy.deepcopy(conversation_item),
+        source,
+        'public',
+        True,
+        cutoff,
+    )
+
+    assert detail['id'] == 'public-chat-1'
+    assert detail['user_id'] == 'owner-a'
+    assert 'public-chat-1' not in conversations.items
+    assert message_item['id'] not in messages.items
+    archived = archived_conversations.items['public-chat-1']
+    assert archived['retention_source'] == 'public_single_user'
+    assert archived['archived_by_retention_policy'] is True
+    assert message_item['id'] in archived_messages.items
+    assert effects['archived_thoughts'] == [('public-chat-1', 'owner-a')]
+    assert effects['archival_logs'][0]['public_workspace_id'] == 'public-1'
+    assert effects['deletion_logs'][0]['public_workspace_id'] == 'public-1'
+    assert effects['deletion_logs'][0]['workspace_type'] == 'public'
+    return True
+
+
+def test_public_workspace_run_keeps_chat_titles_with_their_owners():
+    """The workspace hears a count; each owner hears only about their own chats."""
+    calls = {
+        'conversations': [],
+        'documents': [],
+        'workspace_notifications': [],
+        'user_notifications': [],
+    }
+
+    def fake_delete_aged_conversations(**kwargs):
+        calls['conversations'].append(kwargs)
+        return {
+            'count': 3,
+            'details': [
+                {'id': 'chat-1', 'title': 'Budget draft', 'user_id': 'owner-a'},
+                {'id': 'chat-2', 'title': 'Hiring notes', 'user_id': 'owner-b'},
+                {
+                    'id': 'chat-3',
+                    'title': 'Removed elsewhere',
+                    'user_id': 'owner-a',
+                    'already_deleted': True,
+                },
+            ],
+        }
+
+    def fake_delete_aged_documents(**kwargs):
+        calls['documents'].append(kwargs)
+        return {'count': 0, 'details': []}
+
+    namespace = {
+        'datetime': datetime,
+        'timezone': timezone,
+        'logging': __import__('logging'),
+        'get_all_public_workspaces': lambda: [
+            {
+                'id': 'public-1',
+                'name': 'HR Policies',
+                'retention_policy': {
+                    'conversation_retention_days': 'default',
+                    'document_retention_days': 'none',
+                },
+            },
+            {
+                'id': 'public-2',
+                'name': 'Kept forever',
+                'retention_policy': {
+                    'conversation_retention_days': 'none',
+                    'document_retention_days': 'none',
+                },
+            },
+        ],
+        'get_settings': lambda: {'default_retention_conversation_public': '30'},
+        'delete_aged_conversations': fake_delete_aged_conversations,
+        'delete_aged_documents': fake_delete_aged_documents,
+        'send_retention_notification': (
+            lambda workspace_id, summary, workspace_type: calls[
+                'workspace_notifications'
+            ].append((workspace_id, copy.deepcopy(summary), workspace_type))
+        ),
+        'create_notification': (
+            lambda **kwargs: calls['user_notifications'].append(copy.deepcopy(kwargs))
+        ),
+        'log_event': lambda *args, **kwargs: None,
+        'debug_print': lambda *args, **kwargs: None,
+    }
+    loaded = load_source_members(
+        RETENTION_FILE,
+        {
+            'resolve_retention_value',
+            'process_public_retention',
+            'send_public_conversation_owner_notifications',
+        },
+        namespace=namespace,
+    )
+
+    results = loaded['process_public_retention']()
+
+    assert calls['conversations'] == [{
+        'public_workspace_id': 'public-1',
+        'retention_days': 30,
+        'workspace_type': 'public',
+    }]
+    assert calls['documents'] == []
+    assert results['conversations'] == 3
+    assert results['workspaces_affected'] == 1
+
+    assert len(calls['workspace_notifications']) == 1
+    workspace_id, summary, workspace_type = calls['workspace_notifications'][0]
+    assert (workspace_id, workspace_type) == ('public-1', 'public')
+    assert summary['conversations_deleted'] == 3
+    assert summary['conversation_details'] == [], (
+        "The workspace's managers must not be sent the titles of other users' chats."
+    )
+
+    by_owner = {
+        notification['user_id']: notification
+        for notification in calls['user_notifications']
+    }
+    assert set(by_owner) == {'owner-a', 'owner-b'}
+    owner_a = by_owner['owner-a']['message']
+    owner_b = by_owner['owner-b']['message']
+    assert 'Budget draft' in owner_a and 'Hiring notes' not in owner_a
+    assert 'Hiring notes' in owner_b and 'Budget draft' not in owner_b
+    assert 'Removed elsewhere' not in owner_a
+    assert 'HR Policies' in owner_a
+    assert by_owner['owner-a']['metadata']['conversations_deleted'] == 1
+    assert by_owner['owner-a']['metadata']['public_workspace_id'] == 'public-1'
+    return True
+
+
+def test_public_workspace_listing_never_reads_a_failure_as_no_workspaces():
+    """A failed or partial listing is None, never a set that would release grounded chats."""
+
+    class ListingContainer:
+        def __init__(self, rows):
+            self.rows = rows
+            self.queries = []
+
+        def query_items(self, query=None, enable_cross_partition_query=False, **kwargs):
+            self.queries.append((query, enable_cross_partition_query))
+            return self.rows()
+
+    def list_workspace_ids(rows):
+        container = ListingContainer(rows)
+        loaded = load_source_members(
+            RETENTION_FILE,
+            {'_get_existing_public_workspace_ids'},
+            namespace={
+                'cosmos_public_workspaces_container': container,
+                'logging': __import__('logging'),
+                'log_event': lambda *args, **kwargs: None,
+                'debug_print': lambda *args, **kwargs: None,
+            },
+        )
+        return loaded['_get_existing_public_workspace_ids'](), container.queries
+
+    def refused():
+        raise RuntimeError('throttled')
+
+    def interrupted():
+        yield {'id': 'public-1'}
+        raise RuntimeError('continuation failed')
+
+    workspace_ids, queries = list_workspace_ids(
+        lambda: iter([{'id': 'public-1'}, {'id': ' public-2 '}, {'id': ''}, {}])
+    )
+    assert workspace_ids == frozenset({'public-1', 'public-2'})
+    assert queries == [('SELECT c.id FROM c', True)]
+    assert list_workspace_ids(lambda: iter([]))[0] == frozenset()
+    assert list_workspace_ids(refused)[0] is None
+    assert list_workspace_ids(interrupted)[0] is None, (
+        "A partial listing would hand chats in unlisted workspaces to personal retention."
+    )
+    return True
+
+
+def test_personal_run_takes_back_chats_from_deleted_public_workspaces():
+    """A chat whose public workspace is gone follows its owner's policy again."""
+
+    def aged_chat(conversation_id, public_workspace_id=None):
+        chat = {
+            'id': conversation_id,
+            'user_id': 'owner-a',
+            'title': conversation_id,
+            'chat_type': 'public' if public_workspace_id else 'personal_single_user',
+            'last_updated': '2000-01-01T00:00:00Z',
+            'tags': [],
+        }
+        if public_workspace_id:
+            chat['context'] = [
+                {'type': 'primary', 'scope': 'public', 'id': public_workspace_id},
+            ]
+        return chat
+
+    def run_personal_retention(existing_public_workspace_ids):
+        conversations = FakeContainer([
+            aged_chat('plain'),
+            aged_chat('live-grounded', 'public-live'),
+            aged_chat('orphaned', 'public-deleted'),
+        ])
+        deletion_logs = []
+        namespace = {
+            'datetime': datetime,
+            'timezone': timezone,
+            'timedelta': timedelta,
+            'CosmosResourceNotFoundError': FakeCosmosResourceNotFoundError,
+            'cosmos_conversations_container': conversations,
+            'cosmos_messages_container': FakeContainer(),
+            'cosmos_group_conversations_container': FakeContainer(),
+            'cosmos_group_messages_container': FakeContainer(),
+            'cosmos_collaboration_conversations_container': FakeContainer(),
+            'get_settings': lambda: {'enable_conversation_archiving': False},
+            'cancel_m365_conversation_deliveries': lambda conversation_id: None,
+            'log_conversation_deletion': (
+                lambda **kwargs: deletion_logs.append(copy.deepcopy(kwargs))
+            ),
+            'delete_blob_backed_chat_message_files': lambda *args, **kwargs: None,
+            'delete_thoughts_for_conversation': lambda *args, **kwargs: None,
+            'invalidate_conversation_cache_for_item': lambda item, reason: None,
+            'log_event': lambda *args, **kwargs: None,
+            'debug_print': lambda *args, **kwargs: None,
+        }
+        loaded = load_source_members(
+            RETENTION_FILE,
+            {
+                '_parse_retention_timestamp',
+                '_get_primary_group_id',
+                '_is_group_single_user_conversation',
+                '_get_primary_public_workspace_id',
+                '_is_governed_by_public_workspace',
+                '_is_converted_conversation_source',
+                '_is_aged_conversation',
+                '_build_group_scope_query',
+                '_build_public_scope_query',
+                '_build_conversation_retention_sources',
+                '_delete_standard_conversation_for_retention',
+                'delete_aged_conversations',
+            },
+            assignment_names={
+                'GROUP_SINGLE_USER_CHAT_TYPES',
+                'PERSONAL_MULTI_USER_CHAT_TYPE',
+                'GROUP_MULTI_USER_CHAT_TYPE',
+            },
+            namespace=namespace,
+        )
+        result = loaded['delete_aged_conversations'](
+            30,
+            workspace_type='personal',
+            user_id='owner-a',
+            existing_public_workspace_ids=existing_public_workspace_ids,
+        )
+        return result, conversations, deletion_logs
+
+    result, conversations, deletion_logs = run_personal_retention(
+        frozenset({'public-live'})
+    )
+    assert sorted(detail['id'] for detail in result['details']) == ['orphaned', 'plain']
+    assert set(conversations.items) == {'live-grounded'}, (
+        "A chat grounded in a live public workspace must wait for that workspace's policy."
+    )
+    orphan_log = next(
+        log for log in deletion_logs if log['conversation_id'] == 'orphaned'
+    )
+    assert orphan_log['workspace_type'] == 'personal'
+    assert orphan_log['public_workspace_id'] == 'public-deleted'
+    assert orphan_log['additional_context']['retention_source'] == 'personal_single_user'
+
+    # Without a listing, grounded chats are left for a later run.
+    result, conversations, _ = run_personal_retention(None)
+    assert [detail['id'] for detail in result['details']] == ['plain']
+    assert set(conversations.items) == {'live-grounded', 'orphaned'}
+    return True
+
+
+def test_personal_run_lists_public_workspaces_once_for_every_user():
+    """One listing per run reaches every user's conversation pass."""
+    listings = []
+    conversation_calls = []
+
+    def list_public_workspaces():
+        listings.append(True)
+        return frozenset({'public-live'})
+
+    def fake_delete_aged_conversations(**kwargs):
+        conversation_calls.append(kwargs)
+        return {'count': 0, 'details': []}
+
+    def user(user_id, conversation_retention_days):
+        return {
+            'id': user_id,
+            'settings': {
+                'retention_policy': {
+                    'conversation_retention_days': conversation_retention_days,
+                    'document_retention_days': 'none',
+                },
+            },
+        }
+
+    namespace = {
+        'get_all_user_settings': lambda: [user('owner-a', '30'), user('owner-b', 'default')],
+        'get_settings': lambda: {'default_retention_conversation_personal': '60'},
+        '_get_existing_public_workspace_ids': list_public_workspaces,
+        'delete_aged_conversations': fake_delete_aged_conversations,
+        'log_event': lambda *args, **kwargs: None,
+        'debug_print': lambda *args, **kwargs: None,
+    }
+    loaded = load_source_members(
+        RETENTION_FILE,
+        {'resolve_retention_value', 'process_personal_retention'},
+        namespace=namespace,
+    )
+
+    loaded['process_personal_retention']()
+
+    assert len(listings) == 1
+    assert [
+        (call['user_id'], call['retention_days'], call['existing_public_workspace_ids'])
+        for call in conversation_calls
+    ] == [
+        ('owner-a', 30, frozenset({'public-live'})),
+        ('owner-b', 60, frozenset({'public-live'})),
+    ]
+    return True
+
+
 if __name__ == '__main__':
     tests = [
         test_policy_matrix_and_retention_values,
@@ -677,6 +1178,11 @@ if __name__ == '__main__':
         test_collaboration_archival_covers_group_source_records,
         test_collaboration_revalidation_and_cleanup_failure_safety,
         test_new_groups_persist_default_retention_values,
+        test_public_grounded_deletion_logs_the_governing_workspace,
+        test_public_workspace_run_keeps_chat_titles_with_their_owners,
+        test_public_workspace_listing_never_reads_a_failure_as_no_workspaces,
+        test_personal_run_takes_back_chats_from_deleted_public_workspaces,
+        test_personal_run_lists_public_workspaces_once_for_every_user,
     ]
     results = []
     for test in tests:

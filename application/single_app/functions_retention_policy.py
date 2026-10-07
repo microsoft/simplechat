@@ -6,13 +6,14 @@ Retention Policy Management
 This module handles automated deletion of aged conversations and documents
 based on configurable retention policies for personal, group, and public workspaces.
 
-Version: 0.261.038
+Version: 0.261.260
 Implemented in: 0.234.067
 Updated in: 0.236.012 - Fixed race condition handling for NotFound errors during deletion
 Updated in: 0.237.004 - Fixed critical bug where conversations with null/undefined last_activity_at were deleted regardless of age
 Updated in: 0.237.005 - Fixed field name: use last_updated (actual field) instead of last_activity_at (non-existent)
 Updated in: 0.250.103 - Applied retention by conversation ownership across current, legacy, and collaboration stores
 Updated in: 0.261.038 - Stop pending Microsoft 365 delivery before deleting its destination
+Updated in: 0.261.260 - Chats grounded in a public workspace follow that workspace's conversation policy while it exists
 """
 
 from config import *
@@ -30,6 +31,7 @@ from functions_thoughts import archive_thoughts_for_conversation, delete_thought
 from functions_debug import debug_print
 from functions_appinsights import log_event
 from datetime import datetime, timezone, timedelta
+import logging
 
 
 GROUP_SINGLE_USER_CHAT_TYPES = {'group', 'group-single-user', 'group_single_user'}
@@ -95,6 +97,33 @@ def get_all_public_workspaces():
         log_event("get_all_public_workspaces_error", {"error": str(e)})
         debug_print(f"Error fetching all public workspaces: {e}")
         return []
+
+
+def _get_existing_public_workspace_ids():
+    """Return the ids of the public workspaces that exist, or None if they cannot be listed.
+
+    None is deliberately distinct from an empty set. A failed or partial listing must never
+    read as every public workspace having been deleted, which would hand every grounded chat
+    to its owner's personal policy.
+    """
+    try:
+        workspace_ids = set()
+        for row in cosmos_public_workspaces_container.query_items(
+            query="SELECT c.id FROM c",
+            enable_cross_partition_query=True,
+        ):
+            workspace_id = str((row or {}).get('id') or '').strip()
+            if workspace_id:
+                workspace_ids.add(workspace_id)
+        return frozenset(workspace_ids)
+    except Exception as e:
+        log_event(
+            "[RETENTION_POLICY] Public workspace listing failed",
+            {"error_type": type(e).__name__},
+            level=logging.ERROR,
+        )
+        debug_print(f"[RETENTION_POLICY] Could not list public workspaces: {e}")
+        return None
 
 
 def resolve_retention_value(value, workspace_type, retention_type, settings=None):
@@ -173,6 +202,36 @@ def _is_group_single_user_conversation(conversation_item):
     return chat_type in GROUP_SINGLE_USER_CHAT_TYPES or bool(_get_primary_group_id(conversation_item))
 
 
+def _get_primary_public_workspace_id(conversation_item):
+    """Return the public workspace a single-user conversation is grounded in."""
+    for context_item in list((conversation_item or {}).get('context', []) or []):
+        if not isinstance(context_item, dict):
+            continue
+        if context_item.get('type') != 'primary' or context_item.get('scope') != 'public':
+            continue
+        return str(context_item.get('id') or '').strip()
+    return ''
+
+
+def _is_governed_by_public_workspace(conversation_item, existing_public_workspace_ids):
+    """Whether a public workspace's policy, rather than the owner's, governs a conversation.
+
+    Public workspaces have no conversation store; a chat grounded in one is a personal
+    conversation whose primary context names the workspace. It follows that workspace's
+    policy while the workspace exists. A chat with no workspace id, or whose workspace has
+    been deleted, stays under its owner's personal policy instead of falling outside every
+    policy. When the existing workspaces are unknown (``None``), every grounded chat is
+    treated as governed, so a personal run skips it rather than risk deleting it under the
+    wrong policy.
+    """
+    public_workspace_id = _get_primary_public_workspace_id(conversation_item)
+    if not public_workspace_id:
+        return False
+    if existing_public_workspace_ids is None:
+        return True
+    return public_workspace_id in existing_public_workspace_ids
+
+
 def _is_converted_conversation_source(conversation_item):
     return bool(str((conversation_item or {}).get('collaboration_conversation_id') or '').strip())
 
@@ -204,14 +263,36 @@ def _build_group_scope_query(timestamp_field):
     """
 
 
+def _build_public_scope_query(timestamp_field):
+    return f"""
+        SELECT * FROM c
+        WHERE IS_ARRAY(c.context)
+        AND EXISTS(
+            SELECT VALUE context_item
+            FROM context_item IN c.context
+            WHERE context_item.type = 'primary'
+            AND context_item.scope = 'public'
+            AND context_item.id = @scope_id
+        )
+        AND IS_DEFINED(c.{timestamp_field})
+        AND IS_STRING(c.{timestamp_field})
+        AND c.{timestamp_field} < @cutoff_date
+    """
+
+
 def _build_conversation_retention_sources(
     workspace_type,
     cutoff_iso,
     user_id=None,
     group_id=None,
     public_workspace_id=None,
+    existing_public_workspace_ids=None,
 ):
-    """Describe the backing stores governed by a workspace retention policy."""
+    """Describe the backing stores governed by a workspace retention policy.
+
+    ``existing_public_workspace_ids`` lets a personal run take back chats grounded in a
+    public workspace that has since been deleted. Without it, grounded chats are skipped.
+    """
     if workspace_type == 'personal':
         return [
             {
@@ -232,6 +313,10 @@ def _build_conversation_retention_sources(
                 ],
                 'matches_scope': lambda item: (
                     not _is_group_single_user_conversation(item)
+                    and not _is_governed_by_public_workspace(
+                        item,
+                        existing_public_workspace_ids,
+                    )
                     and not _is_converted_conversation_source(item)
                 ),
             },
@@ -316,24 +401,25 @@ def _build_conversation_retention_sources(
             },
         ]
 
+    # Public workspaces have no conversation store of their own. A chat grounded in
+    # one is a personal conversation whose primary context names the workspace, and
+    # it follows that workspace's policy the way a group-grounded chat follows its
+    # group's.
     return [
         {
-            'name': 'public',
-            'container': cosmos_public_conversations_container,
-            'messages_container': cosmos_public_messages_container,
+            'name': 'public_single_user',
+            'container': cosmos_conversations_container,
+            'messages_container': cosmos_messages_container,
             'timestamp_field': 'last_updated',
-            'query': """
-                SELECT * FROM c
-                WHERE c.public_workspace_id = @scope_id
-                AND IS_DEFINED(c.last_updated)
-                AND IS_STRING(c.last_updated)
-                AND c.last_updated < @cutoff_date
-            """,
+            'query': _build_public_scope_query('last_updated'),
             'parameters': [
                 {'name': '@scope_id', 'value': public_workspace_id},
                 {'name': '@cutoff_date', 'value': cutoff_iso},
             ],
-            'matches_scope': lambda item: item.get('public_workspace_id') == public_workspace_id,
+            'matches_scope': lambda item: (
+                _get_primary_public_workspace_id(item) == public_workspace_id
+                and not _is_converted_conversation_source(item)
+            ),
         },
     ]
 
@@ -361,6 +447,7 @@ def _delete_standard_conversation_for_retention(
         return {
             'id': conversation_id,
             'title': conversation_title,
+            'user_id': selected_conversation_item.get('user_id'),
             source['timestamp_field']: selected_conversation_item.get(
                 source['timestamp_field']
             ),
@@ -385,6 +472,12 @@ def _delete_standard_conversation_for_retention(
 
     conversation_item = live_conversation_item
     cancel_m365_conversation_deliveries(conversation_id)
+    # A grounded chat names its workspace in its primary context, not at the top level.
+    grounded_public_workspace_id = (
+        _get_primary_public_workspace_id(conversation_item)
+        or conversation_item.get('public_workspace_id')
+        or None
+    )
 
     if archiving_enabled:
         archived_item = dict(conversation_item)
@@ -401,7 +494,7 @@ def _delete_standard_conversation_for_retention(
             context=conversation_item.get('context', []),
             tags=conversation_item.get('tags', []),
             group_id=_get_primary_group_id(conversation_item) or None,
-            public_workspace_id=conversation_item.get('public_workspace_id'),
+            public_workspace_id=grounded_public_workspace_id,
             additional_context={'deletion_reason': 'retention_policy'},
         )
 
@@ -456,7 +549,7 @@ def _delete_standard_conversation_for_retention(
         is_archived=archiving_enabled,
         is_bulk_operation=True,
         group_id=_get_primary_group_id(conversation_item) or None,
-        public_workspace_id=conversation_item.get('public_workspace_id'),
+        public_workspace_id=grounded_public_workspace_id,
         additional_context={
             'deletion_reason': 'retention_policy',
             'retention_source': source['name'],
@@ -480,6 +573,8 @@ def _delete_standard_conversation_for_retention(
     return {
         'id': conversation_id,
         'title': conversation_title,
+        # Lets a public workspace's run tell each owner about their own chats.
+        'user_id': conversation_item.get('user_id'),
         source['timestamp_field']: conversation_item.get(source['timestamp_field']),
     }
 
@@ -594,6 +689,9 @@ def process_personal_retention():
         
         # Pre-load settings once for efficiency
         settings = get_settings()
+
+        # Chats grounded in a public workspace follow its policy only while it exists.
+        existing_public_workspace_ids = _get_existing_public_workspace_ids()
         
         for user in all_users:
             user_id = user.get('id')
@@ -632,7 +730,8 @@ def process_personal_retention():
                     conv_results = delete_aged_conversations(
                         user_id=user_id,
                         retention_days=int(conversation_retention_days),
-                        workspace_type='personal'
+                        workspace_type='personal',
+                        existing_public_workspace_ids=existing_public_workspace_ids,
                     )
                     user_deletion_summary['conversations_deleted'] = conv_results['count']
                     user_deletion_summary['conversation_details'] = conv_results['details']
@@ -814,11 +913,26 @@ def process_public_retention():
                 'document_details': []
             }
             
-            # Note: Public workspaces do not have a separate conversations container.
-            # Conversations are only stored in personal (cosmos_conversations_container) or 
-            # group (cosmos_group_conversations_container) workspaces.
-            # Therefore, we skip conversation processing for public workspaces.
-            # Only documents are processed for public workspace retention.
+            # Public workspaces have no conversation store of their own. The chats
+            # this processes are personal conversations grounded in the workspace,
+            # which follow its policy the way group-grounded chats follow their group's.
+            if conversation_retention_days != 'none':
+                try:
+                    conv_results = delete_aged_conversations(
+                        public_workspace_id=workspace_id,
+                        retention_days=int(conversation_retention_days),
+                        workspace_type='public'
+                    )
+                    workspace_deletion_summary['conversations_deleted'] = conv_results['count']
+                    workspace_deletion_summary['conversation_details'] = conv_results['details']
+                    results['conversations'] += conv_results['count']
+                except Exception as e:
+                    log_event(
+                        "[RETENTION_POLICY] Public workspace conversation retention failed",
+                        {"error_type": type(e).__name__, "public_workspace_id": workspace_id},
+                        level=logging.ERROR,
+                    )
+                    debug_print(f"Error processing conversations for public workspace {workspace_id}: {e}")
             
             # Process documents
             if document_retention_days != 'none':
@@ -837,7 +951,18 @@ def process_public_retention():
             
             # Send notification if anything was deleted
             if workspace_deletion_summary['conversations_deleted'] > 0 or workspace_deletion_summary['documents_deleted'] > 0:
-                send_retention_notification(workspace_id, workspace_deletion_summary, 'public')
+                # The chats belong to individual users, so the workspace's managers
+                # are told how many were removed and each owner is told which.
+                send_retention_notification(
+                    workspace_id,
+                    {**workspace_deletion_summary, 'conversation_details': []},
+                    'public',
+                )
+                send_public_conversation_owner_notifications(
+                    workspace_id,
+                    workspace_deletion_summary['workspace_name'],
+                    workspace_deletion_summary['conversation_details'],
+                )
                 results['workspaces_affected'] += 1
                 results['details'].append(workspace_deletion_summary)
         
@@ -849,7 +974,14 @@ def process_public_retention():
         return results
 
 
-def delete_aged_conversations(retention_days, workspace_type='personal', user_id=None, group_id=None, public_workspace_id=None):
+def delete_aged_conversations(
+    retention_days,
+    workspace_type='personal',
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+    existing_public_workspace_ids=None,
+):
     """
     Delete conversations governed by a workspace policy across all backing stores.
     
@@ -859,6 +991,9 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
         user_id (str, optional): User ID for personal workspaces
         group_id (str, optional): Group ID for group workspaces
         public_workspace_id (str, optional): Public workspace ID for public workspaces
+        existing_public_workspace_ids (frozenset, optional): For personal runs, the public
+            workspaces that exist. Chats grounded in any other workspace return to their
+            owner's policy; when omitted, every grounded chat is skipped.
         
     Returns:
         dict: {'count': int, 'details': list}
@@ -874,6 +1009,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
         user_id=user_id,
         group_id=group_id,
         public_workspace_id=public_workspace_id,
+        existing_public_workspace_ids=existing_public_workspace_ids,
     )
 
     for source in sources:
@@ -949,6 +1085,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                 deleted_details.append({
                     'id': conversation_id,
                     'title': conversation_item.get('title', 'Untitled'),
+                    'user_id': conversation_item.get('user_id'),
                     source['timestamp_field']: conversation_item.get(source['timestamp_field']),
                     'already_deleted': True,
                 })
@@ -1183,3 +1320,60 @@ def send_retention_notification(workspace_id, deletion_summary, workspace_type):
         )
     
     debug_print(f"Sent retention notification to {workspace_type} workspace {workspace_id}")
+
+
+def send_public_conversation_owner_notifications(public_workspace_id, workspace_name, conversation_details):
+    """Tell each owner which of their chats a public workspace's policy removed.
+
+    A chat grounded in a public workspace is a personal conversation, so its title
+    belongs to its owner. The workspace's own notification carries only a count; the
+    titles go here, to each owner, and nowhere else. Records another process had
+    already deleted are left out, because retention did not remove them.
+    """
+    deleted_by_owner = {}
+    for detail in conversation_details or []:
+        if not isinstance(detail, dict) or detail.get('already_deleted'):
+            continue
+        owner_id = str(detail.get('user_id') or '').strip()
+        if owner_id:
+            deleted_by_owner.setdefault(owner_id, []).append(detail)
+
+    display_name = str(workspace_name or '').strip() or 'a public workspace'
+    for owner_id, owner_details in deleted_by_owner.items():
+        count = len(owner_details)
+        lines = [
+            f"Retention policy for {display_name} automatically deleted {count} "
+            f"of your conversation{'s' if count != 1 else ''} grounded in it.",
+            "",
+            "**Conversations:**",
+        ]
+        for detail in owner_details[:10]:
+            lines.append(f"• {detail.get('title', 'Untitled')}")
+        if count > 10:
+            lines.append(f"• ...and {count - 10} more")
+
+        try:
+            create_notification(
+                user_id=owner_id,
+                notification_type='system_announcement',
+                title='Retention Policy Cleanup',
+                message="\n".join(lines),
+                link_url='/chats',
+                metadata={
+                    'conversations_deleted': count,
+                    'documents_deleted': 0,
+                    'public_workspace_id': public_workspace_id,
+                    'deletion_date': datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as notification_error:
+            # One owner's notification failing must not stop the others.
+            log_event(
+                "[RETENTION_POLICY] Owner notification for a public workspace run failed",
+                {
+                    "error_type": type(notification_error).__name__,
+                    "public_workspace_id": public_workspace_id,
+                    "user_id": owner_id,
+                },
+                level=logging.WARNING,
+            )

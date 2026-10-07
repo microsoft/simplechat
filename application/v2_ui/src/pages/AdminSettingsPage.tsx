@@ -39,6 +39,7 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
+import { ClassificationCategoriesEditor } from '../components/admin/ClassificationCategoriesEditor';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
@@ -59,6 +60,8 @@ import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { OrchestrationPlannerModelPicker } from '../components/admin/OrchestrationPlannerModelPicker';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
+import { RetentionResetDefaults, RetentionRunNow } from '../components/admin/RetentionOperations';
+import { RetentionSchedule } from '../components/admin/RetentionSchedule';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -707,6 +710,18 @@ export function AdminSettingsPage() {
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
     /**
+     * Fold values the server changed outside a save into the page's copy of the settings.
+     *
+     * A retention run writes its own last and next run. Without this the schedule beside
+     * it would keep showing the times from when the page was opened.
+     */
+    const mergeStoredSettings = useCallback((partial: Json) => {
+        setData((current) =>
+            current ? { ...current, settings: { ...current.settings, ...partial } } : current,
+        );
+    }, []);
+
+    /**
      * Move the page to a section, from a cross-reference elsewhere on it.
      *
      * The target has to be on screen to scroll to, so a filter that hides it is changed: a
@@ -1077,6 +1092,53 @@ export function AdminSettingsPage() {
                             origin={readSibling('front_door_url')}
                             label={field.label}
                             help={field.help}
+                        />
+                    );
+                case 'retention-schedule':
+                    return (
+                        <RetentionSchedule
+                            key={key}
+                            field={field}
+                            value={value}
+                            settings={settings}
+                            draft={draft}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                            onStoredSettingsChange={mergeStoredSettings}
+                        />
+                    );
+                case 'retention-reset-defaults':
+                    return (
+                        <RetentionResetDefaults
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                        />
+                    );
+                case 'retention-run-now':
+                    return (
+                        <RetentionRunNow
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                            onStoredSettingsChange={mergeStoredSettings}
+                            onOpenSection={goToSection}
+                        />
+                    );
+                case 'document-classification-categories':
+                    return (
+                        <ClassificationCategoriesEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
                         />
                     );
                 default:
