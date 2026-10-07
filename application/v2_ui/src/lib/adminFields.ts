@@ -217,6 +217,13 @@ export interface AdminField {
     depends_on?: AdminFieldDependency;
     /** A prerequisite owned by another section. */
     requires?: AdminFieldRequirement;
+    /**
+     * A section whose settings only matter because of this field, drawn as an in-page
+     * jump beneath the control. The opposite direction to `requires`: turning on the
+     * Latest Features destination is what makes the User-Facing Latest Features choices
+     * reach users, so the switch points there.
+     */
+    related_section?: { id: string; label: string };
     /** `status` fields only: which server-computed readout to show. */
     status_source?: string;
     /**

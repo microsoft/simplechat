@@ -65,6 +65,12 @@ import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
 import { SettingsIndex, type SettingsIndexEntry } from '../components/admin/SettingsIndex';
+import { AdminLatestFeatures } from '../components/admin/AdminLatestFeatures';
+import { NewBadge } from '../components/admin/LatestFeatureParts';
+import { LatestFeaturesPublication, describePublication } from '../components/admin/LatestFeaturesPublication';
+import { LatestFeaturesVisibility } from '../components/admin/LatestFeaturesVisibility';
+import { ReleaseNotificationsBadge } from '../components/admin/ReleaseNotificationsBadge';
+import { SendFeedbackForm, SendFeedbackOverview } from '../components/admin/SendFeedback';
 import { agentSectionAppearances } from '../components/admin/agentSectionAppearance';
 import { ALL_SETTINGS_ICON, resolveAdminNavIcon } from '../components/admin/adminSectionIcons';
 import { SettingField } from '../components/admin/fields';
@@ -94,7 +100,18 @@ import {
     type BrandingUploadResponse,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
-import { computeSectionStatus, type SectionStatus } from '../lib/adminSections';
+import { computeSectionStatus, readSectionValue, type SectionStatus } from '../lib/adminSections';
+import {
+    LATEST_FEATURES_RENDER,
+    LATEST_FEATURES_VISIBILITY_KEY,
+    allFeatures,
+    catalogueSearchText,
+    countShared,
+    readVisibility,
+    resolveAdminActionTarget,
+    type LatestFeatureAction,
+    type LatestFeaturesPayload,
+} from '../lib/latestFeatures';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
 import { modelConnectionsChanged, requestConnectionFocus } from '../stores/modelConnectionsStore';
@@ -126,6 +143,33 @@ interface RenderedSection {
     /** Every visible field, which status and field nesting are read from. */
     allFields: AdminField[];
     capabilities: CapabilityRow[];
+    /**
+     * A section drawn from something other than fields. `latest-features` is the Admin
+     * Latest Features tab, which the navigation renders from the release catalogue and so
+     * declares no sections for.
+     */
+    kind?: 'latest-features';
+}
+
+/** The component fields whose content comes from the Latest Features catalogue. */
+const LATEST_FEATURES_VISIBILITY_COMPONENT = 'support-latest-features-visibility';
+const LATEST_FEATURES_PUBLICATION_COMPONENT = 'support-latest-features-publication';
+
+/**
+ * Whether a search names the section itself rather than something inside it.
+ *
+ * A catalogue card found by its own name shows every announcement; only a search that
+ * matched announcements narrows the card to them.
+ */
+function sectionLocationMatches(
+    section: Pick<RenderedSection, 'label' | 'tabLabel' | 'groupLabel'>,
+    query: string,
+): boolean {
+    const needle = query.trim().toLowerCase();
+    return (
+        Boolean(needle) &&
+        `${section.label} ${section.tabLabel} ${section.groupLabel}`.toLowerCase().includes(needle)
+    );
 }
 
 /** Synthetic field definitions used to read a sibling's current value for a preview. */
@@ -215,6 +259,8 @@ function buildCapabilityIndex(
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
     const bootstrapVersion = useBootstrapStore((state) => state.data?.version);
+    const adminName = useBootstrapStore((state) => state.data?.user?.display_name ?? '');
+    const adminEmail = useBootstrapStore((state) => state.data?.user?.email ?? '');
 
     /**
      * Re-read the bootstrap payload once a save lands.
@@ -243,6 +289,10 @@ export function AdminSettingsPage() {
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
     const [pendingScroll, setPendingScroll] = useState<string | null>(null);
+    const [latestFeatures, setLatestFeatures] = useState<LatestFeaturesPayload | null>(null);
+    const [latestFeaturesLoading, setLatestFeaturesLoading] = useState(false);
+    const [latestFeaturesError, setLatestFeaturesError] = useState<string | null>(null);
+    const [latestFeaturesAttempt, setLatestFeaturesAttempt] = useState(0);
 
     const searchRef = useRef<HTMLInputElement>(null);
     /** The pane the cards scroll inside; the page index watches it to mark the current section. */
@@ -337,6 +387,78 @@ export function AdminSettingsPage() {
     const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
     const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
+    /**
+     * Whether the navigation includes anything drawn from the Latest Features catalogues.
+     *
+     * The catalogues are long and only the Help group draws them, so they are requested
+     * beside the settings rather than inside them, and only when something will show them.
+     */
+    const needsLatestFeatures = useMemo(
+        () =>
+            Boolean(
+                data?.admin_nav.some((group) =>
+                    group.tabs.some(
+                        (tab) =>
+                            tab.render === LATEST_FEATURES_RENDER ||
+                            tab.sections.some((section) =>
+                                (data.field_schema[section.id] ?? []).some(
+                                    (field) =>
+                                        field.component === LATEST_FEATURES_VISIBILITY_COMPONENT ||
+                                        field.component === LATEST_FEATURES_PUBLICATION_COMPONENT,
+                                ),
+                            ),
+                    ),
+                ),
+            ),
+        [data],
+    );
+
+    useEffect(() => {
+        if (!isAdmin || !needsLatestFeatures) {
+            return;
+        }
+
+        let cancelled = false;
+        setLatestFeaturesLoading(true);
+        setLatestFeaturesError(null);
+        void (async () => {
+            try {
+                const response = await api.get<LatestFeaturesPayload>('/api/v2/admin/latest-features');
+                if (!cancelled) {
+                    setLatestFeatures(response);
+                }
+            } catch (fetchError) {
+                if (!cancelled) {
+                    setLatestFeaturesError(
+                        fetchError instanceof Error && fetchError.message
+                            ? fetchError.message
+                            : 'Failed to load Latest Features.',
+                    );
+                }
+            } finally {
+                if (!cancelled) {
+                    setLatestFeaturesLoading(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isAdmin, needsLatestFeatures, latestFeaturesAttempt]);
+
+    const retryLatestFeatures = useCallback(() => setLatestFeaturesAttempt((attempt) => attempt + 1), []);
+
+    // What a page search can match inside the catalogues, so a card is found by its content.
+    const adminCatalogueText = useMemo(
+        () => catalogueSearchText(latestFeatures?.admin ?? []),
+        [latestFeatures],
+    );
+    const userCatalogueText = useMemo(
+        () => catalogueSearchText(latestFeatures?.user ?? []),
+        [latestFeatures],
+    );
+
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
         for (const fields of Object.values(schema)) {
@@ -425,6 +547,24 @@ export function AdminSettingsPage() {
                         capabilities,
                     });
                 }
+
+                // The classic page draws this tab from the release catalogue rather than
+                // from sections, which is why the navigation declares none. One card stands
+                // in for the tab, keyed by the tab id the classic page also uses.
+                if (tab.render === LATEST_FEATURES_RENDER) {
+                    rendered.push({
+                        sectionId: tab.id,
+                        label: tab.label,
+                        groupId: group.id,
+                        groupLabel: group.label,
+                        tabLabel: tab.label,
+                        icon: tab.icon,
+                        fields: [],
+                        allFields: [],
+                        capabilities: [],
+                        kind: 'latest-features',
+                    });
+                }
             }
         }
 
@@ -460,10 +600,20 @@ export function AdminSettingsPage() {
                     return section;
                 }
 
+                // A catalogue card is found by the announcements it holds; the card narrows
+                // itself to the matches.
+                if (section.kind === 'latest-features') {
+                    return adminCatalogueText.includes(needle) ? section : null;
+                }
+
                 // Search spans keys, labels and help text, so both "retention" and
-                // "data lifecycle" find the same setting.
-                const fields = section.fields.filter((field) =>
-                    fieldSearchText(field).includes(needle),
+                // "data lifecycle" find the same setting. The user-facing announcements are
+                // searchable through the field that lists them.
+                const fields = section.fields.filter(
+                    (field) =>
+                        fieldSearchText(field).includes(needle) ||
+                        (field.component === LATEST_FEATURES_VISIBILITY_COMPONENT &&
+                            userCatalogueText.includes(needle)),
                 );
                 const capabilities = section.capabilities.filter((row) =>
                     `${row.key} ${row.label}`.toLowerCase().includes(needle),
@@ -473,7 +623,7 @@ export function AdminSettingsPage() {
                     : null;
             })
             .filter((section): section is RenderedSection => section !== null);
-    }, [sections, query, activeGroup]);
+    }, [sections, query, activeGroup, adminCatalogueText, userCatalogueText]);
 
     const settingCount = declaredKeys.size + capabilityRows.length;
 
@@ -761,6 +911,47 @@ export function AdminSettingsPage() {
         },
         [goToSection],
     );
+
+    /** Every section V2 draws, whatever the current filters show. */
+    const renderedSectionIds = useMemo(
+        () => new Set(sections.map((section) => section.sectionId)),
+        [sections],
+    );
+
+    /** Where a Latest Features shortcut lands: a card here, or the classic tab. */
+    const resolveLatestFeatureAction = useCallback(
+        (action: LatestFeatureAction) =>
+            resolveAdminActionTarget(action, data?.admin_nav ?? [], renderedSectionIds),
+        [data, renderedSectionIds],
+    );
+
+    /** Reads the settings being edited, preferring an unsaved value. */
+    const readCurrent = useCallback(
+        (settingKey: string) => readSectionValue(settings, draft, settingKey),
+        [settings, draft],
+    );
+
+    /** How many user-facing announcements the current choices share, once the catalogue is in. */
+    const userAnnouncementCounts = useMemo(() => {
+        if (!latestFeatures) {
+            return { shared: null, total: null };
+        }
+        const features = allFeatures(latestFeatures.user);
+        const visibility = readVisibility(readCurrent(LATEST_FEATURES_VISIBILITY_KEY), latestFeatures.user);
+        return { shared: countShared(visibility, features), total: features.length };
+    }, [latestFeatures, readCurrent]);
+
+    /**
+     * The search a catalogue-backed field narrows itself by: none when the search named its
+     * section or the field itself, and the search otherwise.
+     */
+    const catalogueQueryFor = (field: AdminField) => {
+        if (!query.trim() || fieldSearchText(field).includes(query.trim().toLowerCase())) {
+            return '';
+        }
+        const owner = sections.find((section) => section.allFields.includes(field));
+        return owner && sectionLocationMatches(owner, query) ? '' : query;
+    };
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
@@ -1079,6 +1270,51 @@ export function AdminSettingsPage() {
                             help={field.help}
                         />
                     );
+                case 'send-feedback-overview':
+                    return <SendFeedbackOverview key={key} field={field} onNavigate={goToSection} />;
+                case 'send-feedback-bug-report':
+                case 'send-feedback-feature-request':
+                    return (
+                        <SendFeedbackForm
+                            key={key}
+                            kind={field.component === 'send-feedback-bug-report' ? 'bug_report' : 'feature_request'}
+                            field={field}
+                            defaultName={adminName}
+                            defaultEmail={adminEmail}
+                            appVersion={data?.version || bootstrapVersion || ''}
+                        />
+                    );
+                case 'support-latest-features-publication':
+                    return (
+                        <LatestFeaturesPublication
+                            key={key}
+                            field={field}
+                            state={describePublication({
+                                menuOn: asBoolean(readCurrent('enable_support_menu')),
+                                destinationOn: asBoolean(readCurrent('enable_support_latest_features')),
+                                menuName: readSibling('support_menu_name', 'Support'),
+                                shared: userAnnouncementCounts.shared,
+                                total: userAnnouncementCounts.total,
+                            })}
+                            onNavigate={goToSection}
+                        />
+                    );
+                case 'support-latest-features-visibility':
+                    return (
+                        <LatestFeaturesVisibility
+                            key={key}
+                            field={field}
+                            groups={latestFeatures?.user ?? null}
+                            loading={latestFeaturesLoading}
+                            error={latestFeaturesError}
+                            onRetry={retryLatestFeatures}
+                            value={value}
+                            disabled={saving}
+                            query={catalogueQueryFor(field)}
+                            read={readCurrent}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
                 default:
                     return null;
             }
@@ -1101,6 +1337,7 @@ export function AdminSettingsPage() {
                         setValue(field.key, next);
                     }
                 }}
+                onNavigate={goToSection}
             />
         );
 
@@ -1165,12 +1402,15 @@ export function AdminSettingsPage() {
     // The index needs at least two sections to be worth the width it takes.
     const showIndex = !loading && !error && indexEntries.length > 1;
 
-    const categories: { id: string | null; label: string; Icon: LucideIcon }[] = [
+    const categories: { id: string | null; label: string; Icon: LucideIcon; isNew?: boolean }[] = [
         { id: null, label: 'All settings', Icon: ALL_SETTINGS_ICON },
         ...(data?.admin_nav ?? []).map((group) => ({
             id: group.id,
             label: group.label,
             Icon: resolveAdminNavIcon(group.icon),
+            // The classic navigation flags Admin Latest Features as new; here the category
+            // holding it carries the flag, since V2 has no tab strip to put it on.
+            isNew: group.tabs.some((tab) => tab.render === LATEST_FEATURES_RENDER),
         })),
     ];
 
@@ -1185,46 +1425,65 @@ export function AdminSettingsPage() {
                 }
             />
 
-            <div
-                role="status"
-                aria-label="Application version"
-                className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-edge px-6 py-3 text-sm"
-            >
-                <span className="font-medium text-text-1">
-                    Version: {data?.version || bootstrapVersion || 'Unavailable'}
-                </span>
-                {checkingForUpdates ? (
-                    <span className="text-text-3">Checking for updates...</span>
-                ) : updateStatus ? (
-                    <>
-                        {updateStatus.update_available && (
-                            <span className="text-warn">
-                                {updateStatus.status === 'checked' ? 'New version available' : 'Last known newer release'}
-                                : v{updateStatus.latest_version}.{' '}
-                                <a
-                                    href="https://github.com/microsoft/simplechat/releases"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-accent underline"
-                                >
-                                    View releases
-                                </a>
-                            </span>
-                        )}
-                        {updateStatus.status !== 'checked' ? (
-                            <span className="text-warn">
-                                {updateStatus.error || 'Unable to check for application updates.'}
-                                {updateStatus.latest_version && (
-                                    <> Last known release: v{updateStatus.latest_version}; this result may be stale.</>
-                                )}
-                            </span>
-                        ) : !updateStatus.update_available && (
-                            <span className="text-text-3">No newer release found.</span>
-                        )}
-                    </>
-                ) : (
-                    <span className="text-warn">Unable to check for application updates.</span>
-                )}
+            {/* The registration badge sits beside the version, where the classic page puts it,
+                but outside the live region: its dialog must not be announced as a status. */}
+            <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-edge px-6 py-3 text-sm">
+                {data ? (
+                    <ReleaseNotificationsBadge
+                        settings={settings}
+                        defaultName={adminName}
+                        defaultEmail={adminEmail}
+                        appVersion={data.version || bootstrapVersion || ''}
+                        onRegistered={(updates) =>
+                            setData((current) =>
+                                current
+                                    ? { ...current, settings: { ...current.settings, ...updates } }
+                                    : current,
+                            )
+                        }
+                    />
+                ) : null}
+                <div
+                    role="status"
+                    aria-label="Application version"
+                    className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1"
+                >
+                    <span className="font-medium text-text-1">
+                        Version: {data?.version || bootstrapVersion || 'Unavailable'}
+                    </span>
+                    {checkingForUpdates ? (
+                        <span className="text-text-3">Checking for updates...</span>
+                    ) : updateStatus ? (
+                        <>
+                            {updateStatus.update_available && (
+                                <span className="text-warn">
+                                    {updateStatus.status === 'checked' ? 'New version available' : 'Last known newer release'}
+                                    : v{updateStatus.latest_version}.{' '}
+                                    <a
+                                        href="https://github.com/microsoft/simplechat/releases"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-accent underline"
+                                    >
+                                        View releases
+                                    </a>
+                                </span>
+                            )}
+                            {updateStatus.status !== 'checked' ? (
+                                <span className="text-warn">
+                                    {updateStatus.error || 'Unable to check for application updates.'}
+                                    {updateStatus.latest_version && (
+                                        <> Last known release: v{updateStatus.latest_version}; this result may be stale.</>
+                                    )}
+                                </span>
+                            ) : !updateStatus.update_available && (
+                                <span className="text-text-3">No newer release found.</span>
+                            )}
+                        </>
+                    ) : (
+                        <span className="text-warn">Unable to check for application updates.</span>
+                    )}
+                </div>
             </div>
 
             <div className="flex min-h-0 flex-1">
@@ -1256,6 +1515,7 @@ export function AdminSettingsPage() {
                                         className={clsx('shrink-0', active ? 'text-accent' : 'text-text-3')}
                                     />
                                     <span className="min-w-0 flex-1">{category.label}</span>
+                                    {category.isNew ? <NewBadge /> : null}
                                 </button>
                             );
                         })}
@@ -1272,7 +1532,9 @@ export function AdminSettingsPage() {
                                     className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
                                     <option value="">All settings</option>
                                     {(data?.admin_nav ?? []).map((group) => (
-                                        <option key={group.id} value={group.id}>{group.label}</option>
+                                        <option key={group.id} value={group.id}>
+                                            {`${group.label}${group.tabs.some((tab) => tab.render === LATEST_FEATURES_RENDER) ? ' (New)' : ''}`}
+                                        </option>
                                     ))}
                                 </select>
                             </div>
@@ -1384,7 +1646,21 @@ export function AdminSettingsPage() {
                                         // collapsed group has to be shown or the card would
                                         // appear empty.
                                         forceExpanded={Boolean(query.trim())}
+                                        badge={section.kind === 'latest-features' ? <NewBadge /> : undefined}
                                     >
+                                        {section.kind === 'latest-features' ? (
+                                            <AdminLatestFeatures
+                                                groups={latestFeatures?.admin ?? null}
+                                                loading={latestFeaturesLoading}
+                                                error={latestFeaturesError}
+                                                onRetry={retryLatestFeatures}
+                                                // A search that found the card by its own name
+                                                // shows every announcement, not only matches.
+                                                query={sectionLocationMatches(section, query) ? '' : query}
+                                                resolveAction={resolveLatestFeatureAction}
+                                                onNavigate={goToSection}
+                                            />
+                                        ) : null}
                                         {section.capabilities.length ? (
                                             <div className="admin-switch-grid" data-testid="admin-switch-grid">
                                                 {section.capabilities.map((row) => (

@@ -1,11 +1,12 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.258
+Version: 0.261.260
 Implemented in: 0.261.093
 Separate release check boundary: 0.261.133
 The rail's notification count is answered: 0.261.195
 Selectable sections, Model Catalog, and AI Connections stubs: 0.261.258
+Help group: catalogue tabs, Latest Features, Send Feedback and registration stubs: 0.261.260
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in
@@ -50,9 +51,14 @@ AGENT_SECTION_IDS = (
 
 
 def _select_navigation(sections):
-    """The real navigation, narrowed to the named sections of the named groups."""
+    """The real navigation, narrowed to the named sections of the named groups.
+
+    A tab drawn from a catalogue rather than from sections -- Admin Latest Features
+    declares none -- is selected by naming its tab id among the group's sections.
+    """
     nav = []
     section_ids = []
+    render_tab_ids = []
     for group in ADMIN_NAV:
         wanted = sections.get(group["id"])
         if not wanted:
@@ -61,9 +67,14 @@ def _select_navigation(sections):
         for tab in group["tabs"]:
             tab["sections"] = [section for section in tab["sections"] if section["id"] in wanted]
             section_ids.extend(section["id"] for section in tab["sections"])
-        group["tabs"] = [tab for tab in group["tabs"] if tab["sections"]]
+            if tab.get("render") and tab["id"] in wanted:
+                render_tab_ids.append(tab["id"])
+        group["tabs"] = [
+            tab for tab in group["tabs"] if tab["sections"] or tab["id"] in render_tab_ids
+        ]
         nav.append(group)
-    missing = {section for wanted in sections.values() for section in wanted} - set(section_ids)
+    found = set(section_ids) | set(render_tab_ids)
+    missing = {section for wanted in sections.values() for section in wanted} - found
     assert not missing, f"Unknown fixture sections: {sorted(missing)}"
     return nav, tuple(section_ids)
 
@@ -110,10 +121,21 @@ class AdminSettingsFixture:
             "settings": self.settings,
             "admin_nav": nav,
             "field_schema": self.schema,
-            "section_status": {},
+            # The real status rules, for the sections this fixture serves.
+            "section_status": {
+                section_id: rule
+                for section_id, rule in fields_module.get_admin_section_status().items()
+                if section_id in self.schema
+            },
             "runtime_flags": {},
             "suppressed_capabilities": fields_module.get_suppressed_capability_keys(),
         }
+        # The Help group's catalogues come from the real payload builder, resolved the
+        # way the route resolves them. Feedback and registration posts are recorded.
+        self.latest_features_module = import_app_module("functions_support_latest_features")
+        self.latest_features_requests = 0
+        self.feedback_posts = []
+        self.registration_posts = []
         # The Model Catalog and AI Connections read their own endpoints. Catalog writes go
         # through the real validator and transform, as test_model_catalog_management does.
         self.catalog_settings = {}
@@ -161,7 +183,13 @@ class AdminSettingsFixture:
     def _bootstrap(self):
         return {
             "version": "0.261.093",
-            "user": {"id": "test-admin", "display_name": "Test Admin", "is_admin": True, "roles": ["Admin"]},
+            "user": {
+                "id": "test-admin",
+                "display_name": "Test Admin",
+                "email": "test.admin@contoso.test",
+                "is_admin": True,
+                "roles": ["Admin"],
+            },
             "branding": {"app_title": "SimpleChat", "show_logo": False, "hide_app_title": False},
             "features": {},
             "catalogs": {"models": [], "agents": [], "prompts": [], "initial_model_selection": None},
@@ -221,6 +249,7 @@ class AdminSettingsFixture:
                 })
             else:
                 normalized = updates
+                warnings = {}
                 if self.normalize_updates:
                     normalized, errors, warnings = self.normalize_updates(updates, self.settings)
                     if errors:
@@ -229,7 +258,9 @@ class AdminSettingsFixture:
                         })
                         return
                 self.settings.update(normalized)
-                route.fulfill(json={"settings": normalized, "updated_keys": list(normalized)})
+                route.fulfill(json={
+                    "settings": normalized, "updated_keys": list(normalized), "warnings": warnings,
+                })
         elif path == "/api/orchestration_types" and request.method == "GET":
             route.fulfill(json=[{"value": "default_agent", "label": "Single agent"}])
         elif path == "/api/orchestration_settings" and request.method == "GET":
@@ -242,9 +273,51 @@ class AdminSettingsFixture:
             route.fulfill(json=self._catalog_payload(admin=False))
         elif path == "/api/v2/admin/model-endpoints" and request.method == "GET":
             route.fulfill(json={"endpoints": self.endpoints, "custom_api_types": [], "default_notices": {}})
+        elif path == "/api/v2/admin/latest-features" and request.method == "GET":
+            self.latest_features_requests += 1
+            route.fulfill(json=self._latest_features_payload())
+        elif path == "/api/admin/settings/send_feedback_email" and request.method == "POST":
+            body = request.post_data_json
+            self.feedback_posts.append(copy.deepcopy(body))
+            label = "Bug Report" if body.get("feedbackType") == "bug_report" else "Feature Request"
+            route.fulfill(json={
+                "success": True,
+                "recipientEmail": "simplechat@microsoft.com",
+                "subjectLine": f"[SIMPLE_CHAT_ADMIN_FEEDBACK] {label} - {body.get('organization', '')}",
+                "feedbackLabel": label,
+            })
+        elif path == "/api/admin/settings/release_notifications_registration" and request.method == "POST":
+            body = request.post_data_json
+            self.registration_posts.append(copy.deepcopy(body))
+            route.fulfill(json={
+                "success": True,
+                "recipientEmail": "simplechat@microsoft.com",
+                "subjectLine": (
+                    "[SIMPLE_CHAT_REGISTRATION] Release and Community Call Notifications - "
+                    f"{body.get('organization', '')}"
+                ),
+                "registered": True,
+                "registeredAt": "2026-10-06T12:00:00+00:00",
+                "updatedAt": "2026-10-06T12:00:00+00:00",
+            })
         else:
             self.unexpected_requests.append(f"{request.method} {path}")
             route.fulfill(status=404, json={"error": "Unexpected fixture request."})
+
+    def _latest_features_payload(self):
+        """Both catalogues, resolved as ``v2_admin_get_latest_features`` resolves them."""
+        endpoints = {
+            "frontend_chats.chats": "/chats",
+            "frontend_profile.profile": "/profile",
+            "frontend_support.support_latest_features": "/support/latest-features",
+            "frontend_support.support_send_feedback": "/support/send-feedback",
+        }
+        return self.latest_features_module.build_latest_features_payload(
+            self.settings,
+            resolve_endpoint_url=lambda endpoint: endpoints.get(endpoint, ""),
+            resolve_static_url=lambda path: f"/static/{path}",
+            version="0.261.093",
+        )
 
     def _catalog_payload(self, *, admin):
         profiles = self.catalog_module.get_effective_model_profiles(self.catalog_settings)

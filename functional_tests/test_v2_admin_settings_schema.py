@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.105
+Version: 0.261.260
 Implemented in: 0.261.039
+related_section targets checked: 0.261.260
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
@@ -24,6 +25,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_support.app_stubs import import_app_module
+from test_support.nav import get_section_ids
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -620,6 +622,38 @@ def test_declared_defaults_match_the_application():
     return True
 
 
+def test_related_sections_point_at_real_sections():
+    """A related-section link to an unknown id would jump nowhere."""
+    print("\nTesting related_section targets...")
+
+    assert_app_version_at_least("0.261.260")
+
+    section_ids = set(get_section_ids())
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        related = field.get("related_section")
+        if related is None:
+            continue
+        checked += 1
+        identity = f"{section_id}.{field.get('key') or field.get('component')}"
+        if not isinstance(related, dict) or set(related) != {"id", "label"}:
+            problems.append(f"{identity}: related_section must be {{'id', 'label'}}")
+            continue
+        if related["id"] not in section_ids:
+            problems.append(f"{identity}: {related['id']!r} is not a navigation section")
+        elif related["id"] == section_id:
+            problems.append(f"{identity}: points at its own section")
+        if not str(related["label"]).strip():
+            problems.append(f"{identity}: related_section has no label")
+
+    assert not problems, "These related_section links are broken:\n  " + "\n  ".join(problems)
+    assert checked, "No related_section links were found; the extraction likely broke."
+
+    print(f"  All {checked} related_section link(s) point at real sections.")
+    return True
+
+
 if __name__ == "__main__":
     tests = [
         test_field_types_are_known,
@@ -633,6 +667,7 @@ if __name__ == "__main__":
         test_gated_fields_inherit_their_gate_s_own_conditions,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,
+        test_related_sections_point_at_real_sections,
     ]
 
     results = []

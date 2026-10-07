@@ -10,8 +10,8 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, Check, CheckCircle2, Info, KeyRound, Lock, RotateCcw } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { AlertCircle, ArrowRight, Check, CheckCircle2, Info, KeyRound, Lock, RotateCcw } from 'lucide-react';
+import { useContext, useState, type ReactNode } from 'react';
 import {
     asBoolean,
     asNumber,
@@ -22,6 +22,7 @@ import {
     type AdminField,
 } from '../../lib/adminFields';
 import { Toggle } from '../ui/primitives';
+import { SectionStatusContext } from './sectionStatusContext';
 
 const inputClass = clsx(
     'min-h-10 w-full rounded-lg border border-edge bg-surface-1 px-3 py-2',
@@ -63,6 +64,53 @@ export function FieldNotice({ field }: { field: AdminField }) {
 }
 
 /**
+ * An in-page jump to the section a field leads to, declared with `related_section`.
+ *
+ * Drawn only when the page can navigate, so a field rendered somewhere without that
+ * ability omits the link rather than offering a control that does nothing.
+ */
+export function RelatedSectionLink({
+    field,
+    onNavigate,
+}: {
+    field: AdminField;
+    onNavigate?: (sectionId: string) => void;
+}) {
+    const related = field.related_section;
+    if (!related || !onNavigate) {
+        return null;
+    }
+    return (
+        <button
+            type="button"
+            onClick={() => onNavigate(related.id)}
+            className="mt-1.5 inline-flex items-center gap-1 rounded text-xs font-medium text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+            {related.label}
+            <ArrowRight size={12} aria-hidden="true" />
+        </button>
+    );
+}
+
+/**
+ * Marks a field its section cannot be configured without, while it is still empty.
+ *
+ * The section's status chip says "Needs configuration"; this says which control to fill.
+ * It is not a validation error -- the value can be saved blank -- so it is a quiet pill
+ * beside the label rather than a red line beneath the control.
+ */
+function RequiredMark() {
+    return (
+        <span
+            title="Needed before this section is fully configured"
+            className="shrink-0 rounded-full border border-warn/40 bg-warn-soft px-2 py-0.5 text-[11px] leading-none font-medium text-warn"
+        >
+            Required
+        </span>
+    );
+}
+
+/**
  * How much of the control column a field's input may take on a wide card.
  *
  * A number box stretched across 700px reads as a text field, and a URL squeezed into a
@@ -86,6 +134,8 @@ export function FieldShell({
     children,
     trailing,
     width = 'wide',
+    missing = false,
+    onNavigate,
 }: {
     field: AdminField;
     error?: string;
@@ -94,7 +144,12 @@ export function FieldShell({
     children: ReactNode;
     trailing?: ReactNode;
     width?: FieldWidth;
+    /** A required field that is still empty; see `RequiredMark`. */
+    missing?: boolean;
+    /** Follows the field's `related_section`, when the page can navigate. */
+    onNavigate?: (sectionId: string) => void;
 }) {
+    const requiredMark = missing ? <RequiredMark /> : null;
     return (
         <div className="admin-field py-3" data-field-width={width}>
             <div className="admin-field-heading flex items-baseline justify-between gap-3">
@@ -104,7 +159,14 @@ export function FieldShell({
                 >
                     {field.label}
                 </label>
-                {trailing}
+                {requiredMark && trailing ? (
+                    <span className="flex shrink-0 items-baseline gap-2">
+                        {requiredMark}
+                        {trailing}
+                    </span>
+                ) : (
+                    requiredMark ?? trailing
+                )}
             </div>
 
             {field.help ? (
@@ -115,6 +177,8 @@ export function FieldShell({
                 {children}
 
                 <FieldNotice field={field} />
+
+                <RelatedSectionLink field={field} onNavigate={onNavigate} />
 
                 {warning ? (
                     <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
@@ -144,12 +208,28 @@ export interface FieldControlProps {
     warning?: string;
     disabled?: boolean;
     onChange: (next: unknown) => void;
+    /** Moves the page to another section; follows a field's `related_section`. */
+    onNavigate?: (sectionId: string) => void;
 }
 
-function TextControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+function TextControl({ field, value, error, warning, disabled, onChange, onNavigate }: FieldControlProps) {
     const id = `admin-field-${field.key}`;
+    // Marked only while the section asks for configuration: blank fields under a
+    // capability that is off, or behind a missing prerequisite, are not the next step.
+    const sectionStatus = useContext(SectionStatusContext);
+    const missing =
+        Boolean(field.required) &&
+        !asString(value).trim() &&
+        (sectionStatus === undefined || sectionStatus === 'incomplete');
     return (
-        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            missing={missing}
+            onNavigate={onNavigate}
+        >
             <input
                 id={id}
                 type={field.input_type ?? 'text'}
@@ -411,7 +491,7 @@ function SelectControl({ field, value, error, warning, disabled, onChange }: Fie
     );
 }
 
-function SwitchControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+function SwitchControl({ field, value, error, warning, disabled, onChange, onNavigate }: FieldControlProps) {
     return (
         <div className="admin-switch-row py-1">
             <Toggle
@@ -428,6 +508,11 @@ function SwitchControl({ field, value, error, warning, disabled, onChange }: Fie
             {field.notice ? (
                 <div className="ml-14">
                     <FieldNotice field={field} />
+                </div>
+            ) : null}
+            {field.related_section && onNavigate ? (
+                <div className="ml-14 -mt-1 pb-1">
+                    <RelatedSectionLink field={field} onNavigate={onNavigate} />
                 </div>
             ) : null}
             {warning ? (

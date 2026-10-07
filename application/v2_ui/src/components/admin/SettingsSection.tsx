@@ -49,6 +49,7 @@ import {
 } from '../../lib/adminSections';
 import { GlassPanel } from '../ui/primitives';
 import { FALLBACK_SECTION_ICON } from './adminSectionIcons';
+import { SectionStatusContext } from './sectionStatusContext';
 import { presentSectionStatus } from './sectionStatusPresentation';
 import type { Json } from '../../lib/types';
 
@@ -106,6 +107,11 @@ export interface SettingsSectionProps {
     forceExpanded?: boolean;
     /** Opt-in presentation overrides; never changes the schema's behavior. */
     appearance?: SettingsSectionAppearance;
+    /**
+     * A marker drawn in the header beside the status chip. Admin Latest Features uses it
+     * for its "New" pill, which is about the content rather than the section's state.
+     */
+    badge?: ReactNode;
     children?: ReactNode;
 }
 
@@ -287,6 +293,7 @@ export function SettingsSection({
     renderCapability,
     forceExpanded,
     appearance,
+    badge,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -412,6 +419,8 @@ export function SettingsSection({
                     </div>
                 </div>
 
+                {badge}
+
                 {presentation ? (
                     // Free to shrink once it has wrapped onto its own line, so a long
                     // status at a large text size wraps inside the card instead of past it.
@@ -428,31 +437,33 @@ export function SettingsSection({
             </div>
 
             <div className="admin-section-body p-4 sm:p-5">
-                {requirements.map((requirement) => (
-                    <RequirementNotice
-                        key={requirement.key}
-                        requirement={requirement}
-                        satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
-                    />
-                ))}
+                <SectionStatusContext.Provider value={status}>
+                    {requirements.map((requirement) => (
+                        <RequirementNotice
+                            key={requirement.key}
+                            requirement={requirement}
+                            satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
+                        />
+                    ))}
 
-                {capability ? (
-                    <div className={clsx(emphasisOf(capability) ? 'mb-1' : 'mb-1 border-b border-edge-strong pb-2')}>
-                        {decorateField(capability, renderCapability)}
-                    </div>
-                ) : null}
+                    {capability ? (
+                        <div className={clsx(emphasisOf(capability) ? 'mb-1' : 'mb-1 border-b border-edge-strong pb-2')}>
+                            {decorateField(capability, renderCapability)}
+                        </div>
+                    ) : null}
 
-                {groups.map((group) => (
-                    <FieldGroup
-                        key={group.id || '__ungrouped'}
-                        group={group}
-                        startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
-                        forceExpanded={forceExpanded}
-                        renderFields={renderFields}
-                    />
-                ))}
+                    {groups.map((group) => (
+                        <FieldGroup
+                            key={group.id || '__ungrouped'}
+                            group={group}
+                            startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
+                            forceExpanded={forceExpanded}
+                            renderFields={renderFields}
+                        />
+                    ))}
 
-                {children}
+                    {children}
+                </SectionStatusContext.Provider>
             </div>
         </GlassPanel>
     );

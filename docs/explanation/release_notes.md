@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.260)**
+
+#### New Features
+
+*   **V2 Admin Help Group Matches the Classic Page**
+    *   **Support** now offers the Menu Name, the Send Feedback destination and its Support Recipient Email, nested under the Support menu switch. The card reads **Needs configuration** while Send Feedback is on with no recipient, and the empty recipient field is marked **Required**. A malformed address is refused beside the field instead of being cleared, and turning the menu on no longer switches Send Feedback off.
+    *   **Send Feedback** has an Overview and the **Report a Bug** and **Request a Feature** forms. They prefill your name and email, check each field, record the submission, and open a text-only email draft to the SimpleChat team, with a link to open it again. The overview explains how this differs from your users' own Send Feedback and links to the Support settings.
+    *   **User-Facing Latest Features** lists every announcement by release, with a share checkbox, **Share all** and **Hide all**, and a preview of exactly what users see, including screenshots and the shortcuts your unsaved choices would show. It stays editable while Support is off, so you can prepare announcements before publishing. A **Publication** notice says whether users can reach the page and links to the Support settings.
+    *   **Admin Latest Features** is now a V2 card marked **New**, and the Help category carries the same marker. Each release opens to details, why it matters, rollout notes, screenshots, and shortcuts. Shortcuts jump to the matching V2 card, or open the classic tab when V2 does not show it yet. Page search finds announcements by their content.
+    *   The **Registered** / **Unregistered** release notifications badge now sits beside the version in V2 and opens the registration dialog.
+    *   (Ref: `admin_settings_fields.py`, `functions_support_latest_features.py`, `GET /api/v2/admin/latest-features`, `AdminSettingsPage.tsx`, `SendFeedback.tsx`, `LatestFeaturesVisibility.tsx`, `AdminLatestFeatures.tsx`, `ReleaseNotificationsBadge.tsx`, [V2 Admin Help Settings](features/V2_ADMIN_HELP_SETTINGS.md))
+
+#### Bug Fixes
+
+*   **Application Title No Longer Doubles in Latest Features**
+    *   An application title containing "SimpleChat", such as "SimpleChat Contoso", was substituted twice in Latest Features copy and showed up as "SimpleChat Contoso Contoso". The title is now applied once, on both the classic pages and V2.
+    *   (Ref: `support_menu_config.py`, `test_v2_admin_latest_features_api.py`)
+
 ### **(v0.261.259)**
 
 #### Bug Fixes

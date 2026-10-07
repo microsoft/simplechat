@@ -634,6 +634,38 @@ def iter_tabs():
             yield group, tab
 
 
+# Tabs that existed before the information architecture rework, mapped to where
+# their content now lives. ``LEGACY_TAB_REDIRECTS`` in
+# ``static/js/admin/admin_sidebar_nav.js`` resolves the same ids for the
+# server-rendered page; this copy lets the server resolve a Latest Features
+# shortcut for the V2 surface, and a functional test keeps the two identical.
+LEGACY_TAB_REDIRECTS = {
+    "governance": "feature-governance",
+    "scale": "redis-caching",
+    "general": "branding",
+    "safety": "access-roles",
+    "security": "secrets",
+    "workspaces": "workspace-types",
+    "search-extract": "web-research",
+    "ai-models": "model-endpoints",
+    "data-management": "backup",
+}
+
+
+def resolve_admin_tab_id(tab_id):
+    """Return the live tab id for a current or pre-rework tab id.
+
+    A leading ``#`` is accepted because Latest Features shortcuts store their
+    target as a fragment. Returns None when the id names no tab, directly or
+    through ``LEGACY_TAB_REDIRECTS``.
+    """
+    candidate = str(tab_id or "").strip().lstrip("#")
+    if not candidate:
+        return None
+    candidate = LEGACY_TAB_REDIRECTS.get(candidate, candidate)
+    return candidate if candidate in get_tab_ids() else None
+
+
 def get_tab_ids():
     """Return every tab id in navigation order."""
     return [tab["id"] for _, tab in iter_tabs()]

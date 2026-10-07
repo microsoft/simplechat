@@ -23,8 +23,9 @@ import json
 import logging
 import uuid
 
-from flask import current_app, jsonify, request, session
+from flask import current_app, jsonify, request, session, url_for
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
+from werkzeug.routing import BuildError
 
 from admin_app_roles import get_app_role_requirements
 from admin_settings_fields import (
@@ -167,6 +168,7 @@ from functions_source_review import (
     is_url_access_enabled_for_user,
 )
 from functions_workspace_sections import build_workspace_section_availability
+from functions_support_latest_features import build_latest_features_payload
 from functions_workspace_context import (
     WorkspaceContextError,
     build_group_workspace_context,
@@ -1462,6 +1464,51 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Unable to check for application updates."}), 500
+
+    def _latest_feature_endpoint_url(endpoint):
+        """Resolve a catalogue shortcut's Flask endpoint, or '' when it is not registered."""
+        try:
+            return url_for(endpoint)
+        except BuildError:
+            log_event(
+                "[V2_ADMIN_SETTINGS] A Latest Features shortcut names an unknown endpoint.",
+                extra={"endpoint": endpoint},
+                level=logging.WARNING,
+            )
+            return ""
+
+    @bp.route("/api/v2/admin/latest-features", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_latest_features():
+        """Return the admin and user-facing Latest Features catalogues.
+
+        The server-rendered Help tabs build these cards with Jinja, resolving each
+        shortcut through ``url_for`` and each screenshot through the static route.
+        The V2 surface cannot, so the resolved catalogues are served here.
+
+        Kept apart from the settings GET because the catalogues are long and only the
+        Help group draws them: the SPA requests this beside the settings when its
+        navigation includes those cards, so it never holds up the rest of the page.
+        The payload holds release copy and links only, no settings values.
+        """
+        try:
+            payload = build_latest_features_payload(
+                get_settings(),
+                resolve_endpoint_url=_latest_feature_endpoint_url,
+                resolve_static_url=lambda path: url_for("static", filename=path),
+                version=VERSION,
+            )
+            return jsonify(payload), 200
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Failed to load the Latest Features catalogues.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load Latest Features."}), 500
 
     @bp.route("/api/v2/admin/settings", methods=["PATCH"])
     @swagger_route(security=get_auth_security())

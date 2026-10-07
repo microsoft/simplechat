@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.122
+Version: 0.261.260
 Implemented in: 0.261.047
+Help group described in full: 0.261.260
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -27,9 +28,10 @@ without opening the page:
 Declaring a field is what takes a key out of that scan. This test holds three
 invariants so the misfiling cannot come back:
 
-  1. The Appearance, Chat and Security groups are fully described by the schema, so
-     they must receive *no* guessed rows at all. A new undeclared key that lands in
-     any of them fails here, and the fix is to declare it in its real section.
+  1. The Appearance, Chat, Security, Agents & Actions and Help groups are fully
+     described by the schema, so they must receive *no* guessed rows at all. A new
+     undeclared key that lands in any of them fails here, and the fix is to declare
+     it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
@@ -45,6 +47,12 @@ are Cosmos maintenance switches and are now declared under
 "storage" in ``data-management-storage-section`` and appeared under Backup &
 Recovery, while ``enable_key_vault_secret_expiration_reminders`` matched nothing at
 all and fell into "Other capabilities".
+
+The Help group was described next. Its last guessed row was
+``enable_support_send_feedback``, which matched "send" and "feedback" in
+``send-feedback-overview-card`` and so appeared as a bare switch on the Send
+Feedback overview, a utility for reaching the SimpleChat team, rather than beside
+the Support Menu recipient it actually needs.
 """
 
 import re
@@ -68,7 +76,7 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
+FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions", "help")
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -82,6 +90,8 @@ RELOCATED_CAPABILITIES = {
     ),
     "enable_support_latest_features": ("support-menu-section", "support-menu"),
     "enable_support_menu": ("support-menu-section", "support-menu"),
+    # Guessed onto the Send Feedback overview by "send" and "feedback".
+    "enable_support_send_feedback": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
     # Matched the token "image" and landed in Image Generation, which is about producing
     # pictures rather than reading them out of Word and PowerPoint files. The
