@@ -19,9 +19,12 @@ import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
+import { AdminFeedbackReviewPage } from './pages/AdminFeedbackReviewPage';
+import { AdminSafetyViolationsPage } from './pages/AdminSafetyViolationsPage';
 import { AdminActionEditorPage, AdminAgentEditorPage } from './pages/AdminGlobalEditorPages';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
+import { safeSameOriginUrl } from './lib/adminOperations';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
 import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
@@ -32,12 +35,6 @@ import { ContentReviewPage } from './pages/ContentReviewPage';
 import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
-
-function safeBrandingAssetUrl(value: unknown): string {
-    return typeof value === 'string' && /^\/static\/images\/[A-Za-z0-9_.-]+(?:\?v=\d+)?$/.test(value)
-        ? value
-        : '';
-}
 
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
 // import.meta.env.DEV, which a production build replaces with false, so production never
@@ -182,13 +179,16 @@ export function App() {
      * again.
      */
     useEffect(() => {
-        const faviconUrl = safeBrandingAssetUrl(data?.branding?.favicon_url);
-        if (!faviconUrl) {
+        const faviconUrl = data?.branding?.favicon_url;
+        const safeFaviconUrl = faviconUrl
+            ? safeSameOriginUrl(faviconUrl, window.location.origin)
+            : null;
+        if (!safeFaviconUrl) {
             return;
         }
         const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-        if (link && link.getAttribute('href') !== faviconUrl) {
-            link.setAttribute('href', faviconUrl);
+        if (link && link.getAttribute('href') !== safeFaviconUrl) {
+            link.setAttribute('href', safeFaviconUrl);
         }
     }, [data]);
 
@@ -234,6 +234,8 @@ export function App() {
                 <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
+                <Route path="/admin/feedback-review" element={<AdminFeedbackReviewPage />} />
+                <Route path="/admin/safety-violations" element={<AdminSafetyViolationsPage />} />
                 {/* The global editors return here, with their section in view. */}
                 <Route path="/admin/agents" element={<AdminSettingsPage focusSection="organization-agents-section" />} />
                 <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />

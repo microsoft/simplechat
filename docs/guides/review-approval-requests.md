@@ -51,7 +51,7 @@ Approvals create a checkpoint before sensitive actions execute. Use this page wh
 
 ## In the V2 interface
 
-From **0.261.279**, **Approval requests** in the V2 sidebar opens a full-page view laid out like V2 Admin Settings. A left rail groups the queues so you review one kind of request at a time, the center lists the requests in that queue, and the right pane shows the selected request with its decision controls.
+From **0.261.280**, **Approval requests** in the V2 sidebar opens a full-page view laid out like V2 Admin Settings. A left rail groups the queues so you review one kind of request at a time, the center lists the requests in that queue, and the right pane shows the selected request with its decision controls.
 
 | Category | What it holds |
 | --- | --- |
