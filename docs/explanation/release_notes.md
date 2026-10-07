@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.277)**
+### **(v0.261.279)**
 
 #### New Features
 
@@ -11,6 +11,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
     *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](../guides/admin-review-feedback.md), [Safety Violation Review](../guides/admin-review-safety-violations.md))
 
+### **(v0.261.278)**
+
+#### New Features
+
+*   **V2 Control Center Foundation**
+    *   Adds the permission-aware V2 Control Center pane, reusable management primitives, and a manually invoked activity-log data-health check and backfill.
+    *   The classic page no longer scans for migration status on every visit; the retained backfill skips existing activity events and uses stable IDs for reruns.
+    *   (Ref: `ControlCenterPage.tsx`, `functions_authentication.py`, `route_backend_v2.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md), [Activity Log Migration Prompt Fix](fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
+### **(v0.261.277)**
+
+#### User Interface Enhancements
+
+*   **Agent Editor No Longer Shows GUIDs**
+    *   The agent editor for personal, group and global agents no longer shows internal identifiers. The header shows the agent's own icon, such as the Microsoft 365 logo, and its description instead of a stable ID.
+    *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
+    *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
+    *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
 ### **(v0.261.276)**
 
 #### New Features

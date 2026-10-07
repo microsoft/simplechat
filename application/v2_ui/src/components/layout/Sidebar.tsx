@@ -149,7 +149,9 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
 function UserMenu({ collapsed }: { collapsed: boolean }) {
     const bootstrap = useBootstrapStore((state) => state.data);
     const user = bootstrap?.user;
+    const controlCenter = bootstrap?.control_center;
     const isAdmin = Boolean(user?.is_admin);
+    const canOpenControlCenter = Object.values(controlCenter ?? {}).some(Boolean);
     const roles = user?.roles ?? [];
     const settings = bootstrap?.settings;
     const features = bootstrap?.features;
@@ -250,6 +252,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     {canReviewSafety && (
                         <NavLink to="/admin/safety-violations" onClick={() => setOpen(false)} className={itemClass}>
                             <ShieldAlert size={15} /> Safety Violations
+                        </NavLink>
+                    )}
+                    {canOpenControlCenter && (
+                        <NavLink to="/control-center" onClick={() => setOpen(false)} className={itemClass}>
+                            <ShieldCheck size={15} /> Control Center
                         </NavLink>
                     )}
                     {/* Carries the open conversation across, since both interfaces read the
