@@ -14,6 +14,16 @@ import { EditorDependents, EditorFieldset, EditorGroup, EditorPanel, EditorSwitc
 import { SectionSearch } from '../workspace/primitives';
 import { AgentField, AgentNotice, AgentTextField } from './AgentFields';
 
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+    personal: 'Personal workspace',
+    group: 'Group workspace',
+    public: 'Public workspace',
+};
+
+function sourceTypeLabel(scope: string): string {
+    return SOURCE_TYPE_LABELS[scope] ?? 'Workspace';
+}
+
 export function AgentKnowledgeFields({
     draft, setDraft, catalog, loading, error, onRefresh, readOnly, knowledgeScopes = ['personal', 'public'],
 }: {
@@ -44,7 +54,7 @@ export function AgentKnowledgeFields({
     const tags = catalog?.tags ?? [];
     const unavailableTags = config.tags.filter((tag) => !tags.some((item) => item.name === tag));
     const visibleDocuments = documents.filter((document) =>
-        `${document.title} ${document.file_name} ${document.source_name} ${document.id}`.toLowerCase().includes(documentQuery.toLowerCase()) &&
+        `${document.title} ${document.file_name} ${document.source_name}`.toLowerCase().includes(documentQuery.toLowerCase()) &&
         (!selectedKeys.size || selectedKeys.has(`${document.scope}:${document.source_id}`) || config.document_ids.includes(document.id)));
     const active = catalog ? resolvedAgentDocuments(config, catalog) : [];
 
@@ -98,19 +108,19 @@ export function AgentKnowledgeFields({
                             : 'Only public workspaces can be assigned, because a global agent answers everyone.'} Removing a source does not silently remove stored document references.`}>
                         <SectionSearch value={sourceQuery} onChange={setSourceQuery} placeholder="Search knowledge workspaces" />
                         <div className="grid gap-2 sm:grid-cols-2">
-                            {sources.filter((source) => `${source.label} ${source.id}`.toLowerCase().includes(sourceQuery.toLowerCase())).map((source) => (
+                            {sources.filter((source) => `${source.label} ${sourceTypeLabel(source.scope)}`.toLowerCase().includes(sourceQuery.toLowerCase())).map((source) => (
                                 <label key={knowledgeSourceKey(source)} className="flex items-start gap-2 rounded-xl border border-edge p-3 text-sm text-text-2">
                                     <input type="checkbox" className="mt-1 accent-accent" checked={selectedKeys.has(knowledgeSourceKey(source))}
                                         disabled={readOnly} onChange={(event) => toggleSource(source, event.target.checked)} />
-                                    <span className="min-w-0 break-words">{source.label}<span className="block break-all text-xs text-text-3">{source.scope} · {source.id}</span></span>
+                                    <span className="min-w-0 break-words">{source.label}<span className="block text-xs text-text-3">{sourceTypeLabel(source.scope)}</span></span>
                                 </label>
                             ))}
                         </div>
                         {!sources.length && !loading && !error ? <p className="text-xs text-text-3">No authorized workspace sources are available. You may still assign URLs.</p> : null}
                         {unavailableSourceKeys.map((key) => (
                             <div key={key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warn/30 p-2">
-                                <span className="break-all text-xs text-warn">Saved source unavailable here: {key}</span>
-                                {!readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove knowledge source ${key}`} onClick={() => {
+                                <span className="text-xs text-warn">Saved {sourceTypeLabel(key.split(':')[0]).toLowerCase()} is no longer available here</span>
+                                {!readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove unavailable ${sourceTypeLabel(key.split(':')[0]).toLowerCase()}`} onClick={() => {
                                     setDraft((current) => {
                                         const currentConfig = readAgentKnowledge(current);
                                         return updateAgentKnowledge(current, { scopes: {
@@ -147,7 +157,7 @@ export function AgentKnowledgeFields({
                                                 });
                                             })} />
                                         <span className="min-w-0 break-words">{document.title || document.file_name}
-                                            <span className="block break-all text-xs text-text-3">{document.source_name} · {document.id}</span>
+                                            <span className="block break-words text-xs text-text-3">{[document.source_name, document.title && document.file_name !== document.title ? document.file_name : ''].filter(Boolean).join(' · ')}</span>
                                             {document.tags.length ? <span className="block text-xs text-text-3">{document.tags.join(', ')}</span> : null}
                                             {checked && !inSources ? <span className="block text-xs text-warn">Saved reference retained; its workspace is not selected.</span> : null}
                                         </span>
@@ -156,10 +166,10 @@ export function AgentKnowledgeFields({
                             })}
                         </div>
                         {visibleDocuments.length > documentLimit ? <GlassButton type="button" size="sm" onClick={() => setDocumentLimit((value) => value + 25)}>Show more documents ({visibleDocuments.length - documentLimit} remaining)</GlassButton> : null}
-                        {unavailableDocuments.map((id) => (
+                        {unavailableDocuments.map((id, index) => (
                             <div key={id} className="flex flex-wrap items-center justify-between gap-2">
-                                <code className="break-all text-xs text-warn">Unavailable document: {id}</code>
-                                {!readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove document reference ${id}`}
+                                <span className="text-xs text-warn">Saved document {unavailableDocuments.length > 1 ? `${index + 1} ` : ''}is no longer available</span>
+                                {!readOnly ? <GlassButton type="button" size="sm" aria-label={`Remove unavailable document${unavailableDocuments.length > 1 ? ` ${index + 1}` : ''}`}
                                     onClick={() => setDraft((current) => updateAgentKnowledge(current, { document_ids: readAgentKnowledge(current).document_ids.filter((item) => item !== id) }))}>Remove reference</GlassButton> : null}
                             </div>
                         ))}

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implemented in version: **0.261.277**
+Implemented in version: **0.261.279**
 
 Brings two surfaces that still sent V2 users back to the classic interface into the React V2 UI:
 

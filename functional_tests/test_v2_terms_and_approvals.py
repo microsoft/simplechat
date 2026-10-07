@@ -2,8 +2,8 @@
 # test_v2_terms_and_approvals.py
 """
 Functional test for the V2 Terms of Use page and the V2 Approval requests page.
-Version: 0.261.277
-Implemented in: 0.261.277
+Version: 0.261.279
+Implemented in: 0.261.279
 
 This test ensures the Terms of Use gate sends V2 requests to the V2 page, the V2 terms
 endpoints exist with the required decorators and are exempt from the gate, the approvals
@@ -174,8 +174,8 @@ def test_v2_navigation_points_at_the_v2_approvals_page():
 
 
 def test_version():
-    assert_app_version_at_least("0.261.277")
-    print("PASS: version is at least 0.261.277")
+    assert_app_version_at_least("0.261.279")
+    print("PASS: version is at least 0.261.279")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 # test_v2_approvals_and_terms_pages.py
 """
 Browser coverage for the V2 Approval Requests page and the V2 Terms of Use page.
-Version: 0.261.277
-Implemented in: 0.261.277
+Version: 0.261.279
+Implemented in: 0.261.279
 
 Serve the real built SPA through Playwright request interception with a closed API
 boundary. Check that the approvals page lays out a category rail, a request list and a
@@ -74,7 +74,7 @@ class ApprovalsFixture:
 
     def _bootstrap(self):
         return {
-            "version": "0.261.277",
+            "version": "0.261.279",
             "user": {
                 "id": "user-1",
                 "display_name": "Test User",
