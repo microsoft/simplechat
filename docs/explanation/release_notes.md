@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.290)**
+
+#### Bug Fixes
+
+*   **V2 Sidebar Links Opened the Classic Interface**
+    *   Every primary link in the V2 left rail opened the classic page at the same path instead of the V2 page. This covered Chats, Agents, My Workspace, Group Workspaces, Public Workspaces, Approval requests and Content review. The rail also never highlighted the open page.
+    *   Rail links now stay relative to `/v2`, so each one opens its V2 page without a reload and is highlighted.
+    *   A functional test now flags any router link built from the page origin in the V2 source, and a UI test clicks each rail link.
+    *   (Ref: `Sidebar.tsx` `safeNavHref`, [#1698](https://github.com/microsoft/simplechat/issues/1698), [V2 Sidebar Navigation Links Fix](fixes/V2_SIDEBAR_NAV_LINKS_FIX.md))
+
 ### **(v0.261.288)**
 
 #### New Features
