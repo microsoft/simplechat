@@ -5164,8 +5164,8 @@ def register_route_backend_control_center(bp):
         try:
             filters = parse_workspace_filters(request.args)
             return jsonify(query_workspaces(cosmos_public_workspaces_container, filters)), 200
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace filters."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] Workspace query failed.",
                       extra={"error_type": type(ex).__name__}, level=logging.ERROR)
@@ -5223,8 +5223,8 @@ def register_route_backend_control_center(bp):
                 "tokens": tokens[0] if tokens and tokens[0] is not None else 0,
                 "activity": activity, "metrics_calculated_at": datetime.now(timezone.utc).isoformat(),
             }), 200
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace ID."}), 400
         except CosmosResourceNotFoundError:
             return jsonify({"error": "Public workspace not found."}), 404
         except Exception as ex:
@@ -5241,8 +5241,8 @@ def register_route_backend_control_center(bp):
             data = request.get_json(silent=True)
             validate_group_status_payload(data)
             ids = select_workspace_ids(cosmos_public_workspaces_container, data)
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid bulk public workspace status request."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] Workspace selection failed.",
                       extra={"error_type": type(ex).__name__}, level=logging.ERROR)
@@ -5263,8 +5263,8 @@ def register_route_backend_control_center(bp):
         try:
             validate_group_id(workspace_id)
             validate_group_status_payload(request.get_json(silent=True))
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace status request."}), 400
         return api_update_public_workspace_status(workspace_id)
 
     @bp.route('/api/v2/control-center/public-workspaces/export.csv', methods=['GET'])
@@ -5291,8 +5291,8 @@ def register_route_backend_control_center(bp):
                 ))
             return Response(buffer.getvalue(), mimetype="text/csv",
                             headers={"Content-Disposition": 'attachment; filename="control-center-public-workspaces.csv"'}), 200
-        except GroupRequestError as ex:
-            return jsonify({"error": str(ex)}), 400
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace export filters."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] Workspace export failed.",
                       extra={"error_type": type(ex).__name__}, level=logging.ERROR)
