@@ -21,6 +21,25 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The Run view labels the step **Hand off large work** and puts what it prepares in words: the workflow's name, what it reviews, such as "3 named documents" or "a search of 2 workspaces, the 50 best matches", and its task titles. The tasks' instructions, the document and workspace references, the content filter and the tags aren't shown.
     *   (Ref: `OrchestrationWorkflowHandoffNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`)
 
+### **(v0.261.278)**
+
+#### New Features
+
+*   **V2 Control Center Foundation**
+    *   Adds the permission-aware V2 Control Center pane, reusable management primitives, and a manually invoked activity-log data-health check and backfill.
+    *   The classic page no longer scans for migration status on every visit; the retained backfill skips existing activity events and uses stable IDs for reruns.
+    *   (Ref: `ControlCenterPage.tsx`, `functions_authentication.py`, `route_backend_v2.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md), [Activity Log Migration Prompt Fix](fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
+### **(v0.261.277)**
+
+#### User Interface Enhancements
+
+*   **Agent Editor No Longer Shows GUIDs**
+    *   The agent editor for personal, group and global agents no longer shows internal identifiers. The header shows the agent's own icon, such as the Microsoft 365 logo, and its description instead of a stable ID.
+    *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
+    *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
+    *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
+
 ### **(v0.261.276)**
 
 #### New Features

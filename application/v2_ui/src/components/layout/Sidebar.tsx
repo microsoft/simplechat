@@ -145,7 +145,9 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
 
 function UserMenu({ collapsed }: { collapsed: boolean }) {
     const user = useBootstrapStore((state) => state.data?.user);
+    const controlCenter = useBootstrapStore((state) => state.data?.control_center);
     const isAdmin = Boolean(user?.is_admin);
+    const canOpenControlCenter = Object.values(controlCenter ?? {}).some(Boolean);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -221,6 +223,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     {isAdmin && (
                         <NavLink to="/admin" onClick={() => setOpen(false)} className={itemClass}>
                             <Settings size={15} /> Admin Settings
+                        </NavLink>
+                    )}
+                    {canOpenControlCenter && (
+                        <NavLink to="/control-center" onClick={() => setOpen(false)} className={itemClass}>
+                            <ShieldCheck size={15} /> Control Center
                         </NavLink>
                     )}
                     {/* Carries the open conversation across, since both interfaces read the

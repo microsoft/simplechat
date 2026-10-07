@@ -8,8 +8,9 @@ import type { WorkspaceModelEndpoint } from '../../lib/types';
 import {
     AGENT_INPUT_CLASS, FOUNDRY_SETTINGS_KEYS, agentModelChoices, agentText, applyFoundryDiscovery, clearAgentDraftFields,
     foundryEndpointMatches, foundrySettings, selectAgentModel, selectedAgentModel, selectFoundryEndpoint,
-    updateAgentSetting, type FoundryDiscoveryRecord,
+    updateAgentSetting, type AgentModelChoice, type FoundryDiscoveryRecord,
 } from '../../lib/workspaceAgentAuthoring';
+import { PROVIDER_OPTIONS } from '../../lib/modelConnections';
 import { normalizeAgentKnowledgeUrl } from '../../lib/workspaceAgentKnowledge';
 import { GlassButton } from '../ui/primitives';
 import { EditorGroup, EditorRow, EditorSwitch } from '../workspace/EditorLayout';
@@ -46,6 +47,35 @@ interface ModelFieldsProps {
     neutralReadOnlyCopy?: boolean;
 }
 
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A stored value only when it is a readable name; internal identifiers are never shown. */
+function readableName(value: unknown): string {
+    const text = agentText(value).trim();
+    return text && !GUID_PATTERN.test(text) ? text : '';
+}
+
+function providerLabel(provider: string | undefined): string {
+    if (!provider) return '';
+    return PROVIDER_OPTIONS.find((option) => option.value === provider)?.label ?? readableName(provider);
+}
+
+/** What the agent calls, in the names people configured: deployment, model, connection and provider. */
+function currentSelection(draft: AgentConfiguration, selected: AgentModelChoice | undefined): Array<[string, string]> {
+    const storedDeployment = draft.enable_agent_gpt_apim ? draft.azure_agent_apim_gpt_deployment : draft.azure_openai_gpt_deployment;
+    const deployment = readableName(selected?.deployment) || readableName(storedDeployment) || readableName(draft.model_id);
+    const model = readableName(selected?.modelName) || deployment;
+    const connection = selected?.apim || draft.enable_agent_gpt_apim ? 'Azure API Management'
+        : readableName(selected?.endpointName) || (draft.model_endpoint_id ? 'Saved connection' : 'Configured default');
+    const provider = providerLabel(selected?.provider || draft.model_provider) || 'Configured default';
+    return [
+        ['Deployment', deployment || 'Configured default'],
+        ['Model', model || 'Configured default'],
+        ['Connection', connection],
+        ['Provider', provider],
+    ];
+}
+
 function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints, neutralReadOnlyCopy }: ModelFieldsProps) {
     const choices = agentModelChoices(options);
     const selected = selectedAgentModel(draft, choices);
@@ -62,7 +92,8 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                         const choice = choices.find((item) => item.key === event.target.value);
                         if (choice) setDraft((current) => selectAgentModel(current, choice));
                     }}>
-                    <option value="">{draft.model_id || draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment || 'Use configured default / choose a model'}</option>
+                    <option value="">{readableName(draft.enable_agent_gpt_apim ? draft.azure_agent_apim_gpt_deployment : draft.azure_openai_gpt_deployment)
+                        || readableName(draft.model_id) || 'Use configured default / choose a model'}</option>
                     {choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
                 </select>
             </AgentField>
@@ -70,10 +101,10 @@ function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpo
                 ? 'Uses a configured model.'
                 : 'No enabled models are listed. You can retain the saved connection or configure a custom connection below.'}</AgentNotice> : null}
             <EditorRow heading="Current selection" help="What the agent calls when it runs.">
-                <dl className="grid gap-3 rounded-lg border border-edge bg-surface-1 p-3 text-xs sm:grid-cols-3">
-                    <div className="min-w-0"><dt className="text-text-3">Endpoint ID</dt><dd className="break-all text-text-1">{draft.model_endpoint_id || 'Legacy / configured default'}</dd></div>
-                    <div className="min-w-0"><dt className="text-text-3">Model ID</dt><dd className="break-all text-text-1">{draft.model_id || draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment || 'Configured default'}</dd></div>
-                    <div className="min-w-0"><dt className="text-text-3">Provider</dt><dd className="break-all text-text-1">{draft.model_provider || 'Configured default'}</dd></div>
+                <dl className="grid gap-3 rounded-lg border border-edge bg-surface-1 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                    {currentSelection(draft, selected).map(([term, value]) => (
+                        <div key={term} className="min-w-0"><dt className="text-text-3">{term}</dt><dd className="break-words text-text-1">{value}</dd></div>
+                    ))}
                 </dl>
             </EditorRow>
             <EditorGroup summary="Custom / legacy connection and APIM" open={customOpen} onToggle={setCustomOpen}>
@@ -203,8 +234,8 @@ function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, dis
                     }}>
                     <option value="">Manual Foundry project connection</option>
                     {endpointId && !selectedEndpoint ? <option value={endpointId}>{neutralReadOnlyCopy
-                        ? 'Uses a configured model' : `Saved connection unavailable · ${endpointId}`}</option> : null}
-                    {endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || endpoint.id} · {agentText(endpoint.scope) || 'global'}</option>)}
+                        ? 'Uses a configured model' : 'Saved connection unavailable'}</option> : null}
+                    {endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || 'Unnamed connection'} · {agentText(endpoint.scope) || 'global'}</option>)}
                 </select>
             </AgentField>
             <div className="flex flex-wrap items-center gap-3 pb-1">

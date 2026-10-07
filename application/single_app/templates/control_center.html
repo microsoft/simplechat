@@ -666,48 +666,6 @@
 
     {% include "_semantic_search_health_warning.html" %}
     
-    <!-- Activity Log Migration Banner -->
-    <div id="migrationBanner" class="alert alert-warning alert-dismissible fade show" role="alert" style="display: none;">
-        <div class="d-flex align-items-start">
-            <div class="flex-grow-1">
-                <h5 class="alert-heading">
-                    <i class="bi bi-database-exclamation me-2"></i>
-                    Activity Log Migration Required
-                </h5>
-                <p class="mb-2" id="migrationMessage">
-                    We found <strong id="migrationConversationCount">0</strong> conversations and 
-                    <strong id="migrationDocumentCount">0</strong> documents that need to be added to activity logs 
-                    for improved reporting and performance.
-                </p>
-                <p class="mb-3">
-                    <small class="text-muted">
-                        <i class="bi bi-info-circle me-1"></i>
-                        <strong>Note:</strong> This migration may take a while for large datasets and could temporarily affect system performance. 
-                        We recommend running this during off-peak hours.
-                    </small>
-                </p>
-                <div class="d-flex align-items-center gap-3">
-                    <button type="button" class="btn btn-warning" id="migrateBannerBtn" onclick="performMigration()">
-                        <i class="bi bi-arrow-repeat me-1"></i>
-                        Migrate Now
-                    </button>
-                    <div id="migrationProgress" style="display: none;" class="flex-grow-1">
-                        <div class="d-flex align-items-center gap-2">
-                            <div class="progress flex-grow-1" style="height: 25px;">
-                                <div id="migrationProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
-                                     role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                                    <span id="migrationProgressText">0%</span>
-                                </div>
-                            </div>
-                            <small class="text-muted" id="migrationStatusText">Initializing...</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        </div>
-    </div>
-    
     <!-- Hide tabs when left navigation is enabled -->
     {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
     {% if not (nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default)) %}
@@ -3116,34 +3074,6 @@
         </div>
     </div>
 
-    <!-- Database Migration Confirmation Modal -->
-    <div class="modal fade" id="migrationConfirmModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-warning text-dark">
-                    <h5 class="modal-title">
-                        <i class="bi bi-exclamation-triangle me-2"></i>Confirm Database Migration
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <p class="mb-3">
-                        This migration may take several minutes and could affect system performance during execution.
-                    </p>
-                    <div class="alert alert-warning mb-0">
-                        <i class="bi bi-clock me-2"></i>
-                        <strong>Recommendation:</strong> Run this migration during off-peak hours to minimize impact on users.
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-warning" id="confirmMigrationBtn">
-                        <i class="bi bi-arrow-repeat me-1"></i>Start Migration
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 
 <!-- Control Center Scripts -->

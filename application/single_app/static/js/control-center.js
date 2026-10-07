@@ -4943,172 +4943,6 @@ function showAlert(message, type = 'info') {
     }, 5000);
 }
 
-// Activity Log Migration Functions
-async function checkMigrationStatus() {
-    // Only admins can see migration status
-    if (window.hasControlCenterAdmin !== true) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/admin/control-center/migrate/status');
-        if (!response.ok) {
-            throw new Error('Failed to fetch migration status');
-        }
-        
-        const data = await response.json();
-        
-        if (data.migration_needed) {
-            // Update banner with counts
-            document.getElementById('migrationConversationCount').textContent = data.conversations_without_logs.toLocaleString();
-            document.getElementById('migrationDocumentCount').textContent = data.total_documents_without_logs.toLocaleString();
-            
-            // Show the banner
-            const banner = document.getElementById('migrationBanner');
-            if (banner) {
-                banner.style.display = 'block';
-            }
-        } else {
-            // Hide banner if no migration needed
-            const banner = document.getElementById('migrationBanner');
-            if (banner) {
-                banner.style.display = 'none';
-            }
-        }
-        
-        return data;
-    } catch (error) {
-        console.error('Error checking migration status:', error);
-        return null;
-    }
-}
-
-function showMigrationProgress() {
-    const progressDiv = document.getElementById('migrationProgress');
-    const migrateBtn = document.getElementById('migrateBannerBtn');
-    
-    if (progressDiv) {
-        progressDiv.style.display = 'block';
-    }
-    
-    if (migrateBtn) {
-        migrateBtn.disabled = true;
-        migrateBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Migrating...';
-    }
-}
-
-function hideMigrationProgress() {
-    const progressDiv = document.getElementById('migrationProgress');
-    const migrateBtn = document.getElementById('migrateBannerBtn');
-    
-    if (progressDiv) {
-        progressDiv.style.display = 'none';
-    }
-    
-    if (migrateBtn) {
-        migrateBtn.disabled = false;
-        migrateBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Migrate Now';
-    }
-}
-
-function updateMigrationProgress(percent, statusText) {
-    const progressBar = document.getElementById('migrationProgressBar');
-    const progressText = document.getElementById('migrationProgressText');
-    const statusTextEl = document.getElementById('migrationStatusText');
-    
-    if (progressBar) {
-        progressBar.style.width = percent + '%';
-        progressBar.setAttribute('aria-valuenow', percent);
-    }
-    
-    if (progressText) {
-        progressText.textContent = percent + '%';
-    }
-    
-    if (statusTextEl && statusText) {
-        statusTextEl.textContent = statusText;
-    }
-}
-
-function hideMigrationBanner() {
-    const banner = document.getElementById('migrationBanner');
-    if (banner) {
-        banner.style.display = 'none';
-    }
-}
-
-async function performMigration() {
-    // Show confirmation modal
-    const modal = new bootstrap.Modal(document.getElementById('migrationConfirmModal'));
-    modal.show();
-}
-
-async function executeMigration() {
-    // Close the confirmation modal
-    const modal = bootstrap.Modal.getInstance(document.getElementById('migrationConfirmModal'));
-    if (modal) {
-        modal.hide();
-    }
-    
-    try {
-        showMigrationProgress();
-        updateMigrationProgress(10, 'Starting migration...');
-        
-        const response = await fetch('/api/admin/control-center/migrate/all', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        updateMigrationProgress(50, 'Processing records...');
-        
-        if (!response.ok) {
-            throw new Error('Migration request failed');
-        }
-        
-        const result = await response.json();
-        
-        updateMigrationProgress(90, 'Finalizing...');
-        
-        // Show results
-        setTimeout(() => {
-            updateMigrationProgress(100, 'Migration completed!');
-            
-            setTimeout(() => {
-                hideMigrationProgress();
-                hideMigrationBanner();
-                
-                // Show detailed results
-                const totalMigrated = result.total_migrated || 0;
-                const totalFailed = result.total_failed || 0;
-                
-                let message = `Migration completed! Conversations: ${result.conversations_migrated || 0}, Personal docs: ${result.personal_documents_migrated || 0}, Group docs: ${result.group_documents_migrated || 0}, Public docs: ${result.public_documents_migrated || 0}. Total: ${totalMigrated} records migrated`;
-                
-                if (totalFailed > 0) {
-                    message += `. Warning: ${totalFailed} records failed (check logs)`;
-                }
-                
-                showToast(message, 'success');
-                
-                // Refresh activity trends to show new data
-                if (window.controlCenter) {
-                    window.controlCenter.loadActivityTrends();
-                }
-            }, 1500);
-        }, 500);
-        
-    } catch (error) {
-        console.error('Migration error:', error);
-        hideMigrationProgress();
-        showToast(`Migration failed: ${error.message}. Check console and server logs for details.`, 'danger');
-    }
-}
-
-// Make migration functions globally accessible
-window.checkMigrationStatus = checkMigrationStatus;
-window.performMigration = performMigration;
-
 // Make refresh function globally accessible for debugging
 window.refreshControlCenterData = refreshControlCenterData;
 window.loadRefreshStatus = loadRefreshStatus;
@@ -5130,12 +4964,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Export GroupTableSorter to window for global access
     window.GroupTableSorter = GroupTableSorter;
     
-    // Wire up migration confirmation button
-    const confirmMigrationBtn = document.getElementById('confirmMigrationBtn');
-    if (confirmMigrationBtn) {
-        confirmMigrationBtn.addEventListener('click', executeMigration);
-    }
-    
     // Debug: Log element availability
     console.log('Control Center Elements Check on DOM Ready:');
     window.debugControlCenterElements();
@@ -5148,8 +4976,6 @@ document.addEventListener('DOMContentLoaded', function() {
         setTimeout(() => {
             loadRefreshStatus();
             
-            // Check migration status
-            checkMigrationStatus();
         }, 100);
     }
 });
