@@ -44,7 +44,14 @@ def _allowed_keys():
     users = _read(APP_DIR / "route_backend_users.py")
     block = re.search(r"allowed_keys = \{(.*?)\}", users, re.DOTALL)
     assert block, "Could not find allowed_keys in route_backend_users.py"
-    return set(re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", block.group(1)))
+    keys = set(re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", block.group(1)))
+    # Some keys are listed through a shared constant rather than a literal.
+    if "LATEST_FEATURES_HIDDEN_VERSION_SETTING" in block.group(1):
+        nav = _read(APP_DIR / "functions_latest_features_nav.py")
+        constant = re.search(r'LATEST_FEATURES_HIDDEN_VERSION_SETTING = "([^"]+)"', nav)
+        assert constant, "Could not resolve LATEST_FEATURES_HIDDEN_VERSION_SETTING"
+        keys.add(constant.group(1))
+    return keys
 
 
 def _writable_keys():
@@ -233,11 +240,16 @@ def test_only_settings_this_interface_honours_are_offered():
     )
 
     # Settings V2 does not act on are deliberately not offered.
-    for absent in ("sidebarToggleStyle", "showTutorialButtons"):
-        assert absent not in preferences, (
-            f"{absent!r} drives a classic-interface surface with no V2 equivalent; offering "
-            "it here would change the other interface with no visible effect in this one"
-        )
+    assert "sidebarToggleStyle" not in preferences, (
+        "'sidebarToggleStyle' drives a classic-interface surface with no V2 equivalent; offering "
+        "it here would change the other interface with no visible effect in this one"
+    )
+
+    # The tour switch is offered now that V2 has guided tours that honour it.
+    guidance = _read(V2_SRC / "components" / "settings" / "GuidanceCards.tsx")
+    assert "showTutorialButtons" in guidance and "TutorialsCard" in preferences, (
+        "The tour master switch must be offered alongside the V2 tours it controls"
+    )
 
     print("Preference honouring test passed!")
     return True

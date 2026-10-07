@@ -8,8 +8,8 @@
 // behaviour behind them.
 //
 // Cards are arranged in groups (Appearance, Chat, Voice and audio, Notifications and alerts,
-// Memory and data, Connected accounts, Diagrams and charts) so the page index on the right can list them the way
-// Admin Settings does.
+// Help and guidance, Memory and data, Connected accounts, Diagrams and charts) so the page
+// index on the right can list them the way Admin Settings does.
 
 import { useEffect, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
@@ -43,6 +43,7 @@ import { CompletionAudioCard, MicrophoneCard, SpokenRepliesCard } from './VoiceA
 import { RetentionCard } from './RetentionCard';
 import { FactMemoryBench } from './FactMemoryBench';
 import { M365Cards } from './M365Cards';
+import { LatestFeaturesCard, TutorialsCard } from './GuidanceCards';
 import { VISUAL_STYLE_SETTING_KEYS } from '../../lib/blockVisualStyle';
 import {
     DEFAULT_VISUAL_STYLE,
@@ -408,6 +409,15 @@ export function PreferencesTab() {
                         </div>
                     </div>
                 </SettingsCard>
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="guidance"
+                label="Help and guidance"
+                description="The Latest Features shortcut and the guided tours that point out what each page can do."
+            >
+                <LatestFeaturesCard settings={settings} update={update} />
+                <TutorialsCard settings={settings} update={update} />
             </SettingsGroup>
 
             <SettingsGroup

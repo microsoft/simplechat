@@ -37,7 +37,7 @@ export function WorkspaceShell({
         <div className="flex h-full min-h-0 flex-col">
             {header}
             <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
-                <nav aria-label="Workspace sections" className={clsx(
+                <nav aria-label="Workspace sections" data-tour="workspace-sections" className={clsx(
                     'flex shrink-0 flex-col gap-3 overflow-y-auto transition-[width]',
                     railCollapsed ? 'w-12' : 'w-12 md:w-52',
                 )}>
@@ -45,6 +45,7 @@ export function WorkspaceShell({
                         onClick={() => updateUserSettings({ v2WorkspaceRailCollapsed: !railCollapsed })}
                         aria-label={railCollapsed ? 'Expand workspace sections' : 'Collapse workspace sections'}
                         aria-expanded={!railCollapsed}
+                        data-tour="workspace-rail-toggle"
                         title={railCollapsed ? 'Expand workspace sections' : 'Collapse workspace sections'}
                         className={clsx(
                             'flex items-center gap-2 rounded-lg py-1.5 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
@@ -54,7 +55,8 @@ export function WorkspaceShell({
                             <><PanelLeftClose size={15} /><span className="hidden md:inline">Collapse</span></>
                         )}
                     </button>
-                    <NavLink to={basePath} end className={linkClass} title={railCollapsed ? 'Overview' : undefined}>
+                    <NavLink to={basePath} end className={linkClass} title={railCollapsed ? 'Overview' : undefined}
+                        data-tour="workspace-overview">
                         <LayoutGrid size={15} className="shrink-0" />
                         <span className={railCollapsed ? 'sr-only' : 'sr-only md:not-sr-only md:truncate'}>Overview</span>
                     </NavLink>
@@ -76,7 +78,7 @@ export function WorkspaceShell({
                         </div>
                     ))}
                 </nav>
-                <div className={clsx('min-w-0 flex-1', fullBleed ? 'flex min-h-0 flex-col overflow-hidden' : 'overflow-y-auto')}>
+                <div data-tour="workspace-content" className={clsx('min-w-0 flex-1', fullBleed ? 'flex min-h-0 flex-col overflow-hidden' : 'overflow-y-auto')}>
                     {fullBleed ? children : <div className="mx-auto max-w-4xl pb-8">{children}</div>}
                 </div>
             </div>

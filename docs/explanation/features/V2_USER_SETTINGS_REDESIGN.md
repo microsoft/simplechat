@@ -1,7 +1,7 @@
 # V2 User Settings Redesign
 
 **Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention);
-**0.261.279** (fact memory and Microsoft 365)
+**0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features)
 
 ## Overview
 
@@ -14,7 +14,7 @@ Profile page in stages:
 2. Completion sounds, spoken replies (voice, speed and auto-play), microphone permission,
    and personal retention (0.261.278).
 3. Fact memory workbench and Microsoft 365 sharing and workflows (0.261.279).
-4. Later: tutorials and Latest Features.
+4. Guided tours and the Latest Features shortcut (0.261.280).
 
 Dependencies: the V2 React interface (`application/v2_ui`) and the user settings API
 (`/api/user/settings`).
@@ -44,7 +44,7 @@ Dependencies: the V2 React interface (`application/v2_ui`) and the user settings
 
 | Tab | Cards |
 | --- | --- |
-| Preferences | Grouped: Appearance (Text size, Conversation list), Chat (Conversation navigation), Voice and audio (Completion sounds, Spoken replies, Microphone), Notifications and alerts (Desktop notifications, Workflow alerts on this device), Memory and data (Fact memory, Retention), Connected accounts (Microsoft 365 sharing, Chat connection, Workflow connection, Workflow authorizations), Diagrams and charts (Diagrams, Charts) |
+| Preferences | Grouped: Appearance (Text size, Conversation list), Chat (Conversation navigation), Voice and audio (Completion sounds, Spoken replies, Microphone), Notifications and alerts (Desktop notifications, Workflow alerts on this device), Help and guidance (Latest Features, Guided tours), Memory and data (Fact memory, Retention), Connected accounts (Microsoft 365 sharing, Chat connection, Workflow connection, Workflow authorizations), Diagrams and charts (Diagrams, Charts) |
 | Stats | Lifetime totals, four activity charts, Storage used, Account |
 | Groups / Public workspaces | Your groups / Your public workspaces |
 | Feedback | Summary, Your feedback (with Export CSV) |
@@ -107,6 +107,53 @@ gated by a capability flag.
 - Revocations and disconnect go through one confirmation dialog. It states that history
   already published to conversations is not removed. After a change, all four cards refresh.
 
+### Guided tours and Latest Features
+
+**Guided tours.** V2 has its own tour engine, which replaces the classic floating tutorial
+launchers on the Chat and Personal Workspace pages.
+
+- `lib/tours.ts` defines each tour: its page, and the steps that point at `data-tour`
+  anchors. The shipped tours are `chat` and `workspace`.
+- `components/tour/GuidedTour.tsx` draws the tour:
+  - A spotlight over the current control, with a card beside it.
+  - **Back**, **Next**, **Skip** and **Done** buttons. Esc ends the tour and the arrow
+    keys move between steps.
+  - Focus is trapped in the card, then returned when the tour ends. Reduced motion is
+    respected.
+  - Steps whose control is missing or hidden are skipped.
+- `components/tour/TourLauncher.tsx` adds a help button to the Chat header and the
+  Workspace page header.
+- **Start now** in Preferences opens the tour's page and starts it. It does this through a
+  one-time request in session storage (`simplechat.v2.pendingTour`).
+
+Which tours are offered is decided by two settings:
+
+- `showTutorialButtons` is the master switch, shared with the classic tutorial buttons. When
+  it is false, every tour is off.
+- `tutorialVisibility` holds a per-tour choice, `{ tourId: bool }`. A tour with no entry is
+  shown. The route accepts only shipped tour ids (`TUTORIAL_IDS` in
+  `route_backend_users.py`) with boolean values.
+
+**Latest Features.** The bootstrap payload now has `navigation.latest_features`, built by
+`_build_latest_features_nav` in `route_backend_v2.py`. It contains `available`,
+`hidden_by_development`, `url` and `menu_name`.
+
+The shortcut is available when all of these hold:
+
+- The user has the Admin or User role.
+- The support menu is on.
+- `enable_support_latest_features` is on.
+- At least one Latest Features item is visible.
+
+As on the classic interface, the shortcut is hidden for everyone in development mode.
+`components/layout/LatestFeaturesLink.tsx` adds it to the navigation rail with a hide
+button, and the Preferences card shows its status with **Hide for this version** or **Show
+again**.
+
+Both surfaces write `latestFeaturesHiddenVersion`, shared with the classic page. A hide
+applies only to the version it was saved for, so the shortcut comes back after an upgrade.
+`lib/latestFeaturesNav.ts` holds the logic both surfaces use.
+
 ### Violations visibility
 
 The Violations tab is always listed, as on the classic Profile page. When neither
@@ -140,6 +187,10 @@ collapse or expand it, and the **On this page** index to move between cards.
   memory routes and confirmed delete, CSRF validation on every M365 write the cards make,
   the CSRF retry, the classic choice labels, confirmed revocations, and validated sign-in
   redirects.
+- `functional_tests/test_v2_user_settings_tutorials_latest_features.py`: tour ids
+  accepted by the route, every tour step's anchor present, launchers and the Help and
+  guidance group, the bootstrap navigation entry, and a Node run of the shared tour and
+  Latest Features logic.
 - Related fixes: [Feedback My Routes Filter Unpack Fix](../fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md)
   and [Personal Retention Default Value Fix](../fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md).
 

@@ -34,6 +34,11 @@ export interface UserSettings {
     fontSizePreference?: FontSizePreference;
     sidebarToggleStyle?: SidebarToggleStyle;
     showTutorialButtons?: boolean;
+    /**
+     * Per-tour visibility, `{ tourId: boolean }`. A tour missing from the map is shown,
+     * as long as `showTutorialButtons` is not off. The route accepts only shipped tour ids.
+     */
+    tutorialVisibility?: Record<string, boolean>;
     desktopNotificationsEnabled?: boolean;
     conversationContentsDrawerEnabled?: boolean;
     /**
@@ -144,7 +149,7 @@ export interface UserSettings {
     ttsSpeed?: number;
     ttsAutoplay?: boolean;
 
-    /** Read-only here; the route sets it when the user hides the shortcut. */
+    /** The version the user hid the Latest Features shortcut for; the route accepts only the current one. */
     latestFeaturesHiddenVersion?: string | null;
 
     /**
@@ -209,6 +214,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'fontSizePreference',
     'sidebarToggleStyle',
     'showTutorialButtons',
+    'tutorialVisibility',
+    // Written by the Latest Features hide control: the current version, or null to show it again.
+    'latestFeaturesHiddenVersion',
     'desktopNotificationsEnabled',
     'conversationContentsDrawerEnabled',
     'showConversationWorkspaceTags',

@@ -1619,6 +1619,7 @@ export function MessageList() {
             ref={scrollRef}
             onScroll={onScroll}
             className="min-h-0 flex-1 overflow-y-auto px-4 py-6"
+            data-tour="message-list"
         >
             <div className={clsx('mx-auto w-full space-y-4', chatWidthClass(chatWidth))}>
                 {messagesLoading && (
