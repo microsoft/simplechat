@@ -32,7 +32,7 @@ The login heatmap reports UTC hours with Monday as weekday zero. Charts include 
 
 Group management was implemented in **0.261.282**. Open **Groups** to locate shared workspaces by name, description, owner, status, member-count range, document presence, creation date or last activity. Sort by name, owner, members, documents, tokens or activity to prioritize a review. Counts and all-time tokens use a server snapshot, timestamped in the list and cached for 90 seconds. **Refresh groups** rebuilds that snapshot. Export downloads all matching groups, not just the visible page.
 
-Select a group to inspect its Overview, Members, Ownership, Status, Retention, Activity and Documents tabs. Owner/member links open the corresponding user details. Activity shows the most recent 20 records, offers their raw JSON and a CSV of that subset, and links to the future Activity Logs view with the group scope.
+Select a group to inspect its Overview, Members, Ownership, Status, Retention, Activity and Documents tabs. Owner/member links open the corresponding user details. Activity shows the most recent 20 records, offers their raw JSON and a CSV of that subset, and links to Activity Logs with the group scope.
 
 Select rows, then optionally select all matches across pages, to apply a bulk status. Bulk updates are limited to 500 groups. Locked and inactive changes require a reason and record each actual transition in the status history. Locked groups keep document viewing and chat but disallow document changes; upload-disabled groups prohibit uploads; inactive groups are unavailable. Individual failures remain visible after the list refreshes.
 
@@ -41,6 +41,18 @@ Use **Add member** to search the directory, or **Import CSV** to add up to 1,000
 Changing member roles, removing members and saving retention still require group Owner/Admin membership; full Control Center access alone is not enough. The UI explains unavailable controls. Retention additionally requires enabled group retention and accepts organization defaults, no automatic deletion, or a permitted day count.
 
 Requesting group deletion, deleting all group documents, taking ownership, or transferring ownership to a member requires a reason and creates an approval request. Nothing is deleted and ownership remains unchanged at submission. Follow **View approval requests** in the result notice to the approvals page.
+
+## Investigate activity
+
+Activity Logs was implemented in **0.261.284**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. Choose a UTC date window (default 30 days, maximum 366), select one or more activity-type chips, and narrow by user or workspace ID, model, token type, text or recorded status. **Apply filters** updates the URL so a bookmark preserves the investigation. **More filters** exposes explicit group/public-workspace IDs and status.
+
+The histogram and chip counts describe the filtered records. For busy ranges, they describe only the newest 5,000 matches and clearly say **Sampled**; do not use them as organization-wide totals. Expand the histogram data table to select a UTC bucket and investigate that date window. The table reads 50 records at a time in newest-first order. **Refresh** starts over with newly recorded activity; changing filters resets paging.
+
+Choose **Inspect** for a record's fields and raw JSON. Related links open its recorded user, group, public workspace or approval. The drawer supports Escape and restores keyboard focus to the opener. Use compact density to scan more rows. Saved views preserve applied filters for the signed-in user on this browser, not across devices; removing a saved view does not delete activity.
+
+**Export CSV** uses the same filters, not just the visible page, and exports no more than 10,000 activity rows. A final `export_limit_reached` row means the limit was reached; narrow the filters to export a smaller complete range. Spreadsheet formula prefixes are escaped. The export includes raw JSON, so handle the downloaded audit information according to your organization's data policies.
+
+On an existing deployment, an indexing error requires an administrator to apply the new expected activity-log composite index in **Admin Settings → App Maintenance** and wait for Cosmos index transformation. The activity page does not automatically apply cloud changes. A date cutoff stabilizes forward paging against newer events, but cannot freeze deletes or late/backdated writes; the feed is not a transactional snapshot.
 
 ## Manage public workspaces
 
@@ -54,7 +66,7 @@ The detail drawer shares the Groups tabs and supports status history, recent act
 
 Individual document deletion, workspace deletion, take-ownership and transfer-to-member workflows request approval on the existing server routes. A submission notice means **requested**, not executed. Its link opens the particular approval with workspace scope. The existing document-deletion executor can report successful deletions while other documents fail; workspace deletion can then proceed after partial cleanup. Review execution logs/results rather than treating the submitted request as completed cleanup.
 
-Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links retain public workspace scope for Phase 6.
+Activity exports contain only the 20 recent projected records displayed in the drawer. Activity Logs links open the broader investigation with public workspace scope.
 
 ## Check activity-log data health
 

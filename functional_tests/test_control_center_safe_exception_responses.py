@@ -1,7 +1,7 @@
 # test_control_center_safe_exception_responses.py
 """
 Functional test for safe Control Center exception responses.
-Version: 0.261.285
+Version: 0.261.286
 Implemented in: 0.261.283
 
 This test ensures validation exceptions in the V2 Control Center routes do not

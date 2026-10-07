@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.286)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   Public Workspace list, detail, status, bulk-status and export APIs return stable validation messages rather than exception text.
+    *   Preserves authorization and HTTP status behavior; adds sensitive-error regression coverage.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
 ### **(v0.261.285)**
 
 #### Bug Fixes
@@ -9,6 +18,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Public Workspace Validation Error Safety**
     *   List, detail, bulk status, individual status, and export validation failures return stable messages instead of exception text, preserving HTTP 400 and input bounds.
     *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+#### New Features
+
+*   **V2 Control Center Activity Logs**
+    *   Adds URL-filtered activity investigations, deterministic keyset paging, a bounded histogram and activity-type facets, saved browser views, density controls, and escaped JSON detail drawers with related entity/approval links.
+    *   CSV export streams the same filters, escapes spreadsheet formulas and caps exports at 10,000 activity records. Summary charts disclose sampling above 5,000 matching records.
+    *   Existing deployments must apply the expected activity-log composite index through App Maintenance and wait for index transformation; legacy activity browsing remains unchanged.
+    *   (Ref: `ActivityLogsSection.tsx`, `functions_control_center_activity.py`, `functions_cosmos_indexing.py`, `route_backend_control_center.py`, [V2 Control Center](features/V2_CONTROL_CENTER.md))
 
 ### **(v0.261.284)**
 
