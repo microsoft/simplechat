@@ -47,6 +47,9 @@ PLAN_REPLAY_RESULT_CONTRACT = 'plan-replay-result-v1'
 PLAN_REPLAY_TIME_HANDLING = 'frozen_with_run_time_line'
 PLAN_REPLAY_MAX_STEPS = 8
 PLAN_REPLAY_TASK_NAME = 'Repeat saved plan'
+# The run inspector's copy of the final answer matches the task preview's cap; the full answer
+# stays in the workflow conversation and in the task's stored json result.
+PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT = 4000
 
 # Deny by default. Each entry says why repeating it as the creator, without a signed-in session,
 # reads nothing the creator could not read and writes nothing outside the workflow's conversation.
@@ -1114,8 +1117,21 @@ def execute_plan_replay_task(
     return {
         'reply': value['final_response']['text'],
         'authoritative_result': {'kind': 'json', 'value': value},
-        'plan_replay': value,
+        'plan_replay': plan_replay_run_item_projection(value),
     }
+
+
+def plan_replay_run_item_projection(value):
+    """The typed result the run inspector reads from the task's run item, with the answer capped."""
+    projection = deepcopy(value if isinstance(value, dict) else {})
+    final_response = projection.get('final_response') if isinstance(projection.get('final_response'), dict) else {}
+    text = str(final_response.get('text') or '')
+    projection['final_response'] = {
+        'message_id': str(final_response.get('message_id') or ''),
+        'text': text[:PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT],
+        'truncated': len(text) > PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT,
+    }
+    return projection
 
 
 def build_plan_replay_result(record, answer_message=None):
@@ -1152,9 +1168,9 @@ def build_plan_replay_result(record, answer_message=None):
     for image in orchestration.get('generated_images') or []:
         if isinstance(image, dict) and image.get('visual_id'):
             artifacts.append({
-                'id': image.get('visual_id'),
+                'id': str(image.get('visual_id')),
                 'kind': 'image',
-                'message_id': image.get('message_id') or '',
+                'message_id': str(image.get('message_id') or ''),
             })
     for artifact in record.get('artifacts') or []:
         if not isinstance(artifact, dict):
@@ -1164,16 +1180,17 @@ def build_plan_replay_result(record, answer_message=None):
             or artifact.get('file_id') or artifact.get('blob_name')
         )
         if artifact_id:
-            artifacts.append({'id': artifact_id, 'kind': artifact.get('kind') or artifact.get('type') or 'file'})
+            kind = 'image' if (artifact.get('kind') or artifact.get('type')) == 'image' else 'file'
+            artifacts.append({'id': str(artifact_id), 'kind': kind})
     message_id = (answer_message or {}).get('id') if isinstance(answer_message, dict) else ''
     return {
         'contract': PLAN_REPLAY_RESULT_CONTRACT,
-        'orchestration_run_id': record.get('id') or '',
-        'conversation_id': record.get('conversation_id') or '',
-        'plan_sha256': replay.get('plan_sha256') or '',
-        'status': record.get('status') or '',
-        'outcome': record.get('outcome') or '',
+        'orchestration_run_id': str(record.get('id') or ''),
+        'conversation_id': str(record.get('conversation_id') or ''),
+        'plan_sha256': str(replay.get('plan_sha256') or ''),
+        'status': str(record.get('status') or ''),
+        'outcome': str(record.get('outcome') or ''),
         'steps': steps,
-        'final_response': {'message_id': message_id or '', 'text': record.get('message') or ''},
+        'final_response': {'message_id': str(message_id or ''), 'text': str(record.get('message') or '')},
         'artifacts': artifacts,
     }

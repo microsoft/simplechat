@@ -282,8 +282,10 @@ def test_a_frozen_plan_replays_end_to_end_in_the_workflow_conversation(harness, 
     }, record.get("workflow_replay"))
     require(record["user_message_id"] == WORKFLOW_TURN, "The saved workflow turn anchors the replay.")
 
-    value = result["plan_replay"]
-    require(result["authoritative_result"] == {"kind": "json", "value": value}, "The task result is typed JSON.")
+    value = result["authoritative_result"]["value"]
+    require(result["authoritative_result"]["kind"] == "json", "The task result is typed JSON.")
+    require(result["plan_replay"] == {**value, "final_response": {**value["final_response"], "truncated": False}},
+            "The run item's projection is the typed result with the answer's cap flag.")
     require(value["contract"] == "plan-replay-result-v1", value)
     require(value["orchestration_run_id"] == run_id, "The result names the durable orchestration run.")
     require(value["conversation_id"] == WORKFLOW_CONVERSATION, "The result lands in the workflow conversation.")
@@ -300,6 +302,68 @@ def test_a_frozen_plan_replays_end_to_end_in_the_workflow_conversation(harness, 
     require(answer["role"] == "assistant", "The answer is published in the workflow conversation.")
     require(_partition(harness.messages, SOURCE_CONVERSATION) == source_messages, "The source chat is untouched.")
     require(_partition(harness.runs, SOURCE_CONVERSATION) == source_runs, "No run is added to the source chat.")
+
+
+def test_the_typed_result_normalizes_ids_and_caps_the_inspector_copy(replay):
+    record = {
+        "id": 42, "conversation_id": WORKFLOW_CONVERSATION, "status": "completed", "outcome": "completed",
+        "message": "x" * (replay.PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT + 5),
+        "workflow_replay": {"plan_sha256": "a" * 64},
+        "plan": {"steps": []},
+        "artifacts": [{"artifact_id": 7, "kind": "spreadsheet"}, {"id": "img", "type": "image"}],
+    }
+    answer = {"id": "answer-1", "metadata": {"orchestration": {"generated_images": [{"visual_id": 9, "message_id": 3}]}}}
+    value = replay.build_plan_replay_result(record, answer)
+    require(value["orchestration_run_id"] == "42", "Execution ids are strings, never model prose.")
+    require(value["artifacts"] == [
+        {"id": "9", "kind": "image", "message_id": "3"},
+        {"id": "7", "kind": "file"},
+        {"id": "img", "kind": "image"},
+    ], value["artifacts"])
+    require(len(value["final_response"]["text"]) == replay.PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT + 5,
+            "The stored json result keeps the whole answer.")
+
+    projection = replay.plan_replay_run_item_projection(value)
+    require(projection["final_response"] == {
+        "message_id": "answer-1", "text": "x" * replay.PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT, "truncated": True,
+    }, "The run inspector's copy is capped and says so.")
+    require({k: v for k, v in projection.items() if k != "final_response"}
+            == {k: v for k, v in value.items() if k != "final_response"}, "Only the answer text is capped.")
+    require(len(value["final_response"]["text"]) == replay.PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT + 5,
+            "Projecting never changes the stored result.")
+
+
+@pytest.mark.parametrize("readable", [True, False])
+def test_a_withheld_result_also_withholds_the_typed_projection(readable):
+    from functions_saved_analysis import UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE, sanitize_workflow_analysis_history
+
+    workflow = {"id": "workflow-1", "user_id": "owner"}
+    run_record = {"id": "run-1", "task_results": []}
+    summary = {
+        "contract_version": "workflow-result-v2",
+        "producer": {"workflow_id": "workflow-1", "run_id": "run-1", "task_id": "replay"},
+        "result_ref": {"sha256": "b" * 64},
+    }
+    item = {"task_id": "replay", "workflow_result": summary, "reply": "the answer",
+            "plan_replay": {"contract": "plan-replay-result-v1", "final_response": {"text": "the answer"}}}
+    reads = []
+
+    def reader(*args, **kwargs):
+        reads.append(args)
+        if not readable:
+            raise PermissionError("source access lost")
+
+    _record, items, verified = sanitize_workflow_analysis_history(
+        workflow, run_record, "owner", items=[item], result_reader=reader,
+    )
+    require(reads, "The stored result is checked before its preview is shown.")
+    require(verified is readable, verified)
+    if readable:
+        require(items[0]["plan_replay"] == item["plan_replay"], "A verified result keeps its typed projection.")
+    else:
+        require("plan_replay" not in items[0], "A withheld result never leaks its answer through the projection.")
+        require(items[0]["reply"] == UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE, items[0])
+    require("plan_replay" in item, "The stored item is never changed in place.")
 
 
 def test_sharing_the_source_chat_later_changes_nothing(harness, replay):

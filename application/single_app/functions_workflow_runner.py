@@ -10736,6 +10736,7 @@ def _save_workflow_task_run_item(
     context_budget=None,
     consumed_inputs=None,
     workflow_validation=None,
+    plan_replay=None,
 ):
     task = task if isinstance(task, dict) else {}
     task_id = str(task.get('id') or '').strip()
@@ -10803,6 +10804,9 @@ def _save_workflow_task_run_item(
         item['started_at'] = created_at or now_iso
     if status in {'succeeded', 'failed', 'skipped', 'cancelled', 'invalid', 'incomplete'}:
         item['completed_at'] = now_iso
+    if isinstance(plan_replay, dict):
+        # Only a saved chat plan's task carries this typed projection; other items are unchanged.
+        item['plan_replay'] = dict(plan_replay)
     return _save_workflow_run_item_record(workflow, item)
 
 
@@ -11648,6 +11652,7 @@ def _execute_workflow_task_sequence(
                     consumed_inputs=consumed_inputs,
                     workflow_validation=validation,
                     error=task_error,
+                    **({'plan_replay': task_result.get('plan_replay')} if task.get('type') == 'plan_replay' else {}),
                 )
             except AnalysisResultUnavailable as exc:
                 # Raised when the task's own analysis could not confirm the sources it read

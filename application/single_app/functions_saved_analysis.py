@@ -1947,6 +1947,8 @@ def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=N
         for field in ("output_summary", "response_preview", "reply"):
             if field in redacted:
                 redacted[field] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
+        # A saved chat plan's typed projection carries the answer text, so it is withheld with the preview.
+        redacted.pop("plan_replay", None)
         if redacted.get("error"):
             redacted["error"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
         redacted["analysis_access_available"] = False
