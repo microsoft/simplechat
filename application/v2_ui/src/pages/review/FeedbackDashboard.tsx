@@ -24,7 +24,9 @@ import {
     DEFAULT_FEEDBACK_FILTERS,
     FEEDBACK_RATINGS,
     feedbackFilterParams,
+    feedbackThemeLabel,
     formatReviewDate,
+    isFeedbackTheme,
     readReviewWindow,
     REVIEW_WINDOWS,
     reviewExcerpt,
@@ -173,6 +175,38 @@ export function FeedbackDashboard({ reloadKey }: { reloadKey: number }) {
                                         );
                                     })}
                                 </ul>
+                            ) : null}
+                        </ChartPanel>
+
+                        <ChartPanel
+                            title={`Themes in the last ${days} days`}
+                            description="What the feedback received in the period was about, as reviewers classified it. Select a theme to open that feedback."
+                        >
+                            {stats.theme_mix?.length ? (
+                                <ul className="divide-y divide-edge text-sm" aria-label="Feedback by theme" data-testid="v2-feedback-dashboard-themes">
+                                    {stats.theme_mix.filter((entry) => isFeedbackTheme(entry.theme)).map((entry) => {
+                                        const theme = isFeedbackTheme(entry.theme) ? entry.theme : undefined;
+                                        return (
+                                            <li key={entry.theme}>
+                                                <Link
+                                                    to={safeFeedbackQueueHref({ theme, days, archive: 'all' })}
+                                                    className="flex items-baseline justify-between gap-3 py-2 hover:text-accent"
+                                                >
+                                                    <span className="font-medium text-text-1">{feedbackThemeLabel(entry.theme)}</span>
+                                                    <span className="tabular-nums text-text-2">{entry.count.toLocaleString()}</span>
+                                                </Link>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            ) : (
+                                <p className="py-6 text-center text-sm text-text-3">No feedback from the period has a theme yet.</p>
+                            )}
+                            {stats.unthemed_count_in_window ? (
+                                <p className="mt-2 text-xs text-text-3" data-testid="v2-feedback-dashboard-unthemed">
+                                    {stats.unthemed_count_in_window.toLocaleString()} not classified yet. Reviewers set a theme in a
+                                    record&apos;s review, and approving an AI suggestion sets the one it suggested.
+                                </p>
                             ) : null}
                         </ChartPanel>
 

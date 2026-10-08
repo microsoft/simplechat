@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Archive, ArchiveRestore, CheckCheck, Download, PencilLine, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, CheckCheck, Download, PencilLine, Sparkles, Trash2 } from 'lucide-react';
 import { FeedbackRetest } from '../../components/review/FeedbackRetest';
 import { ReviewBulkBar } from '../../components/review/ReviewBulkBar';
 import { ReviewList, type ReviewListRow } from '../../components/review/ReviewList';
@@ -26,6 +26,7 @@ import {
     ToneBadge,
     type FilterChip,
 } from '../../components/review/ReviewParts';
+import { useReviewTriage } from '../../components/review/useReviewTriage';
 import { useReviewWorkbench } from '../../components/review/useReviewWorkbench';
 import {
     ReviewDetailEmpty,
@@ -38,6 +39,8 @@ import { GlassButton } from '../../components/ui/primitives';
 import { apiUrl } from '../../lib/apiClient';
 import {
     countLabel,
+    FEEDBACK_THEME_LABELS,
+    FEEDBACK_THEMES,
     feedbackFilterParams,
     feedbackFiltersApplied,
     feedbackRatingTone,
@@ -45,6 +48,7 @@ import {
     feedbackReviewState,
     feedbackRowMeta,
     feedbackRowTitle,
+    feedbackThemeLabel,
     feedbackUserLabel,
     formatReviewDate,
     readFeedbackFilters,
@@ -53,6 +57,8 @@ import {
     type FeedbackRecord,
 } from '../../lib/reviewCenter';
 import { bulkFeedback, fetchFeedbackIds, fetchFeedbackPage } from '../../lib/reviewCenterApi';
+import { suggestionBadge } from '../../lib/reviewSuggestions';
+import { useFeature } from '../../stores/bootstrapStore';
 
 const NOUN = { singular: 'feedback record', plural: 'feedback records' };
 type DetailTab = 'conversation' | 'review' | 'retest';
@@ -118,6 +124,7 @@ function FeedbackDetail({
                 ) : tab === 'review' ? (
                     <dl className="divide-y divide-edge">
                         <ReviewFact label="State">{state.label}</ReviewFact>
+                        <ReviewFact label="Theme">{feedbackThemeLabel(review.theme)}</ReviewFact>
                         <ReviewFact label="Analysis notes">{review.analysisNotes || 'None recorded'}</ReviewFact>
                         <ReviewFact label="Action taken">{review.actionTaken || 'None recorded'}</ReviewFact>
                         <ReviewFact label="Response to the user">{review.responseToUser || 'None recorded'}</ReviewFact>
@@ -150,6 +157,8 @@ export function FeedbackWorkbench({
     const filterKey = filterParams.toString();
     const saved = useReviewSavedNotice();
     const [pendingDelete, setPendingDelete] = useState<{ ids: string[]; fromSelection: boolean } | null>(null);
+    const [pendingTriage, setPendingTriage] = useState<string[] | null>(null);
+    const aiAvailable = useFeature('enable_admin_review_ai_assistant');
 
     const workbench = useReviewWorkbench<FeedbackRecord>({
         filterKey,
@@ -164,6 +173,7 @@ export function FeedbackWorkbench({
         },
     });
     const { items, total, loading, error, paging, updateParams, checked, matching } = workbench;
+    const triage = useReviewTriage({ section: 'feedback', noun: NOUN, onFinished: () => workbench.reload() });
 
     useEffect(() => {
         if (!loading && !error) onCountChange(total);
@@ -172,6 +182,7 @@ export function FeedbackWorkbench({
     const selected = items.find((item) => item.id === paging.selected) ?? items[0] ?? null;
     const rows: ReviewListRow[] = useMemo(() => items.map((item) => {
         const state = feedbackReviewState(item);
+        const suggestion = aiAvailable ? suggestionBadge('feedback', item.ai_suggestion) : null;
         return {
             id: item.id,
             title: feedbackRowTitle(item),
@@ -180,23 +191,26 @@ export function FeedbackWorkbench({
                 <>
                     <ToneBadge tone={feedbackRatingTone(item.feedbackType)}>{item.feedbackType || 'Unrated'}</ToneBadge>
                     <ToneBadge tone={state.tone}>{state.label}</ToneBadge>
+                    {suggestion ? <ToneBadge tone={suggestion.tone}>{suggestion.label}</ToneBadge> : null}
                     {item.isArchived ? <ToneBadge tone="neutral">Archived</ToneBadge> : null}
                 </>
             ),
         };
-    }), [items]);
+    }), [items, aiAvailable]);
 
     const setFilter = <K extends keyof FeedbackFilters>(key: K, value: FeedbackFilters[K]) => {
         const next = feedbackFilterParams({ ...filters, [key]: value });
         const changes: Record<string, string | null> = {};
-        for (const name of ['type', 'ack', 'archive', 'search', 'user_id', 'date', 'days']) {
+        for (const name of ['type', 'ack', 'archive', 'search', 'user_id', 'date', 'days', 'theme']) {
             changes[name] = next.get(name);
         }
         changes.selected = null;
         updateParams(changes);
     };
     const clearFilters = () => {
-        updateParams({ type: null, ack: null, archive: null, search: null, user_id: null, date: null, days: null, selected: null });
+        updateParams({
+            type: null, ack: null, archive: null, search: null, user_id: null, date: null, days: null, theme: null, selected: null,
+        });
     };
 
     const chips: FilterChip[] = [];
@@ -213,8 +227,16 @@ export function FeedbackWorkbench({
         return next;
     };
     const openEditor = (id: string) => navigate(safeReviewRecordHref('feedback', id, recordParams(id)));
-    const busy = Boolean(workbench.progress);
+    const busy = Boolean(workbench.progress) || triage.running;
     const archiveView = filters.archive;
+    const startTriage = (ids: string[]) => {
+        const snapshot = items;
+        workbench.clearSelection();
+        void triage.start(ids, (id) => {
+            const item = snapshot.find((candidate) => candidate.id === id);
+            return item ? feedbackRowTitle(item) : `Feedback ${id}`;
+        });
+    };
 
     const header = (
         <>
@@ -246,6 +268,16 @@ export function FeedbackWorkbench({
                     onChange={(value) => setFilter('archive', value)}
                     testId="v2-feedback-filter-archive"
                 />
+                <FilterSelect
+                    label="Theme"
+                    value={filters.theme}
+                    options={[
+                        ['', 'Any theme'],
+                        ...FEEDBACK_THEMES.map((theme): [FeedbackFilters['theme'], string] => [theme, FEEDBACK_THEME_LABELS[theme]]),
+                    ]}
+                    onChange={(value) => setFilter('theme', value)}
+                    testId="v2-feedback-filter-theme"
+                />
                 <a
                     href={apiUrl(`/feedback/review/export?${filterKey}`)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2 text-xs font-medium text-text-1 hover:bg-surface-2"
@@ -274,12 +306,27 @@ export function FeedbackWorkbench({
                 matchingBusy={workbench.matchingBusy}
                 onSelectMatching={() => void workbench.chooseMatching()}
                 onClear={workbench.clearSelection}
-                progress={workbench.progress}
-                report={workbench.report}
-                onDismissReport={() => workbench.setReport(null)}
+                progress={triage.progress ?? workbench.progress}
+                onCancel={triage.running ? triage.cancel : undefined}
+                report={triage.report ?? workbench.report}
+                onDismissReport={() => {
+                    triage.setReport(null);
+                    workbench.setReport(null);
+                }}
                 testIdPrefix="v2-feedback"
                 actions={(
                     <>
+                        {aiAvailable ? (
+                            <GlassButton
+                                type="button"
+                                size="sm"
+                                variant="subtle"
+                                data-testid="v2-feedback-bulk-triage"
+                                onClick={() => setPendingTriage([...checked])}
+                            >
+                                <Sparkles size={14} aria-hidden="true" /> Triage with AI ({checked.length.toLocaleString()})
+                            </GlassButton>
+                        ) : null}
                         <GlassButton
                             type="button"
                             size="sm"
@@ -413,6 +460,25 @@ export function FeedbackWorkbench({
                             (id) => ({ id, op: 'delete' }),
                             target.fromSelection ? undefined : target.ids,
                         );
+                    }}
+                />
+            ) : null}
+            {pendingTriage ? (
+                <ConfirmDialog
+                    title={`Ask AI to suggest reviews for ${countLabel(pendingTriage.length, NOUN.singular, NOUN.plural)}?`}
+                    description={
+                        'AI reads each record and stores a suggested review on it, for you or another reviewer to approve '
+                        + 'or dismiss in the AI suggestions queue. Nothing about the reviews changes now, and no one is '
+                        + 'notified. Records are sent ten at a time, and you can cancel part way.'
+                    }
+                    confirmLabel={`Triage ${countLabel(pendingTriage.length, NOUN.singular, NOUN.plural)}`}
+                    confirmIcon={<Sparkles size={14} aria-hidden="true" />}
+                    tone="primary"
+                    onClose={() => setPendingTriage(null)}
+                    onConfirm={() => {
+                        const target = pendingTriage;
+                        setPendingTriage(null);
+                        startTriage(target);
                     }}
                 />
             ) : null}

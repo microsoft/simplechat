@@ -8,8 +8,11 @@
 // them, which is where a later "Triage with AI" command joins the same bar.
 
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { CheckCheck, Loader2, X } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
+import type { ReviewSectionId } from '../../lib/reviewAccess';
+import { safeReviewViewHref, type ReviewView } from '../../lib/reviewCenter';
 import { ReviewNotice } from './ReviewParts';
 
 export interface BulkRunProgress {
@@ -17,6 +20,8 @@ export interface BulkRunProgress {
     label: string;
     done: number;
     total: number;
+    /** More about where the run stands, such as a wait for the rate limit. */
+    detail?: string;
 }
 
 export interface BulkRunReport {
@@ -25,6 +30,8 @@ export interface BulkRunReport {
     failures: { id: string; label: string; message: string }[];
     /** How the report reads; by default a warning when any record failed. */
     tone?: 'ok' | 'warn';
+    /** Where to go next, such as the AI suggestions queue a triage filled. */
+    link?: { label: string; section: ReviewSectionId; view: ReviewView };
 }
 
 export function ReviewBulkBar({
@@ -36,6 +43,7 @@ export function ReviewBulkBar({
     onClear,
     actions,
     progress,
+    onCancel,
     report,
     onDismissReport,
     testIdPrefix,
@@ -51,6 +59,8 @@ export function ReviewBulkBar({
     onClear: () => void;
     actions: ReactNode;
     progress: BulkRunProgress | null;
+    /** Offered while a run that can stop part way, such as a triage, is in progress. */
+    onCancel?: () => void;
     report: BulkRunReport | null;
     onDismissReport: () => void;
     testIdPrefix: string;
@@ -84,10 +94,18 @@ export function ReviewBulkBar({
                     ) : null}
                     <div className="ml-auto flex flex-wrap items-center gap-2">
                         {progress ? (
-                            <p role="status" className="inline-flex items-center gap-1.5 text-sm text-text-2" data-testid={`${testIdPrefix}-bulk-progress`}>
-                                <Loader2 size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
-                                {progress.label} {Math.min(progress.done, progress.total).toLocaleString()} of {progress.total.toLocaleString()}…
-                            </p>
+                            <>
+                                <p role="status" className="inline-flex items-center gap-1.5 text-sm text-text-2" data-testid={`${testIdPrefix}-bulk-progress`}>
+                                    <Loader2 size={14} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+                                    {progress.label} {Math.min(progress.done, progress.total).toLocaleString()} of {progress.total.toLocaleString()}…
+                                    {progress.detail ? <span className="text-text-3"> {progress.detail}</span> : null}
+                                </p>
+                                {onCancel ? (
+                                    <GlassButton type="button" size="sm" variant="ghost" onClick={onCancel} data-testid={`${testIdPrefix}-bulk-cancel`}>
+                                        <X size={14} aria-hidden="true" /> Cancel
+                                    </GlassButton>
+                                ) : null}
+                            </>
                         ) : (
                             <>
                                 {actions}
@@ -104,6 +122,13 @@ export function ReviewBulkBar({
                     <div className="flex items-start gap-2">
                         <div className="min-w-0 flex-1 space-y-1">
                             <p className="font-medium">{report.summary}</p>
+                            {report.link ? (
+                                <Link to={safeReviewViewHref(report.link.section, report.link.view)}
+                                    className="text-sm text-accent underline underline-offset-2"
+                                    data-testid={`${testIdPrefix}-bulk-report-link`}>
+                                    {report.link.label}
+                                </Link>
+                            ) : null}
                             {report.failures.length ? (
                                 <ul className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-xs">
                                     {report.failures.map((failure) => (

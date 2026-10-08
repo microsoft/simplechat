@@ -90,6 +90,8 @@ export interface FeedbackAdminReview {
     analysisNotes?: string | null;
     responseToUser?: string | null;
     actionTaken?: string | null;
+    /** How a reviewer classified the feedback, one of FEEDBACK_THEMES. */
+    theme?: string | null;
     reviewTimestamp?: string | null;
     analyzedBy?: FeedbackReviewer | string | null;
     userNotifiedAt?: string | null;
@@ -108,6 +110,33 @@ export interface FeedbackRecord {
     isArchived?: boolean;
     adminReview?: FeedbackAdminReview;
     etag?: string;
+    /** The record's AI suggestion as the server presents it; read with parseFeedbackSuggestion. */
+    ai_suggestion?: unknown;
+}
+
+/** What a reviewer says a piece of feedback is about. The Feedback dashboard counts them. */
+export const FEEDBACK_THEMES = [
+    'accuracy', 'citations', 'retrieval', 'formatting', 'tone', 'latency', 'safety', 'praise', 'other',
+] as const;
+export type FeedbackTheme = (typeof FEEDBACK_THEMES)[number];
+export const FEEDBACK_THEME_LABELS: Readonly<Record<FeedbackTheme, string>> = {
+    accuracy: 'Accuracy',
+    citations: 'Citations',
+    retrieval: 'Retrieval',
+    formatting: 'Formatting',
+    tone: 'Tone',
+    latency: 'Speed',
+    safety: 'Safety',
+    praise: 'Praise',
+    other: 'Other',
+};
+
+export function isFeedbackTheme(value: unknown): value is FeedbackTheme {
+    return typeof value === 'string' && (FEEDBACK_THEMES as readonly string[]).includes(value);
+}
+
+export function feedbackThemeLabel(value: unknown): string {
+    return isFeedbackTheme(value) ? FEEDBACK_THEME_LABELS[value] : 'Not classified';
 }
 
 export type FeedbackRating = '' | 'Positive' | 'Negative' | 'Neutral';
@@ -121,6 +150,7 @@ export interface FeedbackFilters {
     userId: string;
     date: string;
     days: '' | ReviewWindow;
+    theme: '' | FeedbackTheme;
 }
 
 export const DEFAULT_FEEDBACK_FILTERS: FeedbackFilters = {
@@ -131,11 +161,13 @@ export const DEFAULT_FEEDBACK_FILTERS: FeedbackFilters = {
     userId: '',
     date: '',
     days: '',
+    theme: '',
 };
 
 export function readFeedbackFilters(params: URLSearchParams): FeedbackFilters {
     const type = params.get('type') ?? '';
     const ack = params.get('ack') ?? '';
+    const theme = params.get('theme') ?? '';
     return {
         type: (FEEDBACK_RATINGS as readonly string[]).includes(type) ? (type as FeedbackRating) : '',
         ack: ack === 'true' || ack === 'false' ? ack : '',
@@ -144,6 +176,7 @@ export function readFeedbackFilters(params: URLSearchParams): FeedbackFilters {
         userId: readText(params.get('user_id')),
         date: readDate(params.get('date')),
         days: readWindowFilter(params.get('days')),
+        theme: isFeedbackTheme(theme) ? theme : '',
     };
 }
 
@@ -157,6 +190,7 @@ export function feedbackFilterParams(filters: FeedbackFilters): URLSearchParams 
     if (filters.userId) params.set('user_id', filters.userId);
     if (filters.date) params.set('date', filters.date);
     if (filters.days) params.set('days', filters.days);
+    if (filters.theme) params.set('theme', filters.theme);
     return params;
 }
 
@@ -198,7 +232,8 @@ export function feedbackReviewerName(review?: FeedbackAdminReview | null): strin
 
 /** How many filters other than the search narrow the feedback list. */
 export function feedbackFiltersApplied(filters: FeedbackFilters): number {
-    return [filters.type, filters.ack, filters.archive !== 'active' ? 'x' : '', filters.userId, filters.date, filters.days]
+    return [filters.type, filters.ack, filters.archive !== 'active' ? 'x' : '', filters.userId, filters.date, filters.days,
+        filters.theme]
         .filter(Boolean).length;
 }
 
@@ -250,6 +285,8 @@ export interface SafetyRecord {
     etag?: string;
     user_access?: UserAccessState | null;
     user_violation_count?: number | null;
+    /** The violation's AI suggestion as the server presents it; read with parseSafetySuggestion. */
+    ai_suggestion?: unknown;
 }
 
 export const SAFETY_STATUSES = ['New', 'In-Review', 'Resolved', 'Dismissed'] as const;
@@ -656,13 +693,14 @@ export function buildBulkReport(
 /* Addresses                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export type ReviewView = 'dashboard' | 'queue' | 'violations' | 'unchecked';
+export type ReviewView = 'dashboard' | 'queue' | 'violations' | 'unchecked' | 'suggestions';
 
 const VIEW_SEGMENTS: Readonly<Record<ReviewView, string>> = {
     dashboard: '',
     queue: '/queue',
     violations: '/violations',
     unchecked: '/unchecked',
+    suggestions: '/suggestions',
 };
 
 function withQuery(path: string, params?: URLSearchParams | null): string {

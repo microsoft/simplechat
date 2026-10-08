@@ -8,7 +8,7 @@
 // a page to a section -- such as an AI suggestions queue -- is adding an entry here.
 
 import type { ReactNode } from 'react';
-import { LayoutDashboard, ListChecks, ScanSearch, ShieldAlert, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard, ListChecks, ScanSearch, ShieldAlert, Sparkles, type LucideIcon } from 'lucide-react';
 import type { ReviewAccessInput, ReviewSectionId } from '../../lib/reviewAccess';
 import { FeedbackDashboard } from './FeedbackDashboard';
 import { FeedbackEditorPage } from './FeedbackEditorPage';
@@ -16,6 +16,7 @@ import { FeedbackWorkbench } from './FeedbackWorkbench';
 import { SafetyDashboard } from './SafetyDashboard';
 import { SafetyEditorPage } from './SafetyEditorPage';
 import { SafetyWorkbench } from './SafetyWorkbench';
+import { SuggestionsQueue } from './SuggestionsQueue';
 import { UncheckedChatContent } from './UncheckedChatContent';
 
 export interface ReviewEntryContext {
@@ -48,6 +49,11 @@ export const REVIEW_SECTION_LABELS: Readonly<Record<ReviewSectionId, string>> = 
     safety: 'Safety',
 };
 
+/** The AI suggestions queues exist while AI assist for the Review center is turned on. */
+function reviewAssistOn(input: ReviewAccessInput): boolean {
+    return input.features.enable_admin_review_ai_assistant === true;
+}
+
 export const REVIEW_CENTER_ENTRIES: ReviewEntry[] = [
     {
         id: 'feedback-dashboard',
@@ -73,6 +79,19 @@ export const REVIEW_CENTER_ENTRIES: ReviewEntry[] = [
         renderRecord: (recordId) => <FeedbackEditorPage key={recordId} recordId={recordId} />,
     },
     {
+        id: 'feedback-suggestions',
+        section: 'feedback',
+        view: 'suggestions',
+        label: 'AI suggestions',
+        accessibleLabel: 'Feedback AI suggestions',
+        description: 'Reviews AI suggested for feedback, waiting for you to approve or dismiss them.',
+        Icon: Sparkles,
+        render: ({ reloadKey, onCountChange }) => (
+            <SuggestionsQueue section="feedback" reloadKey={reloadKey} onCountChange={onCountChange} />
+        ),
+        available: reviewAssistOn,
+    },
+    {
         id: 'safety-dashboard',
         section: 'safety',
         view: '',
@@ -94,6 +113,19 @@ export const REVIEW_CENTER_ENTRIES: ReviewEntry[] = [
             <SafetyWorkbench reloadKey={reloadKey} onCountChange={onCountChange} />
         ),
         renderRecord: (recordId) => <SafetyEditorPage key={recordId} recordId={recordId} />,
+    },
+    {
+        id: 'safety-suggestions',
+        section: 'safety',
+        view: 'suggestions',
+        label: 'AI suggestions',
+        accessibleLabel: 'Safety AI suggestions',
+        description: 'Reviews AI suggested for violations, waiting for you to approve or dismiss them.',
+        Icon: Sparkles,
+        render: ({ reloadKey, onCountChange }) => (
+            <SuggestionsQueue section="safety" reloadKey={reloadKey} onCountChange={onCountChange} />
+        ),
+        available: reviewAssistOn,
     },
     {
         id: 'safety-unchecked',

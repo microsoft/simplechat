@@ -7,6 +7,7 @@
 // and whether a record changed underneath the reviewer.
 
 import { ApiError, api } from './apiClient';
+import type { ReviewSectionId } from './reviewAccess';
 import {
     REVIEW_BULK_BATCH,
     chunkIds,
@@ -29,6 +30,10 @@ export const REMEDIATION_PENDING_CODE = 'remediation_pending';
 export const WARNING_IN_PROGRESS_CODE = 'safety_warning_in_progress';
 /** The server's code for a warning that was sent but could not be recorded on the violation. */
 export const WARNING_NOT_RECORDED_CODE = 'safety_warning_not_recorded';
+/** The server's code for an AI suggestion whose record changed after it was made. */
+export const SUGGESTION_STALE_CODE = 'suggestion_stale';
+/** The server's code for an AI suggestion already applied, dismissed or replaced. */
+export const SUGGESTION_NOT_PENDING_CODE = 'suggestion_not_pending';
 
 export function errorCode(error: unknown): string | null {
     if (!(error instanceof ApiError)) return null;
@@ -42,12 +47,13 @@ export function isRecordChanged(error: unknown): boolean {
 
 /**
  * Whether the record must be read again before another save can succeed: it changed after
- * it was opened, a warning is being sent, or a request now locks it.
+ * it was opened, a warning is being sent, a request now locks it, or the AI suggestion being
+ * applied no longer fits it.
  */
 export function needsReload(error: unknown): boolean {
     const code = errorCode(error);
     return code === RECORD_CHANGED_CODE || code === WARNING_IN_PROGRESS_CODE || code === REMEDIATION_PENDING_CODE
-        || code === WARNING_NOT_RECORDED_CODE;
+        || code === WARNING_NOT_RECORDED_CODE || code === SUGGESTION_STALE_CODE || code === SUGGESTION_NOT_PENDING_CODE;
 }
 
 export function errorText(error: unknown, fallback: string): string {
@@ -80,9 +86,10 @@ export interface DashboardWindow {
 }
 
 export type BulkOperation =
-    | { id: string; op: 'update'; changes: Record<string, unknown>; etag?: string }
+    | { id: string; op: 'update'; changes: Record<string, unknown>; etag?: string; suggestion_id?: string }
     | { id: string; op: 'archive'; archived: boolean; etag?: string }
-    | { id: string; op: 'delete'; etag?: string };
+    | { id: string; op: 'delete'; etag?: string }
+    | { id: string; op: 'dismiss_suggestion'; suggestion_id: string; etag?: string };
 
 function pagedQuery(filters: URLSearchParams, page: number, pageSize: number): string {
     const params = new URLSearchParams(filters);
@@ -140,6 +147,9 @@ export interface FeedbackStats {
     acknowledgement_rate?: number | null;
     archived_count?: number;
     daily_by_rating?: DailySeries;
+    /** Feedback received in the window, by the theme a reviewer gave it. */
+    theme_mix?: { theme: string; count: number }[];
+    unthemed_count_in_window?: number;
     oldest_awaiting?: {
         id: string;
         feedbackType?: string;
@@ -188,6 +198,8 @@ export interface FeedbackReviewChanges {
     analysisNotes?: string;
     responseToUser?: string;
     actionTaken?: string;
+    /** One of FEEDBACK_THEMES, or '' to clear it. */
+    theme?: string;
     notify_user?: boolean;
     etag?: string;
 }
@@ -299,6 +311,72 @@ export function saveSafetyReview(id: string, changes: SafetyReviewChanges) {
 
 export function bulkSafety(operations: readonly BulkOperation[], onProgress?: (done: number, total: number) => void) {
     return runBulk('/api/safety/logs/bulk', operations, onProgress);
+}
+
+/* -------------------------------------------------------------------------- */
+/* AI suggestions                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** One page of the AI suggestions queue: records whose suggestion still waits for a reviewer. */
+export async function fetchSuggestionsPage<T>(
+    section: ReviewSectionId,
+    page: number,
+    pageSize: number,
+    signal?: AbortSignal,
+): Promise<ReviewPage<T>> {
+    const filters = new URLSearchParams({ ai: 'pending', archive: 'all' });
+    if (section === 'safety') {
+        const response = await api.get<{ logs?: T[]; page?: number; page_size?: number; total_count?: number }>(
+            `/api/safety/logs?${pagedQuery(filters, page, pageSize)}`,
+            signal,
+        );
+        return {
+            items: Array.isArray(response?.logs) ? response.logs : [],
+            page: response?.page ?? page,
+            pageSize: response?.page_size ?? pageSize,
+            total: response?.total_count ?? 0,
+        };
+    }
+    const response = await api.get<{ feedback?: T[]; page?: number; page_size?: number; total_count?: number }>(
+        `/feedback/review?${pagedQuery(filters, page, pageSize)}`,
+        signal,
+    );
+    return {
+        items: Array.isArray(response?.feedback) ? response.feedback : [],
+        page: response?.page ?? page,
+        pageSize: response?.page_size ?? pageSize,
+        total: response?.total_count ?? 0,
+    };
+}
+
+/**
+ * Save an editor's review as the application of the record's AI suggestion, so the suggestion
+ * is marked applied and credited in the audit log. The bulk route runs the same save as PATCH;
+ * a refusal is thrown as the PATCH would throw it, with the server's code.
+ */
+export async function saveReviewWithSuggestion(
+    section: ReviewSectionId,
+    id: string,
+    changes: Record<string, unknown>,
+    suggestionId: string,
+): Promise<ReviewBulkResult> {
+    const { etag, ...rest } = changes;
+    const operation: BulkOperation = {
+        id,
+        op: 'update',
+        changes: rest,
+        suggestion_id: suggestionId,
+        ...(typeof etag === 'string' && etag ? { etag } : {}),
+    };
+    const path = section === 'safety' ? '/api/safety/logs/bulk' : '/feedback/review/bulk';
+    const response = await api.post<ReviewBulkResponse>(path, { operations: [operation] });
+    const result = Array.isArray(response?.results) ? response.results[0] : undefined;
+    if (!result || result.id !== id) throw new ApiError('The review could not be saved.', 0, null);
+    if (!result.ok) {
+        const message = result.error || result.message || 'The review could not be saved.';
+        throw new ApiError(message, result.status, { error: message, code: result.code });
+    }
+    return result;
 }
 
 /* -------------------------------------------------------------------------- */

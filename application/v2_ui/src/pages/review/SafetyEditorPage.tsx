@@ -12,10 +12,18 @@
 // request it again. A violation waiting on an approval request, or whose warning is being
 // sent, cannot be changed until that settles. A save that finds the violation changed since
 // it was opened is refused rather than overwriting the newer version.
+//
+// When AI assist is on, Ask AI suggests a review: it fills the unsaved draft, including any
+// notification and suspension length, marks each field it changed, and can be undone. Nothing is
+// sent or requested until the reviewer saves, and then exactly as described above. Applying a
+// suggestion AI triage stored on the violation saves through the suggestion, so it is marked
+// applied and credited in the audit log.
 
 import { useEffect, useId, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { clsx } from 'clsx';
 import { ClipboardCheck, ExternalLink, Gavel, ListFilter, RotateCcw, ShieldAlert, TriangleAlert, Undo2 } from 'lucide-react';
+import { ReviewAskAiPanel, ReviewAskAiToggle, type AskAiSource } from '../../components/review/ReviewAskAiPanel';
 import { ReviewEditorPlaceholder } from '../../components/review/ReviewEditorPlaceholder';
 import { ReviewFact, ReviewNotice, ReviewTextBlock, ToneBadge } from '../../components/review/ReviewParts';
 import { EditorFieldRow, EditorFieldset } from '../../components/workspace/EditorLayout';
@@ -51,9 +59,22 @@ import {
     type SafetyRecord,
     type SuspendPreset,
 } from '../../lib/reviewCenter';
-import { errorText, fetchSafetyRecord, needsReload, saveSafetyReview, type SafetyReviewChanges } from '../../lib/reviewCenterApi';
+import { errorText, fetchSafetyRecord, needsReload, saveReviewWithSuggestion, saveSafetyReview, type SafetyReviewChanges } from '../../lib/reviewCenterApi';
+import {
+    changedDraftGroups,
+    draftKeyMarked,
+    parseSafetySuggestion,
+    safetySuggestionChanges,
+    undoDraftGroups,
+    undoReportText,
+    type AnySuggestion,
+    type DraftGroup,
+    type SafetySuggestion,
+} from '../../lib/reviewSuggestions';
+import { useFeature } from '../../stores/bootstrapStore';
 
 const FIELD_CLASS = 'w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 focus:border-accent focus:outline-none';
+const AI_MARK_CLASS = 'ring-2 ring-change-ai/50';
 
 interface SafetyDraft {
     status: string;
@@ -69,6 +90,27 @@ interface SafetyDraft {
     /** The custom restore time as the date-time field holds it. */
     customUntil: string;
     reissue: boolean;
+}
+
+const DRAFT_GROUPS: readonly DraftGroup<SafetyDraft>[] = [
+    { label: 'Status', keys: ['status'] },
+    { label: 'Action', keys: ['action', 'reissue'] },
+    { label: 'Notes', keys: ['notes'] },
+    { label: 'Notification', keys: ['title', 'titleEdited', 'message', 'messageEdited'] },
+    { label: 'Suspension length', keys: ['preset', 'until', 'customUntil'] },
+];
+
+interface AppliedSuggestion {
+    source: AskAiSource;
+    suggestionId: string | null;
+    before: SafetyDraft;
+    after: SafetyDraft;
+}
+
+function archiveNote(suggestion: AnySuggestion, record: SafetyRecord): string[] {
+    return suggestion.payload.archive && !record.isArchived
+        ? ['It also suggests archiving this violation. Archive it from the list after you save.']
+        : [];
 }
 
 /** A restore time as it reads in the notification: unambiguous whatever the user's time zone. */
@@ -150,6 +192,10 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
     const [saving, setSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [stale, setStale] = useState(false);
+    const aiAvailable = useFeature('enable_admin_review_ai_assistant');
+    const [assistOpen, setAssistOpen] = useState(false);
+    const [applied, setApplied] = useState<AppliedSuggestion | null>(null);
+    const [undoReport, setUndoReport] = useState<string | null>(null);
     const ids = useId();
 
     useEffect(() => {
@@ -161,6 +207,8 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                 setDraft(draftFrom(record));
                 setSaveError(null);
                 setStale(false);
+                setApplied(null);
+                setUndoReport(null);
             })
             .catch((cause) => {
                 if (controller.signal.aborted) return;
@@ -213,6 +261,14 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
     const remediation = remediationStatusText(record);
     const acknowledgment = warningAcknowledgmentText(record);
     const badge = safetyActionBadge(record);
+    const savedSuggestion = parseSafetySuggestion(record.ai_suggestion);
+    const marked = (key: keyof SafetyDraft) => Boolean(applied && draftKeyMarked(current, applied.before, applied.after, key));
+    const markedGroups = applied
+        ? changedDraftGroups(applied.before, applied.after, DRAFT_GROUPS).filter((group) => group.keys.some(marked))
+        : [];
+    // The save goes through the stored suggestion only while the draft still holds what it applied.
+    const appliedSuggestionId = applied?.source === 'saved' && markedGroups.length && savedSuggestion?.status === 'pending'
+        && savedSuggestion.id === applied.suggestionId ? applied.suggestionId : null;
 
     const update = (changes: Partial<SafetyDraft>) => setDraft((value) => (value ? withDefaults(record, { ...value, ...changes }) : value));
     const choosePreset = (preset: SuspendPreset) => {
@@ -221,6 +277,30 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
             return;
         }
         update({ preset, until: suspendPresetUntil(preset)?.toISOString() ?? '' });
+    };
+
+    const applySuggestion = (suggestion: AnySuggestion, source: AskAiSource) => {
+        const payload = (suggestion as SafetySuggestion).payload;
+        let next: SafetyDraft = { ...current, status: payload.status, action: payload.action, notes: payload.notes, reissue: false };
+        next = payload.notificationTitle && payload.notificationMessage
+            ? { ...next, title: payload.notificationTitle, titleEdited: true, message: payload.notificationMessage, messageEdited: true }
+            : { ...next, titleEdited: false, messageEdited: false };
+        if (payload.action === 'SuspendUser' && payload.suspendDuration) {
+            const until = suspendPresetUntil(payload.suspendDuration)?.toISOString() ?? '';
+            next = { ...next, preset: payload.suspendDuration, until, customUntil: toLocalDateTimeInput(until) };
+        }
+        next = withDefaults(record, next);
+        setDraft(next);
+        setApplied({ source, suggestionId: source === 'saved' ? suggestion.id : null, before: current, after: next });
+        setUndoReport(null);
+    };
+
+    const undoSuggestion = () => {
+        if (!applied) return;
+        const result = undoDraftGroups(current, applied.before, applied.after, DRAFT_GROUPS);
+        setDraft(withDefaults(record, result.draft));
+        setApplied(null);
+        setUndoReport(undoReportText(result.reverted, result.skipped));
     };
 
     const save = async () => {
@@ -251,14 +331,21 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
         setSaving(true);
         setSaveError(null);
         try {
-            const result = await saveSafetyReview(record.id, payload);
-            const message = [result.message || 'Review saved.', result.audit_warning].filter(Boolean).join(' ');
+            const result = appliedSuggestionId
+                ? await saveReviewWithSuggestion('safety', record.id, { ...payload }, appliedSuggestionId)
+                : await saveSafetyReview(record.id, payload);
+            const auditWarning = typeof result.audit_warning === 'string' ? result.audit_warning : '';
+            const message = [
+                (typeof result.message === 'string' && result.message) || 'Review saved.',
+                auditWarning,
+                appliedSuggestionId ? 'The AI suggestion was marked as applied.' : '',
+            ].filter(Boolean).join(' ');
             navigate(backTo, {
                 replace: true,
                 state: {
                     workspaceEditorSaved: true,
                     workspaceEditorFrom: location.key,
-                    reviewNotice: { message, warning: Boolean(result.audit_warning) },
+                    reviewNotice: { message, warning: Boolean(auditWarning) },
                 },
             });
         } catch (cause) {
@@ -291,6 +378,14 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
         actionCopy = `Saving keeps the ${actionWord} as it is and requests nothing new.`;
     }
 
+    const panelId = `${ids}-ask-ai`;
+    const lockedReason = locked
+        ? 'A remediation request waiting for approval, or a warning being sent, holds this violation, so a suggestion cannot be applied until it settles.'
+        : undefined;
+    const sectionsMarked = new Set<string>();
+    if (markedGroups.some((group) => group.label === 'Status' || group.label === 'Notes')) sectionsMarked.add('review');
+    if (markedGroups.some((group) => group.label !== 'Status' && group.label !== 'Notes')) sectionsMarked.add('remediation');
+
     return (
         <WorkspaceEditorFrame
             title="Review safety violation"
@@ -308,12 +403,43 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
             )}
             error={stale ? `${saveError} Reloading discards your unsaved changes.` : saveError}
             onSave={() => void save()}
-            onDiscard={() => setDraft(initial)}
+            onDiscard={() => {
+                setDraft(initial);
+                setApplied(null);
+            }}
             saveLabel="Save review"
-            actions={stale || locked ? (
-                <GlassButton type="button" variant="subtle" onClick={() => setAttempt((value) => value + 1)} data-testid="v2-safety-editor-reload">
-                    <RotateCcw size={15} aria-hidden="true" /> Reload
-                </GlassButton>
+            actions={aiAvailable || stale || locked ? (
+                <>
+                    {aiAvailable ? (
+                        <ReviewAskAiToggle open={assistOpen} controls={panelId} onToggle={() => setAssistOpen((value) => !value)} />
+                    ) : null}
+                    {stale || locked ? (
+                        <GlassButton type="button" variant="subtle" onClick={() => setAttempt((value) => value + 1)} data-testid="v2-safety-editor-reload">
+                            <RotateCcw size={15} aria-hidden="true" /> Reload
+                        </GlassButton>
+                    ) : null}
+                </>
+            ) : undefined}
+            aiChangedSections={sectionsMarked.size ? sectionsMarked : undefined}
+            sidePanelOpen={aiAvailable && assistOpen}
+            sidePanel={aiAvailable ? (
+                <ReviewAskAiPanel
+                    id={panelId}
+                    section="safety"
+                    recordId={record.id}
+                    saved={savedSuggestion}
+                    describe={(suggestion) => safetySuggestionChanges(record, (suggestion as SafetySuggestion).payload)}
+                    notesFor={(suggestion) => archiveNote(suggestion, record)}
+                    locked={locked || saving}
+                    lockedReason={lockedReason}
+                    applied={markedGroups.length && applied
+                        ? { source: applied.source, labels: markedGroups.map((group) => group.label) }
+                        : null}
+                    undoReport={undoReport}
+                    onApply={applySuggestion}
+                    onUndo={undoSuggestion}
+                    onClose={() => setAssistOpen(false)}
+                />
             ) : undefined}
             sections={[
                 {
@@ -369,7 +495,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                                     id={`${ids}-status`}
                                     value={current.status}
                                     onChange={(event) => update({ status: event.target.value })}
-                                    className={FIELD_CLASS}
+                                    className={clsx(FIELD_CLASS, marked('status') && AI_MARK_CLASS)}
                                     data-testid="v2-safety-editor-status"
                                 >
                                     {SAFETY_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
@@ -385,7 +511,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                                     rows={4}
                                     value={current.notes}
                                     onChange={(event) => update({ notes: event.target.value })}
-                                    className={FIELD_CLASS}
+                                    className={clsx(FIELD_CLASS, marked('notes') && AI_MARK_CLASS)}
                                     data-testid="v2-safety-editor-notes"
                                 />
                             </EditorFieldRow>
@@ -421,7 +547,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                                         messageEdited: false,
                                         reissue: false,
                                     })}
-                                    className={FIELD_CLASS}
+                                    className={clsx(FIELD_CLASS, marked('action') && AI_MARK_CLASS)}
                                     data-testid="v2-safety-editor-action"
                                 >
                                     {selectableSafetyActions(record).map((action) => (
@@ -453,7 +579,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                             ) : null}
                             {current.action === 'SuspendUser' && sends ? (
                                 <EditorFieldset legend="Suspension length" help="Access returns on its own at this time. The suspension starts once another reviewer approves it.">
-                                    <div className="flex flex-wrap gap-x-5 gap-y-2">
+                                    <div className={clsx('flex flex-wrap gap-x-5 gap-y-2 rounded-lg', marked('preset') && `p-1 ${AI_MARK_CLASS}`)}>
                                         {SUSPEND_PRESETS.map((preset) => (
                                             <label key={preset.id} className="inline-flex items-center gap-2 text-sm text-text-1">
                                                 <input
@@ -501,7 +627,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                                             maxLength={200}
                                             value={current.title}
                                             onChange={(event) => update({ title: event.target.value, titleEdited: true })}
-                                            className={FIELD_CLASS}
+                                            className={clsx(FIELD_CLASS, marked('title') && AI_MARK_CLASS)}
                                             data-testid="v2-safety-editor-title"
                                         />
                                     </EditorFieldRow>
@@ -515,7 +641,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
                                             rows={7}
                                             value={current.message}
                                             onChange={(event) => update({ message: event.target.value, messageEdited: true })}
-                                            className={FIELD_CLASS}
+                                            className={clsx(FIELD_CLASS, marked('message') && AI_MARK_CLASS)}
                                             data-testid="v2-safety-editor-message"
                                         />
                                     </EditorFieldRow>

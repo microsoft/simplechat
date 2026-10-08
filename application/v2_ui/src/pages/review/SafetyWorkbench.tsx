@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Archive, ArchiveRestore, Download, ExternalLink, ListFilter, PencilLine, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Download, ExternalLink, ListFilter, PencilLine, Sparkles, Trash2 } from 'lucide-react';
 import { ReviewBulkBar } from '../../components/review/ReviewBulkBar';
 import { ReviewList, type ReviewListRow } from '../../components/review/ReviewList';
 import {
@@ -26,6 +26,7 @@ import {
     ToneBadge,
     type FilterChip,
 } from '../../components/review/ReviewParts';
+import { useReviewTriage } from '../../components/review/useReviewTriage';
 import { useReviewWorkbench } from '../../components/review/useReviewWorkbench';
 import {
     ReviewDetailEmpty,
@@ -64,6 +65,8 @@ import {
     type SafetyStatus,
 } from '../../lib/reviewCenter';
 import { bulkSafety, errorText, fetchSafetyIds, fetchSafetyPage, fetchSafetyRecord } from '../../lib/reviewCenterApi';
+import { suggestionBadge } from '../../lib/reviewSuggestions';
+import { useFeature } from '../../stores/bootstrapStore';
 
 const NOUN = { singular: 'violation', plural: 'violations' };
 type DetailTab = 'violation' | 'user' | 'remediation';
@@ -88,14 +91,16 @@ const WARNING_LABELS: Readonly<Record<string, string>> = {
 };
 
 /** The violation's status and action, as the row and the detail header show them. */
-function SafetyBadges({ record }: { record: SafetyRecord }) {
+function SafetyBadges({ record, showSuggestion = false }: { record: SafetyRecord; showSuggestion?: boolean }) {
     const action = safetyActionBadge(record);
+    const suggestion = showSuggestion ? suggestionBadge('safety', record.ai_suggestion) : null;
     return (
         <>
             <ToneBadge tone={safetyStatusTone(record.status)}>{record.status || 'New'}</ToneBadge>
             {record.action && record.action !== 'None' ? (
                 <ToneBadge tone={action.tone}>{action.detail ? `${action.label} · ${action.detail}` : action.label}</ToneBadge>
             ) : null}
+            {suggestion ? <ToneBadge tone={suggestion.tone}>{suggestion.label}</ToneBadge> : null}
             {record.isArchived ? <ToneBadge tone="neutral">Archived</ToneBadge> : null}
         </>
     );
@@ -270,6 +275,8 @@ export function SafetyWorkbench({
     const saved = useReviewSavedNotice();
     const [pendingDelete, setPendingDelete] = useState<{ ids: string[]; fromSelection: boolean } | null>(null);
     const [bulkStatus, setBulkStatus] = useState<SafetyStatus>('Resolved');
+    const [pendingTriage, setPendingTriage] = useState<string[] | null>(null);
+    const aiAvailable = useFeature('enable_admin_review_ai_assistant');
 
     const workbench = useReviewWorkbench<SafetyRecord>({
         filterKey,
@@ -284,6 +291,7 @@ export function SafetyWorkbench({
         },
     });
     const { items, total, loading, error, paging, updateParams, checked, matching } = workbench;
+    const triage = useReviewTriage({ section: 'safety', noun: NOUN, onFinished: () => workbench.reload() });
 
     useEffect(() => {
         if (!loading && !error) onCountChange(total);
@@ -294,8 +302,8 @@ export function SafetyWorkbench({
         id: item.id,
         title: safetyRowTitle(item),
         meta: safetyRowMeta(item),
-        status: <SafetyBadges record={item} />,
-    })), [items]);
+        status: <SafetyBadges record={item} showSuggestion={aiAvailable} />,
+    })), [items, aiAvailable]);
 
     const setFilter = <K extends keyof SafetyFilters>(key: K, value: SafetyFilters[K]) => {
         const next = safetyFilterParams({ ...filters, [key]: value });
@@ -331,7 +339,15 @@ export function SafetyWorkbench({
         next.set('selected', id);
         navigate(safeReviewRecordHref('safety', id, next));
     };
-    const busy = Boolean(workbench.progress);
+    const busy = Boolean(workbench.progress) || triage.running;
+    const startTriage = (ids: string[]) => {
+        const snapshot = items;
+        workbench.clearSelection();
+        void triage.start(ids, (id) => {
+            const item = snapshot.find((candidate) => candidate.id === id);
+            return item ? safetyRowTitle(item) : `Violation ${id}`;
+        });
+    };
     const actionOptions: [string, string][] = [
         ['', 'Any action'],
         ...ACTIONS.map((action): [string, string] => [action, safetyActionLabel(action)]),
@@ -407,12 +423,27 @@ export function SafetyWorkbench({
                 matchingBusy={workbench.matchingBusy}
                 onSelectMatching={() => void workbench.chooseMatching()}
                 onClear={workbench.clearSelection}
-                progress={workbench.progress}
-                report={workbench.report}
-                onDismissReport={() => workbench.setReport(null)}
+                progress={triage.progress ?? workbench.progress}
+                onCancel={triage.running ? triage.cancel : undefined}
+                report={triage.report ?? workbench.report}
+                onDismissReport={() => {
+                    triage.setReport(null);
+                    workbench.setReport(null);
+                }}
                 testIdPrefix="v2-safety"
                 actions={(
                     <>
+                        {aiAvailable ? (
+                            <GlassButton
+                                type="button"
+                                size="sm"
+                                variant="subtle"
+                                data-testid="v2-safety-bulk-triage"
+                                onClick={() => setPendingTriage([...checked])}
+                            >
+                                <Sparkles size={14} aria-hidden="true" /> Triage with AI ({checked.length.toLocaleString()})
+                            </GlassButton>
+                        ) : null}
                         <div className="flex items-center gap-1.5">
                             <label htmlFor="v2-safety-bulk-status" className="sr-only">New status</label>
                             <select
@@ -558,6 +589,26 @@ export function SafetyWorkbench({
                             (id) => ({ id, op: 'delete' }),
                             target.fromSelection ? undefined : target.ids,
                         );
+                    }}
+                />
+            ) : null}
+            {pendingTriage ? (
+                <ConfirmDialog
+                    title={`Ask AI to suggest reviews for ${countLabel(pendingTriage.length, NOUN.singular, NOUN.plural)}?`}
+                    description={
+                        'AI reads each violation and stores a suggested review on it, for you or another reviewer to '
+                        + 'approve or dismiss in the AI suggestions queue. Nothing changes now: no one is warned, suspended '
+                        + 'or blocked unless a reviewer approves a suggestion. Violations held by a request in progress are '
+                        + 'skipped. Records are sent ten at a time, and you can cancel part way.'
+                    }
+                    confirmLabel={`Triage ${countLabel(pendingTriage.length, NOUN.singular, NOUN.plural)}`}
+                    confirmIcon={<Sparkles size={14} aria-hidden="true" />}
+                    tone="primary"
+                    onClose={() => setPendingTriage(null)}
+                    onConfirm={() => {
+                        const target = pendingTriage;
+                        setPendingTriage(null);
+                        startTriage(target);
                     }}
                 />
             ) : null}
