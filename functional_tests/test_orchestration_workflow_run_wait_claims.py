@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_claims.py
 """
 Functional test for the scheduler claiming a plan that waits on a saved workflow run.
-Version: 0.261.306
-Implemented in: 0.261.306
+Version: 0.261.307
+Implemented in: 0.261.307
 
 This test ensures that the orchestration scheduler claims a continuation for a required
 workflow_run step waiting on its quick saved-workflow run, exactly as it claims a native tabular
@@ -114,7 +114,7 @@ def _claim(claims):
 
 
 def test_version_is_at_least_the_implementation():
-    assert_app_version_at_least('0.261.306')
+    assert_app_version_at_least('0.261.307')
 
 
 def test_the_wait_kind_constant_is_the_shared_name():

@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_execution.py
 """
 Functional test for a chat plan step that waits for the saved workflow run it started.
-Version: 0.261.306
-Implemented in: 0.261.306
+Version: 0.261.307
+Implemented in: 0.261.307
 
 This test ensures that a workflow_run step the server marked as waitable holds the run's chat
 post-back while it waits, uses the run's result when the run finishes within the bound, and hands
@@ -284,7 +284,7 @@ def _waiting(env_):
 
 
 def test_version_is_at_least_the_implementation():
-    assert_app_version_at_least('0.261.306')
+    assert_app_version_at_least('0.261.307')
 
 
 # ---------------------------------------------------------------------------------------------
