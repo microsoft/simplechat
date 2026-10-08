@@ -2,9 +2,10 @@
 // Right-hand drawer with three modes, mirroring the legacy offcanvas that hosts both a
 // table of contents and the documents used in the conversation, plus the orchestration plan.
 //
-// Contents lists the user's turns so a long thread can be navigated; Documents lists the
-// document-level citation aggregates the server records on the conversation; Plan hosts the
-// orchestration plan surface when the feature is on.
+// Contents lists the user's turns so a long thread can be navigated; Documents lists what the
+// conversation produced (generated files and media) above the document-level citation
+// aggregates the server records on the conversation; Plan hosts the orchestration plan surface
+// when the feature is on.
 
 import { useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
@@ -19,13 +20,17 @@ import {
 } from 'lucide-react';
 import { useChatStore, type DrawerMode } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import {
+    useConversationGeneratedDocuments,
+    useConversationGeneratedFiles,
+} from '../../stores/generatedDocumentsStore';
 import { collectConversationMedia } from '../../lib/conversationMedia';
+import { mergeGeneratedEntries } from '../../lib/conversationGeneratedFiles';
 import { EmptyState, Skeleton } from '../ui/primitives';
 import {
-    GeneratedDocumentsSection,
+    GeneratedSection,
     MediaSection,
     SectionHeading,
-    useGeneratedDocuments,
 } from './DrawerAssets';
 import { OrchestrationPlanPanel } from './OrchestrationPlanPanel';
 import type { UsedDocument } from '../../lib/types';
@@ -157,10 +162,15 @@ function DocumentRow({ document }: { document: UsedDocument }) {
 function DocumentsMode() {
     const { metadata, metadataLoading, metadataError, activeConversationId, loadMetadata } =
         useChatStore();
-    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const kind = useChatStore((state) => state.activeConversationKind);
     const messages = useChatStore((state) => state.messages);
     const media = useMemo(() => collectConversationMedia(messages), [messages]);
-    const generated = useGeneratedDocuments(activeConversationId, collaborative);
+    const files = useConversationGeneratedFiles();
+    const generated = useConversationGeneratedDocuments();
+    const entries = useMemo(
+        () => mergeGeneratedEntries(files, generated.documents, messages),
+        [files, generated.documents, messages],
+    );
 
     useEffect(() => {
         if (activeConversationId && !metadata && !metadataLoading && !metadataError) {
@@ -191,13 +201,15 @@ function DocumentsMode() {
         return [...merged.values()];
     }, [metadata]);
 
-    const hasAssets = generated.documents.length > 0 || Boolean(generated.error) || media.length > 0;
+    const hasAssets = entries.length > 0 || Boolean(generated.error) || media.length > 0;
     const assets = hasAssets && activeConversationId ? (
         <>
-            <GeneratedDocumentsSection
+            <GeneratedSection
                 conversationId={activeConversationId}
-                documents={generated.documents}
+                kind={kind ?? 'personal'}
+                entries={entries}
                 error={generated.error}
+                onLocate={scrollToMessage}
             />
             <MediaSection items={media} onLocate={scrollToMessage} />
         </>
@@ -232,8 +244,8 @@ function DocumentsMode() {
         return (
             <EmptyState
                 icon={<Files size={24} />}
-                title="No documents used yet"
-                description="Documents referenced while answering will be listed here."
+                title="No documents yet"
+                description="Documents used or created while answering will be listed here."
             />
         );
     }

@@ -366,7 +366,7 @@ prepared retry** are not offered for a waiting attempt. **Stop execution**
 continues to request cancellation from the server; closing the browser does not
 mean the computation stopped.
 
-Since **0.261.302**, if the attempt fails or is stopped as a whole while a task
+Since **0.261.303**, if the attempt fails or is stopped as a whole while a task
 still waits, the plan shows that task as **Not finished** and what it produces as
 **Not delivered**. Nothing will finish that wait any more, so **Retry from failed
 step** is offered; it runs the waiting task again and reuses the completed ones.
@@ -413,7 +413,7 @@ remain valid downloads; a zero row, character, or byte count is not a failure.
 can be retried. It requests that file again from retained results, not another
 plan, producer task, or sibling output. An exhausted automatic-attempt count
 does not by itself authorize a manual retry. Non-retryable failures keep their
-status and the server's explanation. Since **0.261.302**, when a failed file
+status and the server's explanation. Since **0.261.303**, when a failed file
 can't be retried on its own and no other file is still being prepared, the
 recovery card offers **Retry from failed step**, which creates the plan's files
 again without repeating completed plan steps.

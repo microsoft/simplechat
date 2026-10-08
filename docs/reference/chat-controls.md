@@ -358,7 +358,7 @@ These controls exist only in the V2 interface, so they are not part of the gener
 
 ## Shared conversations (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for, which agents are working, and what the conversation has produced. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for and which agents are working. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
@@ -366,7 +366,15 @@ These controls exist only in the V2 interface, so they are not part of the gener
 | Mention chips | Show who the message is for: any number of people and at most one model or agent. Picking a second agent replaces the first, and each chip has a remove button. When you send, the names are placed in front of the message, which is how the server, the classic interface and the assistant read them. A message of chips alone is sent as a ping. | Use them to check who will be notified and which agent will answer before sending. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
 | Mention pills on a message | Show the agent that was asked and the people who were named as pills above the message text, with your own name highlighted. The `@Name` text is removed from what is displayed, including where a reply quotes the message; the stored message keeps it. | Use them to see at a glance who a message was for, the same way a reply shows what it answers. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
 | Agent activity line | Shows one slim line at the end of the thread for each running request: which agent, who asked, how long it has been running, and what it is doing in plain words, such as "Looking up order status", "Asking Data Analyst" or "Writing the answer". Everyone in the conversation sees it, several can run at once, and it replaces the large "Thinking" bubble in shared conversations. | Use it to know an agent is still working, and on what, without the thread filling with placeholders. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
-| Generated (Documents drawer) | Lists the documents agents created in this conversation with the SimpleChat upload actions. Markdown opens in a preview, and Download appears only when the workspace's download rules allow it for you. | Use it to open or save a briefing or report an agent produced without hunting for it in a workspace. | [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) for group documents<br>[`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) for personal documents |
+
+## Documents drawer (V2 interface)
+
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. The drawer's **Documents** tab gathers what a conversation used and what it produced, in personal and shared conversations alike, so a file or source is not lost in a long thread. See [Documents drawer generated files fix]({{ '/explanation/fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX/' | relative_url }}) for how generated files are found.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Documents button badge | Counts the documents answers used plus every file and document the conversation produced, each once. Media is not counted. | Use it to see at a glance that a reply produced a file, even with the drawer closed. | Always available |
+| Generated (Documents drawer) | Lists every file the conversation produced, in conversation order. That covers the files an orchestration plan rendered (CSV, Excel, Word, PDF, PowerPoint, Markdown, text, JSON, XML and YAML), exports and Analyze or comparison files a reply wrote, and documents agents created with the SimpleChat upload actions. A file that is still rendering, failed, or waits for a shared conversation owner's approval is listed with its status. **Download** appears once the file is ready, and only where the workspace's download rules allow it for an agent's document. Markdown and files that carry a preview open in place, and **Show in conversation** scrolls to the reply that produced the file. | Use it to download or reopen a file a reply made, such as a CSV export, without scrolling back through the thread to find its card. | Always available; agent documents follow [`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) and [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) |
 | Media (Documents drawer) | Gathers every image, video and audio clip shown in the conversation, including signed links an action fetched from a remote service, grouped as **Images**, **Videos** and **Audio** with a count for each. Images and clips open one viewer that steps through all of them, with **Show in conversation** to scroll to the message. Recordings play in place and can be downloaded. | Use it to find a photo, clip or recording again in a long thread. | Always available |
 
 ## Media in replies (V2 interface)
@@ -530,7 +538,7 @@ saved effective plan, not the current composer selections or a new planner call.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints. For an attempt with files, only when a failed file can't be retried on its own and no file is still being prepared (since **0.261.302**) |
+| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints. For an attempt with files, only when a failed file can't be retried on its own and no file is still being prepared (since **0.261.303**) |
 | Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. Since **0.261.212** it also appears for a step that starts a saved workflow; its retry never starts the workflow twice, and links the run when the plan already started it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
 | Run prepared retry | Starts a recovery attempt that was already prepared but has not executed. | Continue after preparation was saved but execution was interrupted by navigation or connection loss. | An unstarted saved recovery attempt |
 | Review saved attempt | Opens the selected attempt in the Plan/Run view. | Inspect the failure, completed steps, and remaining work without editing or rerunning history. | A saved orchestration attempt |
@@ -547,7 +555,7 @@ attempt active. Reload and status checks do not execute it again, and waiting
 does not expose a run-retry button or a completed-file link. File-specific
 publication and retry controls require the server's separate output lifecycle.
 
-Since **0.261.302**, an attempt that fails or is stopped as a whole while a step
+Since **0.261.303**, an attempt that fails or is stopped as a whole while a step
 is still pending, running or waiting shows that step as **Not finished** and the
 deliverable it produces as **Not delivered**, instead of **Waiting for results**
 or **In progress**. Nothing will finish that work in the ended attempt, so
@@ -581,7 +589,7 @@ survive reload in the same browser tab, but reloading never posts a retry or
 reruns the original plan. An expired sign-in or a conflict requires checking
 saved state before another request.
 
-Since **0.261.302**, a failed file says why it could not be created, for example
+Since **0.261.303**, a failed file says why it could not be created, for example
 that the results it uses can only be checked with your sign-in. File retries run
 in the background, where that sign-in isn't available, so such a file offers
 **Retry from failed step** instead of **Retry file**.

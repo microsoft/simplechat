@@ -1,8 +1,8 @@
 # test_orchestration_file_sign_in_publication.py
 """A file a signed-in run renders is published under that run's sign-in, or says why not.
 
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.303
+Implemented in: 0.261.303
 
 A Word report rendered from an action's results failed with only "This file could not be
 created." Publishing the file re-checked its sources through a fresh rendering service built on
@@ -35,7 +35,7 @@ def _no_session(record, *, operation):
 
 
 def test_version_includes_the_file_sign_in_fix():
-    assert_app_version_at_least('0.261.302')
+    assert_app_version_at_least('0.261.303')
 
 
 def test_publication_is_checked_by_the_service_that_rendered_the_file(lifecycle, monkeypatch):

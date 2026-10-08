@@ -170,7 +170,7 @@ offers **Retry file** for each failed file rather than **Retry from failed step*
 so recovering one file never withdraws another that is already available. If
 other work in that attempt failed, ask again to create a new plan.
 
-Since **0.261.302**, a failed file says why it could not be created. A file built
+Since **0.261.303**, a failed file says why it could not be created. A file built
 from web search, linked pages, deep research, an agent or an action is checked
 with your sign-in before it's published. If it was prepared where your sign-in
 wasn't available, for example after a run waited for a long computation, it says

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.302)**
+### **(v0.261.303)**
 
 #### Bug Fixes
 
@@ -17,6 +17,31 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   An orchestrated file whose content came from web search, linked pages, deep research, an agent or an action rendered, then failed with only "This file could not be created." and no retry. Publishing it rechecked its sources through a new service that didn't have the user's sign-in. Publication now uses the rendering service that ran the attempt, which has it.
     *   A file that still can't be checked without a sign-in, such as one prepared in the background, says so. A failed file now explains why it could not be created. When a failed file can't be retried on its own, the chat offers **Retry from failed step**.
     *   (Ref: `functions_orchestration_artifacts.py` `render_attempt_scope`, `functions_orchestration_rendering.py`, `functions_orchestration_output_store.py`, `OrchestrationRecoveryNotice.tsx`, [Orchestration Files From External Results Failing Without a Reason Fix](fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md))
+
+### **(v0.261.302)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Sign-In No Longer Fails With `m365_auth_state_invalid`**
+    *   Reconnecting Microsoft 365 for chat could fail seconds after the user signed in, leaving raw JSON in the popup. The session store wrote the whole session back at the end of every request, so the request that finished last won. In V2, the startup-data refresh that runs when the window regains focus took about five seconds, loaded the session before the connect call saved the pending sign-in, and wrote its stale copy back afterwards.
+    *   A request now saves only the session keys it changed, merged into the latest stored copy, and a request that changed nothing no longer writes its copy back. A session deleted during a request stays deleted. This also stops overlapping requests from dropping token-cache refreshes, the Microsoft 365 CSRF token and other session writes.
+    *   V2 skips the focus refresh while one is running or one started in the last 15 seconds.
+    *   Sign-in callbacks show a result page instead of JSON. In a popup it reports back to the page that opened it and closes; opened as a full page, it continues on success or explains the error with a way to try again.
+    *   (Ref: `functions_session_store.py`, `app.py`, `m365_connection_result.html`, `route_backend_m365.py`, `bootstrapStore.ts`, [#1714](https://github.com/microsoft/simplechat/issues/1714), [Microsoft 365 Connection Session Race Fix](fixes/M365_CONNECTION_SESSION_RACE_FIX.md))
+
+*   **Workflow Connections Create Their Own Encryption Key**
+    *   **Connect for workflows** failed with "Configure Key Vault and a dedicated workflow encryption-key secret" unless an operator had created a key and set `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME`. SimpleChat now creates one deployment-wide key in the configured Key Vault the first time someone connects, and checks for it whenever an administrator saves settings. The app setting still overrides the secret name, so existing keys keep working.
+    *   This needs Key Vault secret storage on and the application identity allowed to create secrets. **Connect for workflows** is disabled with an explanation until Key Vault secret storage and a Key Vault name are configured.
+    *   Workflow sign-in now returns through `/getAToken`, which the app registration already lists, so no extra redirect URI is needed.
+    *   (Ref: `functions_m365_connections.py` `ensure_m365_workflow_encryption_key`, `workflow_connection_readiness`, `route_frontend_authentication.py`, `route_frontend_admin_settings.py`, `route_backend_v2.py`, [#1604](https://github.com/microsoft/simplechat/issues/1604))
+
+*   **Chat Connection Status Matches What Chat Can Use**
+    *   The chat connection card said "Sources saved for this session: none" while chat was reading mail, OneDrive and SharePoint, because it listed only sources from an explicit reconnect. It now lists the sources the current sign-in can use, in both V2 Settings and classic Profile.
+    *   (Ref: `functions_m365_connections.py` `read_chat_connection`, `profile-m365.js`, `M365Cards.tsx`)
+
+*   **Microsoft 365 Links Stay in V2**
+    *   Connect, reconnect and approval links in V2 chat, workflow cards and Approvals opened the classic Profile and Approvals pages. They now open V2 Settings at the Microsoft 365 section and V2 Approvals, and connecting for workflows in V2 uses a popup, like chat, instead of leaving the page.
+    *   (Ref: `m365Links.ts`, `m365Connect.ts`, `M365Cards.tsx`, `SettingsPage.tsx`, `OrchestrationM365Notice.tsx`, `WorkflowProposalCard.tsx`, `WorkflowRunCard.tsx`, `PendingActionsPanel.tsx`, `PausedRequestsPanel.tsx`)
 
 ### **(v0.261.301)**
 

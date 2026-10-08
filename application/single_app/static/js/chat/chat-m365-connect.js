@@ -213,9 +213,14 @@
                 }
             }
             function onMessage(event) {
-                if (event.origin === window.location.origin && event.source === popup
-                    && event.data?.type === 'm365-profile-reconnected') {
+                if (event.origin !== window.location.origin || event.source !== popup) {
+                    return;
+                }
+                if (event.data?.type === 'm365-profile-reconnected') {
                     finish();
+                } else if (event.data?.type === 'm365-connect-failed' && event.data?.kind === 'chat') {
+                    const detail = typeof event.data.message === 'string' ? event.data.message.slice(0, 500) : '';
+                    finish(new Error(`${detail || 'Microsoft 365 sign-in did not complete.'} No action was sent.`));
                 }
             }
             function onAbort() {
@@ -242,8 +247,9 @@
                         return;
                     }
                     // Profile reconnect saves credentials only; the saved-request connect/resume path would rerun the agent.
+                    // A popup completion ends on a small result page that reports back here and closes.
                     const result = await api.requestJson('/api/m365/chat/connection/connect', {
-                        method: 'POST', body: { sources: selectedSources },
+                        method: 'POST', body: { sources: selectedSources, completion: 'popup' },
                     });
                     if (!finished) {
                         popup.location.replace(authorizationUrl(result.authorization_url));

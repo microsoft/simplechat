@@ -1,8 +1,8 @@
 # Orchestration Runs Failing While Their Work Was Still Running Fix
 
-**Version: 0.261.302**
+**Version: 0.261.303**
 
-Fixed in version: **0.261.302**, recorded in
+Fixed in version: **0.261.303**, recorded in
 `application/single_app/config.py`.
 
 This affects the React V2 branch (`paullizer-react-v2-ui`) and deployments built
@@ -139,7 +139,7 @@ superseded:
 | `application/v2_ui/src/lib/orchestrationPlan.ts` | `stepUnfinishedByEndedRun`, and `deliverableRows` takes the run status. |
 | `application/v2_ui/src/components/chat/OrchestrationRunView.tsx` | **Not finished** step badges and summaries. |
 | `application/v2_ui/src/components/chat/OrchestrationDeliverables.tsx` | Passes the run status to the deliverable rows. |
-| `application/single_app/config.py` | Version 0.261.302. |
+| `application/single_app/config.py` | Version 0.261.303. |
 
 ## Testing
 

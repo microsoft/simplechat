@@ -1,8 +1,8 @@
 # Orchestration Files From External Results Failing Without a Reason Fix
 
-**Version: 0.261.302**
+**Version: 0.261.303**
 
-Fixed in version: **0.261.302**, recorded in
+Fixed in version: **0.261.303**, recorded in
 `application/single_app/config.py`.
 
 This affects the React V2 branch (`paullizer-react-v2-ui`) and deployments built
@@ -109,7 +109,7 @@ can check and publish the file.
 | `application/single_app/functions_orchestration_continuation.py` | Scheduler reconciliation reports the same step failure. |
 | `application/single_app/functions_orchestration_schema.py` | `file_sign_in_required` failure message. |
 | `application/v2_ui/src/components/chat/OrchestrationRecoveryNotice.tsx` | **Retry from failed step** for a file that can't be retried alone. |
-| `application/single_app/config.py` | Version 0.261.302. |
+| `application/single_app/config.py` | Version 0.261.303. |
 
 ## Testing
 

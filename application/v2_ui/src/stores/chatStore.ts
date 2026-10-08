@@ -3543,7 +3543,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // The Documents drawer reads the conversation's used-document list rather than the
         // message's citations, and the server only extends that list once the run finishes.
         // Without this refetch the drawer keeps reporting the state it was fetched in --
-        // "No documents used yet" under an answer that plainly used one.
+        // "No documents yet" under an answer that plainly used one.
         if (event.augmented) {
             void get().loadMetadata(conversationId);
         }

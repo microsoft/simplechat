@@ -1,8 +1,8 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.302
-Settings fingerprints ignore storage metadata and runtime state in: 0.261.302
+Version: 0.261.303
+Settings fingerprints ignore storage metadata and runtime state in: 0.261.303
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 Checkpoints record Gather / Reason / Render state only. A checkpoint written by the

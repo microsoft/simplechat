@@ -98,6 +98,22 @@ export function SettingsPage() {
         document.getElementById(`${sectionId}-title`)?.focus({ preventScroll: true });
     }, []);
 
+    // A link can name one card with `section`, such as the Microsoft 365 connection a chat
+    // notice points at. Jump to it once, when its card has registered on the open tab.
+    const requestedSection = searchParams.get('section');
+    const jumpedSection = useRef<string | null>(null);
+    useEffect(() => {
+        if (!requestedSection) {
+            jumpedSection.current = null;
+            return;
+        }
+        if (jumpedSection.current === requestedSection || !(requestedSection in sections)) {
+            return;
+        }
+        jumpedSection.current = requestedSection;
+        jumpToSection(requestedSection);
+    }, [requestedSection, sections, jumpToSection]);
+
     if (!active) {
         return null;
     }

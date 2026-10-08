@@ -6,7 +6,7 @@ This module never discovers clients, settings, credentials, or source paths.
 The output row, not file-message metadata, authorizes visibility.
 A file's publication is authorized by the rendering service running its attempt on the
 same task, so a signed-in execution checks the file's sources with that sign-in instead of
-a fresh service that has none (0.261.302).
+a fresh service that has none (0.261.303).
 """
 
 import re

@@ -1,8 +1,8 @@
 # test_orchestration_terminal_wait_retry.py
 """A run that ends while a step still waits can be retried, and the wait runs again.
 
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.303
+Implemented in: 0.261.303
 
 A waiting run whose continuation failed as a whole kept its waiting step. The recovery
 projection then reported "Required computation is still pending" and preparing a retry raised
@@ -58,7 +58,7 @@ def _fail_while_waiting(durable, status='failed'):
 
 
 def test_version_includes_the_terminal_wait_retry_fix():
-    assert_app_version_at_least('0.261.302')
+    assert_app_version_at_least('0.261.303')
 
 
 @pytest.mark.parametrize('status', ['failed', 'cancelled'])

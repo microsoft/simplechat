@@ -38,6 +38,7 @@ from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_rate_limit import build_rate_limit_error_payload
 from functions_appinsights import *
 from functions_activity_logging import *
+from functions_session_store import install_merging_session_interface
 
 import threading
 import time
@@ -186,6 +187,7 @@ if SESSION_TYPE == 'filesystem':
         log_event(f"Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}", level=logging.ERROR)
 
 Session(app)
+install_merging_session_interface(app)
 
 
 def register_route_blueprint(name, registrar, auth_guard=None):
@@ -302,8 +304,10 @@ def configure_sessions(settings):
         log_event(f"Session configuration error; falling back to filesystem: {e}", level=logging.ERROR)
         app.config['SESSION_TYPE'] = 'filesystem'
 
-    # Initialize session interface
+    # Initialize session interface. Saves merge into the latest stored session so a slow
+    # request cannot overwrite what a concurrent request saved meanwhile.
     Session(app)
+    install_merging_session_interface(app)
 
 # =================== Helper Functions ===================
 def start_background_tasks():

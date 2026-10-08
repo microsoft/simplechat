@@ -2,9 +2,10 @@
 # test_v2_user_settings_memory_m365.py
 """
 Functional test for V2 User Settings fact memory and Microsoft 365 parity.
-Version: 0.261.281
+Version: 0.261.302
 Implemented in: 0.261.279
 Authorization URL validation updated in: 0.261.281
+Popup workflow connect and V2-only links updated in: 0.261.302
 
 V2 Preferences now carries the classic profile page's Fact Memory section, as a workbench
 for adding, searching, editing and deleting memories, and its Microsoft 365 sharing and
@@ -147,13 +148,17 @@ def test_m365_cards_send_and_refresh_the_csrf_token():
         "'/api/m365/preferences'",
         "'/api/m365/chat/connection'",
         "'/api/m365/connections'",
-        "'/api/m365/connections/connect'",
         "'/api/m365/connections/disconnect'",
         "`/api/m365/sources/${encodeURIComponent(source)}/revoke`",
         "`/api/m365/bindings/${encodeURIComponent(binding.id)}/revoke`",
         "`/api/m365/bindings?${query}`",
     ):
         assert path in source, f"M365 cards no longer call {path}"
+    # Connecting runs in the shared popup helper, which sends the token it just read.
+    connect_source = _read(M365_CONNECT_TS)
+    for path in ("'/api/m365/chat/connection/connect'", "'/api/m365/connections/connect'"):
+        assert path in connect_source, f"The connect helper no longer calls {path}"
+    assert connect_source.count("headers: { 'X-M365-CSRF-Token': requireCsrf(current.csrf_token) }") == 2
 
 
 def test_m365_cards_mirror_classic_choices():
@@ -182,13 +187,39 @@ def test_m365_revocations_are_confirmed_and_redirects_validated():
             assert "onRevoke({" in preceding, f"{path} is not behind the confirmation dialog"
     assert "<ConfirmDialog" in source
     assert "Answers and evidence already published to conversations are not removed." in source
-    # Workflow connect navigates only to a validated HTTPS sign-in URL.
-    assert "window.location.assign(normalizeAuthorizationUrl(result.authorization_url))" in source
+    # Workflow and chat connect run in a popup that reports back, so V2 never navigates to the
+    # sign-in or lands on a classic page; the popup goes only to a validated HTTPS sign-in URL.
+    assert "window.location.assign" not in source
+    assert "await connectMicrosoft365Workflow(selected)" in source
+    assert "await connectMicrosoft365(selected)" in source
     connect_source = _read(M365_CONNECT_TS)
     assert "export function normalizeAuthorizationUrl(value: unknown): string" in connect_source
     assert "target.protocol !== 'https:'" in connect_source
-    # Chat reconnect reuses the popup flow rather than navigating away.
-    assert "await connectMicrosoft365(selected)" in source
+    assert "popup.location.replace(normalizeAuthorizationUrl(authorizationUrl))" in connect_source
+    assert connect_source.count("body: { sources, completion: 'popup' }") == 2
+    # Failures reported by the result page reach the user; the opener checks source and origin.
+    assert "data.type === CONNECT_FAILED_TYPE && data.kind === signIn.kind" in connect_source
+    assert "event.source !== popup" in connect_source
+
+
+def test_m365_links_stay_in_v2():
+    """Settings and approvals links are V2 routes, never classic Profile or Approvals pages."""
+    for path in (
+        M365_CARDS_TSX,
+        V2_SRC / "components" / "chat" / "OrchestrationM365Notice.tsx",
+        V2_SRC / "components" / "chat" / "WorkflowProposalCard.tsx",
+        V2_SRC / "components" / "chat" / "WorkflowRunCard.tsx",
+        V2_SRC / "components" / "approvals" / "PendingActionsPanel.tsx",
+        V2_SRC / "components" / "approvals" / "PausedRequestsPanel.tsx",
+    ):
+        source = _read(path)
+        assert not re.search(r"['\"`]/profile", source), f"{path.name} links to the classic Profile page"
+        assert not re.search(r"['\"`]/approvals['\"`]", source), f"{path.name} links to the classic Approvals page"
+        assert "M365_PROFILE_CONNECTION_HREF" not in source, f"{path.name} uses the removed classic link"
+        assert not re.search(r"href=\{M365_[A-Z_]+_HREF\}", source), f"{path.name} renders a V2 route as a bare anchor"
+    settings_page = _read(V2_SRC / "pages" / "SettingsPage.tsx")
+    assert "searchParams.get('section')" in settings_page
+    assert "jumpToSection(requestedSection)" in settings_page
 
 
 if __name__ == "__main__":
@@ -202,6 +233,7 @@ if __name__ == "__main__":
         test_m365_cards_send_and_refresh_the_csrf_token,
         test_m365_cards_mirror_classic_choices,
         test_m365_revocations_are_confirmed_and_redirects_validated,
+        test_m365_links_stay_in_v2,
     ]
     failures = 0
     for test in tests:

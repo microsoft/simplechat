@@ -1,8 +1,8 @@
 # functions_settings_runtime_state.py
 """Settings keys that record the application's own runtime state, not configuration.
 
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.303
+Implemented in: 0.261.303
 
 The settings document also holds values the application writes for itself while it
 runs: storage metadata that changes on every save, background monitor readings and

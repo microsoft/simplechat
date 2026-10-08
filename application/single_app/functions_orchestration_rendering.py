@@ -5,7 +5,7 @@ No producer, composition model, executor, route, or configuration owner is
 imported. Runtime owners supply current capability/admission checks and private
 transport. Approved deadlines and retry admissions survive worker replacement.
 A file whose sources could only be checked with a signed-in session that wasn't
-available fails as ``output_sign_in_required`` and says so (0.261.302).
+available fails as ``output_sign_in_required`` and says so (0.261.303).
 """
 
 import hashlib

@@ -1,11 +1,11 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.302**
+**Version: 0.261.303**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
 
-Since **0.261.302**, a settings save made by a background task no longer
+Since **0.261.303**, a settings save made by a background task no longer
 invalidates saved progress, and an attempt that ended while a step was waiting
 can be retried. See the
 [runs failing while their work was still running fix](../fixes/ORCHESTRATION_SETTINGS_WRITE_RECOVERY_FIX.md).
@@ -113,7 +113,7 @@ attempt** and **View previous attempt** navigate history without executing work.
 
 A step that hands work to a long computation, such as a native tabular analysis,
 waits in the same attempt until its result is ready. If the attempt then fails or
-is stopped as a whole, nothing will finish that wait. Since **0.261.302**:
+is stopped as a whole, nothing will finish that wait. Since **0.261.303**:
 
 - The Run view shows the waiting step, and any step still pending or running, as
   **Not finished**, and the deliverable it produces as **Not delivered**.
@@ -149,7 +149,7 @@ retry review lists them as work that will execute:
   the earlier attempt's files are then shown as superseded. A restart of the same attempt
   still reuses its completed files. React V2 offers **Retry from failed step** for an
   attempt with files only when a failed file can't be retried on its own and no file is
-  still being prepared (since **0.261.302**). Otherwise an attempt with files is
+  still being prepared (since **0.261.303**). Otherwise an attempt with files is
   recovered one file at a time with **Retry file**, which never repeats plan steps or
   withdraws an available file. A whole-run retry prepared through the retry API follows
   the rule above.
@@ -586,7 +586,7 @@ exception remains server-side in `__cause__`.
 | `result_unavailable` | Ownership, producer or integrity validation failed, or a document the step reads as an input is denied or held; no preview may replace it. |
 
 The settings part of a saved run's binding is the configuration its work ran
-under. Since **0.261.302** it leaves out what the settings document holds that
+under. Since **0.261.303** it leaves out what the settings document holds that
 isn't configuration, listed in `functions_settings_runtime_state.py`: storage
 metadata that changes on every save (`_etag`, `_ts`, `_rid`, `_self`,
 `_attachments`, `_settings_revision`, `id`) and runtime state that background
@@ -603,7 +603,7 @@ reports the step failure `external_session_required`, which asks the user to
 send the request again, instead of `result_unavailable`. The refusal code is
 logged as `sc_authority_reason`; it is never shown to the user.
 
-Since **0.261.302**, publishing a file is authorized by the rendering service
+Since **0.261.303**, publishing a file is authorized by the rendering service
 that ran its attempt (`render_attempt_scope`), so a run started from the chat
 publishes with the sign-in it started with. A file whose sources still can't be
 checked without a session, such as one rendered in the background, fails as

@@ -1,7 +1,7 @@
 # test_m365_connections.py
 """
 Functional tests for encrypted Microsoft 365 workflow connections.
-Version: 0.261.034
+Version: 0.261.302
 Implemented in: 0.261.029
 
 Uses real MSAL authorization-code/cache logic with a scoped HTTP fake, real
@@ -621,7 +621,8 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertEqual(cache_before_callback, "broken-cache")
         self.assertEqual(completed, {"return_to": "profile"})
         self.assertEqual(status_after["status"], "available")
-        self.assertEqual(status_after["sources"], ["spo"])
+        # OneDrive and SPO need the same permissions, so connecting SPO makes both usable.
+        self.assertEqual(status_after["sources"], ["onedrive", "spo"])
         self.assertIn("connected_at", status_after)
         self.assertEqual(original_user, user_after)
         self.assertNotIn("request_id", metadata)
@@ -630,6 +631,51 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertNotIn("access-token", json.dumps(status_after))
         self.assertNotIn("refresh-token", json.dumps(status_after))
         self.service.key_provider.assert_not_called()
+
+    def test_chat_status_reports_sources_granted_to_the_session_without_explicit_reconnect(self):
+        """Chat could read mail although Settings said 'Sources saved for this session: none'."""
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        # Microsoft returns every scope consented for the resource on each token.
+        self.http.scope_transform = lambda scopes: " ".join([
+            scopes, "Mail.Read Mail.ReadWrite Mail.Send User.ReadBasic.All",
+            "Calendars.Read MailboxSettings.Read",
+        ])
+        with app.test_request_context():
+            _begin, query = self.begin_chat()
+            self.service.complete_chat_connection("user-a", "tenant-a", {"state": query["state"][0], "code": "chat"})
+            session.pop(connections.CHAT_CONNECTION_SESSION_KEY)
+            status = self.service.read_chat_connection("user-a", "tenant-a")
+            cache = connections.deserialize_m365_cache(session["token_cache"])
+            for token in list(cache.search(msal.TokenCache.CredentialType.REFRESH_TOKEN)):
+                cache.remove_rt(token)
+            session["token_cache"] = cache.serialize()
+            without_refresh = self.service.read_chat_connection("user-a", "tenant-a")
+        self.assertEqual(status["status"], "available")
+        self.assertEqual(status["sources"], ["email", "onedrive", "spo"])
+        self.assertNotIn("calendar", status["sources"])
+        self.assertEqual(without_refresh["sources"], [])
+
+    def test_profile_chat_reconnect_reports_popup_completion(self):
+        app = Flask(__name__)
+        app.secret_key = "unit-test-only"
+        with app.test_request_context():
+            session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+            begin = self.service.start_profile_chat_connection(
+                "user-a", "tenant-a", ["email"], f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+                completion="popup",
+            )
+            query = parse_qs(urlsplit(begin["authorization_url"]).query)
+            self.http.nonce = query["nonce"][0]
+            completed = self.service.complete_chat_connection(
+                "user-a", "tenant-a", {"state": query["state"][0], "code": "popup-code"},
+            )
+            with self.assertRaises(ValueError):
+                self.service.start_profile_chat_connection(
+                    "user-a", "tenant-a", ["email"],
+                    f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}", completion="tab",
+                )
+        self.assertEqual(completed, {"return_to": "profile", "completion": "popup"})
 
     def test_failed_profile_reconnect_preserves_previous_sign_in_and_reconnect_marker(self):
         app = Flask(__name__)
@@ -1003,37 +1049,202 @@ class M365ConnectionTests(unittest.TestCase):
             )
             self.assertIs(client, constructor.return_value)
 
-    def test_default_key_provider_requires_explicit_key_vault_reference(self):
+    def key_vault_modules(self, settings=None):
         config_stub = types.ModuleType("config")
         config_stub.KEY_VAULT_DOMAIN = ".vault.azure.net"
         settings_stub = types.ModuleType("functions_settings")
-        settings_stub.get_settings = lambda: {
+        settings_stub.get_settings = lambda: dict(settings or {
             "enable_key_vault_secret_storage": True, "key_vault_name": "test-vault",
-        }
+        })
         vault_stub = types.ModuleType("functions_keyvault")
         vault_stub.get_keyvault_credential = lambda settings: "test-credential"
-        properties = types.SimpleNamespace(
-            enabled=True, expires_on=None, not_before=None, version="version1",
-        )
-        secret = types.SimpleNamespace(
-            value=base64.b64encode(b"a" * 32).decode("ascii"), properties=properties,
-        )
-        client = types.SimpleNamespace(get_secret=lambda name, version=None: secret)
-        with patch.dict(sys.modules, {
-            "config": config_stub, "functions_settings": settings_stub, "functions_keyvault": vault_stub,
-        }), patch.dict(os.environ, {connections.KEY_SECRET_ENV: ""}), patch(
+        return {"config": config_stub, "functions_settings": settings_stub, "functions_keyvault": vault_stub}
+
+    @staticmethod
+    def vault_secret(value, version):
+        properties = types.SimpleNamespace(enabled=True, expires_on=None, not_before=None, version=version)
+        return types.SimpleNamespace(value=value, properties=properties)
+
+    def test_default_key_provider_requires_key_vault_storage_and_names_the_secret_itself(self):
+        secret = self.vault_secret(base64.b64encode(b"a" * 32).decode("ascii"), "version1")
+        client = Mock()
+        client.get_secret.return_value = secret
+        disabled = self.key_vault_modules({"enable_key_vault_secret_storage": False, "key_vault_name": "test-vault"})
+        with patch.dict(sys.modules, disabled), patch.dict(os.environ, {connections.KEY_SECRET_ENV: ""}), patch(
             "azure.keyvault.secrets.SecretClient", return_value=client,
         ) as constructor:
-            with self.assertRaises(connections.M365ConnectionError):
+            with self.assertRaises(connections.M365ConnectionError) as raised:
                 connections._default_key_provider()
             constructor.assert_not_called()
-            os.environ[connections.KEY_SECRET_ENV] = "workflow-token-key"
-            key = connections._default_key_provider("version1", "workflow-token-key")
-            self.assertEqual(key.key, b"a" * 32)
-            self.assertEqual(key.version, "version1")
+        self.assertEqual(raised.exception.code, "m365_key_vault_required")
+        self.assertIn("Admin Settings > Security > Secrets > Key Vault", raised.exception.payload["message"])
+
+        with patch.dict(sys.modules, self.key_vault_modules()), patch.dict(os.environ, {connections.KEY_SECRET_ENV: ""}), patch(
+            "azure.keyvault.secrets.SecretClient", return_value=client,
+        ) as constructor:
+            key = connections._default_key_provider()
             constructor.assert_called_once_with(
                 vault_url="https://test-vault.vault.azure.net", credential="test-credential",
             )
+        client.get_secret.assert_called_with(connections.DEFAULT_KEY_SECRET_NAME, version=None)
+        self.assertEqual((key.key, key.version, key.name), (b"a" * 32, "version1", connections.DEFAULT_KEY_SECRET_NAME))
+
+        with patch.dict(sys.modules, self.key_vault_modules()), patch.dict(
+            os.environ, {connections.KEY_SECRET_ENV: "workflow-token-key"},
+        ), patch("azure.keyvault.secrets.SecretClient", return_value=client):
+            pinned = connections._default_key_provider("version1", "workflow-token-key")
+            with self.assertRaises(connections.M365ConnectionError) as renamed:
+                connections._default_key_provider("version1", connections.DEFAULT_KEY_SECRET_NAME)
+        client.get_secret.assert_called_with("workflow-token-key", version="version1")
+        self.assertEqual(pinned.name, "workflow-token-key")
+        self.assertEqual(renamed.exception.code, "m365_key_unavailable")
+
+    def test_key_vault_hostname_comes_only_from_a_valid_vault_name(self):
+        # Readiness rejects these names too; bypassing it proves the hostname check stands alone.
+        for vault_name in ("evil.example.com/x", "test-vault.evil.example", "user@test-vault", "test-vault:8443"):
+            with self.subTest(vault_name=vault_name):
+                settings = {"enable_key_vault_secret_storage": True, "key_vault_name": vault_name}
+                with patch.dict(sys.modules, self.key_vault_modules(settings)), patch.dict(
+                    os.environ, {connections.KEY_SECRET_ENV: ""},
+                ), patch.object(
+                    connections, "workflow_connection_readiness",
+                    return_value={"available": True, "reason": None, "message": ""},
+                ), patch("azure.keyvault.secrets.SecretClient") as constructor:
+                    with self.assertRaises(connections.M365ConnectionError) as raised:
+                        connections._default_key_provider()
+                constructor.assert_not_called()
+                self.assertEqual(raised.exception.code, "m365_key_vault_required")
+
+    def test_missing_key_is_created_once_when_encrypting_and_never_when_decrypting(self):
+        from azure.core.exceptions import ResourceNotFoundError
+        client = Mock()
+        client.get_secret.side_effect = ResourceNotFoundError("SecretNotFound")
+        client.set_secret.side_effect = lambda name, value, **kwargs: types.SimpleNamespace(
+            value=None, properties=types.SimpleNamespace(
+                enabled=True, expires_on=None, not_before=None, version="created-version",
+            ),
+        )
+        logged = []
+        with patch.dict(sys.modules, self.key_vault_modules()), patch.dict(os.environ, {connections.KEY_SECRET_ENV: ""}), patch(
+            "azure.keyvault.secrets.SecretClient", return_value=client,
+        ), patch.object(connections, "_log_key_created", lambda name, version: logged.append((name, version))):
+            with self.assertRaises(connections.M365ConnectionError) as decrypting:
+                connections._default_key_provider("old-version", connections.DEFAULT_KEY_SECRET_NAME)
+            client.set_secret.assert_not_called()
+            key = connections._default_key_provider()
+
+        self.assertEqual(decrypting.exception.code, "m365_key_unavailable")
+        client.set_secret.assert_called_once()
+        name, value = client.set_secret.call_args.args
+        self.assertEqual(name, connections.DEFAULT_KEY_SECRET_NAME)
+        self.assertEqual(len(base64.b64decode(value, validate=True)), 32)
+        self.assertEqual(client.set_secret.call_args.kwargs, {
+            "content_type": connections.KEY_SECRET_CONTENT_TYPE, "tags": connections.KEY_SECRET_TAGS,
+        })
+        self.assertEqual(key.key, base64.b64decode(value))
+        self.assertEqual((key.version, key.name), ("created-version", connections.DEFAULT_KEY_SECRET_NAME))
+        self.assertEqual(logged, [(connections.DEFAULT_KEY_SECRET_NAME, "created-version")])
+        self.assertNotIn(value, repr(logged))
+
+    def test_key_creation_failures_name_the_missing_permission_or_deleted_secret(self):
+        from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+        cases = {403: "m365_key_provision_forbidden", 409: "m365_key_deleted", 500: "m365_key_unavailable"}
+        for status, code in cases.items():
+            with self.subTest(status=status):
+                failure = HttpResponseError(message="private provider detail")
+                failure.status_code = status
+                client = Mock()
+                client.get_secret.side_effect = ResourceNotFoundError("SecretNotFound")
+                client.set_secret.side_effect = failure
+                with patch.dict(sys.modules, self.key_vault_modules()), patch.dict(
+                    os.environ, {connections.KEY_SECRET_ENV: ""},
+                ), patch("azure.keyvault.secrets.SecretClient", return_value=client):
+                    with self.assertRaises(connections.M365ConnectionError) as raised:
+                        connections._default_key_provider()
+                self.assertEqual(raised.exception.code, code)
+                self.assertNotIn("private provider detail", raised.exception.payload["message"])
+
+    def test_ensure_workflow_key_reports_status_and_never_raises(self):
+        from azure.core.exceptions import ResourceNotFoundError
+        modules = self.key_vault_modules()
+        settings = modules["functions_settings"].get_settings()
+        self.assertEqual(
+            connections.ensure_m365_workflow_encryption_key({"enable_key_vault_secret_storage": False})["status"],
+            "not_configured",
+        )
+        present = Mock()
+        present.get_secret.return_value = self.vault_secret(base64.b64encode(b"a" * 32).decode("ascii"), "v1")
+        missing = Mock()
+        missing.get_secret.side_effect = ResourceNotFoundError("SecretNotFound")
+        missing.set_secret.return_value = self.vault_secret(None, "v2")
+        broken = Mock()
+        broken.get_secret.side_effect = RuntimeError("unexpected SDK failure")
+        results = {}
+        for label, client in (("present", present), ("missing", missing), ("broken", broken)):
+            with patch.dict(sys.modules, modules), patch.dict(os.environ, {connections.KEY_SECRET_ENV: ""}), patch(
+                "azure.keyvault.secrets.SecretClient", return_value=client,
+            ), patch.object(connections, "_log_key_created", lambda *args: None):
+                results[label] = connections.ensure_m365_workflow_encryption_key(settings)
+        self.assertEqual(results["present"]["status"], "ready")
+        self.assertEqual(results["missing"]["status"], "created")
+        self.assertIn(connections.DEFAULT_KEY_SECRET_NAME, results["missing"]["message"])
+        self.assertEqual(results["broken"]["status"], "unavailable")
+        self.assertNotIn("unexpected SDK failure", results["broken"]["message"])
+
+    def test_workflow_readiness_comes_from_settings_alone(self):
+        readiness = connections.workflow_connection_readiness
+        self.assertEqual(readiness({})["reason"], "key_vault_disabled")
+        self.assertEqual(
+            readiness({"enable_key_vault_secret_storage": True, "key_vault_name": ""})["reason"],
+            "key_vault_name_missing",
+        )
+        ready = {"enable_key_vault_secret_storage": True, "key_vault_name": "test-vault"}
+        with patch.dict(os.environ, {connections.KEY_SECRET_ENV: ""}):
+            self.assertEqual(readiness(ready), {"available": True, "reason": None, "message": ""})
+        with patch.dict(os.environ, {connections.KEY_SECRET_ENV: "not a valid/name"}):
+            self.assertEqual(readiness(ready)["reason"], "key_secret_name_invalid")
+
+    def test_workflow_sign_in_uses_registered_callback_prefix_and_remembers_completion(self):
+        for completion in ("page", "popup"):
+            with self.subTest(completion=completion):
+                result = self.service.start_connection(
+                    "user-a", "tenant-a", ["email"],
+                    f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+                    "session-binding-for-user-a", completion=completion,
+                )
+                query = parse_qs(urlsplit(result["authorization_url"]).query)
+                state = query["state"][0]
+                self.assertTrue(state.startswith(connections.WORKFLOW_AUTH_STATE_PREFIX))
+                self.assertEqual(query["redirect_uri"], [f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}"])
+                self.assertEqual(self.service.connection_flow_completion("user-a", state), completion)
+                self.assertEqual(self.service.connection_flow_completion("user-b", state), "auto")
+        self.assertEqual(self.service.connection_flow_completion("user-a", "unknown-state-value-123456"), "auto")
+        with self.assertRaises(ValueError):
+            self.service.start_connection(
+                "user-a", "tenant-a", ["email"],
+                f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+                "session-binding-for-user-a", completion="redirect",
+            )
+        with self.assertRaises(connections.M365ConnectionError):
+            self.service.start_connection(
+                "user-a", "tenant-a", ["email"], "https://simplechat.example.test/elsewhere",
+                "session-binding-for-user-a",
+            )
+
+    def test_workflow_callback_through_registered_callback_completes(self):
+        result = self.service.start_connection(
+            "user-a", "tenant-a", ["email"],
+            f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}",
+            "session-binding-for-user-a",
+        )
+        query = parse_qs(urlsplit(result["authorization_url"]).query)
+        self.http.nonce = query["nonce"][0]
+        connected = self.service.complete_connection(
+            "user-a", "tenant-a", {"state": query["state"][0], "code": "one-use-code"},
+            "session-binding-for-user-a",
+        )
+        self.assertEqual(connected["status"], "connected")
+        self.assertEqual(self.http.posts[-1]["redirect_uri"], f"https://simplechat.example.test{connections.CHAT_CALLBACK_PATH}")
 
 
 if __name__ == "__main__":

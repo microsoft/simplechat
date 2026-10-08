@@ -1,8 +1,8 @@
 # test_orchestration_settings_runtime_state_binding.py
 """Background settings writes never invalidate saved orchestration progress.
 
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.303
+Implemented in: 0.261.303
 
 A waiting run failed with "Saved step inputs changed" because its execution binding hashed the
 whole settings document. That document also holds storage metadata that changes on every save
@@ -120,7 +120,7 @@ def _saved_keys(file_name, function_name, names):
 
 
 def test_version_includes_the_runtime_state_binding_fix():
-    assert_app_version_at_least('0.261.302')
+    assert_app_version_at_least('0.261.303')
 
 
 def test_storage_metadata_and_runtime_state_leave_saved_bindings_unchanged(runtime):
