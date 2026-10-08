@@ -30,16 +30,26 @@ from functions_approvals import (
     mark_approval_executed,
 )
 from functions_authentication import *
+from functions_review_assist import ReviewAssistError, present_suggestion, strip_suggestion
+from functions_review_assist_runtime import (
+    ReviewRecordStore,
+    handle_review_assist_request,
+    review_assist_error_response,
+)
 from functions_review_center import (
     REVIEW_RECORD_CHANGED_CODE,
+    ReviewRecordConflict,
     ReviewRequestError,
+    apply_suggested_review,
     cap_review_ids,
     daily_counts,
+    dismiss_review_suggestion,
     in_review_window,
     normalize_review_search,
     parse_review_bulk_operations,
     parse_review_date,
     parse_review_window,
+    replace_review_record,
     resolve_review_users,
     review_bulk_result,
     review_day,
@@ -169,6 +179,7 @@ SAFETY_ACTION_LABELS = {
     SAFETY_REMEDIATION_SUSPEND: 'suspension',
     SAFETY_REMEDIATION_BLOCK: 'block',
 }
+SAFETY_AI_FILTER_PENDING = 'pending'
 
 
 def _get_safety_session_user_id():
@@ -308,6 +319,12 @@ def _query_safety_logs(
         # whole, so it must still be exactly the stored document.
         logs = reconcile_pending_safety_logs(logs)
     for log_item in logs:
+        if user_id:
+            # A user reads their own violations; what an AI suggested about them is for reviewers.
+            strip_suggestion(log_item)
+        else:
+            # Read from the stored fields, before they are prepared for display.
+            log_item['ai_suggestion'] = present_suggestion('safety', log_item)
         log_item.update(serialize_archive_metadata(log_item))
         present_safety_warning_send_state(log_item)
         log_item.update(serialize_safety_warning_state(log_item))
@@ -420,6 +437,9 @@ def _parse_safety_list_filters():
     warning = (args.get('warning') or '').strip().lower() or None
     if warning and warning not in SAFETY_WARNING_FILTERS:
         raise ReviewRequestError('Unknown warning acknowledgment state.', code='invalid_warning_state')
+    ai_state = (args.get('ai') or '').strip().lower() or None
+    if ai_state and ai_state != SAFETY_AI_FILTER_PENDING:
+        raise ReviewRequestError('Unknown AI suggestion state.', code='invalid_ai_state')
     return {
         'status': (args.get('status') or '').strip() or None,
         'action': (args.get('action') or '').strip() or None,
@@ -433,6 +453,7 @@ def _parse_safety_list_filters():
         'restricted': (args.get('restricted') or '').strip().lower() in ('1', 'true'),
         'date': parse_review_date(args.get('date')),
         'days': parse_review_window(args.get('days')),
+        'ai': ai_state,
     }
 
 
@@ -465,6 +486,12 @@ def _safety_log_matches(log_item, filters, users, window):
     if filters['date'] and review_day(_safety_record_time(log_item)) != filters['date']:
         return False
     if window and not in_review_window(_safety_record_time(log_item), window):
+        return False
+    # The AI suggestions queue: suggestions still waiting for a reviewer, stale ones included so
+    # they can be dismissed.
+    if filters.get('ai') == SAFETY_AI_FILTER_PENDING and (
+        (log_item.get('ai_suggestion') or {}).get('status') not in ('pending', 'stale')
+    ):
         return False
     if filters['search']:
         user = users.get(log_item.get('user_id')) or {}
@@ -652,6 +679,15 @@ def _build_safety_window_stats(days):
 
 def _record_changed_body():
     return {'error': SAFETY_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}
+
+
+def _review_assist_client(settings):
+    """The draft-instructions deployment's client and model name, as the other AI assistants use."""
+    # Lazy: route_backend_agents loads the agent stack, which app.py has already imported by the
+    # time a request arrives. Importing it when this module loads would make the safety routes
+    # depend on that whole stack.
+    from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
+    return _create_agent_instruction_client(settings), _resolve_agent_instruction_model(settings)
 
 
 def _response_parts(result):
@@ -1190,6 +1226,8 @@ def register_route_backend_safety(bp):
 
         item = reconcile_pending_safety_log(item)
         record = dict(item)
+        # Read from the stored fields, before they are prepared for display.
+        record['ai_suggestion'] = present_suggestion('safety', item)
         record.update(serialize_archive_metadata(item))
         present_safety_warning_send_state(record)
         record.update(serialize_safety_warning_state(record))
@@ -1500,7 +1538,11 @@ def register_route_backend_safety(bp):
         exactly as that save would: Warn user sends the warning, Suspend user and Block user
         create approval requests. ``archive`` carries ``archived``; ``delete`` carries
         nothing more. Each result repeats the single route's response with ``ok`` and
-        ``status``, in request order; one failure never stops the others.
+        ``status``, in request order; one failure never stops the others. An ``update`` with
+        ``suggestion_id`` applies the violation's pending AI suggestion as the reviewer edited
+        it, through that same save, and ``dismiss_suggestion`` dismisses one; a suggestion that
+        is stale or no longer pending is refused with ``suggestion_stale`` or
+        ``suggestion_not_pending``.
         """
         actor = _get_safety_actor_context()
         if not actor.get('id'):
@@ -1521,9 +1563,22 @@ def register_route_backend_safety(bp):
                 changes = {key: value for key, value in operation['changes'].items() if key != 'etag'}
                 if operation['etag']:
                     changes['etag'] = operation['etag']
-                body, status = _response_parts(apply_safety_review_update(operation['id'], changes))
+                if operation.get('suggestion_id'):
+                    body, status = apply_suggested_review(
+                        cosmos_safety_container, 'safety', operation['id'], operation['suggestion_id'], changes, actor,
+                        lambda checked, record_id=operation['id']: _response_parts(
+                            apply_safety_review_update(record_id, checked),
+                        ),
+                    )
+                else:
+                    body, status = _response_parts(apply_safety_review_update(operation['id'], changes))
             elif operation['op'] == 'archive':
                 body, status = _archive_safety_log(operation['id'], operation['archived'], actor, operation['etag'])
+            elif operation['op'] == 'dismiss_suggestion':
+                body, status = dismiss_review_suggestion(
+                    cosmos_safety_container, 'safety', operation['id'], operation['suggestion_id'], actor,
+                    operation['etag'],
+                )
             else:
                 body, status = _delete_safety_log(operation['id'], actor, operation['etag'])
             results.append(review_bulk_result(operation, body, status))
@@ -1536,6 +1591,46 @@ def register_route_backend_safety(bp):
             'failed': summary['failed'],
         })
         return jsonify(summary), 200
+
+    @bp.route('/api/admin/review/safety/assist', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @safety_violation_admin_required
+    @content_checks_report_enabled
+    def safety_review_assist():
+        """Ask AI to suggest reviews for safety violations.
+
+        Body: ``{"mode": "analyze" | "triage", "ids": [...]}``. ``analyze`` takes one violation
+        and returns a suggested review for the editor's unsaved draft; nothing is stored.
+        ``triage`` takes up to 10 violations and stores each suggestion on its violation for a
+        reviewer to apply or dismiss. A violation held by a pending remediation request or a
+        warning being sent is skipped. The model never warns, suspends or blocks anyone: those
+        happen only when a reviewer applies a suggestion through the normal save, and a
+        suspension or block still needs a second reviewer. Answers are never cached.
+        """
+        settings = get_settings()
+        actor = _get_safety_actor_context()
+        if not is_admin_review_assistant_enabled(settings):
+            return review_assist_error_response(ReviewAssistError('review_assistant_disabled'), user_id=actor.get('id'))
+        store = ReviewRecordStore(
+            section='safety',
+            container=cosmos_safety_container,
+            replace=lambda record_id, mutate, base_item: replace_review_record(
+                cosmos_safety_container, record_id, mutate, base_item=base_item,
+            ),
+            conflict_error=ReviewRecordConflict,
+            prepare=reconcile_pending_safety_log,
+            is_locked=lambda record: (
+                _safety_request_state(record) == 'pending' or safety_warning_send_in_progress(record)
+            ),
+        )
+        return handle_review_assist_request(
+            section='safety',
+            actor=actor,
+            settings=settings,
+            store=store,
+            client_factory=lambda: _review_assist_client(settings),
+        )
 
     @bp.route('/api/safety/logs/<string:log_id>/archive', methods=['PATCH'])
     @swagger_route(security=get_auth_security())

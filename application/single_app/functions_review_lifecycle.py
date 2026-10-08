@@ -108,3 +108,47 @@ def log_review_lifecycle_action(
         description=descriptions[lifecycle_action],
         additional_context=additional_context,
     )
+
+
+def log_review_suggestion_action(record_type, suggestion_action, item, actor, suggestion_id, edited=None):
+    """Write a non-sensitive admin activity event for an AI suggestion a reviewer decided.
+
+    ``suggestion_action`` is ``applied`` or ``dismissed``. The event credits the suggestion, so
+    the audit log shows which reviewed changes an AI suggestion proposed, and whether the reviewer
+    edited it first. No review text is recorded.
+    """
+    noun = record_type.replace('_', ' ')
+    action_names = {
+        'applied': f'{record_type}_ai_suggestion_applied',
+        'dismissed': f'{record_type}_ai_suggestion_dismissed',
+    }
+    descriptions = {
+        'applied': f'Applied an AI-suggested review to a {noun} record.',
+        'dismissed': f'Dismissed an AI-suggested review of a {noun} record.',
+    }
+    suggestion = item.get('ai_suggestion') if isinstance(item.get('ai_suggestion'), dict) else {}
+    payload = suggestion.get('payload') if isinstance(suggestion.get('payload'), dict) else {}
+    additional_context = {
+        'record_type': record_type,
+        'record_id': item.get('id'),
+        'target_user_id': item.get('userId') or item.get('user_id'),
+        'suggestion_id': suggestion_id,
+        'suggestion_action': suggestion_action,
+        'suggested_by': (suggestion.get('created_by') or {}).get('id') if isinstance(suggestion.get('created_by'), dict) else None,
+        'suggestion_created_at': suggestion.get('created_at'),
+        'suggestion_model': suggestion.get('model'),
+    }
+    if suggestion_action == 'applied':
+        additional_context['edited'] = edited is True
+    if record_type == 'safety_violation':
+        additional_context['suggested_action'] = payload.get('action')
+    elif record_type == 'feedback':
+        additional_context['suggested_theme'] = payload.get('theme')
+
+    return log_general_admin_action(
+        admin_user_id=actor.get('id'),
+        admin_email=actor.get('email') or '',
+        action=action_names[suggestion_action],
+        description=descriptions[suggestion_action],
+        additional_context=additional_context,
+    )

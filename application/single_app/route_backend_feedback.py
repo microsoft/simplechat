@@ -11,12 +11,20 @@ from config import *
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_notifications import create_notification
+from functions_review_assist import FEEDBACK_THEMES, ReviewAssistError, present_suggestion
+from functions_review_assist_runtime import (
+    ReviewRecordStore,
+    handle_review_assist_request,
+    review_assist_error_response,
+)
 from functions_review_center import (
     REVIEW_RECORD_CHANGED_CODE,
     ReviewRecordConflict,
     ReviewRequestError,
+    apply_suggested_review,
     cap_review_ids,
     daily_counts,
+    dismiss_review_suggestion,
     in_review_window,
     normalize_review_search,
     parse_review_bulk_operations,
@@ -63,6 +71,9 @@ FEEDBACK_RESPONSE_NOTIFICATION_TITLE = 'An administrator responded to your feedb
 FEEDBACK_RESPONSE_NOTIFICATION_FALLBACK = 'An administrator reviewed the feedback you sent about an AI response.'
 FEEDBACK_RESPONSE_NOTIFICATION_LINK = '/profile?tab=feedback'
 FEEDBACK_RESPONSE_NOTIFICATION_MAX_LENGTH = 1000
+# Review fields for reviewers only: who reviewed the feedback, and how it was classified.
+FEEDBACK_REVIEWER_ONLY_FIELDS = frozenset({'analyzedBy', 'theme'})
+FEEDBACK_AI_FILTER_PENDING = 'pending'
 
 
 def _authorize_feedback_conversation(user_id, conversation_id):
@@ -116,7 +127,7 @@ def _parse_feedback_filters(include_archive_state=False):
     return filter_type, filter_ack_bool, archive_state
 
 
-def _serialize_feedback_item(item):
+def _serialize_feedback_item(item, include_suggestion=False):
     normalized_feedback_type = _normalize_feedback_type(item.get("feedbackType"))
 
     serialized_item = {
@@ -130,6 +141,9 @@ def _serialize_feedback_item(item):
         "adminReview": item.get("adminReview", {}),
     }
     serialized_item.update(serialize_archive_metadata(item))
+    if include_suggestion:
+        # Reviewers see the AI suggestion as it stands now; the stored fingerprint stays here.
+        serialized_item["ai_suggestion"] = present_suggestion('feedback', item)
     return serialized_item
 
 
@@ -164,14 +178,15 @@ def _query_feedback_items(
         enable_cross_partition_query=True,
     ))
 
-    serialized_items = [_serialize_feedback_item(item) for item in items]
+    serialized_items = [_serialize_feedback_item(item, include_suggestion=not user_id) for item in items]
     if user_id:
-        # Who reviewed the feedback is for reviewers; the user sees the review itself.
+        # Who reviewed the feedback, and how it was classified, is for reviewers; the user
+        # sees the review itself.
         for serialized_item in serialized_items:
             review = serialized_item.get("adminReview")
-            if isinstance(review, dict) and "analyzedBy" in review:
+            if isinstance(review, dict) and FEEDBACK_REVIEWER_ONLY_FIELDS.intersection(review):
                 serialized_item["adminReview"] = {
-                    key: value for key, value in review.items() if key != "analyzedBy"
+                    key: value for key, value in review.items() if key not in FEEDBACK_REVIEWER_ONLY_FIELDS
                 }
 
     if filter_type:
@@ -326,6 +341,15 @@ def _feedback_record_changed_body():
     return {'error': FEEDBACK_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}
 
 
+def _review_assist_client(settings):
+    """The draft-instructions deployment's client and model name, as the other AI assistants use."""
+    # Lazy: route_backend_agents loads the agent stack, which app.py has already imported by the
+    # time a request arrives. Importing it when this module loads would make the feedback routes
+    # depend on that whole stack.
+    from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
+    return _create_agent_instruction_client(settings), _resolve_agent_instruction_model(settings)
+
+
 def _feedback_acknowledged(item):
     return bool((item.get('adminReview') or {}).get('acknowledged'))
 
@@ -333,6 +357,12 @@ def _feedback_acknowledged(item):
 def _parse_feedback_list_filters():
     """Read the Review center list filters. Raises ValueError for a value that can't be used."""
     filter_type, filter_ack_bool, archive_state = _parse_feedback_filters(include_archive_state=True)
+    theme = (request.args.get('theme') or '').strip().lower() or None
+    if theme and theme not in FEEDBACK_THEMES:
+        raise ReviewRequestError('Unknown feedback theme.', code='invalid_theme')
+    ai_state = (request.args.get('ai') or '').strip().lower() or None
+    if ai_state and ai_state != FEEDBACK_AI_FILTER_PENDING:
+        raise ReviewRequestError('Unknown AI suggestion state.', code='invalid_ai_state')
     return {
         'type': filter_type,
         'ack': filter_ack_bool,
@@ -341,6 +371,8 @@ def _parse_feedback_list_filters():
         'user_id': (request.args.get('user_id') or '').strip() or None,
         'date': parse_review_date(request.args.get('date')),
         'days': parse_review_window(request.args.get('days')),
+        'theme': theme,
+        'ai': ai_state,
     }
 
 
@@ -350,6 +382,14 @@ def _feedback_matches(item, filters, users, window):
     if filters['date'] and review_day(item.get('timestamp')) != filters['date']:
         return False
     if window and not in_review_window(item.get('timestamp'), window):
+        return False
+    if filters.get('theme') and (item.get('adminReview') or {}).get('theme') != filters['theme']:
+        return False
+    # The AI suggestions queue: suggestions still waiting for a reviewer, stale ones included so
+    # they can be dismissed.
+    if filters.get('ai') == FEEDBACK_AI_FILTER_PENDING and (
+        (item.get('ai_suggestion') or {}).get('status') not in ('pending', 'stale')
+    ):
         return False
     if filters['search']:
         review = item.get('adminReview') or {}
@@ -404,6 +444,11 @@ def _build_feedback_window_stats(days):
     oldest = sorted(awaiting, key=lambda item: str(item.get('timestamp') or ''))[:FEEDBACK_OLDEST_AWAITING_LIMIT]
     names = resolve_review_users([item.get('userId') for item in oldest])
     acknowledged_in_window = sum(1 for item in in_window if _feedback_acknowledged(item))
+    theme_counts = {}
+    for item in in_window:
+        theme = (item.get('adminReview') or {}).get('theme')
+        if theme in FEEDBACK_THEMES:
+            theme_counts[theme] = theme_counts.get(theme, 0) + 1
     return {
         'window': {
             'days': window['days'],
@@ -422,6 +467,12 @@ def _build_feedback_window_stats(days):
             lambda item: item.get('timestamp'),
             lambda item: item.get('feedbackType') or 'Unknown',
         ),
+        # What the reviewed feedback was about, as reviewers classified it.
+        'theme_mix': [
+            {'theme': theme, 'count': count}
+            for theme, count in sorted(theme_counts.items(), key=lambda pair: (-pair[1], pair[0]))
+        ],
+        'unthemed_count_in_window': len(in_window) - sum(theme_counts.values()),
         'oldest_awaiting': [
             {
                 'id': item.get('id'),
@@ -448,6 +499,9 @@ def _validate_feedback_review_changes(data):
             return f'{field} is too long.'
     if 'notify_user' in data and not isinstance(data.get('notify_user'), bool):
         return 'notify_user must be true or false.'
+    theme = data.get('theme')
+    if theme not in (None, '') and theme not in FEEDBACK_THEMES:
+        return f'theme must be one of: {", ".join(FEEDBACK_THEMES)}.'
     return None
 
 
@@ -521,6 +575,8 @@ def _apply_feedback_review_update(feedback_id, data, actor):
         admin_review["acknowledged"] = data.get("acknowledged", admin_review.get("acknowledged", False))
         for field in FEEDBACK_REVIEW_TEXT_FIELDS:
             admin_review[field] = data.get(field, admin_review.get(field))
+        if 'theme' in data:
+            admin_review["theme"] = data.get('theme') or None
         admin_review["reviewTimestamp"] = reviewed_at
         admin_review["analyzedBy"] = {'id': actor['id'], 'displayName': actor.get('name') or actor.get('email') or ''}
         if notify_user:
@@ -905,7 +961,10 @@ def register_route_backend_feedback(bp):
         ``changes``, the same fields PATCH /feedback/review/<id> accepts; ``archive`` carries
         ``archived``; ``delete`` carries nothing more. Each result repeats the single route's
         response with ``ok`` and ``status``, in request order; one failure never stops the
-        others.
+        others. An ``update`` with ``suggestion_id`` applies the record's pending AI suggestion
+        as the reviewer edited it, and ``dismiss_suggestion`` dismisses one; a suggestion that
+        is stale or no longer pending is refused with ``suggestion_stale`` or
+        ``suggestion_not_pending``.
         """
         actor = _get_feedback_admin_actor()
         if not actor.get('id'):
@@ -926,9 +985,20 @@ def register_route_backend_feedback(bp):
                 changes = {key: value for key, value in operation['changes'].items() if key != 'etag'}
                 if operation['etag']:
                     changes['etag'] = operation['etag']
-                body, status = _apply_feedback_review_update(operation['id'], changes, actor)
+                if operation.get('suggestion_id'):
+                    body, status = apply_suggested_review(
+                        cosmos_feedback_container, 'feedback', operation['id'], operation['suggestion_id'], changes, actor,
+                        lambda checked, record_id=operation['id']: _apply_feedback_review_update(record_id, checked, actor),
+                    )
+                else:
+                    body, status = _apply_feedback_review_update(operation['id'], changes, actor)
             elif operation['op'] == 'archive':
                 body, status = _archive_feedback(operation['id'], operation['archived'], actor, operation['etag'])
+            elif operation['op'] == 'dismiss_suggestion':
+                body, status = dismiss_review_suggestion(
+                    cosmos_feedback_container, 'feedback', operation['id'], operation['suggestion_id'], actor,
+                    operation['etag'],
+                )
             else:
                 body, status = _delete_feedback(operation['id'], actor, operation['etag'])
             results.append(review_bulk_result(operation, body, status))
@@ -941,6 +1011,39 @@ def register_route_backend_feedback(bp):
             'failed': summary['failed'],
         })
         return jsonify(summary), 200
+
+    @bp.route("/api/admin/review/feedback/assist", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @feedback_admin_required
+    @enabled_required("enable_user_feedback")
+    def feedback_review_assist():
+        """Ask AI to suggest reviews for feedback records.
+
+        Body: ``{"mode": "analyze" | "triage", "ids": [...]}``. ``analyze`` takes one record
+        and returns a suggested review for the editor's unsaved draft; nothing is stored.
+        ``triage`` takes up to 10 records and stores each suggestion on its record for a
+        reviewer to apply or dismiss. The model never changes a review. Answers are never cached.
+        """
+        settings = get_settings()
+        actor = _get_feedback_admin_actor()
+        if not is_admin_review_assistant_enabled(settings):
+            return review_assist_error_response(ReviewAssistError('review_assistant_disabled'), user_id=actor.get('id'))
+        store = ReviewRecordStore(
+            section='feedback',
+            container=cosmos_feedback_container,
+            replace=lambda record_id, mutate, base_item: replace_review_record(
+                cosmos_feedback_container, record_id, mutate, base_item=base_item,
+            ),
+            conflict_error=ReviewRecordConflict,
+        )
+        return handle_review_assist_request(
+            section='feedback',
+            actor=actor,
+            settings=settings,
+            store=store,
+            client_factory=lambda: _review_assist_client(settings),
+        )
 
     @bp.route("/feedback/review/<feedbackId>", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -970,6 +1073,7 @@ def register_route_backend_feedback(bp):
                 "timestamp": feedback_doc.get("timestamp"),
                 "adminReview": feedback_doc.get("adminReview", {}),
                 "etag": feedback_doc.get("_etag"),
+                "ai_suggestion": present_suggestion('feedback', feedback_doc),
             }
             result.update(serialize_archive_metadata(feedback_doc))
             _with_feedback_user_names([result])

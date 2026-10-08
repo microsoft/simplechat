@@ -23,6 +23,18 @@ from azure.cosmos import exceptions as cosmos_exceptions
 from config import cosmos_user_settings_container
 from functions_access_restriction import ACCESS_STATE_RESTRICTED, describe_access_restriction
 from functions_appinsights import log_event
+from functions_review_assist import (
+    SUGGESTION_ID_PATTERN,
+    SUGGESTION_NOT_PENDING_CODE,
+    SUGGESTION_NOT_PENDING_MESSAGE,
+    SUGGESTION_STATUS_APPLIED,
+    SUGGESTION_STATUS_DISMISSED,
+    mark_suggestion,
+    stored_suggestion,
+    suggestion_problem,
+    suggestion_was_edited,
+)
+from functions_review_lifecycle import log_review_suggestion_action
 
 
 REVIEW_WINDOW_DAYS = (7, 30, 90)
@@ -32,10 +44,12 @@ REVIEW_SEARCH_MAX_LENGTH = 200
 REVIEW_NAME_BATCH = 100
 REVIEW_EXCERPT_LENGTH = 160
 REVIEW_WRITE_ATTEMPTS = 3
-REVIEW_BULK_OPERATIONS = ('update', 'archive', 'delete')
+REVIEW_BULK_OPERATIONS = ('update', 'archive', 'delete', 'dismiss_suggestion')
 # Every key an operation may carry. Unknown keys are refused, so a later field, such as an
 # attribution to the suggestion that proposed the change, is added here on purpose.
-REVIEW_BULK_OPERATION_KEYS = frozenset({'id', 'op', 'etag', 'changes', 'archived'})
+# ``suggestion_id`` names the AI suggestion an ``update`` applies or a ``dismiss_suggestion``
+# dismisses; the server checks it against the record.
+REVIEW_BULK_OPERATION_KEYS = frozenset({'id', 'op', 'etag', 'changes', 'archived', 'suggestion_id'})
 REVIEW_RECORD_ID_MAX_LENGTH = 200
 
 REVIEW_RECORD_CHANGED_CODE = 'record_changed'
@@ -284,6 +298,9 @@ def parse_review_bulk_operations(payload):
     ``{"id", "op", "etag"?, ...}``: ``update`` carries ``changes`` (the same fields the
     single-record PATCH accepts), ``archive`` carries ``archived`` (a boolean) and
     ``delete`` carries nothing more. ``etag``, when present, must match the stored record.
+    An ``update`` may carry ``suggestion_id`` to apply the record's pending AI suggestion
+    with the reviewer's changes, and ``dismiss_suggestion`` carries the ``suggestion_id`` it
+    dismisses.
 
     A malformed request as a whole raises ``ReviewRequestError``. A malformed operation is
     returned with an ``error`` so the rest of the request still runs and the caller can
@@ -315,7 +332,9 @@ def parse_review_bulk_operations(payload):
             parsed.append(_operation_error(index, record_id, op, 'Each operation needs the id of a record.'))
             continue
         if op not in REVIEW_BULK_OPERATIONS:
-            parsed.append(_operation_error(index, record_id, op, 'The operation must be update, archive or delete.'))
+            parsed.append(_operation_error(
+                index, record_id, op, 'The operation must be update, archive, delete or dismiss_suggestion.',
+            ))
             continue
         etag = raw.get('etag')
         if etag is not None and (not isinstance(etag, str) or not etag):
@@ -330,6 +349,18 @@ def parse_review_bulk_operations(payload):
         if (op != 'update' and 'changes' in raw) or (op != 'archive' and 'archived' in raw):
             parsed.append(_operation_error(index, record_id, op, 'The operation has fields this API does not accept.'))
             continue
+        suggestion_id = raw.get('suggestion_id')
+        if 'suggestion_id' in raw and op not in ('update', 'dismiss_suggestion'):
+            parsed.append(_operation_error(index, record_id, op, 'The operation has fields this API does not accept.'))
+            continue
+        if op == 'dismiss_suggestion' and suggestion_id is None:
+            parsed.append(_operation_error(index, record_id, op, 'A dismissal needs the suggestion_id it dismisses.'))
+            continue
+        if suggestion_id is not None and (
+            not isinstance(suggestion_id, str) or not SUGGESTION_ID_PATTERN.match(suggestion_id)
+        ):
+            parsed.append(_operation_error(index, record_id, op, 'The suggestion_id is not valid.'))
+            continue
         if record_id in seen:
             duplicate = _operation_error(index, record_id, op, 'This record already has an operation in this request.')
             duplicate['error']['body']['code'] = REVIEW_DUPLICATE_OPERATION_CODE
@@ -343,6 +374,7 @@ def parse_review_bulk_operations(payload):
             'etag': etag,
             'changes': raw.get('changes') if op == 'update' else None,
             'archived': raw.get('archived') if op == 'archive' else None,
+            'suggestion_id': suggestion_id,
         })
     return parsed
 
@@ -404,3 +436,158 @@ def daily_counts(records, window, timestamp_of, group_of):
         'dates': list(dates),
         'series': [{'key': key, 'counts': values} for key, values in ordered],
     }
+
+
+# ---------------------------------------------------------------------------
+# AI suggestions: applying and dismissing them
+# ---------------------------------------------------------------------------
+
+REVIEW_SUGGESTION_RECORD_TYPES = {'feedback': 'feedback', 'safety': 'safety_violation'}
+REVIEW_SUGGESTION_RECORD_CHANGED_MESSAGE = (
+    'This record changed after you opened it. Reload it to see the latest version, then try again.'
+)
+REVIEW_SUGGESTION_NOT_MARKED_WARNING = (
+    'The review was saved, but the AI suggestion could not be marked as applied. Dismiss it from the queue.'
+)
+
+
+def _utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _read_review_record(container, record_id):
+    return container.read_item(item=record_id, partition_key=record_id)
+
+
+def mark_review_suggestion(container, section, record_id, suggestion_id, actor, *, status, edited=None):
+    """Mark a record's pending AI suggestion applied or dismissed. Returns whether it was marked.
+
+    Only ``ai_suggestion`` changes, conditionally on the stored version and again on a fresh
+    copy after a conflict, so a concurrent save of anything else survives. A suggestion that was
+    replaced or already decided meanwhile is left as it is.
+    """
+    at = _utc_now_iso()
+
+    def mutate(record):
+        return mark_suggestion(record, suggestion_id, status=status, actor=actor, at=at, edited=edited)
+
+    try:
+        stored = replace_review_record(container, record_id, mutate)
+    except (ReviewRecordConflict, cosmos_exceptions.CosmosResourceNotFoundError):
+        return False
+    except Exception as exc:
+        log_event(
+            '[REVIEW_ASSIST] An AI suggestion could not be marked.',
+            extra={'section': section, 'record_id': record_id, 'status': status, 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return False
+    return stored is not None
+
+
+def apply_suggested_review(container, section, record_id, suggestion_id, changes, actor, run_update):
+    """Apply a record's pending AI suggestion, as the reviewer edited it, through the normal save.
+
+    ``run_update(changes)`` is the section's single-record save and returns ``(body, status)``;
+    it enforces every rule a hand-made save does. The suggestion must still be pending and still
+    match its record, and unless the reviewer sent an etag of their own, the save is conditional
+    on the version that was checked, so the record cannot change between the check and the save.
+    Once saved, the suggestion is marked applied, with whether the reviewer edited it first, and
+    the decision is credited to the suggestion in the audit log. Returns ``(body, status)``.
+    """
+    try:
+        record = _read_review_record(container, record_id)
+    except cosmos_exceptions.CosmosResourceNotFoundError:
+        return {'error': 'The record was not found.', 'code': REVIEW_NOT_FOUND_CODE}, 404
+    problem = suggestion_problem(section, record, suggestion_id)
+    if problem:
+        code, message = problem
+        return {'error': message, 'code': code}, 409
+    checked = dict(changes or {})
+    if not checked.get('etag') and record.get('_etag'):
+        checked['etag'] = record.get('_etag')
+    body, status = run_update(checked)
+    if not 200 <= int(status) < 300:
+        return body, status
+
+    payload = (stored_suggestion(record) or {}).get('payload')
+    edited = suggestion_was_edited(section, payload, changes)
+    marked = mark_review_suggestion(
+        container, section, record_id, suggestion_id, actor, status=SUGGESTION_STATUS_APPLIED, edited=edited,
+    )
+    audit_logged = log_review_suggestion_action(
+        REVIEW_SUGGESTION_RECORD_TYPES[section], 'applied', record, actor, suggestion_id, edited=edited,
+    )
+    result = dict(body if isinstance(body, dict) else {})
+    result['suggestion'] = {
+        'id': suggestion_id,
+        'status': SUGGESTION_STATUS_APPLIED if marked else 'pending',
+        'edited': edited,
+    }
+    if not marked:
+        result['suggestion_warning'] = REVIEW_SUGGESTION_NOT_MARKED_WARNING
+    if not audit_logged:
+        log_event(
+            '[REVIEW_ASSIST] Applying an AI suggestion could not be audited.',
+            extra={'section': section, 'record_id': record_id, 'suggestion_id': suggestion_id},
+            level=logging.ERROR,
+        )
+    return result, status
+
+
+def dismiss_review_suggestion(container, section, record_id, suggestion_id, actor, expected_etag=None):
+    """Dismiss a record's pending AI suggestion, stale or not. Returns ``(body, status)``.
+
+    Nothing about the review changes. ``expected_etag``, when sent, must match the stored record,
+    and is then honoured strictly: a record that changes before the write is refused, not merged.
+    """
+    try:
+        record = _read_review_record(container, record_id)
+    except cosmos_exceptions.CosmosResourceNotFoundError:
+        return {'error': 'The record was not found.', 'code': REVIEW_NOT_FOUND_CODE}, 404
+    if expected_etag and record.get('_etag') != expected_etag:
+        return {'error': REVIEW_SUGGESTION_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}, 409
+    problem = suggestion_problem(section, record, suggestion_id, allow_stale=True)
+    if problem:
+        code, message = problem
+        return {'error': message, 'code': code}, 409
+
+    at = _utc_now_iso()
+
+    def mutate(current):
+        return mark_suggestion(current, suggestion_id, status=SUGGESTION_STATUS_DISMISSED, actor=actor, at=at)
+
+    try:
+        stored = replace_review_record(
+            container,
+            record_id,
+            mutate,
+            base_item=record,
+            attempts=1 if expected_etag else REVIEW_WRITE_ATTEMPTS,
+        )
+    except ReviewRecordConflict:
+        return {'error': REVIEW_SUGGESTION_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}, 409
+    except cosmos_exceptions.CosmosResourceNotFoundError:
+        return {'error': 'The record was not found.', 'code': REVIEW_NOT_FOUND_CODE}, 404
+    except Exception as exc:
+        log_event(
+            '[REVIEW_ASSIST] An AI suggestion could not be dismissed.',
+            extra={'section': section, 'record_id': record_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        return {'error': 'The AI suggestion could not be dismissed.', 'code': REVIEW_OPERATION_FAILED_CODE}, 500
+    if stored is None:
+        return {'error': SUGGESTION_NOT_PENDING_MESSAGE, 'code': SUGGESTION_NOT_PENDING_CODE}, 409
+
+    audit_logged = log_review_suggestion_action(
+        REVIEW_SUGGESTION_RECORD_TYPES[section], 'dismissed', record, actor, suggestion_id,
+    )
+    body = {
+        'success': True,
+        'message': 'AI suggestion dismissed.',
+        'suggestion': {'id': suggestion_id, 'status': SUGGESTION_STATUS_DISMISSED},
+        'audit_logged': audit_logged,
+    }
+    if not audit_logged:
+        body['audit_warning'] = 'The suggestion was dismissed, but the audit activity could not be recorded.'
+    return body, 200

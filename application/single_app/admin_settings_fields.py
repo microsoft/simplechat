@@ -188,6 +188,10 @@ from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_MAX_LENGTH,
     normalize_rate_limit_message,
 )
+from functions_review_assist import (
+    ADMIN_REVIEW_GUIDANCE_MAX_LENGTH,
+    normalize_admin_review_guidance,
+)
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -3754,6 +3758,38 @@ ADMIN_SETTINGS_FIELDS = {
                 "Feedback is enabled under Chat."
             ),
             "default": False,
+        },
+        {
+            "key": "enable_admin_review_ai_assistant",
+            "type": "switch",
+            "label": "Enable AI Assist in the Review Center",
+            "help": (
+                "Lets feedback and safety reviewers ask AI to analyze one record or "
+                "triage many, and lists its suggested reviews for a person to approve "
+                "or dismiss. The model never saves or acts: a warning is sent, and a "
+                "suspension or block is requested, only when a reviewer applies a "
+                "suggestion, and a suspension or block still needs a second "
+                "reviewer's approval."
+            ),
+            "default": False,
+            "group": {"id": "review-ai", "label": "Review center AI assist", "variant": "behavior"},
+        },
+        {
+            "key": "admin_review_ai_guidance",
+            "type": "textarea",
+            "label": "Review Guidance for the AI Assistant",
+            "help": (
+                "Your organization's review policy in plain language, such as when a "
+                "first violation only gets a warning. The assistant follows it where it "
+                "fits, but it can't override the built-in safeguards. Only the model "
+                "reads it; it is never sent to browsers."
+            ),
+            "default": "",
+            "rows": 5,
+            "max_length": ADMIN_REVIEW_GUIDANCE_MAX_LENGTH,
+            "placeholder": "Warn on a first minor violation. Suggest a suspension only after repeated violations.",
+            "group": {"id": "review-ai", "label": "Review center AI assist", "variant": "behavior"},
+            "depends_on": {"key": "enable_admin_review_ai_assistant", "equals": True},
         },
     ],
     "app-role-requirements-section": [
@@ -9697,6 +9733,7 @@ _DELEGATED_NORMALIZERS = {
         normalize_content_safety_violation_message(value)
     ),
     "rate_limit_message": lambda value, field: normalize_rate_limit_message(value),
+    "admin_review_ai_guidance": lambda value, field: normalize_admin_review_guidance(value),
     # Declared as a component field, so it never reaches the type-driven
     # normalization below and would otherwise be written through unvalidated.
     "agents_page_promoted_popular_agents": lambda value, field: (

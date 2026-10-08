@@ -41,6 +41,28 @@
                      <p class="text-muted small mb-0">
                         Required app role value: <code>FeedbackAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the User Feedback admin page. Requires <strong>Enable User Feedback</strong> to be active.
                     </p>
+
+                    <!-- Review center AI assist -->
+                    <hr class="my-3" />
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_admin_review_ai_assistant"
+                            name="enable_admin_review_ai_assistant"
+                            {% if settings.enable_admin_review_ai_assistant %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_admin_review_ai_assistant">
+                            Enable AI Assist in the Review Center
+                        </label>
+                    </div>
+                    <p class="text-muted small mb-3">
+                        Lets feedback and safety reviewers ask AI to analyze one record or triage many in the V2 Review center, and lists its suggested reviews for a person to approve or dismiss. The model never saves or acts: a warning is sent, and a suspension or block is requested, only when a reviewer applies a suggestion, and a suspension or block still needs a second reviewer's approval.
+                    </p>
+                    <div class="mb-0">
+                        <label for="admin_review_ai_guidance" class="form-label">Review Guidance for the AI Assistant</label>
+                        <small class="text-muted d-block mb-1">Your organization's review policy in plain language, such as when a first violation only gets a warning. Used only while AI assist is on, and never sent to browsers. Up to 2,000 characters.</small>
+                        <textarea class="form-control" id="admin_review_ai_guidance" name="admin_review_ai_guidance"
+                            rows="4" maxlength="2000">{{ settings.admin_review_ai_guidance }}</textarea>
+                    </div>
                 </div>
 
                 <div class="card p-3 mb-3" id="app-role-requirements-section">

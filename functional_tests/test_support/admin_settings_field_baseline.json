@@ -2,6 +2,7 @@
   "_comment": "Contract for Admin Settings form field names. Regenerate with test_admin_settings_field_contract.py --update-baseline only when a field is intentionally removed or renamed.",
   "field_names": [
     "access_denied_message",
+    "admin_review_ai_guidance",
     "agent_templates_allow_user_submission",
     "agent_templates_require_approval",
     "agents_page_disclaimer_markdown",
@@ -164,6 +165,7 @@
     "document_intelligence_auto_sample_pages",
     "document_intelligence_pdf_image_extraction_mode",
     "embedding_model_json",
+    "enable_admin_review_ai_assistant",
     "enable_agent_template_gallery",
     "enable_ai_notice",
     "enable_ai_search_apim",

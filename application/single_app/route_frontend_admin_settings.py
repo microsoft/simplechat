@@ -40,6 +40,7 @@ from functions_embedding_compatibility import preflight_embedding_settings, read
 from functions_content_safety import normalize_content_safety_violation_message
 from functions_chat_content_checks import chat_content_form_updates
 from functions_rate_limit import normalize_rate_limit_message
+from functions_review_assist import normalize_admin_review_guidance
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
     INBOUND_MCP_SETTINGS_DEFAULTS,
@@ -720,6 +721,10 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_control_center_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
             settings['require_member_of_feedback_admin'] = False
+        if 'enable_admin_review_ai_assistant' not in settings:
+            settings['enable_admin_review_ai_assistant'] = False
+        if 'admin_review_ai_guidance' not in settings:
+            settings['admin_review_ai_guidance'] = ''
         if 'control_center_auto_refresh_enabled' not in settings:
             settings['control_center_auto_refresh_enabled'] = True
         control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
@@ -2730,6 +2735,10 @@ def register_route_frontend_admin_settings(bp):
                 'azure_apim_content_safety_subscription_key': admin_secret('azure_apim_content_safety_subscription_key'),
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
+                'enable_admin_review_ai_assistant': form_data.get('enable_admin_review_ai_assistant') == 'on',
+                'admin_review_ai_guidance': normalize_admin_review_guidance(
+                    form_data.get('admin_review_ai_guidance', settings.get('admin_review_ai_guidance', ''))
+                ),
 
                 # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
