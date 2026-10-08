@@ -1,8 +1,8 @@
 # test_workflow_plan_replay_off_golden.py
 """
 Functional test for the plan replay setting-off golden.
-Version: 0.261.303
-Implemented in: 0.261.303
+Version: 0.261.305
+Implemented in: 0.261.305
 
 With enable_workflow_plan_replay off, which is the default, nothing a user can
 already do changes. The golden was captured by running this file with
@@ -368,7 +368,7 @@ def test_the_setting_is_off_by_default_and_saves_only_a_real_true(app):
 
 
 def test_version_includes_plan_replay():
-    assert_app_version_at_least("0.261.303")
+    assert_app_version_at_least("0.261.305")
 
 
 def _write_golden():
