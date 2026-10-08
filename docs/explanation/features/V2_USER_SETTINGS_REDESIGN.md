@@ -146,9 +146,11 @@ The shortcut is available when all of these hold:
 - At least one Latest Features item is visible.
 
 As on the classic interface, the shortcut is hidden for everyone in development mode.
-`components/layout/LatestFeaturesLink.tsx` adds it to the navigation rail with a hide
-button, and the Preferences card shows its status with **Hide for this version** or **Show
-again**.
+`components/layout/SupportMenu.tsx` draws it in the navigation rail's Support group with a
+hide button, and the Preferences card shows its status with **Hide for this version** or
+**Show again**. Since **0.261.296** the shortcut and the card's **Open Latest Features** link
+open the V2 Latest Features page instead of the classic one; see
+[V2 Support Menu](V2_SUPPORT_MENU.md).
 
 Both surfaces write `latestFeaturesHiddenVersion`, shared with the classic page. A hide
 applies only to the version it was saved for, so the shortcut comes back after an upgrade.

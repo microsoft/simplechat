@@ -45,7 +45,7 @@ import { classicChatHref } from '../../lib/conversationUrl';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
-import { LatestFeaturesLink } from './LatestFeaturesLink';
+import { SupportMenu } from './SupportMenu';
 import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
 import { useWorkflowAlertCalloutShown, WorkflowAlertRowSlot } from '../notifications/WorkflowAlertNotice';
@@ -527,8 +527,9 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                     nothing when neither is enabled, which is the default. */}
                 <NavExtras collapsed={collapsed} />
 
-                {/* The Support menu's Latest Features shortcut, until the user hides it. */}
-                <LatestFeaturesLink collapsed={collapsed} />
+                {/* The Support menu: Latest Features, until the user hides it, and Send
+                    Feedback. Renders nothing when an administrator has offered neither. */}
+                <SupportMenu collapsed={collapsed} />
 
                 {/* The conversation list only belongs in the rail while the chat page is open,
                     so other pages get the full rail height for their own navigation. */}

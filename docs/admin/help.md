@@ -42,6 +42,8 @@ Users who cannot find help ask in the wrong place, or not at all. A Support menu
 
 The Support menu appears in navigation for signed-in users with the User or Admin role once at least one destination is available. **Send Feedback** opens a form that prepares an email draft to your support mailbox. **Latest Features** opens the release announcements you have chosen to share.
 
+Both interfaces show the menu under the name you choose: the classic interface in its sidebar and top navigation, and V2 as a collapsible group in its navigation rail. In V2 both destinations open as V2 pages, and a user who collapses the group in one interface finds it collapsed in the other.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -138,7 +140,7 @@ The badge appears in both the classic and V2 Admin Settings.
 | --- | --- | --- |
 | Users do not see Send Feedback | The destination is on but no recipient is set. In V2 the Support card reads **Needs configuration**. | Set Support Recipient Email and save. |
 | The Support menu does not appear | The menu is off, or no destination has anything to show. For example, Send Feedback has no recipient and every announcement is hidden. | Turn the menu on and give at least one destination something to show. |
-| Latest Features is missing from the Support menu | No announcements are shared, or the destination is off. | Share at least one announcement, or turn on Enable Latest Features Destination. |
+| Latest Features is missing from the Support menu | No announcements are shared, or the destination is off. A user can also hide the entry until the next release. | Share at least one announcement, or turn on Enable Latest Features Destination. A user who hid the entry can restore it from their own preferences, or wait for the next upgrade, which brings it back. |
 | No email draft opens | The browser has no default mail app. | In V2, use the **open the draft** link that appears after you submit, or set a default mail app. |
 
 ## Related

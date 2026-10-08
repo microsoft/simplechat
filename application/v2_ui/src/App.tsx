@@ -35,6 +35,8 @@ import { ContentReviewPage } from './pages/ContentReviewPage';
 import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
+import { SupportLatestFeaturesPage } from './pages/SupportLatestFeaturesPage';
+import { SupportSendFeedbackPage } from './pages/SupportSendFeedbackPage';
 
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
 // import.meta.env.DEV, which a production build replaces with false, so production never
@@ -273,6 +275,9 @@ export function App() {
                 <Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />
+                {/* The Support menu's destinations, offered from the rail. */}
+                <Route path="/support/latest-features" element={<SupportLatestFeaturesPage />} />
+                <Route path="/support/send-feedback" element={<SupportSendFeedbackPage />} />
                 {/* The workflow alert lab (dev/AlertLabPage.tsx). Never in a production build. */}
                 {import.meta.env.DEV && AlertLabPage ? <Route path="/dev/alert-lab" element={<Suspense fallback={<BootScreen />}><AlertLabPage /></Suspense>} /> : null}
                 <Route path="*" element={<Navigate to="/" replace />} />
