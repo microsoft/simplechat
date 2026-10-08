@@ -1522,7 +1522,13 @@ def test_legacy_mail_pagination_preserves_result_shapes_and_delegated_scopes(exe
     plugin._transports["email"] = transport
     result = plugin.get_my_messages(top=3)
     assert result["count"] == 3 and result["truncated"] is True
-    assert result["value"] == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    # Since 0.261.303 each message also carries the citation value an answer copies; the Graph
+    # fields themselves are passed through unchanged.
+    citation_keys = {"citation_id", "citation"}
+    assert all(citation_keys <= set(item) for item in result["value"])
+    assert [
+        {key: value for key, value in item.items() if key not in citation_keys} for item in result["value"]
+    ] == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
     assert result["source"] == "email" and request.call_count == 2
     assert token_provider.call_args.args[0] == ["https://graph.microsoft.com/Mail.Read"]
 

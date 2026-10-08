@@ -7,6 +7,8 @@ from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from functions_m365_citations import rebuild_conversation_used_m365_items
+
 
 CITATION_TRACKING_VERSION = 1
 USED_DOCUMENTS_TRACKING_VERSION = 1
@@ -669,9 +671,10 @@ def rebuild_conversation_used_documents(
 ) -> List[Dict[str, Any]]:
     """Rebuild exact usage after a retry, switch, deletion, or fork mutation."""
     initialize_conversation_used_document_tracking(conversation)
+    messages = list(messages or [])
     cited_hybrid_citations: List[Dict[str, Any]] = []
     legacy_hybrid_citations: List[Dict[str, Any]] = []
-    for message in messages or []:
+    for message in messages:
         if not isinstance(message, Mapping) or not _message_is_active_assistant(message):
             continue
         if _message_has_citation_tracking(message):
@@ -692,5 +695,14 @@ def rebuild_conversation_used_documents(
         conversation["legacy_used_documents"] = build_used_documents(
             legacy_hybrid_citations,
             source_document_tags=source_document_tags,
+        )
+    if conversation.get("conversation_kind") != "collaborative":
+        # Microsoft 365 items are listed to their owner only, so a shared thread keeps none.
+        rebuild_conversation_used_m365_items(
+            conversation,
+            [
+                message for message in messages
+                if isinstance(message, Mapping) and _message_is_active_assistant(message)
+            ],
         )
     return deepcopy(conversation["used_documents"])

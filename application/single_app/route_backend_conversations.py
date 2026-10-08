@@ -43,6 +43,7 @@ from functions_conversation_feed import (
 )
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_citation_tracking import rebuild_conversation_used_documents
+from functions_m365_citations import used_m365_items_for_viewer
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
 from functions_conversation_cache import (
     build_conversation_cache_key,
@@ -2270,6 +2271,10 @@ def register_route_backend_conversations(bp):
                 "workflow_id": conversation_item.get('workflow_id'),
                 "summary": conversation_item.get('summary'),
                 "linked_workspace_documents": linked_workspace_documents,
+                # Only the signed-in owner's own Microsoft 365 items are listed.
+                "used_m365_items": used_m365_items_for_viewer(
+                    conversation_item.get('used_m365_items'), user_id,
+                ),
             }), 200
             
         except CosmosResourceNotFoundError:

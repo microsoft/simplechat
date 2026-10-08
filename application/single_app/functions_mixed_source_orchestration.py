@@ -2099,6 +2099,8 @@ def build_mixed_source_evidence_handoff(
             "Use the mixed-source evidence handoff below with the other bounded narrative excerpts "
             "and computed tabular results. Synthesize one answer. Preserve narrative source citations "
             "and tabular tool citations; do not convert computed table facts into unsupported narrative claims. "
+            "Copy each citation value written as (Source: <name>, Page|Sheet|Location: <where>) [#<id>] "
+            "verbatim right after the claim it supports, and never invent, renumber or alter one. "
             "When selection_mode is selected, current selected-source evidence supersedes prior document "
             "grounding; do not use prior source claims to fill missing current coverage. "
             "This handoff is your starting evidence, not your only means of gathering evidence: if you have "

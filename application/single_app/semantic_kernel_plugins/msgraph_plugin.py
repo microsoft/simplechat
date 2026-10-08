@@ -9,6 +9,11 @@ from azure.core.exceptions import AzureError
 
 from functions_authentication import get_current_user_info
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_citations import (
+    annotate_m365_event_result,
+    annotate_m365_mail_result,
+    get_m365_display_time_zone,
+)
 from functions_m365_operations import (
     M365_INTERNAL_OPERATION_FUNCTIONS,
     M365_SELECTED_RESOURCE_SOURCES,
@@ -1621,7 +1626,7 @@ class MSGraphPlugin(BasePlugin):
             if isinstance(result.get("value"), list):
                 result["value"] = self._strip_fields(result["value"], added_fields)
             return result
-        return self._with_calendar_coverage(
+        result = self._with_calendar_coverage(
             result,
             top=normalized_top,
             window_start=window_start,
@@ -1633,6 +1638,11 @@ class MSGraphPlugin(BasePlugin):
             select_fields=str(select_fields or "").strip(),
             added_fields=added_fields,
             scan=scan,
+        )
+        # Each event carries the citation value the answer copies and a display time span.
+        return annotate_m365_event_result(
+            result, display_time_zone=get_m365_display_time_zone(),
+            matching=bool(terms), newest_first=newest_first,
         )
 
     @plugin_function_logger("MSGraphPlugin")
@@ -1962,7 +1972,7 @@ class MSGraphPlugin(BasePlugin):
         )
         if result.get("error"):
             return result
-        return self._with_mail_coverage(
+        result = self._with_mail_coverage(
             result,
             top=normalized_top,
             folder_label=folder_label,
@@ -1972,6 +1982,11 @@ class MSGraphPlugin(BasePlugin):
             upper=upper,
             select_fields=str(select_fields or "").strip(),
             last_examined=scan["last"],
+        )
+        # Each message carries the citation value the answer copies and a display time.
+        return annotate_m365_mail_result(
+            result, display_time_zone=get_m365_display_time_zone(),
+            matching=bool(terms or lower or upper),
         )
 
     @plugin_function_logger("MSGraphPlugin")

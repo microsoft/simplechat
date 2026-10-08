@@ -456,6 +456,7 @@ def serialize_collaboration_message(message_doc):
         'citation_tracking_version',
         'cited_hybrid_citations',
         'cited_web_search_citations',
+        'm365_citations',
     ):
         if field_name in message_doc:
             payload[field_name] = deepcopy(message_doc.get(field_name))
@@ -564,6 +565,7 @@ def _build_collaboration_generation_details(message_doc, source_message_doc=None
     hybrid_citations = list(message_doc.get('hybrid_citations', []) or (source_message_doc or {}).get('hybrid_citations', []) or [])
     web_search_citations = list(message_doc.get('web_search_citations', []) or (source_message_doc or {}).get('web_search_citations', []) or [])
     agent_citations = list(message_doc.get('agent_citations', []) or (source_message_doc or {}).get('agent_citations', []) or [])
+    m365_citations = list(message_doc.get('m365_citations', []) or (source_message_doc or {}).get('m365_citations', []) or [])
 
     if hybrid_citations:
         generation_details['document_citation_count'] = len(hybrid_citations)
@@ -571,6 +573,8 @@ def _build_collaboration_generation_details(message_doc, source_message_doc=None
         generation_details['web_citation_count'] = len(web_search_citations)
     if agent_citations:
         generation_details['agent_citation_count'] = len(agent_citations)
+    if m365_citations:
+        generation_details['m365_citation_count'] = len(m365_citations)
 
     return generation_details
 
@@ -815,6 +819,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'citation_tracking_version',
         'cited_hybrid_citations',
         'cited_web_search_citations',
+        'm365_citations',
     ):
         if field_name in message_doc:
             payload[field_name] = deepcopy(message_doc.get(field_name))

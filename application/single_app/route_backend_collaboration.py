@@ -3151,6 +3151,7 @@ def register_route_backend_collaboration(bp):
                                 'cited_hybrid_citations': serialized_assistant_message.get('cited_hybrid_citations', []),
                                 'cited_web_search_citations': serialized_assistant_message.get('cited_web_search_citations', []),
                                 'agent_citations': serialized_assistant_message.get('agent_citations', []),
+                                'm365_citations': serialized_assistant_message.get('m365_citations', []),
                                 'agent_display_name': serialized_assistant_message.get('agent_display_name'),
                                 'agent_name': serialized_assistant_message.get('agent_name'),
                                 'full_content': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),

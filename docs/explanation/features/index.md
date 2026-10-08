@@ -26,6 +26,7 @@ category: Version History
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
+- [Microsoft 365 Source Citations](M365_SOURCE_CITATIONS.md)
 - [RocksDB Action](v0.250.216/ROCKSDB_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
 - [Tableau Action](TABLEAU_ACTION.md)

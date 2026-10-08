@@ -377,6 +377,7 @@ def build_run_done_event(
     finalization_status=None,
     outputs=None,
     generated_images=None,
+    m365_citations=None,
 ):
     """Terminal frame of the run endpoint.
 
@@ -387,6 +388,8 @@ def build_run_done_event(
     Document, web, and tool citations use chat's existing separate fields. Only document
     citations participate in used-document tracking. ``generated_images`` lists the saved
     image messages the answer shows, so the browser loads them with the answer.
+    ``m365_citations`` carries the Microsoft 365 items the answer drew on, so its citation
+    chips resolve before the thread is read again.
     """
     return serialize_sse({
         'done': True,
@@ -398,7 +401,8 @@ def build_run_done_event(
         'hybrid_citations': list(citations or ()),
         'web_search_citations': list(web_citations or ()),
         'agent_citations': list(agent_citations or ()),
-        'augmented': bool(citations or web_citations or agent_citations),
+        'm365_citations': list(m365_citations or ()),
+        'augmented': bool(citations or web_citations or agent_citations or m365_citations),
         'generated_artifacts': list(artifacts or ()),
         **({'outputs': outputs} if outputs is not None else {}),
         **({'generated_images': list(generated_images)} if generated_images else {}),
