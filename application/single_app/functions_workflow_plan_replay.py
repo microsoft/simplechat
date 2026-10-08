@@ -99,6 +99,7 @@ REFUSAL_MESSAGES = {
     'model_unavailable': 'The model this plan used is no longer available. Create it again from chat.',
     'quota_exceeded': 'You already have the most saved chat-plan workflows allowed. Delete one before adding another.',
     'workflow_conflict': 'This workflow is being changed or deleted. Reload and try again.',
+    'workflow_unavailable': 'This workflow was deleted or is being deleted, so the saved plan didn\'t run.',
 }
 
 PLAN_REPLAY_MAX_SECONDS = 900
@@ -821,6 +822,33 @@ def _default_workflow_run(user_id, run_id):
     return get_personal_workflow_run(user_id, run_id)
 
 
+def _load_current_workflow(user_id, workflow_id):
+    from functions_personal_workflows import get_personal_workflow
+
+    return get_personal_workflow(user_id, workflow_id)
+
+
+def _authorize_current_workflow(workflow, actor_user_id, plan_sha256, settings, *, load_workflow=None):
+    """Re-read the stored workflow so a delete or a changed plan stops the run before step 1."""
+    current = (load_workflow or _load_current_workflow)(workflow.get('user_id'), workflow.get('id'))
+    if not isinstance(current, dict) or current.get('deleting'):
+        raise PlanReplayRefused('workflow_unavailable')
+    # Imported at run admission; the runtime module imports the runner lazily, never this module.
+    from functions_workflow_runtime import _authorize_execution
+    from functions_workflow_runtime_store import WorkflowRuntimeConflict
+
+    try:
+        _authorize_execution(current, actor_user_id, settings)
+    except WorkflowRuntimeConflict:
+        raise PlanReplayRefused('workflow_unavailable') from None
+    except PermissionError:
+        raise PlanReplayRefused('creator_mismatch') from None
+    stored = stored_plan_replay_task(current)
+    if not stored or (stored.get('plan_replay') or {}).get('plan_sha256') != plan_sha256:
+        raise PlanReplayRefused('plan_hash_mismatch')
+    return current
+
+
 def _safe_error_code(error):
     code = getattr(error, 'code', '') or ''
     if code == 'model_routing_changed':
@@ -835,7 +863,7 @@ def execute_plan_replay_task(
     user_message_id=None, now=None, clock=None, max_seconds=PLAN_REPLAY_MAX_SECONDS,
     poll_seconds=PLAN_REPLAY_POLL_SECONDS, read_conversation=None, read_message=None,
     read_workflow_run=None, create_run=None, claim_run=None, prepare_execution=None,
-    get_run=None, request_cancel=None, fence=None, message_container=None,
+    get_run=None, request_cancel=None, fence=None, message_container=None, load_workflow=None,
 ):
     workflow = workflow if isinstance(workflow, dict) else {}
     task = task if isinstance(task, dict) else {}
@@ -843,10 +871,9 @@ def execute_plan_replay_task(
     if str(actor_user_id or '') != str(workflow.get('user_id') or ''):
         raise PlanReplayRefused('creator_mismatch')
     user_id = ctx['user_id']
+    _authorize_current_workflow(workflow, actor_user_id, ctx['plan_sha256'], settings, load_workflow=load_workflow)
     replay = task['plan_replay']
     provenance = replay.get('provenance') if isinstance(replay.get('provenance'), dict) else {}
-    authorize_replay_capabilities(user_id, ctx['frozen_plan'], settings)
-    authorize_replay_sources(user_id, ctx['frozen_plan'], ctx['frozen_seeds'], settings)
     _verify_workflow_conversation(
         workflow, conversation_id, user_id, provenance.get('source_conversation_id') or '',
         read_conversation=read_conversation,
@@ -1029,7 +1056,8 @@ def build_plan_replay_result(record, answer_message=None):
         if isinstance(item, dict) and item.get('step_id')
     }
     task_step_status = {}
-    for result in record.get('task_results') or []:
+    task_results = record.get('task_results')
+    for result in (task_results.values() if isinstance(task_results, dict) else task_results or []):
         if not isinstance(result, dict):
             continue
         producer = result.get('producer') if isinstance(result.get('producer'), dict) else {}
