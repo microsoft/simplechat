@@ -665,6 +665,34 @@ def test_workflow_handoff_routes_keep_the_personal_workflow_security_policy() ->
             raise AssertionError(f"{route.function_name} decorators changed: {route.decorator_names}.")
 
 
+def test_plan_replay_routes_keep_the_personal_workflow_security_policy() -> None:
+    """Saving a chat plan as a repeating workflow stays requester-only, behind the personal workflow gates.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    path = "/api/v2/orchestration/runs/<run_id>/plan-replay"
+    expected_routes = {
+        "orchestration_plan_replay_preview": path,
+        "orchestration_create_plan_replay": path,
+    }
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path.startswith(path)
+    ]
+    found = {route.function_name: route.path for route in routes}
+    if len(routes) != len(expected_routes) or found != expected_routes:
+        raise AssertionError(f"Unexpected plan replay routes: {sorted(found.items())}.")
+    expected = (
+        "bp.route", "swagger_route", "login_required", "user_required",
+        "enabled_required", "workflow_user_required",
+    )
+    for route in routes:
+        if route.route_target != "bp":
+            raise AssertionError(f"{route.function_name} is registered on {route.route_target}.")
+        if route.decorator_names != expected:
+            raise AssertionError(f"{route.function_name} decorators changed: {route.decorator_names}.")
+
+
 def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
     """Evidence and decisions never become public, even while enrollment is off."""
     routes = [
@@ -767,6 +795,7 @@ if __name__ == "__main__":
         test_workflow_run_link_route_keeps_the_orchestration_security_policy,
         test_workflow_run_status_route_keeps_the_personal_workflow_security_policy,
         test_workflow_handoff_routes_keep_the_personal_workflow_security_policy,
+        test_plan_replay_routes_keep_the_personal_workflow_security_policy,
         test_content_screening_routes_keep_authenticated_blueprint_guards,
         test_access_restricted_routes_are_login_only,
         test_review_center_routes_keep_their_reviewer_policy,

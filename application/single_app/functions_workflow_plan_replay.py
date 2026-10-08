@@ -96,10 +96,29 @@ REFUSAL_MESSAGES = {
     'replay_execution_failed': 'The repeated plan could not finish. Open the run for details.',
     'plan_replay_read_only': 'A saved plan can\'t be edited. Create it again from chat.',
     'workflow_replay_managed': 'This workflow repeats a saved chat plan; only its name, schedule and alerts can change.',
+    'workflow_replay_run_managed': 'This plan runs as part of a saved workflow. Open the workflow to run or cancel it.',
     'model_unavailable': 'The model this plan used is no longer available. Create it again from chat.',
     'quota_exceeded': 'You already have the most saved chat-plan workflows allowed. Delete one before adding another.',
     'workflow_conflict': 'This workflow is being changed or deleted. Reload and try again.',
     'workflow_unavailable': 'This workflow was deleted or is being deleted, so the saved plan didn\'t run.',
+    'run_not_found': 'That plan could not be found.',
+    'invalid_request': 'The request was not valid. Reload the plan and try again.',
+    'service_unavailable': 'The plan could not be saved as a workflow right now. Try again.',
+}
+
+# HTTP status for each code when a request to preview or save a replay is refused.
+PLAN_REPLAY_ERROR_STATUS = {
+    'replay_disabled': 403,
+    'orchestration_disabled': 403,
+    'personal_workflows_disabled': 403,
+    'creator_mismatch': 403,
+    'shared_conversation_not_allowed': 403,
+    'run_not_found': 404,
+    'source_run_not_eligible': 409,
+    'plan_hash_mismatch': 409,
+    'workflow_conflict': 409,
+    'quota_exceeded': 429,
+    'service_unavailable': 503,
 }
 
 PLAN_REPLAY_MAX_SECONDS = 900
@@ -128,6 +147,14 @@ class PlanReplaySaveError(WorkflowPublicValidationError):
         self.code = code
         self.public_message = text
         self.refusals = list(refusals or [])
+
+
+def plan_replay_error_response(code, message=None, refusals=None):
+    """Return ``(payload, status)`` for a refused preview or save. Every text is fixed server text."""
+    payload = {'error': message or REFUSAL_MESSAGES.get(code) or REFUSAL_MESSAGES['service_unavailable'], 'code': code}
+    if refusals:
+        payload['refusals'] = [dict(item) for item in refusals if isinstance(item, dict)]
+    return payload, PLAN_REPLAY_ERROR_STATUS.get(code, 422)
 
 
 def capability_label(capability_id):
@@ -658,7 +685,8 @@ def create_plan_replay_workflow(user_id, run_id, body, settings, *, read_run=Non
         raise PlanReplaySaveError('source_run_not_eligible') from exc
     freeze = freeze_source_run(record, conversation, user_id, settings)
     if freeze.get('refusals'):
-        raise PlanReplaySaveError(freeze['refusals'][0]['code'], refusals=freeze['refusals'])
+        first = freeze['refusals'][0]
+        raise PlanReplaySaveError(first['code'], first.get('message') or None, refusals=freeze['refusals'])
     if str(body.get('plan_sha256') or '').strip() != freeze['plan_sha256']:
         raise PlanReplaySaveError('plan_hash_mismatch')
     from functions_workflow_drafts import check_orchestration_workflow_quota, orchestration_workflow_id
@@ -864,6 +892,7 @@ def execute_plan_replay_task(
     poll_seconds=PLAN_REPLAY_POLL_SECONDS, read_conversation=None, read_message=None,
     read_workflow_run=None, create_run=None, claim_run=None, prepare_execution=None,
     get_run=None, request_cancel=None, fence=None, message_container=None, load_workflow=None,
+    check_cancelled=None,
 ):
     workflow = workflow if isinstance(workflow, dict) else {}
     task = task if isinstance(task, dict) else {}
@@ -996,7 +1025,8 @@ def execute_plan_replay_task(
         if not thread.is_alive():
             break
         try:
-            assert_workflow_execution_owned()
+            # The runner passes its cancel check, which also asserts a durable run's lease.
+            (check_cancelled or assert_workflow_execution_owned)()
         except BaseException:
             cancel_and_fence()
             thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)

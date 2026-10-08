@@ -11247,6 +11247,7 @@ def _execute_workflow_task_sequence(
                         lambda: execute_plan_replay_task(
                             workflow, task, settings, conversation_id=conversation_id, run_id=run_id,
                             actor_user_id=actor_id, attempt=attempt_index,
+                            check_cancelled=lambda: _raise_if_workflow_run_cancelled(workflow, run_id),
                         ),
                         inputs={'task': task},
                     )
