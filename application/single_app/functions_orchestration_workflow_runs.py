@@ -1076,6 +1076,11 @@ def _wait_summary(wait):
     return _WAIT_SUMMARIES[outcome]
 
 
+def workflow_run_wait_text(wait):
+    """Application-owned text on how a waited run's wait ended, for the step and the steps that use it."""
+    return _wait_summary(wait)
+
+
 def _waiting_summary(name, deadline, now):
     """The plan card's line while the step waits. Plain text: the card shows it as text, never markup."""
     text = clean_catalog_text(name, NAME_MAX_LENGTH).strip()
@@ -1761,4 +1766,5 @@ __all__ = [
     'workflow_run_reason_text',
     'workflow_run_repair_text',
     'workflow_run_request_id',
+    'workflow_run_wait_text',
 ]

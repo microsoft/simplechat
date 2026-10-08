@@ -32,8 +32,8 @@ from functions_orchestration_deliverables import (
 )
 from functions_orchestration_memory import OrchestrationMemoryError
 from functions_orchestration_registry import (
-    CAPABILITY_GENERATE_IMAGE, CAPABILITY_WORKFLOW_RESULTS, KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED,
-    KNOWLEDGE_BASIS_SOURCES, VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL,
+    CAPABILITY_GENERATE_IMAGE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN, KNOWLEDGE_BASIS_GENERAL,
+    KNOWLEDGE_BASIS_MIXED, KNOWLEDGE_BASIS_SOURCES, VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL,
 )
 from functions_generated_export_registry import PREPARED_SLIDE_DECK_VERSION
 from functions_orchestration_result_contracts import (
@@ -351,10 +351,13 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             for name, reader in readers.items() if name not in image_names
         }
         # A saved workflow's result reaches the model only as fenced, untrusted notes, read again
-        # for this call; the retained value it replaces never does.
+        # for this call; the retained value it replaces never does. That includes a run the plan
+        # waited for, which only a setting-gated plan can have compose read.
         workflow_results_policy = None
         if any(
-            getattr(getattr(reader.reference, 'producer', None), 'capability_id', None) == CAPABILITY_WORKFLOW_RESULTS
+            getattr(getattr(reader.reference, 'producer', None), 'capability_id', None) in (
+                CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
+            )
             for reader in readers.values()
         ):
             # The workflow result reader loads only when a plan read a saved result.

@@ -1241,6 +1241,10 @@ class HarnessExecution:
             for step in self.record["plan"].get("steps") or []
         )
 
+    def _waits_on_workflow_runs(self):
+        # Only a plan made with the 6c wait setting on carries this marker.
+        return bool(self.record["plan"].get("workflow_run_waits"))
+
     def _mentions_workflow_handoff(self):
         plan = self.record["plan"]
         return bool(plan.get("workflow_handoff_notes")) or any(
@@ -1249,7 +1253,7 @@ class HarnessExecution:
 
     def _workflow_result_lineage(self, record_state):
         """The workflow result contexts the answer read, re-authorized now; [] when it read none."""
-        if not self._reads_workflow_results():
+        if not self._reads_workflow_results() and not self._waits_on_workflow_runs():
             return []
         # Imported here, like every caller of the results step's module.
         from functions_orchestration_workflow_results import (
