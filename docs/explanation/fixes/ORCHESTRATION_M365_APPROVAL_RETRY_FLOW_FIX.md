@@ -190,6 +190,9 @@ retry whose progress can't be followed is reconciled with the saved run.
   reload, the thread shows only the retry's answer.
 - Hand-built test namespaces for `_build_export_entry()` and
   `build_conversation_history_segments()` gained the new helper.
+- After integrating Microsoft 365 source citations, the Analyze route harness also
+  loads the real citation attachment and conversation aggregation helpers. Its 29
+  tests pass independently, alongside the citation/retry backend and browser tests.
 - `functional_tests/test_v2_workflow_run_tracking_xss_guardrail.py` pins
   `M365_SHARING_PREFERENCES_HREF` with the other Microsoft 365 links, which the XSS
   checker trusts by name.

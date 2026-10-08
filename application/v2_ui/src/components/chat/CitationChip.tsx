@@ -15,6 +15,7 @@ import {
 } from '../../lib/enhancedCitations';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { EnhancedCitationViewer } from './EnhancedCitationViewer';
+import { M365CitationChips } from './M365CitationChip';
 import { GlassPanel } from '../ui/primitives';
 import type { CitationGroup, ParsedCitation } from '../../lib/citations';
 import type { Citation } from '../../lib/types';
@@ -159,6 +160,12 @@ function CitationDetail({
 
 export function CitationChip({ group }: { group: CitationGroup }) {
     const [active, setActive] = useState<ParsedCitation | null>(null);
+
+    // A Microsoft 365 email, event or file resolves against the message's own records and
+    // opens where it lives; it has no workspace passage to look up.
+    if (group.kind === 'm365') {
+        return <M365CitationChips group={group} />;
+    }
 
     // Web citations point at a real URL, so they open directly rather than resolving a
     // stored passage that does not exist for them.

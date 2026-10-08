@@ -700,6 +700,7 @@ def build_collaboration_message_doc_from_legacy(
         'cited_hybrid_citations',
         'cited_web_search_citations',
         'agent_citations',
+        'm365_citations',
         'agent_display_name',
         'agent_name',
         'extracted_text',

@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Repository imports follow the standalone source-path setup.
 import functions_m365_execution as execution
+from functions_m365_citations import set_request_m365_display_time_zone
 from m365_interaction import M365SignInRequired
 from test_support.m365 import CosmosContainer
 
@@ -82,9 +83,12 @@ def test_selected_action_is_bound_before_preflight_and_new_chat_survives_auth_pa
         "get_settings": lambda: {},
         "workflow_m365_manifests": lambda workflow: ([manifest], workflow),
         "preflight_m365_manifests": preflight,
+        "set_request_m365_display_time_zone": set_request_m365_display_time_zone,
     })
     app = Flask(__name__)
-    with app.test_request_context(json={"agent_info": {"id": "agent", "name": "M365"}}):
+    # Since 0.261.303 the helper also records the browser time zone for Microsoft 365 display times.
+    request_json = {"agent_info": {"id": "agent", "name": "M365"}, "time_zone": "America/New_York"}
+    with app.test_request_context(json=request_json):
         context = execution.M365ExecutionContext(
             "owner", "owner", "tenant", request_id="request", conversation_id="new-conversation",
         )
@@ -102,7 +106,9 @@ def test_selected_action_is_bound_before_preflight_and_new_chat_survives_auth_pa
             selected = dict(g.m365_selected_agent_ref)
             initial = dict(g.m365_initial_conversation)
             bound = execution.get_m365_execution_context()
+            display_zone = g.m365_display_time_zone
     assert before_binding == []
+    assert display_zone == "America/New_York"
     assert [item["id"] for item in effective] == ["calendar"]
     assert selected == agent
     assert saved["user_id"] == "owner"

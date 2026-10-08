@@ -30,6 +30,7 @@ import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisi
 import { stripLegacyMapBlocks } from '../../lib/inlineMaps';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
+import { M365CitationProvider } from './M365CitationContext';
 import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
@@ -1123,13 +1124,16 @@ function MessageBubbleInner({
                                     results={proposalImages}
                                     generatedImages={generatedImages}
                                 >
-                                    <AssistantMarkdown
-                                        content={masks.ranges.length === 0
-                                            ? stripLegacyMapBlocks(message.content)
-                                            : message.content}
-                                        masks={masks.ranges}
-                                        messageId={message.id}
-                                    />
+                                    {/* Microsoft 365 citation chips resolve against this message's own records. */}
+                                    <M365CitationProvider citations={message.m365_citations}>
+                                        <AssistantMarkdown
+                                            content={masks.ranges.length === 0
+                                                ? stripLegacyMapBlocks(message.content)
+                                                : message.content}
+                                            masks={masks.ranges}
+                                            messageId={message.id}
+                                        />
+                                    </M365CitationProvider>
                                 </ImageProposalScope>
                             </div>
                         )}

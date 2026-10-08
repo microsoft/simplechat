@@ -1,11 +1,12 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.257
+Version: 0.261.304
 Implemented in: 0.261.109
 Container-only saved-result access covered in: 0.261.232
 Message family constants added to the chat harness in: 0.261.234
 Soft-deleted message filter added to the chat harness in: 0.261.257
+Microsoft 365 citation helpers added to the chat harness in: 0.261.304
 
 Real adapter, artifact, history, chat route and shared section-reader functions
 run against serialized storage, Flask requests and deterministic model doubles.
@@ -60,6 +61,7 @@ result_storage = import_app_module("functions_workflow_result_store")
 tabular = import_app_module("functions_tabular_orchestration")
 deletion = import_app_module("functions_message_deletion")
 attempts = import_app_module("functions_orchestration_attempts")
+m365_citations = import_app_module("functions_m365_citations")
 
 
 def load_m365_runtime():
@@ -417,6 +419,9 @@ def chat(saved_chat, monkeypatch):
         "initialize_m365_chat_context": m365_runtime.initialize_m365_chat_context,
         "get_m365_execution_context": m365_runtime.get_m365_execution_context,
         "attach_m365_message_provenance": m365_runtime.attach_m365_message_provenance,
+        "attach_m365_message_citations": m365_citations.attach_m365_message_citations,
+        "merge_m365_items_into_conversation": m365_citations.merge_m365_items_into_conversation,
+        "_get_current_message_plugin_invocations": lambda *args: [],
         "complete_m365_request": m365_runtime.complete_m365_request,
         "M365ApprovalRequired": m365_runtime.M365ApprovalRequired,
         "M365PolicyError": m365_runtime.M365PolicyError,
@@ -599,6 +604,7 @@ def chat(saved_chat, monkeypatch):
         "_validate_reauthorized_manifest_finalization", "_build_generated_analysis_metadata",
         "_normalize_generated_analysis_artifact_metadata",
         "_persist_screened_assistant",
+        "_attach_m365_citations", "_merge_m365_conversation_items",
         "_refresh_workspace_linked_history_message",
     }
     load_functions("route_backend_chats.py", names, namespace)

@@ -4,7 +4,7 @@ title: "Microsoft 365 Email"
 description: "Read and search mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
 section: "Reference"
 audience: user
-version: "0.261.129"
+version: "0.261.303"
 ---
 
 <!-- action-slug: m365-email -->
@@ -88,6 +88,36 @@ consent or app registration change is needed.
 - Keyword results are ordered by when each message was sent. A message that
   arrived long after it was sent can be skipped when a search continues across
   calls.
+
+## Cited emails and a consistent list
+
+Implemented in version: **0.261.303** (`application/single_app/config.py`).
+
+Every email that **Read my mail** returns carries a citation value, and the answer
+cites each email it mentions with a chip that shows the subject. Clicking the chip
+opens a card with the sender, received time, read state, importance and a short
+preview, and **Open in Outlook** opens the message in the reader's own mailbox.
+Cited emails are also listed under **Email** in the conversation's **Documents**
+pane, with **Open online**.
+
+Lists of emails always use the same layout, so the answer reads the same from one
+request to the next:
+
+```text
+10 most recent emails, all unread, newest first:
+1. **PIM: Role activated** — Microsoft Security, Oct 7, 2026, 12:52 PM EDT [citation]
+2. ...
+```
+
+Each line has the subject in bold, the sender, and the received time in the
+reader's browser time zone. " · Unread" and " · High importance" are added only
+when they apply, and a one-line summary appears under an email only when the
+question was about its content. The header says "matching" instead of "most
+recent" for a search.
+
+Only an `https` link from Microsoft Graph becomes a link, and stored citations
+hold no message body. See
+[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## Failure and approval behavior
 

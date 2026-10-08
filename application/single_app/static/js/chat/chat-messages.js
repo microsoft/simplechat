@@ -2830,7 +2830,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       options.blockRevisions,
     );
     const imageProposalExtraction = extractInlineImageProposalBlocks(diagramExtraction.markdown);
-    const withInlineCitations = parseCitations(imageProposalExtraction.markdown);
+    const withInlineCitations = parseCitations(imageProposalExtraction.markdown, {
+      m365Citations: options.m365Citations,
+    });
     const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
@@ -5949,6 +5951,7 @@ export function appendMessage(
 
     const renderedAiContent = renderAiMessageContent(messageContent, {
       blockRevisions: fullMessageObject?.metadata?.block_revisions,
+      m365Citations: fullMessageObject?.m365_citations,
     });
     const htmlContent = renderedAiContent.htmlContent;
     const inlineAssistantExportActionsHtml = renderCompletedAssistantActions && !fullMessageObject?.metadata?.saved_analysis
@@ -7257,6 +7260,16 @@ function buildCollaborativeSendContext(finalMessageToSend, conversationId = curr
   };
 }
 
+// The browser's IANA time zone, so Microsoft 365 email and event times are written in it.
+function getBrowserTimeZone() {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && zone.length > 0 && zone.length <= 64 ? zone : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 export function buildChatRequestPayload(finalMessageToSend, conversationId = currentConversationId) {
   const {
     modelDeployment,
@@ -7420,6 +7433,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
+    time_zone: getBrowserTimeZone(),
   };
 
   if (documentActionType !== DOCUMENT_ACTION_NONE) {

@@ -4,7 +4,7 @@ title: "Microsoft 365 Calendar"
 description: "Read and search calendar events in any time range and prepare invitations using delegated Microsoft 365 access."
 section: "Reference"
 audience: user
-version: "0.261.129"
+version: "0.261.303"
 ---
 
 <!-- action-slug: m365-calendar -->
@@ -56,8 +56,10 @@ with these parameters:
 | `top` | Up to 25 events per call. |
 
 Dates and times without a time zone are read as UTC, and event times are
-returned in UTC. **Read my mailbox timezone** gives the agent the user's time
-zone for presenting them.
+returned in UTC. Since **0.261.303** each event also carries a `when_display`
+span in the reader's browser time zone, which answers copy as written.
+**Read my mailbox timezone** gives the agent the mailbox time zone for other
+time questions.
 
 Without a time range, the tool reads events from now through the next 30 days.
 Before this version, a call without a range listed the oldest events in the
@@ -90,6 +92,29 @@ no new consent or app registration change is needed.
   and group calendars, aren't included.
 - Events that were deleted, by the user or a retention policy, can't be
   returned.
+
+## Cited events and a consistent list
+
+Implemented in version: **0.261.303** (`application/single_app/config.py`).
+
+Every event that **Read my calendar events** returns carries a citation value, and
+the answer cites each event it mentions with a chip that shows the event's title.
+Clicking the chip opens a card with when, where and the organizer, and **Open in
+Outlook** opens the event in the reader's own calendar. Cited events are also
+listed under **Calendar** in the conversation's **Documents** pane, with **Open
+online**.
+
+Lists of events always use the same layout:
+
+```text
+3 events, earliest first:
+1. **Standup** — Thu, Oct 8, 2026, 2:00 PM – 2:30 PM EDT · Teams · Organizer: Ann Lee [citation]
+2. ...
+```
+
+The time span is in the reader's browser time zone, an all-day event shows
+"All day", and the location and organizer parts are left out when they are empty.
+See [Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## Workflow identity
 

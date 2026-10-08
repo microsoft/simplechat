@@ -1174,6 +1174,22 @@ class HarnessExecution:
         reader.recheck()
         return value
 
+    def _gathered_m365_records(self):
+        """The Microsoft 365 emails, events and files the run's action and agent steps read.
+
+        Citations are a presentation of sources the answer already used, so a step whose
+        retained value cannot be read leaves them out rather than failing the answer.
+        """
+        # Like the citation tracker, the citation helpers load only once a run is finishing.
+        from functions_m365_citations import collect_gathered_m365_records
+
+        try:
+            return collect_gathered_m365_records(self.context.task_results, self._read_gathered_value)
+        except Exception as exc:
+            self._raise_delivery_infrastructure_failure(exc)
+            _log_failure("Microsoft 365 citations could not be read for the answer.", self.record, exc)
+            return []
+
     def _validate_citations(self, citations):
         document_ids = sorted({
             citation["document_id"] for citation in citations
@@ -1191,17 +1207,21 @@ class HarnessExecution:
         }:
             raise HarnessExecutionError("context_unavailable")
 
-    def _touch_conversation(self, documents):
+    def _touch_conversation(self, documents, message=None):
         # Cache/citation integrations belong after application initialization and
         # never determine whether the authoritative assistant message committed.
         from functions_citation_tracking import merge_cited_documents_into_conversation
         from functions_conversation_cache import invalidate_conversation_cache_for_item
+        from functions_m365_citations import merge_m365_items_into_conversation
 
         try:
             for _ in range(3):
                 conversation = self._read_conversation()
                 if documents:
                     merge_cited_documents_into_conversation(conversation, documents)
+                if message is not None:
+                    # The answer's cited or read Microsoft 365 items join the Documents list.
+                    merge_m365_items_into_conversation(conversation, message)
                 conversation["last_updated"] = _now_iso()
                 try:
                     saved = self._bootstrap.config.cosmos_conversations_container.replace_item(
@@ -1291,6 +1311,7 @@ class HarnessExecution:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
         assets, charts, workflow_result_contexts = {}, {}, []
+        m365_records = []
         if error is None:
             try:
                 self._revalidate_context()
@@ -1314,16 +1335,19 @@ class HarnessExecution:
                 if self.context is not None and not current.get("cancellation_requested_at"):
                     assets = generated_image_assets(self.context.task_results, self._read_image_asset)
                     charts = gathered_charts(self.record["plan"], self.context.task_results, self._read_gathered_value)
+                    m365_records = self._gathered_m365_records()
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
                 error, prepared, citations, assets, charts, workflow_result_contexts = exc, "", [], {}, {}, []
+                m365_records = []
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
             failures.append(failure)
         if status == "cancelled" or current.get("cancellation_requested_at") or current.get("status") == "cancelled":
             status, prepared, citations, assets, charts = "cancelled", "", [], {}, {}
+            m365_records = []
             if not any(value["code"] == "user_cancelled" for value in failures):
                 failures.append(build_failure("user_cancelled"))
         # Generated images appear in the answer where its content placed them.
@@ -1428,12 +1452,15 @@ class HarnessExecution:
             CHECK_METADATA, attach_chat_check, check_chat_content, retract_message_content,
             strip_private_chat_checks,
         )
+        from functions_m365_citations import finalize_m365_citations
 
         output_check = check_chat_content(
             answer, "chat_output", user_id=self.record["user_id"], settings=self.settings,
         )
         if output_check.blocked:
-            answer, citations = output_check.notice, []
+            answer, citations, m365_records = output_check.notice, [], []
+        # Every Microsoft 365 item the steps read, marked with whether the published answer cites it.
+        m365_citations = finalize_m365_citations(m365_records, answer, data_user_id=self.record["user_id"])
         if self._delivery_only:
             if "harness_step_token_usage" in self.record:
                 combined_usage = _usage(self.prompt_token_usage, self.record["harness_step_token_usage"])
@@ -1518,7 +1545,9 @@ class HarnessExecution:
             "role": "assistant", "content": answer, "timestamp": timestamp,
             "metadata": metadata, **model_metadata, **reasoning,
             "hybrid_citations": documents, "web_search_citations": web, "agent_citations": tools,
-            "generated_artifacts": artifacts, "augmented": bool(documents or web or tools),
+            "generated_artifacts": artifacts,
+            "augmented": bool(documents or web or tools or m365_citations),
+            **({"m365_citations": m365_citations} if m365_citations else {}),
         }
         if output_check.status != "not_required":
             document = (
@@ -1558,6 +1587,7 @@ class HarnessExecution:
         blocked = document.get("role") == "safety"
         if blocked:
             answer, documents, web, tools = document["content"], [], [], []
+            m365_citations = []
         checked = CHECK_METADATA in (document.get("metadata") or {})
         self.lease.update({
             "assistant_message_id": message_id, "message_saved": True, "finalization_status": "saved",
@@ -1571,7 +1601,7 @@ class HarnessExecution:
             except Exception as exc:
                 _log_failure("A chat content incident could not be recorded.", self.record, exc)
         if self._bootstrap is not None:
-            self._touch_conversation(documents)
+            self._touch_conversation(documents, document)
             self._mirror_to_shared_thread(saved)
         finalized = self.lease.close(release=True)
         self._released = True
@@ -1587,6 +1617,7 @@ class HarnessExecution:
             failure=updates["failure"], failures=failures, recovery=public["recovery"],
             message_saved=True, finalization_status=public.get("finalization_status"),
             generated_images=[] if blocked else generated_images,
+            m365_citations=m365_citations,
             **model_metadata, **reasoning,
         )
         payload = json.loads(frame.partition("data:")[2].strip())

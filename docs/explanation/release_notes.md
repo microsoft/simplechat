@@ -24,6 +24,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.303)**
 
+#### New Features
+
+*   **Microsoft 365 Files, Emails and Events as Citations**
+    *   Answers that use SharePoint or OneDrive files, emails or calendar events through a Microsoft 365 action now cite them like workspace documents, in chat with an agent and in Orchestrate mode. An orchestrated SharePoint answer that used to end with plain "Source: … (SharePoint file 20170010188.pdf)" text now cites the file after each claim.
+    *   In V2 a chip shows the file name or the email's or event's subject. Clicking it opens a source card with the item's details and **Open in SharePoint**, **Open in OneDrive** or **Open in Outlook**, which opens the item with the reader's own sign-in. The classic chat links the cited title to the item.
+    *   The Documents pane gains **SharePoint & OneDrive**, **Email** and **Calendar** sections listing every cited item, and every file whose content was read, with **Open online** instead of a download. Only the conversation owner sees them.
+    *   Email and event lists always use the same layout: a header such as "10 most recent emails, all unread, newest first:" and one numbered line per item with the subject in bold, the sender or time span and the citation. Times are written in the reader's browser time zone.
+    *   Each item gets a deterministic `m365-` id and a bounded record; only an `https` link from Microsoft Graph becomes a link, and no message body or file content is stored. Records come only from the Microsoft 365 actions themselves and are captured before the tool result is truncated, so output from any other tool that merely looks like a Graph result never becomes a Microsoft 365 citation or link. They are carried by shared conversations and exports and count as Microsoft 365 data when a conversation is shared.
+    *   Workflow answers are cited the same way. When a turn returns more than a message keeps, the cited items are kept first, and an item Microsoft 365 returns with an unusual value is simply left uncited instead of failing the tool.
+    *   (Ref: `functions_m365_citations.py`, `msgraph_plugin.py`, `functions_m365_retrieval.py`, `plugin_invocation_logger.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `functions_orchestration_adapters.py`, `functions_orchestration_execution.py`, `M365CitationChip.tsx`, `ConversationDrawer.tsx`, `chat-citations.js`, [Microsoft 365 Source Citations](features/M365_SOURCE_CITATIONS.md))
 #### Bug Fixes
 
 *   **Orchestrated Runs Reported Failure While Their Work Was Still Running**
@@ -37,7 +47,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   An orchestrated file whose content came from web search, linked pages, deep research, an agent or an action rendered, then failed with only "This file could not be created." and no retry. Publishing it rechecked its sources through a new service that didn't have the user's sign-in. Publication now uses the rendering service that ran the attempt, which has it.
     *   A file that still can't be checked without a sign-in, such as one prepared in the background, says so. A failed file now explains why it could not be created. When a failed file can't be retried on its own, the chat offers **Retry from failed step**.
     *   (Ref: `functions_orchestration_artifacts.py` `render_attempt_scope`, `functions_orchestration_rendering.py`, `functions_orchestration_output_store.py`, `OrchestrationRecoveryNotice.tsx`, [Orchestration Files From External Results Failing Without a Reason Fix](fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md))
-
 ### **(v0.261.302)**
 
 #### Bug Fixes

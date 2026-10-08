@@ -278,6 +278,11 @@ from functions_m365_action_cards import (
     m365_action_card_events,
 )
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_citations import (
+    attach_m365_message_citations,
+    merge_m365_items_into_conversation,
+    set_request_m365_display_time_zone,
+)
 from functions_m365_execution import get_m365_execution_context
 from functions_m365_runtime import (
     attach_m365_message_provenance,
@@ -3527,7 +3532,17 @@ def _build_plugin_invocation_agent_citation(invocation):
         'success': getattr(invocation, 'success', None),
         'error_message': make_json_serializable(sanitized_error),
         'user_id': getattr(invocation, 'user_id', None),
+        **_m365_items_field(invocation),
     }
+
+
+def _m365_items_field(invocation):
+    """The compact Microsoft 365 records captured from this call's raw result, when it had any."""
+    items = getattr(invocation, 'm365_items', None)
+    if not isinstance(items, list) or not items:
+        return {}
+    # Records are flat dictionaries of scalars, so a shallow copy of each is a full copy.
+    return {'m365_items': [dict(item) for item in items if isinstance(item, dict)]}
 
 
 def _append_new_plugin_invocation_citations(
@@ -3911,12 +3926,16 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
 
     g.conversation_id = conversation_id
     g.authorized_chat_context = authorized_context
+    request_body = request.get_json(silent=True)
+    request_body = request_body if isinstance(request_body, dict) else {}
+    # Microsoft 365 email and event times are shown in the reader's browser time zone.
+    set_request_m365_display_time_zone(request_body.get('time_zone'))
     if get_m365_execution_context() is None:
         initialize_m365_chat_context(
             user_id, conversation_id,
             allow_new=bool(getattr(g, 'm365_new_conversation', False)),
         )
-    agent_selection = (request.get_json(silent=True) or {}).get('agent_info')
+    agent_selection = request_body.get('agent_info')
     if agent_selection and not getattr(g, 'm365_chat_preflight_complete', False):
         agent = _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection)
         if agent:
@@ -3936,6 +3955,42 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
             preflight_m365_manifests(manifests)
         g.m365_chat_preflight_complete = True
     return authorized_context
+
+
+def _attach_m365_citations(assistant_doc, raw_agent_citations, user_id, conversation_id, *, include_invocations=True):
+    """Record the Microsoft 365 items this reply drew on, and which of them its text cites.
+
+    Read from the raw tool citations, plus this request's plugin invocations when the caller
+    cleared them at the start of the request, before citations are compacted for storage.
+    A failure here never loses the reply.
+    """
+    try:
+        invocations = (
+            _get_current_message_plugin_invocations(user_id, conversation_id)
+            if include_invocations else None
+        )
+        return attach_m365_message_citations(
+            assistant_doc, raw_agent_citations, invocations=invocations, data_user_id=user_id,
+        )
+    except Exception as exc:
+        log_event(
+            '[M365_CITATIONS] Microsoft 365 citations could not be recorded for a reply.',
+            extra={'conversation_id': conversation_id, 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return assistant_doc
+
+
+def _merge_m365_conversation_items(conversation_item, assistant_doc):
+    """Add the reply's cited or read Microsoft 365 items to the conversation's Documents list."""
+    try:
+        merge_m365_items_into_conversation(conversation_item, assistant_doc)
+    except Exception as exc:
+        log_event(
+            '[M365_CITATIONS] Microsoft 365 items could not be added to the conversation.',
+            extra={'conversation_id': (conversation_item or {}).get('id'), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
 
 
 def _persist_screened_assistant(message, user_id, settings=None):
@@ -15050,6 +15105,7 @@ def register_route_backend_chats(bp):
             'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
             'cited_web_search_citations': payload.get('cited_web_search_citations', []),
             'agent_citations': payload.get('agent_citations', []),
+            'm365_citations': payload.get('m365_citations', []),
             'agent_display_name': payload.get('agent_display_name'),
             'agent_name': payload.get('agent_name'),
             'full_content': payload.get('reply', ''),
@@ -16805,6 +16861,10 @@ def register_route_backend_chats(bp):
         try:
             if analysis_checkpoints is not None:
                 assert_analysis_attempt_current(analysis_checkpoints)
+            assistant_doc = _attach_m365_citations(
+                assistant_doc, document_action_agent_citations, user_id, conversation_id,
+                include_invocations=False,
+            )
             assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
             document_action_reply_content = assistant_doc["content"]
             if analysis_checkpoints is not None:
@@ -16930,6 +16990,7 @@ def register_route_backend_chats(bp):
             conversation_item,
             document_action_citation_tracking['cited_hybrid_citations'],
         )
+        _merge_m365_conversation_items(conversation_item, assistant_doc)
         conversation_item = update_analysis_conversation(user_id, conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
@@ -16964,6 +17025,7 @@ def register_route_backend_chats(bp):
             'web_search_citations': [],
             **document_action_citation_tracking,
             'agent_citations': prepared_agent_citations,
+            'm365_citations': assistant_doc.get('m365_citations', []),
             'reload_messages': False,
             'kernel_fallback_notice': None,
             'thoughts_enabled': thought_tracker.enabled,
@@ -20877,6 +20939,7 @@ def register_route_backend_chats(bp):
                                 'error_message': make_json_serializable(inv.error_message),
                                 'user_id': inv.user_id,
                                 'delegation': getattr(inv, 'provenance', None),
+                                **_m365_items_field(inv),
                             }
                             detailed_citations.append(citation)
 
@@ -21602,6 +21665,7 @@ def register_route_backend_chats(bp):
             debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
 
+            assistant_doc = _attach_m365_citations(assistant_doc, agent_citations_list, user_id, conversation_id)
             assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
             ai_message = assistant_doc["content"]
 
@@ -21726,6 +21790,7 @@ def register_route_backend_chats(bp):
                 conversation_item,
                 citation_tracking['cited_hybrid_citations'],
             )
+            _merge_m365_conversation_items(conversation_item, assistant_doc)
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
             cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
@@ -21758,6 +21823,7 @@ def register_route_backend_chats(bp):
                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                 'deep_research': deep_research_result,
                 'agent_citations': prepared_agent_citations,
+                'm365_citations': assistant_doc.get('m365_citations', []),
                 'metadata': assistant_doc.get('metadata', {}),
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice,
@@ -21930,6 +21996,7 @@ def register_route_backend_chats(bp):
                 'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
                 'cited_web_search_citations': payload.get('cited_web_search_citations', []),
                 'agent_citations': payload.get('agent_citations', []),
+                'm365_citations': payload.get('m365_citations', []),
                 'm365_pending_actions': payload.get('m365_pending_actions', []),
                 'request_id': payload.get('request_id'),
                 'metadata': payload.get('metadata', {}),
@@ -25033,6 +25100,12 @@ def register_route_backend_chats(bp):
                                 },
                             },
                         })
+                        # Rolled-back root evidence must not be republished, so only the kept
+                        # delegated citations are read then, never this request's root tool calls.
+                        assistant_doc = _attach_m365_citations(
+                            assistant_doc, partial_agent_citations, user_id, conversation_id,
+                            include_invocations=not (mixed_source_manifest or suppress_streamed_file_payload),
+                        )
                         assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
                         if token_usage_data and token_usage_data.get('total_tokens') is not None:
                             try:
@@ -25071,6 +25144,7 @@ def register_route_backend_chats(bp):
                             conversation_item,
                             partial_citation_tracking['cited_hybrid_citations'],
                         )
+                        _merge_m365_conversation_items(conversation_item, assistant_doc)
                         cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
@@ -25100,6 +25174,7 @@ def register_route_backend_chats(bp):
                             'web_search_citations': partial_web_citations,
                             **partial_citation_tracking,
                             'agent_citations': partial_agent_citations,
+                            'm365_citations': assistant_doc.get('m365_citations', []) if message_persisted else [],
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'model_icon': gpt_model_icon,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
@@ -25458,6 +25533,7 @@ def register_route_backend_chats(bp):
                                 'error_message': make_json_serializable(inv.error_message),
                                 'user_id': inv.user_id,
                                 'delegation': getattr(inv, 'provenance', None),
+                                **_m365_items_field(inv),
                             }
                             agent_citations_list.append(citation)
 
@@ -25902,6 +25978,7 @@ def register_route_backend_chats(bp):
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     })
+                    assistant_doc = _attach_m365_citations(assistant_doc, agent_citations_list, user_id, conversation_id)
                     assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
                     accumulated_content = assistant_doc["content"]
                     raise_if_mixed_source_cancelled(
@@ -26001,6 +26078,7 @@ def register_route_backend_chats(bp):
                         conversation_item,
                         stream_citation_tracking['cited_hybrid_citations'],
                     )
+                    _merge_m365_conversation_items(conversation_item, assistant_doc)
                     if is_personal_chat_conversation(conversation_item):
                         conversation_item = mark_conversation_unread(
                             conversation_item,
@@ -26048,6 +26126,7 @@ def register_route_backend_chats(bp):
                         'source_review': compact_source_review_result_for_metadata(source_review_result),
                         'deep_research': deep_research_result,
                         'agent_citations': prepared_agent_citations,
+                        'm365_citations': assistant_doc.get('m365_citations', []),
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'agent_icon': agent_icon_used if use_agent_streaming else None,
@@ -26210,6 +26289,9 @@ def register_route_backend_chats(bp):
                             }
                         })
                         try:
+                            assistant_doc = _attach_m365_citations(
+                                assistant_doc, agent_citations_list, user_id, conversation_id,
+                            )
                             assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
                             safe_partial_content = assistant_doc["content"]
                             interrupted_message_persisted = True
@@ -26238,6 +26320,7 @@ def register_route_backend_chats(bp):
                                     'cited_hybrid_citations'
                                 ],
                             )
+                            _merge_m365_conversation_items(conversation_item, assistant_doc)
                             cosmos_conversations_container.replace_item(
                                 item=conversation_item['id'], body=conversation_item,
                             )
