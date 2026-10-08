@@ -71,6 +71,8 @@ SAFETY_ESCALATE_RETIRED_MESSAGE = (
     'Choose None, Warn user, Suspend user or Block user.'
 )
 SAFETY_WARNING_SEND_FAILED_MESSAGE = 'The warning notification could not be sent.'
+# The signed-in user's own pending warnings are never cached, whatever the answer.
+SAFETY_WARNINGS_NO_STORE_HEADERS = {'Cache-Control': 'no-store'}
 # Of two overlapping saves that would send a warning -- a double-click, or two reviewers --
 # only the one that claims the violation first sends it; the other is refused with this code.
 SAFETY_WARNING_IN_PROGRESS_CODE = 'safety_warning_in_progress'
@@ -1103,7 +1105,7 @@ def register_route_backend_safety(bp):
         """
         user_id = _get_safety_session_user_id()
         if not user_id:
-            return jsonify({"error": "No user ID found in session"}), 403
+            return jsonify({"error": "No user ID found in session"}), 403, SAFETY_WARNINGS_NO_STORE_HEADERS
 
         try:
             warnings = list_pending_safety_warnings(user_id)
@@ -1113,9 +1115,9 @@ def register_route_backend_safety(bp):
                 extra={"user_id": user_id, "error_type": type(e).__name__},
                 level=logging.WARNING,
             )
-            return jsonify({"error": "Your warnings could not be loaded."}), 500, {"Cache-Control": "no-store"}
+            return jsonify({"error": "Your warnings could not be loaded."}), 500, SAFETY_WARNINGS_NO_STORE_HEADERS
 
-        return jsonify({"warnings": warnings, "count": len(warnings)}), 200, {"Cache-Control": "no-store"}
+        return jsonify({"warnings": warnings, "count": len(warnings)}), 200, SAFETY_WARNINGS_NO_STORE_HEADERS
 
     @bp.route('/api/safety/warnings/<string:log_id>/acknowledge', methods=['POST'])
     @swagger_route(security=get_auth_security())

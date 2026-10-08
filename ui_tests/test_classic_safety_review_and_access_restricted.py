@@ -213,7 +213,7 @@ def test_admin_review_retires_escalate_and_shows_warning_state(classic_ui):
     expect(modal).to_be_hidden()
 
     # A new warning is sent on save, while suspensions and blocks wait for another reviewer.
-    modal = _open_review(page, "log-new")
+    _open_review(page, "log-new")
     page.locator("#editAction").select_option("SuspendUser")
     expect(page.locator("#safetyRemediationHelp")).to_contain_text("another eligible reviewer approves it")
     page.locator("#editAction").select_option("WarnUser")
