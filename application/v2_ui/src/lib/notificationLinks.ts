@@ -422,7 +422,12 @@ export function resolveNotificationLink(
     }
 
     if (path === '/profile') {
-        return route(url.searchParams.get('tab') === 'violations' ? '/settings?tab=violations' : '/settings');
+        // The classic profile tabs that V2 Settings also has: a safety violation notice opens
+        // Violations, and a reply to the user's feedback opens Feedback.
+        const tab = url.searchParams.get('tab');
+        if (tab === 'violations') return route('/settings?tab=violations');
+        if (tab === 'feedback') return route('/settings?tab=feedback');
+        return route('/settings');
     }
 
     // Anything already written for V2 is a route in this application. The router adds its

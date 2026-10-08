@@ -20,8 +20,6 @@ import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
-import { AdminFeedbackReviewPage } from './pages/AdminFeedbackReviewPage';
-import { AdminSafetyViolationsPage } from './pages/AdminSafetyViolationsPage';
 import { AdminActionEditorPage, AdminAgentEditorPage } from './pages/AdminGlobalEditorPages';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
@@ -37,6 +35,7 @@ import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { AccessRestrictedPage } from './pages/AccessRestrictedPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
+import { ReviewCenterPage } from './pages/review/ReviewCenterPage';
 import { SupportLatestFeaturesPage } from './pages/SupportLatestFeaturesPage';
 import { SupportSendFeedbackPage } from './pages/SupportSendFeedbackPage';
 
@@ -252,8 +251,15 @@ export function App() {
                 <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
-                <Route path="/admin/feedback-review" element={<AdminFeedbackReviewPage />} />
-                <Route path="/admin/safety-violations" element={<AdminSafetyViolationsPage />} />
+                {/* Feedback and safety review, one section each, with each section's pages
+                    and a record's editor as real paths. */}
+                <Route path="/admin/review" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section/:view" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section/:view/:recordId" element={<ReviewCenterPage />} />
+                {/* The pages the Review center replaced, kept as links that still arrive. */}
+                <Route path="/admin/feedback-review" element={<Navigate to={{ pathname: '/admin/review/feedback/queue', search: location.search }} replace />} />
+                <Route path="/admin/safety-violations" element={<Navigate to={{ pathname: '/admin/review/safety/violations', search: location.search }} replace />} />
                 {/* The global editors return here, with their section in view. */}
                 <Route path="/admin/agents" element={<AdminSettingsPage focusSection="organization-agents-section" />} />
                 <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />
