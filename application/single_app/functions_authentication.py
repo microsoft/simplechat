@@ -1053,6 +1053,19 @@ def get_control_center_capabilities(user=None, settings=None):
     }
 
 
+def get_request_control_center_capabilities(settings=None):
+    """Return the signed-in request's Control Center capabilities, failing closed outside one.
+
+    Agent and orchestration runs re-enter a request context that carries the authenticated
+    user and roles, so tools invoked from chat are answered here too. A scheduled run has no
+    signed-in session, so it receives no Control Center access.
+    """
+    if not has_request_context():
+        return get_control_center_capabilities({}, {})
+    user = session.get('user') or {}
+    return get_control_center_capabilities(user, get_settings() if settings is None else settings)
+
+
 def control_center_required(access_level='admin'):
     """
     Unified Control Center access control decorator.

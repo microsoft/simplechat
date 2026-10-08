@@ -22,11 +22,58 @@ Deleting all documents for a user requires a reason and submits an approval requ
 
 ## Review dashboard activity
 
-Choose a 7-, 30-, or 90-day period, or set an inclusive custom UTC date range of up to 366 days. Summary cards show user and workspace counts, period activity, token usage, and pending approvals when that count is available. Counts that have no historical snapshots are labeled as current status instead of showing a misleading period delta.
+Choose a 7-, 30- or 90-day range, or a custom inclusive UTC date range of up to 366 days. The page answers the usual questions in order, one section each.
 
-The charts use recorded logins, conversation creation, document creation by workspace type, token usage type, token models, and workspace activity. Select chart points or KPI cards to open the related section with query filters. Use **Export** to download trend data as CSV, or **Chat with these trends** to start a conversation containing the selected trend data. Token filters apply to token totals and token charts; they do not change login, conversation, or upload counts.
+### Directory
 
-The login heatmap totals the logins for each UTC weekday and hour across the selected period, with Monday as weekday zero, so it shows recurring busy times rather than a single day. Charts include data tables for screen-reader and text-based access. Dashboard summaries are cached for 90 seconds; choose **Refresh** to bypass the cache.
+Current totals for users, blocked users, groups, public workspaces and pending approvals. The date range does not change them. Groups and public workspaces list any that are locked, have uploads disabled or are inactive, so the ones that need attention stand out.
+
+### Sign-ins
+
+Every figure here counts a person once, however often they signed in:
+
+- **Signed-in users**: people who signed in at least once in the range, compared with the previous range of the same length.
+- **Daily active users**: people who signed in on the range's end date.
+- **Weekly active users**: people who signed in during the 7 days ending on the end date.
+- **Monthly active users**: people who signed in during the 30 days ending on the end date.
+
+The daily chart counts sign-ins, so a person who signs in twice counts twice. The weekday-and-hour table totals every sign-in in the range by UTC weekday and hour, which shows recurring busy times rather than one day.
+
+### Conversations and documents
+
+Conversations created, document uploads by personal, group and public workspace, and uploads whose processing failed, each with a daily chart where there is activity.
+
+### Token usage
+
+The token filters sit at the top of this section and change only the figures in it: tokens used, tokens by usage type, tokens by model and the top token consumers. Sign-ins, conversations and uploads are not filtered, because the filters describe token records. **Clear filters** returns to every token record in the range.
+
+Rankings show each user's display name and email, and each group's or public workspace's name. Point at a name to see its ID. A ranked group or workspace that has since been deleted is shown as **Deleted group** or **Deleted public workspace**.
+
+### Most active
+
+The users, groups and public workspaces with the most activity records in the range, such as sign-ins, conversations, uploads, token use and administrative actions. Token filters do not apply here.
+
+### Drill through, export and refresh
+
+Select a point in a chart to open Activity Logs for that day: a sign-in point opens sign-ins, a segment of a stacked bar opens that series, and token charts keep the token filters. Figures and names link to the Users, Groups, Public Workspaces or Activity Logs sections only when your Control Center permissions include that section. Charts include data tables for screen-reader and text-based access.
+
+**Export** downloads the range's trend data as CSV. Dashboard figures are cached for 90 seconds; choose **Refresh** to recalculate them.
+
+## Chat with the dashboard
+
+Choose **Chat with this dashboard** to ask questions about the usage data in chat. When it is set up, it opens a new chat with orchestration turned on and a prompt that describes the dashboard's date range and token filters. Read or change the prompt, then send it. The answer comes from the [Control Center action]({{ '/reference/actions/control-center/' | relative_url }}), which reads the same data as the dashboard, so figures match the dashboard for the same dates.
+
+When something is missing, a checklist marks each requirement **Ready** or **Needs set-up** and says what to do. Administrators get a link to the setting; anyone else is told what to ask an administrator for. Choose **Check again** after a change.
+
+| Requirement | Where it is set |
+| --- | --- |
+| Agents and actions are turned on | **Enable Agents** in **Admin Settings › Agents & Actions › Agent Runtime** |
+| Chat Orchestration is turned on | **Enable Chat Orchestration** in **Admin Settings › Orchestration** |
+| Orchestration can use actions | **Enable Action Access** in **Admin Settings › Orchestration › Capabilities**, with **Use an action** allowed in the capability list |
+| A Control Center action is set up for you | A global Control Center action in **Admin Settings › Agents & Actions › Global Actions**, turned on, offered in chat when Workspace Mode is on, and allowed for you by governance |
+| Your account can use chat | The **User** or **Admin** app role; listed only when your account has neither |
+
+The action only answers for people who can view the Control Center dashboard, so the chat works for administrators and dashboard readers alike, and it cannot change anything.
 
 ## Manage groups
 

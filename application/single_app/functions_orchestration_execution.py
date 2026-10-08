@@ -675,6 +675,7 @@ class HarnessExecution:
         actions = resolve_action_catalog(
             user_id, seeds=seeds, settings=self.settings,
             user_groups=seeds.get("active_group_ids") or None,
+            user_roles=identity["user_roles"],
         )
         user_message = self.record.get("user_message") or ""
         allowed_urls = list(dict.fromkeys([

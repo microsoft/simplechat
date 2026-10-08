@@ -5,7 +5,7 @@ counts:
   admin_groups: 15
   admin_tabs: 49
   admin_sections: 107
-  actions: 32
+  actions: 33
   chat_controls: 47
   sub_elements: 3
   app_pages: 30
@@ -955,6 +955,10 @@ actions:
 - slug: chart
   module: chart_plugin.py
   class_name: ChartPlugin
+- slug: control-center
+  module: control_center_plugin.py
+  class_name: ControlCenterPlugin
+  summary: Answer questions about SimpleChat usage from the Control Center dashboard's data.
 - slug: cosmos-query
   module: cosmos_query_plugin.py
   class_name: CosmosQueryPlugin

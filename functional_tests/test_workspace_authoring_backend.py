@@ -512,7 +512,9 @@ def test_agent_types_create_edit_and_redact(environment, kind, vault_enabled):
     assert fetched.headers["Cache-Control"] == "no-store"
 
 
-@pytest.mark.parametrize("kind", [kind for kind in CURRENT_TYPES if kind != "msgraph"])
+# control_center is global-only: personal creation is refused, which
+# test_v2_control_center_action.py covers.
+@pytest.mark.parametrize("kind", [kind for kind in CURRENT_TYPES if kind not in {"msgraph", "control_center"}])
 def test_every_action_type_create_edit_reload_delete(environment, kind):
     env = environment
     env.services.add_agent()

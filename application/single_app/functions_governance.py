@@ -17,6 +17,7 @@ import app_settings_cache
 from config import cosmos_governance_item_policies_container, cosmos_governance_policies_container
 from functions_activity_logging import log_governance_change
 from functions_action_manifest import resolve_action_type
+from functions_control_center_dashboard import CONTROL_CENTER_ACTION_TYPE
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_public_workspaces
 from functions_settings import get_settings
@@ -113,6 +114,7 @@ ACTION_TYPE_ALIASES = {
     "blob_storage": "blob_storage",
     "document_search": "document_search",
     "search": "document_search",
+    CONTROL_CENTER_ACTION_TYPE: CONTROL_CENTER_ACTION_TYPE,
 }
 
 
@@ -135,7 +137,12 @@ ACTION_TYPE_LABELS = {
     "azure_maps": "Azure Maps",
     "blob_storage": "Blob Storage",
     "document_search": "Document Search",
+    CONTROL_CENTER_ACTION_TYPE: "Control Center",
 }
+
+# Action types that only an administrator may create, as global actions. A Control Center
+# action reads organization-wide usage, so a personal or group copy would only ever refuse.
+GLOBAL_ONLY_ACTION_TYPES = frozenset({CONTROL_CENTER_ACTION_TYPE})
 
 
 LEGACY_ITEM_POLICY_ENTITY_TYPE_ALIASES = {
@@ -1277,6 +1284,11 @@ def ensure_action_type_access(
         raise PermissionError("Governance policy blocks access to an unknown action type.")
     if not action_type_entity_type:
         raise ValueError(f"Unsupported action type governance scope: {scope}")
+    if normalized_action_type in GLOBAL_ONLY_ACTION_TYPES and normalized_scope != "global":
+        action_type_label = get_governed_action_type_label(normalized_action_type)
+        raise PermissionError(
+            f"{action_type_label} actions are available only as global actions that an administrator creates."
+        )
 
     decision_key = (
         "action_type_access_decision",

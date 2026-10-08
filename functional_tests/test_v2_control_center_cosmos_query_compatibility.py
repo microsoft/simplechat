@@ -2,7 +2,7 @@
 # test_v2_control_center_cosmos_query_compatibility.py
 """
 Functional test for V2 Control Center Cosmos query compatibility.
-Version: 0.261.296
+Version: 0.261.301
 Implemented in: 0.261.292
 
 The Dashboard, Users and Groups sections returned HTTP 500 because Cosmos DB rejected
@@ -15,6 +15,9 @@ Since 0.261.296 it also rejects reserved keywords used as dotted property names,
 c.group.group_id, in every Control Center query, classic routes included. Cosmos answers
 those with an HTTP 400 syntax error, which kept the Groups list, group details, the
 Activity Logs group filter and every Activity Logs search failing after 0.261.292.
+
+Since 0.261.301 the dashboard queries live in functions_control_center_dashboard.py, which
+the Control Center action shares, so that module is scanned too.
 """
 
 import ast
@@ -28,6 +31,7 @@ APP = ROOT / "application" / "single_app"
 ROUTE = APP / "route_backend_control_center.py"
 CONFIG = APP / "config.py"
 CONTROL_CENTER_MODULES = (
+    APP / "functions_control_center_dashboard.py",
     APP / "functions_control_center_groups.py",
     APP / "functions_control_center_public_workspaces.py",
     APP / "functions_control_center_activity.py",
@@ -45,7 +49,6 @@ from test_support.versioning import assert_app_version_at_least
 
 SQL_PATTERN = re.compile(r"\b(SELECT|ORDER\s+BY|GROUP\s+BY)\b", re.IGNORECASE)
 V2_ROUTE_PREFIXES = ("api_v2_control_center_", "_dashboard_", "_control_center_")
-SHARED_ROUTE_HELPERS = {"build_token_usage_query_context", "append_token_usage_filters"}
 
 
 def _activity_log_composite_indexes():
@@ -97,14 +100,13 @@ def _scanned_sql():
     route_tree = ast.parse(ROUTE.read_text(encoding="utf-8"))
     route_docstrings = _docstring_ids(route_tree)
     for node in ast.walk(route_tree):
-        if isinstance(node, ast.FunctionDef) and (
-            node.name.startswith(V2_ROUTE_PREFIXES) or node.name in SHARED_ROUTE_HELPERS
-        ):
+        if isinstance(node, ast.FunctionDef) and node.name.startswith(V2_ROUTE_PREFIXES):
             found.extend(
                 (f"{ROUTE.name}:{line} ({node.name})", text, ())
                 for line, text in _sql_strings(node, route_docstrings)
             )
     for module, indexes in (
+        (APP / "functions_control_center_dashboard.py", ()),
         (APP / "functions_control_center_groups.py", ()),
         (APP / "functions_control_center_public_workspaces.py", ()),
         (APP / "functions_control_center_activity.py", _activity_log_composite_indexes()),
@@ -229,16 +231,24 @@ def test_every_v2_control_center_query_is_supported_by_the_python_sdk():
 def test_scan_covers_the_previously_failing_sections():
     locations = " ".join(location for location, _, _ in _scanned_sql())
     for expected in (
-        "_dashboard_count_active_users", "_dashboard_document_upload_counts", "_dashboard_status_rows",
-        "_dashboard_token_insights", "_dashboard_activity_insights", "_control_center_query_user_page",
+        "functions_control_center_dashboard.py", "_control_center_query_user_page",
         "_control_center_iter_users", "functions_control_center_groups.py",
         "api_v2_control_center_group_detail", "functions_control_center_activity_display.py",
     ):
         assert expected in locations, f"The compatibility scan no longer reaches {expected}."
+    dashboard_sql = " ".join(
+        text for location, text, _ in _scanned_sql()
+        if location.startswith("functions_control_center_dashboard.py")
+    )
+    for expected in (
+        "SELECT DISTINCT VALUE c.user_id", "SELECT VALUE c.status", "c.usage.total_tokens AS tokens",
+        "c.activity_type,", "SELECT TOP @limit",
+    ):
+        assert expected in dashboard_sql, f"The dashboard scan no longer reaches {expected!r}."
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.296")
+    assert_app_version_at_least("0.261.301")
 
 
 TESTS = [

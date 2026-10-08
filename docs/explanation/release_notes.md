@@ -2,6 +2,44 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.301)**
+
+#### New Features
+
+*   **Chat With the Control Center Dashboard**
+    *   The V2 Control Center Dashboard's **Chat with this dashboard** opens a new chat with Orchestrate on and a prompt that describes the dashboard's dates and token filters, ready to read, change and send. The prompt travels in the page's navigation state, never the URL, so a link can't put text in anyone's composer, and a reload doesn't apply it again.
+    *   When something is missing, a checklist marks each requirement **Ready** or **Needs set-up** and says what to do: agents on, Chat Orchestration on, action access for orchestration, a Control Center action, and the User or Admin app role. Administrators get a link straight to each setting; dashboard readers are told what to ask for. **Check again** rechecks after a change.
+    *   (Ref: `DashboardChat.tsx`, `composerDraftHandoff.ts`, `Composer.tsx`, `functions_control_center_dashboard_chat.py`, `GET /api/v2/control-center/dashboard/chat-readiness`, [Control Center Action](features/CONTROL_CENTER_ACTION.md))
+
+*   **Control Center Action**
+    *   A new read-only, global-only action type answers usage questions in chat from the dashboard's own data: sign-ins and daily, weekly and monthly active users, conversations, uploads, processing failures, and token use by day, model, usage type, user, group or public workspace, plus the most active users, groups and workspaces. Answers come back as rows orchestration can chart and match the dashboard for the same dates.
+    *   Only people who can view the Control Center dashboard see it in chat, and it checks their roles again on every call. Scheduled workflow runs, which have no signed-in session, are refused. It needs no connection settings; create it under **Admin Settings › Agents & Actions › Global Actions**.
+    *   (Ref: `control_center_plugin.py`, `functions_control_center_dashboard.py`, `functions_action_catalog.py`, `functions_governance.py` `GLOBAL_ONLY_ACTION_TYPES`, [Control Center action reference](../reference/actions/control-center.md))
+
+#### User Interface Enhancements
+
+*   **Control Center Dashboard Reorganized and Explained**
+    *   The dashboard reads top to bottom as **Directory**, **Sign-ins**, **Conversations and documents**, **Token usage** and **Most active**. Every figure says what it counts: daily, weekly and monthly active users name the end date and window and count each person once, replacing the bare "unique users" label.
+    *   The token filters now sit inside **Token usage**, say they change only that section, and have **Clear filters**. Before, they sat above the whole page, so choosing a user seemed not to change the sign-in, conversation and upload charts.
+    *   Top token consumers and the most active rankings show names, with a user's email, instead of IDs. The ID is shown on hover, and a ranked group or workspace that was deleted says so.
+    *   Sign-ins and conversations have their own charts, and empty ranges say so instead of drawing a flat line.
+    *   (Ref: `DashboardSection.tsx`, `DashboardParts.tsx`, `functions_control_center_dashboard.py` `resolve_entity_names`, [V2 Control Center Dashboard Usability Fix](fixes/V2_CONTROL_CENTER_DASHBOARD_USABILITY_FIX.md))
+
+*   **Admin Settings Deep Links and Action Type Links**
+    *   `/admin/settings/<section>` opens V2 Admin Settings on one section, and `/admin/actions/new?type=<type>` starts a new global action of that type, so other pages can link to the exact setting they need.
+    *   (Ref: `App.tsx` `AdminSettingsSectionRoute`, `ActionEditorPage.tsx`)
+
+#### Bug Fixes
+
+*   **Chat With These Trends Failed With "User Not Authenticated"**
+    *   The classic trends chat endpoint read a session key the application never sets, so it answered HTTP 401 for every administrator, and past that it wrote a malformed conversation that V2 then linked to a page that doesn't exist. The endpoint and the classic page's unreachable chat modal were removed; **Chat with this dashboard** replaces them.
+    *   (Ref: `route_backend_control_center.py`, `control_center.html`, `control-center.js`, [V2 Control Center Dashboard Usability Fix](fixes/V2_CONTROL_CENTER_DASHBOARD_USABILITY_FIX.md))
+
+*   **Dashboard Drill-Through Opened the Wrong Records**
+    *   Clicking a sign-in point on the combined chart opened conversation records, and clicking any segment of a stacked bar opened the first series at that date, such as personal uploads or chat tokens. A click now opens the series under the pointer, or the whole day when the click is beside a stack.
+    *   Token drill-throughs keep the token filters, and dashboard readers no longer see links into Users, Groups or Activity Logs, which they can't open.
+    *   (Ref: `DashboardSection.tsx`, `ui_tests/test_v2_control_center_dashboard.py`)
+
 ### **(v0.261.300)**
 
 #### Bug Fixes

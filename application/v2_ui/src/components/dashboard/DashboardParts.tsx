@@ -178,15 +178,19 @@ export function ChartDataTable({
 export function ChartPanel({
     title,
     description,
+    headingLevel = 3,
     children,
 }: {
     title: string;
     description?: string;
+    /** Where the panel sits in the page outline; h4 for panels inside a titled dashboard section. */
+    headingLevel?: 3 | 4;
     children: ReactNode;
 }) {
+    const Heading = headingLevel === 4 ? 'h4' : 'h3';
     return (
         <section className="min-w-0 rounded-2xl border border-edge bg-surface-1 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-text-1">{title}</h3>
+            <Heading className="mb-3 text-sm font-semibold text-text-1">{title}</Heading>
             {description ? <p className="-mt-2 mb-3 text-xs text-text-3">{description}</p> : null}
             {children}
         </section>

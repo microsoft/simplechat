@@ -16,6 +16,7 @@ from importlib import import_module
 
 from functions_action_manifest import bind_action_origin, is_retired_mcp_stdio
 from functions_agent_delegation import AGENT_PLUGIN_TYPE, _identifier
+from functions_control_center_dashboard import CONTROL_CENTER_ACTION_TYPE
 
 
 _SCOPES = frozenset({"personal", "group", "global"})
@@ -158,6 +159,42 @@ def _container(scope_type):
     return getattr(import_module("config"), f"cosmos_{scope_type}_actions_container")
 
 
+def _is_control_center_action(action):
+    action_type = action.get("type") if isinstance(action, dict) else None
+    return isinstance(action_type, str) and action_type.strip().lower() == CONTROL_CENTER_ACTION_TYPE
+
+
+def _request_roles():
+    """The signed-in request's app roles, or none outside a request.
+
+    Flask is imported here, with the rest of this module's runtime dependencies, so the
+    planner projection stays importable without the application.
+    """
+    from flask import has_request_context, session
+
+    if not has_request_context():
+        return []
+    user = session.get("user") or {}
+    roles = user.get("roles") if isinstance(user, dict) else None
+    return list(roles) if isinstance(roles, (list, tuple, set, frozenset)) else []
+
+
+def _control_center_access(settings, user_roles=None):
+    """Whether the caller may read Control Center insights; no identity means no access.
+
+    ``user_roles`` should come from the authenticated identity a caller captured. Without it
+    the current request's session is read, and outside a request access is refused.
+    """
+    roles = _request_roles() if user_roles is None else user_roles
+    if not isinstance(roles, (list, tuple, set, frozenset)) or not roles:
+        return False
+    authentication = import_module("functions_authentication")
+    capabilities = authentication.get_control_center_capabilities(
+        {"roles": [str(role) for role in roles]}, settings,
+    )
+    return bool(capabilities.get("can_view_dashboard"))
+
+
 def _stored_actions(scope_type, scope_id):
     if scope_type == "global":
         return _container(scope_type).query_items(
@@ -256,13 +293,15 @@ def _descriptor(action, scope_type, scope_id, scope_label):
     }
 
 
-def build_accessible_action_catalog(user_id, *, settings=None, user_groups=None):
+def build_accessible_action_catalog(user_id, *, settings=None, user_groups=None, user_roles=None):
     """Return safe metadata for enabled, governed actions belonging to this actor.
 
     ``user_id`` must be captured from authenticated server context, never from plan
     arguments. ``user_groups`` may contain group IDs or group records and only
     narrows current membership. Global actions retain their own scope and are
     available in global mode, or when global/workspace merging is enabled.
+    ``user_roles`` are the caller's authenticated app roles; a Control Center action is
+    listed only for a caller who may view the Control Center dashboard.
     """
     user_id = _require_actor(user_id)
     settings = _resolve_settings(settings)
@@ -281,6 +320,7 @@ def build_accessible_action_catalog(user_id, *, settings=None, user_groups=None)
             group_id = group["id"]
             scopes.append(("group", group_id, group.get("name") or "Group"))
 
+    control_center_allowed = None
     catalog = {}
     for scope_type, scope_id, scope_label in scopes:
         actions = [
@@ -293,6 +333,11 @@ def build_accessible_action_catalog(user_id, *, settings=None, user_groups=None)
             feature = "governance_user_actions" if scope_type == "personal" else "governance_group_actions"
             actions = governance.filter_actions_by_action_type_access(user_id, actions, feature, scope_type)
         for action in actions:
+            if _is_control_center_action(action):
+                if control_center_allowed is None:
+                    control_center_allowed = _control_center_access(settings, user_roles)
+                if scope_type != "global" or not control_center_allowed:
+                    continue
             descriptor = _descriptor(action, scope_type, scope_id, scope_label)
             catalog.setdefault(descriptor["action_ref"], descriptor)
     return list(catalog.values())
@@ -325,7 +370,7 @@ def build_action_planner_projection(actions):
     return projection
 
 
-def resolve_action_manifest(user_id, action_ref, *, settings=None, user_groups=None):
+def resolve_action_manifest(user_id, action_ref, *, settings=None, user_groups=None, user_roles=None):
     """Reauthorize an exact stored ID and return its secret-reference manifest.
 
     No lookup by name, plugin initialization, or workspace-identity hydration is
@@ -365,6 +410,10 @@ def resolve_action_manifest(user_id, action_ref, *, settings=None, user_groups=N
     if not isinstance(action, dict) or action.get("id") != action_id:
         raise LookupError(_UNAVAILABLE)
     if not _eligible_record(action, scope_type, scope_id):
+        raise PermissionError(_UNAVAILABLE)
+    if _is_control_center_action(action) and (
+        scope_type != "global" or not _control_center_access(settings, user_roles)
+    ):
         raise PermissionError(_UNAVAILABLE)
 
     governance = import_module("functions_governance")

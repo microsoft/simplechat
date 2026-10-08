@@ -1590,8 +1590,12 @@ def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
 # Run ledger
 # --------------------------------------------------------------------------------------
 
-def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None):
-    """Discover action metadata only when this request can use direct actions."""
+def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None, user_roles=None):
+    """Discover action metadata only when this request can use direct actions.
+
+    ``user_roles`` are the caller's authenticated app roles, which decide whether a
+    Control Center action is offered.
+    """
     settings = settings or {}
     seeds = seeds or {}
     if (seeds.get('agent') or {}).get('name'):
@@ -1607,7 +1611,7 @@ def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None)
     from functions_action_catalog import build_accessible_action_catalog
 
     return build_accessible_action_catalog(
-        user_id, settings=settings, user_groups=user_groups,
+        user_id, settings=settings, user_groups=user_groups, user_roles=user_roles,
     )
 
 

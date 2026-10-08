@@ -2,14 +2,16 @@
 #!/usr/bin/env python3
 """Functional coverage for governed orchestration action discovery and resolution.
 
-Version: 0.261.122
+Version: 0.261.301
 Implemented in: 0.261.098
 
 Exercises the real catalog and governance decisions with isolated storage,
 membership, and Key Vault seams. No Azure calls or plugin initialization occur.
 Trusted remote MCP origins and retired transport exclusion were integrated in 0.261.122.
+Control Center action gating (global-only, dashboard viewers only) was added in 0.261.301.
 """
 
+import ast
 import base64
 import importlib
 import json
@@ -21,7 +23,7 @@ from enum import Enum
 from types import ModuleType
 from unittest.mock import Mock, patch
 
-from test_support.app_stubs import stubbed_app_imports, stubbed_config
+from test_support.app_stubs import APP_ROOT, stubbed_app_imports, stubbed_config
 
 
 class _MissingAction(Exception):
@@ -873,6 +875,76 @@ class ActionCatalogTests(unittest.TestCase):
             self.resolve("group", user_groups=["group-one"])
         self.containers["group"].query_items.assert_not_called()
         self.containers["group"].read_item.assert_not_called()
+
+    def use_real_control_center_roles(self):
+        """Answer Control Center access with the application's own role rule.
+
+        Only that function is compiled from functions_authentication.py, so the rule under test
+        is the shipped one while the authentication module's application bootstrap stays out.
+        """
+        source_path = APP_ROOT / "functions_authentication.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        node = next(
+            item for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name == "get_control_center_capabilities"
+        )
+        namespace = {}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source_path), "exec"), namespace)
+        self.stack.enter_context(patch.dict(sys.modules, {
+            "functions_authentication": _module(
+                "functions_authentication",
+                get_control_center_capabilities=namespace["get_control_center_capabilities"],
+            ),
+        }))
+
+    def test_control_center_action_is_offered_only_to_dashboard_viewers(self):
+        self.use_real_control_center_roles()
+        self.store("global", action_id="insights", type="control_center", displayName="Usage insights")
+        self.store("global", action_id="tickets")
+
+        def offered(**kwargs):
+            return {action["id"] for action in self.discover(**kwargs)}
+
+        self.assertEqual(offered(user_roles=["Admin"]), {"insights", "tickets"})
+        self.assertEqual(offered(user_roles=["User"]), {"tickets"})
+        self.assertEqual(offered(user_roles=[]), {"tickets"})
+        # Outside a request there is no signed-in identity, so access fails closed.
+        self.assertEqual(offered(), {"tickets"})
+
+        self.settings.update(
+            require_member_of_control_center_admin=True,
+            require_member_of_control_center_dashboard_reader=True,
+        )
+        self.assertEqual(offered(user_roles=["Admin"]), {"tickets"})
+        self.assertEqual(offered(user_roles=["ControlCenterAdmin"]), {"insights", "tickets"})
+        self.assertEqual(offered(user_roles=["ControlCenterDashboardReader"]), {"insights", "tickets"})
+
+    def test_control_center_manifest_resolves_only_for_dashboard_viewers(self):
+        self.use_real_control_center_roles()
+        self.store("global", action_id="insights", type="control_center")
+        self.assertEqual(self.resolve("global", action_id="insights", user_roles=["Admin"])["id"], "insights")
+        for roles in (["User"], [], None):
+            with self.subTest(roles=roles), self.assertRaises(PermissionError):
+                self.resolve("global", action_id="insights", user_roles=roles)
+
+    def test_control_center_records_outside_global_scope_are_never_offered(self):
+        self.use_real_control_center_roles()
+        self.store("personal", action_id="personal-insights", type="control_center")
+        self.store("group", action_id="group-insights", type="control_center")
+        self.assertEqual(self.discover(user_roles=["Admin"]), [])
+        for scope, action_id in (("personal", "personal-insights"), ("group", "group-insights")):
+            with self.subTest(scope=scope), self.assertRaises(PermissionError):
+                self.resolve(scope, action_id=action_id, user_roles=["Admin"])
+
+    def test_control_center_type_is_global_only_in_governance(self):
+        for scope in ("personal", "user", "group"):
+            feature = "governance_group_actions" if scope == "group" else "governance_user_actions"
+            with self.subTest(scope=scope), self.assertRaisesRegex(PermissionError, "only as global actions"):
+                self.governance.ensure_action_type_access(feature, "actor", "control_center", scope)
+        self.governance.ensure_action_type_access(
+            "governance_global_actions_usage", "actor", "Control_Center", "global",
+        )
+        self.assertEqual(self.governance.get_governed_action_type_label("control_center"), "Control Center")
 
 
 class ActionCatalogImportTests(unittest.TestCase):

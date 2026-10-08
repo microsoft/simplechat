@@ -131,6 +131,7 @@ def test_all_v2_routes_declare_swagger_security():
     assert {node.name for node, _ in dashboard_routes} == {
         "api_v2_control_center_dashboard_summary",
         "api_v2_control_center_dashboard_insights",
+        "api_v2_control_center_dashboard_chat_readiness",
     }
     for node, decorators in dashboard_routes:
         assert {"swagger_route", "login_required", "control_center_required"} <= set(decorators), (

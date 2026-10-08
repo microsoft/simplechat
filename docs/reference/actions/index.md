@@ -24,6 +24,7 @@ If an action type does not appear, check Agents settings, workspace action permi
 
 | Action | What it does | Typical use | Depth |
 | --- | --- | --- | --- |
+| [Control Center](./control-center/) | Answers read-only questions about SimpleChat usage from the Control Center dashboard's data: sign-ins, active users, conversations, uploads and token use. | Use it, or the dashboard's **Chat with this dashboard** button, to ask usage questions in chat. Only Control Center dashboard viewers can use it. | overview |
 | [Cosmos Query](./cosmos-query/) | Runs read-only Azure Cosmos DB for NoSQL queries and validates Cosmos SQL-style queries. | Use it for governed lookup over one Cosmos container. Use SQL Query for relational databases. | overview |
 | [Databricks Table](./databricks-table/) | Compatibility wrapper for legacy `databricks_table` manifests. | Use only to keep older manifests working. For new work, use Databricks. | overview |
 | [Document Search](./document-search/) | Searches accessible SimpleChat documents, retrieves chunks, and summarizes documents using current user access. | Use it when an agent should reason over workspace documents as a tool. Use the normal grounded-search panel for one-off user searches. | overview |

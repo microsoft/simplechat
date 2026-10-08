@@ -1356,6 +1356,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
     ) if identity.get('user_enable_agents', True) else []
     actions = resolve_action_catalog(
         user_id, seeds=seeds, settings=settings, user_groups=seeds.get('active_group_ids') or None,
+        user_roles=identity.get('user_roles') or [],
     )
     allowed_urls = revision_allowed_urls(record)
     workflow_planning = _current_workflow_planning(record, user_id, settings, conversation_id)
@@ -2060,6 +2061,7 @@ def register_route_backend_orchestration(bp):
                 action_catalog = resolve_action_catalog(
                     user_id, seeds=seeds, settings=settings,
                     user_groups=seeds.get('active_group_ids') or None,
+                    user_roles=identity.get('user_roles') or [],
                 )
                 planning_identity = dict(identity)
                 if isinstance(seeds.get('agent'), dict) and seeds['agent'].get('name'):
@@ -2639,6 +2641,7 @@ def register_route_backend_orchestration(bp):
             action_catalog = resolve_action_catalog(
                 user_id, seeds=seeds, settings=settings,
                 user_groups=seeds.get('active_group_ids') or None,
+                user_roles=identity.get('user_roles') or [],
             )
             effective_plan = apply_plan_edits(
                 deepcopy(plan), data.get('edits', record.get('edit_narrowing')),

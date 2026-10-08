@@ -406,6 +406,12 @@ These are the existing [Agents and actions settings]({{ '/admin/agents-actions/'
 not additional orchestration permissions. Global merging does not bypass action-type or
 global-item governance.
 
+Since **0.261.301**, a global **Control Center** action is offered to a plan only when the
+person asking can view the Control Center dashboard, using the roles of their signed-in
+session, and that is checked again when the step runs. The Control Center's **Chat with
+this dashboard** button opens an orchestrated chat that uses it, after checking each
+setting above. See [Control Center action]({{ '/reference/actions/control-center/' | relative_url }}).
+
 Action steps gather findings before the normal answering step. This ordering describes
 the plan's intent, not a guarantee that an action cannot change data. Existing operation
 restrictions and confirmation behavior remain intact. The focused loop can make model

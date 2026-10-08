@@ -1,11 +1,15 @@
 # test_control_center_token_filters.py
 """
 Functional test for Control Center token filters.
-Version: 0.239.164
+Version: 0.261.301
 Implemented in: 0.239.164
 
 This test ensures that the Control Center token filters are wired through the
-backend APIs, dashboard template, and client-side request handling.
+backend APIs, dashboard template, and client-side request handling. Since 0.261.301
+the token filter helpers live in functions_control_center_dashboard.py, which the
+Control Center routes import, so the backend check reads both files. The classic
+"chat with trends" modal, which also forwarded token filters, was retired in 0.261.301
+along with its endpoint, so only the trend and export requests are checked.
 """
 
 from pathlib import Path
@@ -27,7 +31,10 @@ def read_text(relative_path: str) -> str:
 def test_backend_token_filter_routes_and_helpers_present() -> bool:
     """Validate the control center backend exposes token filter support."""
     print("Testing control center token filter backend wiring...")
-    backend_content = read_text("application/single_app/route_backend_control_center.py")
+    backend_content = (
+        read_text("application/single_app/route_backend_control_center.py")
+        + read_text("application/single_app/functions_control_center_dashboard.py")
+    )
 
     required_snippets = [
         "/api/admin/control-center/token-filters",
@@ -89,13 +96,21 @@ def test_control_center_javascript_wires_token_filter_requests() -> bool:
         "syncTokenFiltersFromControls()",
         "params.append(key, value);",
         "exportData.token_filters = tokenFilters;",
-        "chatData.token_filters = tokenFilters;",
         "'/api/admin/control-center/token-filters'"
     ]
 
     for snippet in required_snippets:
         if snippet not in js_content:
             print(f"Missing JavaScript snippet: {snippet}")
+            return False
+
+    retired_snippets = [
+        "chatActivityTrends",
+        "'/api/admin/control-center/activity-trends/chat'",
+    ]
+    for snippet in retired_snippets:
+        if snippet in js_content:
+            print(f"Retired trends-chat code is still present: {snippet}")
             return False
 
     print("JavaScript token filter wiring found.")

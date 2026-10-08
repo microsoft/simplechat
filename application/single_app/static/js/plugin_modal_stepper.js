@@ -3,8 +3,9 @@
 import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon, getMcpRetirementStatus, isMcpActionType } from "./workspace/view-utils.js";
 
-// Action types hidden from the creation UI (backend plugins remain intact)
-const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table'];
+// Action types hidden from the creation UI (backend plugins remain intact).
+// control_center is created in the V2 admin action editor, the one surface that configures it.
+const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table', 'control_center'];
 const M365_ACTION_TYPES = ['m365_calendar', 'm365_email', 'm365_onedrive', 'm365_sharepoint'];
 const ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
 const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity', 'username_password'];

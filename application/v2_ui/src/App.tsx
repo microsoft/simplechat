@@ -2,7 +2,7 @@
 // Loads bootstrap, then renders the shell and routes.
 
 import { lazy, Suspense, useEffect } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { LogIn, TriangleAlert } from 'lucide-react';
 import { AppShell } from './components/layout/AppShell';
 import { GlassPanel, Skeleton } from './components/ui/primitives';
@@ -58,6 +58,17 @@ function BootScreen() {
             </div>
         </div>
     );
+}
+
+/**
+ * Admin Settings opened on one section, as `/admin/settings/<section id>`.
+ *
+ * Lets another page link to the exact setting it needs, such as the Control Center's dashboard
+ * chat requirements. An unknown section simply opens Admin Settings.
+ */
+function AdminSettingsSectionRoute() {
+    const { sectionId } = useParams<{ sectionId?: string }>();
+    return <AdminSettingsPage focusSection={sectionId} />;
 }
 
 function BootError({ message, authExpired }: { message: string; authExpired: boolean }) {
@@ -263,6 +274,7 @@ export function App() {
                 {/* The global editors return here, with their section in view. */}
                 <Route path="/admin/agents" element={<AdminSettingsPage focusSection="organization-agents-section" />} />
                 <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />
+                <Route path="/admin/settings/:sectionId" element={<AdminSettingsSectionRoute />} />
                 <Route path="/admin/agents/:resourceId" element={<AdminAgentEditorPage />} />
                 <Route path="/admin/actions/:resourceId" element={<AdminActionEditorPage />} />
                 <Route path="/control-center" element={<ControlCenterPage />} />

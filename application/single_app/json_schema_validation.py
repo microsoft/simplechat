@@ -22,6 +22,7 @@ from functions_agent_delegation import (
 )
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
+from functions_control_center_dashboard import CONTROL_CENTER_ACTION_DEFAULT_ENDPOINT, CONTROL_CENTER_ACTION_TYPE
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_DEFAULT_ENDPOINT, SNOWFLAKE_PLUGIN_TYPE
 from functions_m365_operations import (
@@ -37,6 +38,7 @@ PLUGIN_ENDPOINT_DEFAULTS = {
     'sql_query': 'sql://sql_query',
     'chart': CHART_DEFAULT_ENDPOINT,
     'simplechat': 'simplechat://internal',
+    CONTROL_CENTER_ACTION_TYPE: CONTROL_CENTER_ACTION_DEFAULT_ENDPOINT,
     'search': 'internal://document-search',
     'document_search': 'internal://document-search',
     SNOWFLAKE_PLUGIN_TYPE: SNOWFLAKE_DEFAULT_ENDPOINT,
