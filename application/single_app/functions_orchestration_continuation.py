@@ -4,7 +4,8 @@
 Version: 0.261.139
 Initialized callers import this module after application bootstrap. It neither
 admits plans nor creates retry attempts, and never starts or cancels native jobs.
-Valid native waits use the existing recovery claim and native restore engine.
+Valid native waits use the existing recovery claim and native restore engine, and so,
+since 0.261.302, does a step waiting on a quick saved-workflow run.
 Other scheduler states share its stable producer token and fresh claim_id fences.
 Saved native and generic result waits retain their original core dispatch data.
 A run from the removed legacy plan contract is refused with the legacy-plan failure;
@@ -16,7 +17,7 @@ import threading
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
@@ -55,6 +56,7 @@ from functions_orchestration_result_runtime import decode_step_result, validate_
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE, PLAN_HARD_MAX_STEPS, build_failure, build_step_result, is_legacy_plan, safe_failure,
 )
+from functions_orchestration_workflow_run_wait import SAVED_WORKFLOW_RUN_WAIT_KIND
 
 
 CONTINUATION_VERSION = "orchestration-continuation-v1"
@@ -62,6 +64,13 @@ _MODES = frozenset({"execute", "outputs", "delivery"})
 _TERMINAL = frozenset({"completed", "failed", "cancelled"})
 _COMPLETE = frozenset({"completed", "partial"})
 _TRANSIENT = (AzureError, TimeoutError, ConnectionError)
+# The waits the scheduler claims a continuation for, by wait kind, with the capability whose step
+# may declare it. 6c adds the quick saved-workflow run; a native compute waits as before.
+_SCHEDULED_WAIT_KINDS = MappingProxyType({
+    "native_tabular_compute": "tabular_analyze",
+    SAVED_WORKFLOW_RUN_WAIT_KIND: "workflow_run",
+})
+_SCHEDULED_WAIT_CAPABILITIES = frozenset(_SCHEDULED_WAIT_KINDS.values())
 
 
 def _now():
@@ -125,7 +134,8 @@ def _lease_live(record):
     return _timestamp(lease.get("expires_at")) > _now()
 
 
-def _native_wait_claimable(record, authorize):
+def _scheduled_wait_claimable(record, authorize):
+    """Whether a required step waits on work the scheduler checks back on: a native compute or, 6c, a quick run."""
     if (
         record.get("cancellation_requested_at") or not record.get("execution_binding")
         or _timestamp(record["execution_deadline_at"]) <= _now()
@@ -137,13 +147,14 @@ def _native_wait_claimable(record, authorize):
     for row in record.get("execution_steps") or []:
         step = planned.get(row.get("step_id")) or {}
         if (
-            row.get("status") != "waiting" or step.get("capability_id") != "tabular_analyze"
+            row.get("status") != "waiting" or step.get("capability_id") not in _SCHEDULED_WAIT_CAPABILITIES
             or step.get("optional") or not store.has_manifest(row["step_id"], waiting=True)
             or store.has_manifest(row["step_id"])
         ):
             continue
         payload = store.load(row["step_id"], waiting=True)
-        if (payload.get("result", {}).get("wait") or {}).get("kind") == "native_tabular_compute":
+        kind = (payload.get("result", {}).get("wait") or {}).get("kind")
+        if _SCHEDULED_WAIT_KINDS.get(kind) == step["capability_id"]:
             return True
     return False
 
@@ -195,7 +206,7 @@ def claim_run_continuation(
         return None
     if mode == "delivery" and status in _TERMINAL and record.get("finalization_status") != "pending":
         return None
-    if mode == "execute" and _native_wait_claimable(record, authorize):
+    if mode == "execute" and _scheduled_wait_claimable(record, authorize):
         request = {
             "conversation_id": conversation_id,
             "submission_id": f"scheduler_{fingerprint([run_id, record['recovery_version']])[:40]}",
