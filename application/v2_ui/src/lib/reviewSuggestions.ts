@@ -820,6 +820,16 @@ export interface TriageReport {
     suggested: number;
 }
 
+/**
+ * The records a triage made no suggestion for, including any it never sent, in the order they
+ * were triaged. The workbench leaves them checked, as it does the records a bulk action couldn't
+ * change, so they can be tried again or dealt with by hand.
+ */
+export function triageRetryIds(run: TriageRun): string[] {
+    const ids = run.results.filter((result) => result.outcome !== 'suggested').map((result) => result.id);
+    return [...new Set([...ids, ...run.unprocessed])];
+}
+
 /** What a triage did, for the report under the bulk bar. */
 export function buildTriageReport(
     run: TriageRun,

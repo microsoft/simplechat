@@ -454,6 +454,9 @@ def test_triage_sends_ten_at_a_time_and_reports_each_record(assist_ui):
     expect(report).to_contain_text("content filter declined this record")
     assert [len(body["ids"]) for _section, body in assist_ui.assist_calls] == [10, 2], assist_ui.assist_calls
     assert all(body["mode"] == "triage" and set(body) == {"mode", "ids"} for _section, body in assist_ui.assist_calls)
+    # Only the record without a suggestion stays checked, ready to try again or review by hand.
+    expect(page.get_by_test_id("v2-feedback-check-fb-3")).to_be_checked()
+    expect(page.get_by_test_id("v2-feedback-check-fb-2")).not_to_be_checked()
     page.get_by_test_id("v2-feedback-bulk-report-link").click()
     expect(page).to_have_url(f"{ORIGIN}/v2/admin/review/feedback/suggestions")
     expect(page.get_by_test_id("v2-feedback-suggestion-fb-2")).to_be_visible()

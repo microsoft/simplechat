@@ -57,7 +57,7 @@ import {
     type FeedbackRecord,
 } from '../../lib/reviewCenter';
 import { bulkFeedback, fetchFeedbackIds, fetchFeedbackPage } from '../../lib/reviewCenterApi';
-import { suggestionBadge } from '../../lib/reviewSuggestions';
+import { suggestionBadge, triageRetryIds } from '../../lib/reviewSuggestions';
 import { useFeature } from '../../stores/bootstrapStore';
 
 const NOUN = { singular: 'feedback record', plural: 'feedback records' };
@@ -173,7 +173,14 @@ export function FeedbackWorkbench({
         },
     });
     const { items, total, loading, error, paging, updateParams, checked, matching } = workbench;
-    const triage = useReviewTriage({ section: 'feedback', noun: NOUN, onFinished: () => workbench.reload() });
+    const triage = useReviewTriage({
+        section: 'feedback',
+        noun: NOUN,
+        onFinished: (run) => {
+            workbench.keepChecked(triageRetryIds(run));
+            workbench.reload();
+        },
+    });
 
     useEffect(() => {
         if (!loading && !error) onCountChange(total);

@@ -65,7 +65,7 @@ import {
     type SafetyStatus,
 } from '../../lib/reviewCenter';
 import { bulkSafety, errorText, fetchSafetyIds, fetchSafetyPage, fetchSafetyRecord } from '../../lib/reviewCenterApi';
-import { suggestionBadge } from '../../lib/reviewSuggestions';
+import { suggestionBadge, triageRetryIds } from '../../lib/reviewSuggestions';
 import { useFeature } from '../../stores/bootstrapStore';
 
 const NOUN = { singular: 'violation', plural: 'violations' };
@@ -291,7 +291,14 @@ export function SafetyWorkbench({
         },
     });
     const { items, total, loading, error, paging, updateParams, checked, matching } = workbench;
-    const triage = useReviewTriage({ section: 'safety', noun: NOUN, onFinished: () => workbench.reload() });
+    const triage = useReviewTriage({
+        section: 'safety',
+        noun: NOUN,
+        onFinished: (run) => {
+            workbench.keepChecked(triageRetryIds(run));
+            workbench.reload();
+        },
+    });
 
     useEffect(() => {
         if (!loading && !error) onCountChange(total);

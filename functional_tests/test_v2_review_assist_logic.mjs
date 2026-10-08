@@ -209,6 +209,7 @@ const report = ai.buildTriageReport(run, { singular: 'violation', plural: 'viola
 assert.equal(report.summary, 'AI suggested reviews for 20 of 23 violations. Nothing changes until you approve them in the AI suggestions queue.');
 assert.equal(report.failures.length, 3);
 assert.equal(report.tone, 'warn');
+assert.deepEqual(ai.triageRetryIds(run), ['log-21', 'log-22', 'log-23'], 'records without a suggestion stay checked');
 
 calls = [];
 run = await ai.runTriage({
@@ -222,6 +223,7 @@ run = await ai.runTriage({
 });
 assert.equal(run.stopped.code, 'review_assistant_disabled');
 assert.equal(run.unprocessed.length, 13, 'the refused chunk and the rest are reported unprocessed');
+assert.deepEqual(ai.triageRetryIds(run), ids.slice(10), 'records never sent stay checked');
 assert.match(ai.buildTriageReport(run, { singular: 'violation', plural: 'violations' }, String).summary, /Stopped: Turned off\./);
 
 const controller = new AbortController();

@@ -178,6 +178,8 @@ export function useReviewWorkbench<T extends { id: string }>({
         toggle,
         togglePage,
         clearSelection,
+        /** Check exactly `ids`, such as the records an AI triage made no suggestion for. */
+        keepChecked: (ids: readonly string[]) => setSelection(keepFailures(ids)),
         chooseMatching,
         matchingBusy,
         runBulkOperation,
