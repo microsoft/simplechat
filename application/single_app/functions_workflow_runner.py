@@ -247,7 +247,6 @@ from functions_workflow_execution import (
     workflow_checkpoint_scope_guard,
     workflow_unit,
 )
-from functions_workflow_plan_replay import PLAN_REPLAY_TASK_TYPE, execute_plan_replay_task
 from functions_workflow_readiness import (
     WorkflowOutputUnavailable,
     pending_workflow_output_references,
@@ -11239,8 +11238,11 @@ def _execute_workflow_task_sequence(
                     runner_audit = {'requested_mode': 'publication', 'resolved_type': 'publication'}
                     task_error = ''
                     break
-                if task.get('type') == PLAN_REPLAY_TASK_TYPE:
+                if task.get('type') == 'plan_replay':
                     # A frozen chat plan replays as the workflow's creator, never through a runner.
+                    # Imported here so workflows without a replay task keep the runner's import graph.
+                    from functions_workflow_plan_replay import PLAN_REPLAY_TASK_TYPE, execute_plan_replay_task
+
                     task_stage = 'execution'
                     task_result = workflow_unit(
                         task_unit_key,

@@ -392,7 +392,7 @@ def authorize_replay_sources(user_id, frozen_plan, frozen_seeds, settings):
     group_ids = list(frozen_seeds.get('active_group_ids') or [])
     workspace_ids = list(frozen_seeds.get('active_public_workspace_ids') or [])
     if group_ids:
-        if settings.get('enable_group_workspaces') is False:
+        if settings.get('enable_group_workspaces') is not True:
             _refuse('source_unavailable')
         from functions_group import (
             check_group_status_allows_operation, find_group_by_id, get_user_role_in_group,
@@ -689,6 +689,11 @@ def create_plan_replay_workflow(user_id, run_id, body, settings, *, read_run=Non
         raise PlanReplaySaveError(first['code'], first.get('message') or None, refusals=freeze['refusals'])
     if str(body.get('plan_sha256') or '').strip() != freeze['plan_sha256']:
         raise PlanReplaySaveError('plan_hash_mismatch')
+    try:
+        # The creator must still reach every source today, or the first run would only fail later.
+        authorize_replay_sources(user_id, freeze['frozen_plan'], freeze['frozen_seeds'], settings)
+    except PlanReplayRefused as exc:
+        raise PlanReplaySaveError(exc.code) from None
     from functions_workflow_drafts import check_orchestration_workflow_quota, orchestration_workflow_id
     from functions_workflow_definitions import WorkflowDefinitionConflict, normalize_workflow_origin, workflow_definition_for_editor
     from functions_personal_workflows import create_personal_workflow_if_absent
