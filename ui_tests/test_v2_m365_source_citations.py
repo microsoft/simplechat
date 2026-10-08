@@ -16,7 +16,6 @@ It drives the real bundled V2 components and the real classic modules over a loc
 with synthetic HTTP boundaries, so no Azure credentials or network access are needed.
 """
 
-import json
 import sys
 from pathlib import Path
 

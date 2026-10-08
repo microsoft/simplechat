@@ -599,6 +599,8 @@ def _log_annotation_failure(kind, error):
             level=logging.WARNING,
         )
     except Exception:
+        # Reporting is best-effort: a failure to log must never turn an uncitable item into a
+        # failed Microsoft 365 tool call, so it is deliberately ignored.
         pass
 
 
