@@ -1,14 +1,14 @@
 # test_control_center_token_filters.py
 """
 Functional test for Control Center token filters.
-Version: 0.261.300
+Version: 0.261.301
 Implemented in: 0.239.164
 
 This test ensures that the Control Center token filters are wired through the
-backend APIs, dashboard template, and client-side request handling. Since 0.261.300
+backend APIs, dashboard template, and client-side request handling. Since 0.261.301
 the token filter helpers live in functions_control_center_dashboard.py, which the
 Control Center routes import, so the backend check reads both files. The classic
-"chat with trends" modal, which also forwarded token filters, was retired in 0.261.300
+"chat with trends" modal, which also forwarded token filters, was retired in 0.261.301
 along with its endpoint, so only the trend and export requests are checked.
 """
 

@@ -404,7 +404,7 @@ credential resolves from the global Key Vault namespace rather than your own. A
 **Call agent** action can target only global agents, because the server refuses
 any other target for a global action.
 
-Since **0.261.300**, a **Control Center** action answers read-only questions about
+Since **0.261.301**, a **Control Center** action answers read-only questions about
 SimpleChat usage, such as sign-ins, active users, conversations, uploads and token
 use, from the Control Center dashboard's data. It can only be created here, as a
 global action, and needs no connection settings. It is offered only to people who

@@ -2,13 +2,13 @@
 #!/usr/bin/env python3
 """Functional coverage for governed orchestration action discovery and resolution.
 
-Version: 0.261.300
+Version: 0.261.301
 Implemented in: 0.261.098
 
 Exercises the real catalog and governance decisions with isolated storage,
 membership, and Key Vault seams. No Azure calls or plugin initialization occur.
 Trusted remote MCP origins and retired transport exclusion were integrated in 0.261.122.
-Control Center action gating (global-only, dashboard viewers only) was added in 0.261.300.
+Control Center action gating (global-only, dashboard viewers only) was added in 0.261.301.
 """
 
 import ast

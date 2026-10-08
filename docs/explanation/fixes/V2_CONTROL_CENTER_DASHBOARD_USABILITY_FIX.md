@@ -1,6 +1,6 @@
 # V2 Control Center Dashboard Usability Fix
 
-**Fixed in version:** 0.261.300
+**Fixed in version:** 0.261.301
 
 ## Issue
 

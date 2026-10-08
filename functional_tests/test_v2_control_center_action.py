@@ -2,8 +2,8 @@
 # test_v2_control_center_action.py
 """
 Functional test for the Control Center action and "Chat with this dashboard".
-Version: 0.261.300
-Implemented in: 0.261.300
+Version: 0.261.301
+Implemented in: 0.261.301
 
 This test ensures that the read-only Control Center action answers only for Control Center
 dashboard viewers and refuses runs without a signed-in session, validates its arguments,
@@ -650,7 +650,7 @@ def test_readiness_route_failures_do_not_expose_details():
 
 
 def test_version_is_at_least_implementation_version():
-    assert_app_version_at_least("0.261.300")
+    assert_app_version_at_least("0.261.301")
 
 
 TESTS = [

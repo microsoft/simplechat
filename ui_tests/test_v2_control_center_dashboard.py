@@ -2,14 +2,14 @@
 # test_v2_control_center_dashboard.py
 """
 Browser coverage for the V2 Control Center dashboard.
-Version: 0.261.300
+Version: 0.261.301
 Implemented in: 0.261.279
 
 Validates the dashboard's sections and plain-language definitions, named rankings, token
 filters that sit inside (and only change) the Token usage section, capability-aware
 drill-through links, CSV export, and "Chat with this dashboard": the requirements checklist
 when something is missing, and a new orchestrated chat with the prompt ready to send when
-everything is set up. Reworked in 0.261.300, when the dashboard stopped calling the classic
+everything is set up. Reworked in 0.261.301, when the dashboard stopped calling the classic
 activity-trends API and the broken "Chat with these trends" endpoint was retired.
 """
 
@@ -169,7 +169,7 @@ def bootstrap_payload(admin):
         "can_run_maintenance": admin,
     }
     return {
-        "version": "0.261.300",
+        "version": "0.261.301",
         "user": {
             "id": "admin-user" if admin else "dashboard-reader",
             "display_name": "Admin" if admin else "Dashboard Reader",
