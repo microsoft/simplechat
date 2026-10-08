@@ -90,10 +90,10 @@ class AgentCatalogFixture(WorkspaceAuthoringFixture):
         self.catalog = _catalog()
         self.chat_agents = copy.deepcopy(self.catalog["agents"])
         self.document_loads = 0
-        self.groups = [
+        self.groups.extend([
             {"id": "group-operations", "name": "Operations"},
             {"id": "group-research", "name": "Research"},
-        ]
+        ])
 
     def _bootstrap(self):
         payload = super()._bootstrap()
