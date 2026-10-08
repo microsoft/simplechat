@@ -1,8 +1,9 @@
 # test_m365_runtime_adapters.py
 """
 Integration tests for staged file processing and subject-owned resume adapters.
-Version: 0.261.035
+Version: 0.261.294
 Implemented in: 0.261.029
+Analysis reads its model through get_m365_analysis_model in: 0.261.294
 
 Real memory manifests and batch execution are used with mocked external model
 I/O. Resume tests prove that authenticated decisions enqueue only their own job.
@@ -248,18 +249,17 @@ def test_staged_model_analysis_commits_each_source_chunk_once():
             assert settings.tools is None
             return [types.SimpleNamespace(content=f"Findings from batch {len(model_calls)}")]
 
-    class Agent:
+    class AnalysisModel:
         deployment_name = "gpt-5.6-terra"
-        kernel = object()
-        arguments = None
+        model_token_budget = None
 
-        async def _get_chat_completion_service_and_settings(self, **kwargs):
+        async def service_and_settings(self):
             return Model(), OpenAIChatPromptExecutionSettings(
                 tools=[{"type": "function", "function": {"name": "must_not_be_called", "parameters": {"type": "object", "properties": {}}}}],
                 max_completion_tokens=10000,
             )
 
-    runtime.get_m365_analysis_agent = lambda context: Agent()
+    runtime.get_m365_analysis_model = lambda context: AnalysisModel()
     runtime.get_m365_approval_service = lambda: types.SimpleNamespace(
         authorize_extended_analysis=lambda *args: {"mode": "extended"},
     )

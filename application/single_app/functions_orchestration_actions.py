@@ -5,8 +5,9 @@ When the request asks for a chart, a separate chart sub-step runs after gatherin
 kernel holds only the built-in chart tools, never the action's own functions, so saved
 visual preferences can be applied there without reaching calls to the integration.
 
-Version: 0.261.238
+Version: 0.261.294
 Microsoft 365 actions authorized for their own step in: 0.261.238
+SharePoint and OneDrive steps bind their model's token budget and analysis model in: 0.261.294
 """
 
 import asyncio
@@ -39,7 +40,10 @@ from functions_m365_approvals import M365PolicyError
 from functions_orchestration_invocation_capture import require_invocation_capture
 from functions_orchestration_m365 import (
     action_step_scope,
+    file_step_filter,
+    file_step_model_limits,
     is_m365_action_manifest,
+    m365_file_source,
     result_refusal,
     step_error,
 )
@@ -94,7 +98,12 @@ def _check_access(settings, catalog, action_ref):
     return selected
 
 
-def _build_action_model(settings, context, user_id, *, capture_configuration=False):
+def _resolve_action_model(settings, context, user_id):
+    """Resolve and build the step's authorized model once.
+
+    Returns its service, the protocol the service speaks, the resolved endpoint record (None
+    for the classic deployment settings) and the model context.
+    """
     # Model and plugin dependencies initialize clients; import them only for a running step.
     from functions_model_endpoint_runtime import (
         build_semantic_kernel_chat_service_for_model,
@@ -137,9 +146,10 @@ def _build_action_model(settings, context, user_id, *, capture_configuration=Fal
         deployment, settings, service_id='orchestration-action',
         model_context=model_context, resolved_model_endpoint=endpoint,
     )
-    if not capture_configuration:
-        return service
+    return service, protocol, endpoint, model_context
 
+
+def _action_model_configuration(settings, service, protocol, endpoint, model_context):
     connection = (endpoint or {}).get('connection') or {}
     if endpoint:
         configured_endpoint = connection.get('endpoint')
@@ -148,12 +158,73 @@ def _build_action_model(settings, context, user_id, *, capture_configuration=Fal
         prefix = 'azure_apim_gpt' if settings.get('enable_gpt_apim') else 'azure_openai_gpt'
         configured_endpoint = settings.get(f'{prefix}_endpoint')
         configured_version = settings.get(f'{prefix}_api_version')
-    return service, azure_chat_construction_metadata(
+    return azure_chat_construction_metadata(
         service, protocol=protocol,
         provider=(endpoint.get('provider') or 'aoai') if endpoint else 'aoai',
         configured_endpoint=configured_endpoint, configured_api_version=configured_version,
         endpoint_id=(endpoint or {}).get('id'), model_id=model_context.get('model_id'),
     )
+
+
+def _build_action_model(settings, context, user_id, *, capture_configuration=False):
+    service, protocol, endpoint, model_context = _resolve_action_model(settings, context, user_id)
+    if not capture_configuration:
+        return service
+    return service, _action_model_configuration(settings, service, protocol, endpoint, model_context)
+
+
+def _action_model_budget(settings, service, protocol, endpoint, model_context):
+    """The step model's token budget, from the same records its service was built from.
+
+    Mirrors ``build_agent_model_budget`` with secret-free projections of those records. The
+    step does not cap its model's output, so no request limit is set: the model's documented
+    output limit is reserved instead. Raises ``ModelTokenBudgetError`` for invalid limits.
+    """
+    # Budget and endpoint metadata helpers are only needed by a running file step.
+    from functions_model_capabilities import project_model_budget_metadata, resolve_model_token_budget
+    from functions_model_endpoint_providers import MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
+    from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
+
+    deployment = getattr(service, 'ai_model_id', None) or model_context.get('model_deployment')
+    if endpoint:
+        model_id = str(model_context.get('model_id') or '').strip()
+        models = [model for model in endpoint.get('models') or [] if isinstance(model, dict)]
+        record = next(
+            (model for model in models if model_id and str(model.get('id') or '').strip() == model_id), None,
+        ) or next(
+            (model for model in models if resolve_model_endpoint_request_model(endpoint, model) == deployment),
+            None,
+        )
+        endpoint_metadata = project_model_budget_metadata(endpoint)
+        provider = endpoint.get('provider') or 'aoai'
+        if get_model_endpoint_api_type(endpoint) == 'azure_openai':
+            provider = 'azure'
+    else:
+        record = next((
+            model for model in (settings.get('gpt_model') or {}).get('selected') or []
+            if isinstance(model, dict) and model.get('deploymentName') == deployment
+        ), None)
+        endpoint_metadata = {'provider': 'aoai'}
+        provider = 'aoai'
+    return resolve_model_token_budget(
+        project_model_budget_metadata(record) if record else {'deploymentName': deployment},
+        endpoint_metadata, provider=provider,
+        protocol='messages' if protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else 'chat_completions',
+    )
+
+
+def _build_file_action_model(settings, context, user_id, *, capture_configuration=False):
+    """A SharePoint or OneDrive step's model, its capture configuration, and its token budget.
+
+    File functions bound the content they return by the model's verified token limits, so a
+    file step resolves the budget from the same single resolution as its service.
+    """
+    service, protocol, endpoint, model_context = _resolve_action_model(settings, context, user_id)
+    configuration = (
+        _action_model_configuration(settings, service, protocol, endpoint, model_context)
+        if capture_configuration else None
+    )
+    return service, configuration, _action_model_budget(settings, service, protocol, endpoint, model_context)
 
 
 def _model_usage(messages):
@@ -450,7 +521,9 @@ async def invoke_action(
     invocation capture it acquires nothing the capture has not already attested.
 
     A Microsoft 365 action runs inside its own step's Microsoft 365 context, keyed by
-    ``m365_request_key`` so a retry of the step reuses its request and any approval.
+    ``m365_request_key`` so a retry of the step reuses its request and any approval. A
+    SharePoint or OneDrive action also binds the step model's token budget around each of
+    its function calls, and offers that model to deeper file analysis, as a chat agent does.
     """
     # Keep the planner/registry importable without SK and the Azure application bootstrap.
     from semantic_kernel import Kernel
@@ -516,9 +589,13 @@ async def invoke_action(
             current_settings = deepcopy(current_settings)
             manifest = deepcopy(manifest)
         m365_step = is_m365_action_manifest(manifest)
+        # SharePoint and OneDrive functions also need the step model's token budget.
+        file_source = m365_file_source(manifest)
+        m365_context = None
+        model_budget = None
         if m365_step:
             # Sign-in is checked here, before the model or Microsoft Graph is called.
-            m365_scope.enter_context(action_step_scope(
+            m365_context = m365_scope.enter_context(action_step_scope(
                 action_ref, user_id=user_id, conversation_id=getattr(context, 'conversation_id', None),
                 request_key=m365_request_key, user_groups=getattr(context, 'active_group_ids', None),
                 origin=m365_origin,
@@ -611,9 +688,15 @@ async def invoke_action(
         try:
             prepared = prepare_action_plugin_manifest(manifest, current_settings)
             if invocation_capture is not None:
-                service, model_configuration = _build_action_model(
-                    current_settings, context, user_id, capture_configuration=True,
-                )
+                if file_source:
+                    with file_step_model_limits(file_source):
+                        service, model_configuration, model_budget = _build_file_action_model(
+                            current_settings, context, user_id, capture_configuration=True,
+                        )
+                else:
+                    service, model_configuration = _build_action_model(
+                        current_settings, context, user_id, capture_configuration=True,
+                    )
                 kernel.add_service(service)
                 if model_configuration is None:
                     invocation_capture.refuse()
@@ -635,10 +718,25 @@ async def invoke_action(
             kernel.add_filter(FilterTypes.FUNCTION_INVOCATION, guard_function)
             kernel.add_filter(FilterTypes.AUTO_FUNCTION_INVOCATION, stop_after_failure)
             if invocation_capture is None:
-                service = _build_action_model(current_settings, context, user_id)
+                if file_source:
+                    with file_step_model_limits(file_source):
+                        service, _configuration, model_budget = _build_file_action_model(
+                            current_settings, context, user_id,
+                        )
+                else:
+                    service = _build_action_model(current_settings, context, user_id)
                 kernel.add_service(service)
             if not getattr(service, 'SUPPORTS_FUNCTION_CALLING', False):
                 raise ActionExecutionError('The selected model does not support action functions.')
+            if file_source:
+                # Chat binds these through the selected agent; this step's own model stands in.
+                kernel.add_filter(FilterTypes.AUTO_FUNCTION_INVOCATION, file_step_filter(
+                    m365_context, service=service, model_token_budget=model_budget, source=file_source,
+                    tool_schemas=[
+                        metadata.model_dump(mode='json', exclude_none=True)
+                        for metadata in kernel.get_full_list_of_function_metadata()
+                    ],
+                ))
             system_prompt = (
                 'Complete one knowledge-collection step using only the supplied action functions. '
                 'Use the action descriptions to choose functions and arguments. You may make '

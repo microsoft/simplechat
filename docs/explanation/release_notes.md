@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.294)**
+
+#### Bug Fixes
+
+*   **Orchestrated SharePoint and OneDrive Actions Find Documents Again**
+    *   With Orchestrate on, a **Use an action** step with a Microsoft 365 SharePoint or OneDrive action never searched or read any file. Every file function refused the call with `model_context_unavailable` before reaching Microsoft Graph, because the step had no model token budget. Chat binds that budget through the selected agent, and a plan step has no agent. The step still reported completed, so the answer said the documents couldn't be searched, while the same agent in chat found them. Production telemetry for the reported run showed one `search_files` refusal for `spo` with that code.
+    *   A file step now measures what it reads against the model it runs on, the same way chat does with the agent's model. The model's token limits come from the model catalog or Model Endpoints.
+    *   (Ref: `functions_orchestration_actions.py` `_build_file_action_model`, `_action_model_budget`, `functions_orchestration_m365.py` `file_step_filter`, [Orchestration M365 File Action Evidence Fix](fixes/ORCHESTRATION_M365_FILE_ACTION_EVIDENCE_FIX.md))
+
+*   **Deeper File Analysis Finishes in a Plan After Approval**
+    *   In a plan, `analyze_file` stopped for the user's extended-analysis approval. After the user approved and retried, it failed with "Microsoft 365 access for this step could not be confirmed", because analysis took its model only from a chat agent. Every retry failed the same way.
+    *   Analysis now runs on the step's own model, for that step's request only. A retry after the approval reuses the captured file and completes.
+    *   (Ref: `functions_m365_agent_continuation.py` `get_m365_analysis_model`, `m365_step_model_binder`, `functions_m365_analysis_runtime.py`)
+
+*   **File Steps Fail Clearly Instead of Reporting Missing Documents**
+    *   A SharePoint or OneDrive step whose model has no verified token limits now stops before reading anything, with the new `m365_model_limits_required` failure. Its message says to choose a model with published limits or set them in Model Endpoints.
+    *   File evidence that can't be saved or read for the conversation now stops the step with the new `m365_evidence_unavailable` failure. Previously both reached the model as findings, so the step completed with a misleading answer.
+    *   Bounded-coverage outcomes, such as a full context window or a request's file limits, are still reported as findings.
+    *   (Ref: `functions_orchestration_m365.py` `result_refusal`, `failure_code`, `functions_orchestration_schema.py` `FAILURE_MESSAGES`, `M365_STEP_FAILURE_CODES`)
+
 ### **(v0.261.293)**
 
 #### Bug Fixes

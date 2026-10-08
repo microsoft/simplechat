@@ -1767,6 +1767,16 @@ FAILURE_MESSAGES = {
         "Plans can only read Microsoft 365 data. This action's enabled functions all send or change "
         'data, so use it from chat instead.'
     ),
+    'm365_model_limits_required': (
+        "This step's model has no verified token limits, so SharePoint and OneDrive file content "
+        "couldn't be used safely. Choose a model with published token limits, or ask an admin to "
+        'set them in Model Endpoints, then retry.'
+    ),
+    'm365_evidence_unavailable': (
+        "SharePoint or OneDrive file evidence couldn't be saved or read for this conversation, so "
+        'no file content was used. Select Retry from failed step. If it fails again, ask an admin '
+        "to check the app's chat storage."
+    ),
     'workflow_runtime_unavailable': (
         'Saved workflows were temporarily unavailable, so this workflow may not have started. '
         "Retrying is safe: a workflow this plan already started won't start again."
@@ -1863,6 +1873,7 @@ FAILURE_MESSAGES = {
 M365_STEP_FAILURE_CODES = frozenset({
     'm365_sign_in_required', 'm365_approval_required', 'm365_unavailable',
     'm365_shared_conversation', 'm365_read_only',
+    'm365_model_limits_required', 'm365_evidence_unavailable',
 })
 # Failures an exception may carry by code, through its ``orchestration_failure_code``.
 EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {'external_session_required'}
