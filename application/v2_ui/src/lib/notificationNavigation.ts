@@ -5,9 +5,10 @@
 // conversation the same way whichever of the two the user clicked.
 
 import { OFF_SITE_LINK, sameSiteAddress, type NotificationTarget } from './notificationLinks';
-import { chatHrefForConversation } from './conversationUrl';
+import { chatHrefForConversation, chatHrefForPendingAction } from './conversationUrl';
 import { GROUP_WORKSPACES } from './workspaces';
 import { useChatStore } from '../stores/chatStore';
+import { chatPendingActionsStore } from '../stores/m365PendingActionsStore';
 import { toast } from '../stores/toastStore';
 
 export interface NotificationNavigationContext {
@@ -24,19 +25,32 @@ export interface NotificationNavigationContext {
  * leave the old thread on screen. On the chat page the store opens the conversation directly
  * instead -- and reports a deleted or inaccessible one itself -- while the page's own URL sync
  * writes the address bar to match. Anywhere else the link is simply followed.
+ *
+ * `pendingActionId` is a saved Microsoft 365 action to bring into view once the conversation
+ * is open. On the chat page it is asked for before the conversation is opened: the store keeps
+ * a request for the conversation it is switching to, and the thread acts on it when the card is
+ * on screen. Anywhere else it travels in the address, where the chat page picks it up.
  */
 export function openConversationFromNotification(
     conversationId: string,
     context: NotificationNavigationContext,
+    pendingActionId?: string,
 ): void {
     if (context.pathname === '/chat') {
+        if (pendingActionId) {
+            chatPendingActionsStore.getState().requestFocus(pendingActionId, conversationId);
+        }
         const chat = useChatStore.getState();
         if (chat.activeConversationId !== conversationId) {
             void chat.openLinkedConversation(conversationId);
         }
         return;
     }
-    context.navigate(chatHrefForConversation(conversationId));
+    context.navigate(
+        pendingActionId
+            ? chatHrefForPendingAction(conversationId, pendingActionId)
+            : chatHrefForConversation(conversationId),
+    );
 }
 
 /**
@@ -54,7 +68,7 @@ export async function openNotificationTarget(
     context: NotificationNavigationContext,
 ): Promise<void> {
     if (target.kind === 'conversation') {
-        openConversationFromNotification(target.conversationId, context);
+        openConversationFromNotification(target.conversationId, context, target.pendingActionId);
         return;
     }
     if (target.kind === 'route') {

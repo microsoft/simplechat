@@ -26,6 +26,7 @@ sys.path.insert(0, str(FIXTURES / "orchestration"))
 
 import harness_build as hb
 from v2_admin_settings import connect_options
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload
 
 
 pytestmark = pytest.mark.ui
@@ -58,6 +59,10 @@ def action_page(page):
             route.fulfill(path=str(hb.BUNDLE), content_type="application/javascript")
         elif f"{parsed.scheme}://{parsed.netloc}" == ORIGIN and parsed.path == "/favicon.ico":
             route.fulfill(status=204)
+        elif f"{parsed.scheme}://{parsed.netloc}" == ORIGIN and is_pending_actions_list(
+            route.request.method, parsed.path
+        ):
+            route.fulfill(json=pending_actions_payload())
         else:
             unexpected_requests.append(route.request.url)
             route.abort()

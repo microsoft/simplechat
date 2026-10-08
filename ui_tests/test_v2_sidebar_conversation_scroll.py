@@ -36,6 +36,7 @@ from test_v2_orchestration_plan_editor import (  # noqa: F401
     editor_assets,
     editor_browser,
 )
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -198,6 +199,8 @@ class RailApi:
             route.fulfill(json={"approvals": []})
         elif method == "GET" and path == "/api/user/collaboration-suggestions":
             route.fulfill(json={"results": []})
+        elif is_pending_actions_list(method, path):
+            route.fulfill(json=pending_actions_payload())
         else:
             return False
         return True

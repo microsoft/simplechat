@@ -1339,6 +1339,15 @@ export interface ChatStreamEvent {
     agent_display_name?: string;
     augmented?: boolean;
     metadata?: Json;
+    /** The outgoing Microsoft 365 action a `type: "m365_pending_action"` frame announces. */
+    pending_action?: Json;
+    /** Outgoing actions a terminal frame carries for the chat run that saved them. */
+    m365_pending_actions?: Json;
+    /** Set when those actions could not be listed; the conversation's list is the fallback. */
+    m365_pending_actions_error?: Json;
+    request_id?: string;
+    /** A shared conversation's frame names the user turn in the hidden source conversation. */
+    m365_source_user_message_id?: string;
     [key: string]: unknown;
 }
 

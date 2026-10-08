@@ -20,15 +20,20 @@
 
 import type { AppNotification } from './notifications';
 import type { WorkflowScope } from './workflowEditor';
-import { readConversationParam } from './conversationUrl';
+import { readConversationParam, readPendingActionFocus } from './conversationUrl';
 import { groupWorkspaceDocumentPath, groupWorkspacePath } from './groupWorkspaceNavigation';
 import { publicWorkspacePath } from './publicWorkspaceNavigation';
 import { workflowRunHref } from './workflowRunLink';
 import { requireWorkspaceId } from './workspaceContext';
 
 export type NotificationTarget =
-    /** A conversation, opened on the chat page. */
-    | { kind: 'conversation'; conversationId: string }
+    /**
+     * A conversation, opened on the chat page.
+     *
+     * `pendingActionId` is a Microsoft 365 action saved in that conversation. The chat page
+     * scrolls to its card and highlights it; it is never acted on.
+     */
+    | { kind: 'conversation'; conversationId: string; pendingActionId?: string }
     /** A V2 route, relative to the router's `/v2` base. */
     | { kind: 'route'; path: string }
     /**
@@ -110,8 +115,11 @@ const WORKFLOW_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether the notice is about a Microsoft 365 action. Those are resolved on classic pages,
- * which are the only ones that render the pending action, wherever the action id was written.
+ * Whether the notice is about a Microsoft 365 action, wherever the action id was written.
+ *
+ * A notice that names a workflow run keeps its classic workflow-activity page: that page draws
+ * the saved action beside the run, and V2's run page does not. A notice about an action in a
+ * conversation does not need this; it opens the conversation (see `chatTarget`).
  */
 function isMicrosoft365Notice(notification: AppNotification): boolean {
     return 'm365_pending_action_id' in notification.metadata
@@ -195,6 +203,11 @@ function groupIdFor(notification: AppNotification): string | null {
 /**
  * A chat link. The conversation id is read with both spellings in circulation, the same
  * way the chat page reads it (conversationUrl.ts readConversationParam).
+ *
+ * A Microsoft 365 notice also names the saved action to bring into view
+ * (`m365_pending_action`). An id that is not a plausible action id is left out rather than
+ * refusing the link: the conversation is still the right place to land, and nothing is ever
+ * sent by opening it.
  */
 function chatTarget(url: URL): ResolvedNotificationLink {
     const conversationId = readConversationParam(url.searchParams);
@@ -205,7 +218,13 @@ function chatTarget(url: URL): ResolvedNotificationLink {
     if (!id) {
         return { target: null, error: INVALID_LINK };
     }
-    return { target: { kind: 'conversation', conversationId: id }, error: null };
+    const pendingActionId = readPendingActionFocus(url.searchParams);
+    return {
+        target: pendingActionId
+            ? { kind: 'conversation', conversationId: id, pendingActionId }
+            : { kind: 'conversation', conversationId: id },
+        error: null,
+    };
 }
 
 /**
@@ -358,11 +377,6 @@ export function resolveNotificationLink(
     // No empty segments are left to collapse, so only a trailing slash is set aside.
     const path = url.pathname.replace(/(.)\/$/, '$1');
 
-    // A Microsoft 365 action waiting in a conversation is resolved on the classic chat page,
-    // which is the only one that renders the pending-action card.
-    if ((path === '/chats' || path === '/chat' || path === '/v2/chat') && url.searchParams.has('m365_pending_action')) {
-        return classic(`/chats${url.search}${url.hash}`, notification, origin);
-    }
     if (path === '/chats' || path === '/chat' || path === '/v2/chat') {
         return chatTarget(url);
     }

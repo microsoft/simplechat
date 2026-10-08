@@ -1637,7 +1637,10 @@ tracker, running tag and posted-message footers. The last bullet of the **V2** l
     the notice's `workflow_scope` and `workflow_group_id` metadata: personal runs belong under `/workspace/workflows`,
     group runs under the group's workflows page, and an unknown scope keeps the classic link. Once it returns a path,
     N2's alert card shows **Open run** instead of **Open workflow**, so the run link has to lead somewhere the
-    workflow link doesn't.
+    workflow link doesn't. Since 0.261.307 V2 chat renders pending actions and a chat link with `m365_pending_action`
+    opens the V2 conversation (see [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md)); a
+    notice with `m365_pending_action_id` that links to `/workflow-activity` still stays classic, because V2's run
+    page doesn't draw the action.
 62. **Result answers outside the message list.** Answers built from stored results (saved analysis or workflow
     results) are masked when messages are read, but some reads skip that sanitizer: collaboration copies and their
     `last_message_preview`, the collaboration metadata route (pending invitees included), summaries, reply

@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 from ui_tests.fixtures.public_documents import chat_list  # noqa: E402
 
 
@@ -122,6 +123,10 @@ class ContextApi:
         if request.method == "GET" and path == "/api/conversations/feed":
             # Re-read once a new conversation's first answer lands.
             route.fulfill(json={"conversations": [], "has_more": False, "next_cursor": None})
+            return
+        if is_pending_actions_list(request.method, path):
+            # The open conversation's saved outgoing actions: none here.
+            route.fulfill(json=pending_actions_payload())
             return
 
         if request.method == "POST" and path in STREAM_PATHS.values():

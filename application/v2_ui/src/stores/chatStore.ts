@@ -143,6 +143,8 @@ import { readConversationParam } from '../lib/conversationUrl';
 import { refreshNotificationCount } from './notificationStore';
 import { useBootstrapStore } from './bootstrapStore';
 import { useCollaborationStore, participantName } from './collaborationStore';
+import { chatPendingActionsStore } from './m365PendingActionsStore';
+import { latestUserMessageId } from '../lib/m365PendingActions';
 import type { MaskAction, MaskSelection } from '../lib/masking';
 import type { VisualStyle } from '../lib/visualPalettes';
 import {
@@ -953,11 +955,31 @@ function detachActiveStream(): void {
     activeStreamController.abort();
     activeStreamController = null;
     streamingConversationId = null;
+    // The reply is no longer being read, so its turn stops being a streaming one. Left
+    // registered, the next send in this conversation would take the old turn for a renamed
+    // one and pull the stopped reply's saved Microsoft 365 actions down with it.
+    chatPendingActionsStore.getState().setLiveStream(null);
     // Included here rather than left to callers: `stopStreaming` has no state reset of its
     // own, so dropping it would leave the composer stuck showing Stop for a stream that is no
     // longer being read. `selectConversation` and `startNewConversation` also set `streaming`
     // themselves, because an orchestration turn holds it without a controller to detach.
     useChatStore.setState({ streaming: false, streamingContent: '', reconnectPhase: null });
+}
+
+/**
+ * Read the open conversation's saved Microsoft 365 actions again once a reply is over.
+ *
+ * A reply can save an action its own stream never described: the connection drops, or the
+ * model fails after the tool ran. The list is the only complete answer, so the classic client
+ * reads it after every ending (chat-streaming.js:777). Skipped when the reader has moved on,
+ * because a conversation's list is read when it is opened.
+ */
+function refreshPendingActionsAfterReply(conversationId: string): void {
+    const pendingActions = chatPendingActionsStore.getState();
+    if (pendingActions.conversationId !== conversationId) {
+        return;
+    }
+    void pendingActions.refreshList();
 }
 
 /**
@@ -1283,9 +1305,32 @@ function buildStreamHandlers(
     const analysisRevision = getState().analysisContextRevision;
     const completionMetadata = (event: ChatStreamEvent) =>
         reasoningMetadataForEvent(event, getState().streamingReasoningAdjustments);
+    // The user turn this stream answers, which is where an outgoing Microsoft 365 action it
+    // saves is drawn until the reply exists. Swapped for the server's id once the optimistic
+    // message is persisted.
+    let streamUserMessageId =
+        String(pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
     return {
+        onM365PendingActions: (event) => {
+            // The viewed conversation's id rather than the frame's own: a shared conversation's
+            // frames can carry the id of the hidden source conversation.
+            chatPendingActionsStore.getState().handleStreamPayload(event, {
+                conversationId,
+                messageId: '',
+                userMessageId: streamUserMessageId,
+                requestId: '',
+            });
+        },
         onUserMessagePersisted: (event) => {
             const persistedId = String(event.user_message_id ?? event.message_id ?? '').trim();
+            if (persistedId) {
+                streamUserMessageId = persistedId;
+                if (isCurrent()) {
+                    chatPendingActionsStore
+                        .getState()
+                        .setLiveStream({ conversationId, userMessageId: persistedId });
+                }
+            }
             if (!persistedId || !pendingUserMessageId || !isCurrent()) {
                 return;
             }
@@ -1532,6 +1577,17 @@ async function runChatStream(
     const isCurrent = () =>
         ownsController() && getState().activeConversationId === conversationId;
 
+    // The user turn this stream answers is where an outgoing Microsoft 365 action it saves is
+    // drawn until the reply exists. Registered after the conversation is active, because
+    // switching conversations clears it.
+    const liveUserMessageId =
+        String(options.pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
+    if (liveUserMessageId && isCurrent()) {
+        chatPendingActionsStore
+            .getState()
+            .setLiveStream({ conversationId, userMessageId: liveUserMessageId });
+    }
+
     await streamChat(
         requestBody,
         buildStreamHandlers(
@@ -1553,7 +1609,9 @@ async function runChatStream(
     if (ownsController()) {
         activeStreamController = null;
         streamingConversationId = null;
+        chatPendingActionsStore.getState().setLiveStream(null);
         set({ streaming: false, reconnectPhase: null });
+        refreshPendingActionsAfterReply(conversationId);
     }
 
     // Retry and edit rewrite thread state server-side, so the authoritative message list
@@ -1621,6 +1679,13 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         reconnectPhase: 'connecting',
     });
 
+    const reattachedUserMessageId = latestUserMessageId(getState().messages);
+    if (reattachedUserMessageId) {
+        chatPendingActionsStore
+            .getState()
+            .setLiveStream({ conversationId, userMessageId: reattachedUserMessageId });
+    }
+
     await reattachChatStream(
         conversationId,
         buildStreamHandlers(conversationId, isCurrent, set, getState),
@@ -1629,7 +1694,9 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
 
     if (isCurrent()) {
         activeStreamController = null;
+        chatPendingActionsStore.getState().setLiveStream(null);
         set({ streaming: false, reconnectPhase: null });
+        refreshPendingActionsAfterReply(conversationId);
     }
 
     return true;
@@ -1869,6 +1936,23 @@ function attachCollaborationEvents(conversationId: string): void {
                 return;
             }
             collaboration().applyAiActivity(activity);
+        },
+
+        onM365PendingActions: ({ unavailable }) => {
+            if (!stillOpen()) {
+                return;
+            }
+            const pendingActions = chatPendingActionsStore.getState();
+            if (unavailable) {
+                // The server could not work out what this reader may see of the saved action,
+                // so say so and look again rather than showing a thread that seems to have none.
+                pendingActions.handleStreamPayload(
+                    { m365_pending_actions_error: { error: 'm365_pending_actions_unavailable' } },
+                    { conversationId },
+                );
+                return;
+            }
+            void pendingActions.refreshList();
         },
 
         onConversationUpdated: (conversation) => {
@@ -3294,13 +3378,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // written, not merely to stop being watched. Addresses the conversation the stream
         // actually belongs to, which may no longer be the one on screen, through whichever
         // cancel route that conversation uses.
-        if (streamingConversationId) {
+        const stoppedConversationId = streamingConversationId;
+        if (stoppedConversationId) {
+            // The reply is detached below, so its ending is never seen here. Read the list
+            // once the server has the request instead. An action the reply was still saving
+            // is picked up by the next read: window focus, Refresh, or a collaboration event.
             void cancelStream(
-                streamingConversationId,
+                stoppedConversationId,
                 streamingConversationKind === 'collaborative'
-                    ? cancelCollaborationStreamUrl(streamingConversationId)
+                    ? cancelCollaborationStreamUrl(stoppedConversationId)
                     : undefined,
-            );
+            ).then(() => refreshPendingActionsAfterReply(stoppedConversationId));
         }
         detachActiveStream();
     },
@@ -4437,3 +4525,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 }));
+
+// The open conversation's outgoing Microsoft 365 actions follow the thread on screen. Done here,
+// off every change to the open conversation, rather than in each action that can change it:
+// there are many (selecting, a new chat, a deep link, a reload), and one missed would leave the
+// cards of the conversation the reader just left standing under the next one. The store is
+// pointed at the conversation first so the messages it is then shown are attributed to it.
+useChatStore.subscribe((state, previous) => {
+    const pendingActions = chatPendingActionsStore.getState();
+    const conversationChanged = state.activeConversationId !== previous.activeConversationId;
+    if (conversationChanged) {
+        pendingActions.setConversation(state.activeConversationId ?? '');
+    }
+    if (conversationChanged || state.messages !== previous.messages) {
+        pendingActions.ingestMessages(state.messages);
+    }
+});

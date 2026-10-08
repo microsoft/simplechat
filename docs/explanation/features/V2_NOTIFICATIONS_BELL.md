@@ -131,7 +131,7 @@ in classic rather than leaving the notice with nowhere to go.
 | Link | Opens |
 |---|---|
 | `/chats`, `/chat` or `/v2/chat` with `conversationId` or `conversation_id` | The conversation in V2 chat |
-| The same with `m365_pending_action` | Classic chat, the only page that shows the pending-action card |
+| The same with `m365_pending_action` | The V2 conversation, scrolled to that saved action's card and highlighted |
 | `/approvals` | Classic Approvals |
 | `/workflow-activity` | Classic workflow activity (see the Phase 6b seams below) |
 | `/workspace` | Your V2 document list; there is no per-document link yet |
@@ -185,8 +185,10 @@ Phase 6b-2 (0.261.251) filled in all three; see
     `workflow_chat_delivery`) opens its run when its metadata names the workspace,
     workflow and run. Any other notice without a link gets none.
   - A Microsoft 365 notice, one with `m365_pending_action_id` in its metadata or link
-    context, always stays classic, which is the only interface that renders the
-    pending action.
+    context, never opens a V2 run page. The classic workflow-activity page draws the
+    saved action beside the run, and V2's run page doesn't. A notice about an action
+    saved in a conversation opens that conversation in V2 instead; see
+    [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md).
   - The workspace is never read from `metadata.group_id`, which classic treats as the
     group to make active.
 - **Delivered results.** When 6b-1 posts a result back into a chat, V2's app-shell
@@ -291,8 +293,10 @@ conversations keep their own read tracking, so neither is affected.
 
 ## Known limitations
 
-- Microsoft 365 approvals, pending Microsoft 365 actions and workflow activity open
-  in classic until V2 has those pages.
+- Microsoft 365 approvals and workflow activity open in classic until V2 has those
+  pages. That includes a notice about a Microsoft 365 action inside a workflow run.
+  A notice about an action saved in a conversation opens that conversation in V2
+  with the card brought into view.
 - A personal document notice opens your document list, not the document.
 - The count is polled. While the tab is visible and nothing is changing, a new
   notice can take up to five minutes to appear; returning to the tab reads it at
@@ -330,6 +334,7 @@ data.
 
 - [Desktop Conversation Notifications](DESKTOP_CONVERSATION_NOTIFICATIONS.md)
 - [V2 Workflow Alert Notices](V2_WORKFLOW_ALERT_NOTICES.md)
+- [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md)
 - [Chat Orchestration Workflows Roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md), Track N
 - [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }})
 - [Chat settings]({{ '/admin/chat/' | relative_url }})
