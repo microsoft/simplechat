@@ -81,9 +81,11 @@ from functions_control_center_public_workspaces import (
     select_workspace_ids, workspace_members, workspace_row,
 )
 from functions_safety_remediation import (
+    SAFETY_REQUEST_NOT_CURRENT_MESSAGE,
     build_safety_action_execution_updates,
     execute_safety_violation_action,
     get_safety_log_item,
+    safety_log_awaits_request,
     update_safety_log_action_state,
 )
 from functions_public_workspaces import (
@@ -8792,6 +8794,10 @@ def register_route_backend_control_center(bp):
             return {'success': False, 'message': 'Approval metadata is missing the safety log reference.'}
 
         safety_log = get_safety_log_item(safety_log_id)
+        # Only the request its violation is waiting on is carried out. One the violation has
+        # moved on from -- withdrawn, replaced by a newer request, or settled -- changes nothing.
+        if not safety_log_awaits_request(safety_log, approval.get('id')):
+            return {'success': False, 'message': SAFETY_REQUEST_NOT_CURRENT_MESSAGE}
         action = metadata.get('violation_action')
         if not action:
             return {'success': False, 'message': 'Approval metadata is missing the violation action.'}

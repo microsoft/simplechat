@@ -87,6 +87,20 @@ SAFETY_REQUEST_LOOKUP_BATCH = 100
 SAFETY_REQUEST_FAILED_MESSAGE = (
     'The approved action could not be completed. Open the approval request for details.'
 )
+SAFETY_REQUEST_NOT_CURRENT_MESSAGE = (
+    'The safety violation is no longer waiting on this request, so nothing was changed. '
+    'Open the violation to decide what to do now.'
+)
+# What a remediation decision rests on: the request the violation waits on, a warning being
+# sent, and the warning last recorded. A reviewer's save is written only while these are as
+# the save read them, so it never lands on another save's warning or request.
+SAFETY_REMEDIATION_STATE_FIELDS = (
+    'action_request_status',
+    'action_request_id',
+    'warning_send_claim_id',
+    'warning_notification_id',
+    'warning_issued_at',
+)
 
 
 class SafetyLogConflict(Exception):
@@ -164,6 +178,21 @@ def _safety_request_still_pending(log_item: Dict[str, Any], approval_id: Optiona
         and _safety_request_status(log_item) == SAFETY_REQUEST_PENDING
         and log_item.get('action_request_id') == approval_id
     )
+
+
+def safety_log_awaits_request(log_item: Optional[Dict[str, Any]], approval_id: Optional[str]) -> bool:
+    """True while a violation is waiting on exactly this remediation request.
+
+    An approved request is carried out only then. One its violation has moved on from --
+    withdrawn, replaced by a newer request, or settled -- must not change the user's access.
+    """
+    return _safety_request_still_pending(log_item or {}, approval_id)
+
+
+def safety_remediation_state(log_item: Optional[Dict[str, Any]]) -> Tuple[Any, ...]:
+    """The parts of a violation a remediation decision rests on, to compare a later read with."""
+    log_item = log_item or {}
+    return tuple(log_item.get(field) for field in SAFETY_REMEDIATION_STATE_FIELDS)
 
 
 def release_safety_log_after_approval_decision(

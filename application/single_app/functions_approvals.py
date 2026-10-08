@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from urllib.parse import quote
+from azure.core import MatchConditions
 from content_screening.contracts import (
     ScreeningConflictError,
     ScreeningError,
@@ -783,6 +784,63 @@ def _release_denied_safety_request(approval: Dict[str, Any], auto_denied: bool) 
         }, level=logging.WARNING)
 
 
+def withdraw_approval_request(
+    approval_id: str,
+    group_id: str,
+    withdrawn_by_id: str,
+    withdrawn_by_email: str,
+    withdrawn_by_name: str,
+    comment: str,
+) -> Optional[Dict[str, Any]]:
+    """Deny a pending request its own creator could not record, and remove its notices.
+
+    Used when the record a request was raised from changed while the request was being
+    created, so nothing links the two and the request must never be approved. The denial is
+    written only while the request is still pending, conditionally on the version read, so it
+    never overwrites a decision made meanwhile. The notices the request sent -- that it waits
+    for reviewers, and that it was submitted -- are removed: the requester was already told
+    nothing was requested. Returns the denied request, or None when it was already decided.
+    """
+    current = cosmos_approvals_container.read_item(item=approval_id, partition_key=group_id)
+    if current.get('status') != STATUS_PENDING:
+        log_event("[APPROVALS] A request to withdraw was already decided, so it was left as it is.", {
+            'approval_id': approval_id,
+            'request_type': current.get('request_type'),
+            'status': current.get('status'),
+        }, level=logging.WARNING)
+        return None
+
+    current.update({
+        'status': STATUS_DENIED,
+        'approved_by_id': withdrawn_by_id,
+        'approved_by_email': withdrawn_by_email,
+        'approved_by_name': withdrawn_by_name,
+        'approved_at': datetime.utcnow().isoformat(),
+        'approval_comment': comment,
+        'ttl': -1,
+    })
+    etag = current.get('_etag')
+    if etag:
+        stored = cosmos_approvals_container.replace_item(
+            item=approval_id,
+            body=current,
+            etag=etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    else:
+        stored = cosmos_approvals_container.upsert_item(current)
+
+    _clear_pending_admin_notifications(approval_id)
+    _clear_requester_pending_notification(approval_id)
+    log_event("[APPROVALS] Request withdrawn", {
+        'approval_id': approval_id,
+        'request_type': current.get('request_type'),
+        'group_id': group_id,
+        'withdrawn_by': withdrawn_by_email,
+    })
+    return stored if isinstance(stored, dict) else current
+
+
 def mark_approval_executed(
     approval_id: str,
     group_id: str,
@@ -1407,6 +1465,20 @@ def _create_requester_pending_notification(approval: Dict[str, Any]) -> None:
             'approval_id': approval['id']
         }, level=logging.WARNING)
         debug_print(f"Error notifying requester of pending approval {approval['id']}: {e}")
+
+
+def _clear_requester_pending_notification(approval_id: str) -> None:
+    """Remove the requester's "request submitted" notice for a request that was withdrawn."""
+    try:
+        delete_notifications_by_metadata(
+            metadata_filters={'approval_id': approval_id},
+            notification_types=['approval_request_pending_submitter'],
+        )
+    except Exception as e:
+        log_event("[APPROVALS] Error clearing the requester's pending notification", {
+            'error_type': type(e).__name__,
+            'approval_id': approval_id,
+        }, level=logging.WARNING)
 
 
 def _clear_pending_admin_notifications(approval_id: str, *, safe_errors=False) -> None:

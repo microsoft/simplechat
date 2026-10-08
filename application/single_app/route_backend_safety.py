@@ -28,6 +28,7 @@ from functions_approvals import (
     create_approval_request,
     get_approval_roles_for_request_type,
     mark_approval_executed,
+    withdraw_approval_request,
 )
 from functions_authentication import *
 from functions_review_center import (
@@ -56,12 +57,14 @@ from functions_review_lifecycle import (
     serialize_archive_metadata,
 )
 from functions_safety_remediation import (
+    SAFETY_LOG_WRITE_ATTEMPTS,
     SAFETY_REMEDIATION_BLOCK,
     SAFETY_REMEDIATION_SUSPEND,
     SAFETY_REMEDIATION_WARNING,
     SAFETY_REQUEST_STATUSES,
     SAFETY_WARNING_REPLACED_CODE,
     SAFETY_WARNING_REPLACED_MESSAGE,
+    SAFETY_WARNING_SEND_CLAIM_FIELDS,
     SafetyLogConflict,
     acknowledge_safety_warning,
     build_safety_action_execution_updates,
@@ -75,6 +78,7 @@ from functions_safety_remediation import (
     reconcile_pending_safety_log,
     reconcile_pending_safety_logs,
     resolve_safety_target_user,
+    safety_remediation_state,
     safety_warning_send_in_progress,
     serialize_safety_warning_state,
     write_safety_log_updates,
@@ -135,14 +139,25 @@ SAFETY_REMEDIATION_PENDING_CODE = 'remediation_pending'
 SAFETY_RECORD_CHANGED_MESSAGE = (
     'This violation changed after you opened it. Reload it to see the latest version, then try again.'
 )
+SAFETY_REQUEST_NOT_RECORDED_MESSAGE = (
+    'This violation changed while the request was being created, so nothing was requested. '
+    'Reload it to see the latest version, then try again.'
+)
+SAFETY_REQUEST_WITHDRAWN_COMMENT = (
+    'Withdrawn automatically: the safety violation changed while this request was being created, '
+    'so the request was never recorded on it.'
+)
+SAFETY_ARCHIVE_IN_PROGRESS_MESSAGE = (
+    'This safety violation cannot be archived or restored while a warning for it '
+    'is being sent. Try again in a moment.'
+)
 # "Open" is the reviewer's queue: everything not yet resolved or dismissed.
 SAFETY_LIST_STATUS_OPEN = 'open'
 SAFETY_OPEN_STATUSES = {'New', 'In-Review'}
 SAFETY_WARNING_FILTERS = {'pending', 'acknowledged', 'not_tracked'}
-# The fields a reviewer's save writes, the remediation request fields an approval request
-# writes beside them, and the archive fields, so a conflicting write is merged field by
-# field and never drops another writer's change.
-SAFETY_REVIEW_FIELDS = ('status', 'action', 'notes', 'created_at', 'last_updated')
+# The remediation request fields an approval request writes beside a reviewer's own changes,
+# and the archive fields, so a conflicting write is merged field by field and never drops
+# another writer's change. A reviewer's save writes only the review fields it was sent.
 SAFETY_REQUEST_FIELDS = (
     'action_request_id',
     'action_request_type',
@@ -654,6 +669,64 @@ def _record_changed_body():
     return {'error': SAFETY_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}
 
 
+def _write_attempts(expected_etag):
+    """How often a save may write: once when it names the version it read, so a conflict is
+    refused rather than merged onto a newer version; otherwise it is merged field by field."""
+    return 1 if expected_etag else SAFETY_LOG_WRITE_ATTEMPTS
+
+
+def _remediation_unchanged(read_item):
+    """A guard for a reviewer's save: the violation's request and warning are as the save read them.
+
+    A conflicting write is merged onto a fresh read only while nothing a remediation decision
+    rests on has moved -- no warning is being sent or was recorded since, and the violation
+    waits on the same request -- so a save never lands on another save's warning or request.
+    """
+    expected = safety_remediation_state(read_item)
+
+    def guard(current):
+        return not safety_warning_send_in_progress(current) and safety_remediation_state(current) == expected
+
+    return guard
+
+
+def _withdraw_safety_request(approval, actor, log_id):
+    """Withdraw a remediation request this save created but could not record on its violation.
+
+    Nothing links the violation to the request then, so it is withdrawn at once instead of
+    being left for a reviewer to approve. Should withdrawing fail, approval still refuses to
+    carry out a request its violation is not waiting on. Returns True when it was withdrawn.
+    """
+    approval = approval or {}
+    try:
+        withdrawn = withdraw_approval_request(
+            approval_id=approval.get('id'),
+            group_id=approval.get('group_id'),
+            withdrawn_by_id=actor.get('id'),
+            withdrawn_by_email=actor.get('email') or '',
+            withdrawn_by_name=actor.get('name') or '',
+            comment=SAFETY_REQUEST_WITHDRAWN_COMMENT,
+        )
+    except Exception as exc:
+        log_event(
+            '[SAFETY_REMEDIATION] A remediation request its violation could not record was not withdrawn.',
+            {'safety_log_id': log_id, 'approval_id': approval.get('id'), 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        return False
+    log_event(
+        '[SAFETY_REMEDIATION] A remediation request was withdrawn because its violation changed while it was created.',
+        {
+            'safety_log_id': log_id,
+            'approval_id': approval.get('id'),
+            'actor_id': actor.get('id'),
+            'withdrawn': withdrawn is not None,
+        },
+        level=logging.WARNING,
+    )
+    return withdrawn is not None
+
+
 def _response_parts(result):
     """The JSON body and status of a route-style result, for one bulk operation."""
     if isinstance(result, tuple):
@@ -762,20 +835,24 @@ def _archive_safety_log(log_id, archived, actor, expected_etag=None):
         # A warning being sent is recorded on the record when it finishes; wait for that.
         if safety_warning_send_in_progress(item):
             return {
-                'error': (
-                    'This safety violation cannot be archived or restored while a warning for it '
-                    'is being sent. Try again in a moment.'
-                ),
+                'error': SAFETY_ARCHIVE_IN_PROGRESS_MESSAGE,
                 'code': SAFETY_WARNING_IN_PROGRESS_CODE,
             }, 409
         was_archived = bool(item.get('is_archived'))
         apply_archive_state(item, archived, actor['id'])
         item['last_updated'] = datetime.utcnow().isoformat()
-        write_safety_log_updates(
+        stored = write_safety_log_updates(
             log_id,
             {field: item.get(field) for field in SAFETY_ARCHIVE_FIELDS if field in item},
             base_item=item,
+            guard=lambda current: not safety_warning_send_in_progress(current),
+            attempts=_write_attempts(expected_etag),
         )
+        if stored is None:
+            return {
+                'error': SAFETY_ARCHIVE_IN_PROGRESS_MESSAGE,
+                'code': SAFETY_WARNING_IN_PROGRESS_CODE,
+            }, 409
     except exceptions.CosmosResourceNotFoundError:
         return {'error': 'Safety violation not found'}, 404
     except SafetyLogConflict:
@@ -1243,7 +1320,10 @@ def register_route_backend_safety(bp):
 
         Saving a suspension or block again with the same action requests nothing more unless
         the body carries ``reissue: true``. ``etag``, when sent, must match the stored record,
-        or the save is refused with 409 ``record_changed``.
+        or the save is refused with 409 ``record_changed``; it is then written on that version
+        only, never merged onto a newer one. A suspension or block that can't be recorded on
+        the violation, because another save moved it on meanwhile, is withdrawn and refused
+        with 409 ``record_changed``.
         """
         data = request.get_json() or {}
         if not isinstance(data, dict):
@@ -1280,7 +1360,9 @@ def register_route_backend_safety(bp):
                 return jsonify(_record_changed_body()), 409
             # A request that was denied or has expired no longer locks the violation.
             item = reconcile_pending_safety_log(item)
-            original_request = (item.get('action_request_status'), item.get('action_request_id'))
+            # What this save decides from. Its write lands only while that still holds, so it
+            # never overwrites a warning being sent or recorded, or another request.
+            unchanged_remediation = _remediation_unchanged(item)
             previous_action = str(item.get('action') or 'None')
             existing_request_status = str(item.get('action_request_status') or '').strip().lower()
 
@@ -1290,8 +1372,12 @@ def register_route_backend_safety(bp):
             if action in SAFETY_REMEDIATION_ACTIONS and item.get("content_origin", "user") != "user":
                 return jsonify({"error": "AI-generated findings cannot be used to warn or restrict a user."}), 400
 
+            # Only what this save changes is written, so a concurrent change to anything else
+            # on the violation survives it.
+            review_updates = {}
             if not item.get("created_at"):
                 item["created_at"] = datetime.utcnow().isoformat()
+                review_updates['created_at'] = item['created_at']
 
             if existing_request_status == 'pending':
                 return jsonify({
@@ -1305,7 +1391,8 @@ def register_route_backend_safety(bp):
                     'error': SAFETY_WARNING_SENDING_MESSAGE,
                     'code': SAFETY_WARNING_IN_PROGRESS_CODE,
                 }), 409
-            if is_interrupted_safety_warning_send(item):
+            interrupted_send = is_interrupted_safety_warning_send(item)
+            if interrupted_send:
                 mark_interrupted_safety_warning_send(item)
                 existing_request_status = 'failed'
 
@@ -1321,11 +1408,14 @@ def register_route_backend_safety(bp):
 
             if status:
                 item["status"] = status
+                review_updates['status'] = status
             if action:
                 item["action"] = action
+                review_updates['action'] = action
 
             if notes is not None:
                 item["notes"] = notes
+                review_updates['notes'] = notes
 
             actor = _get_safety_actor_context()
             if not actor.get('id'):
@@ -1408,25 +1498,48 @@ def register_route_backend_safety(bp):
                     item['action_executed_at'] = None
 
             item["last_updated"] = datetime.utcnow().isoformat()
+            review_updates['last_updated'] = item['last_updated']
 
             if restriction_requested:
-                # The approval request exists now, so it is recorded even if the violation
-                # changed meanwhile; only the review and request fields are merged in.
-                write_safety_log_updates(
-                    log_id,
-                    {field: item.get(field) for field in SAFETY_REVIEW_FIELDS + SAFETY_REQUEST_FIELDS if field in item},
-                    base_item=item,
-                )
-            elif write_safety_log_updates(
-                log_id,
-                {field: item.get(field) for field in SAFETY_REVIEW_FIELDS if field in item},
-                base_item=item,
-                guard=lambda current: (
-                    current.get('action_request_status'),
-                    current.get('action_request_id'),
-                ) == original_request,
-            ) is None:
-                return jsonify(_record_changed_body()), 409
+                request_updates = {field: item.get(field) for field in SAFETY_REQUEST_FIELDS if field in item}
+                if interrupted_send:
+                    # A save that stopped while sending a warning can never record it over this request.
+                    request_updates.update({field: None for field in SAFETY_WARNING_SEND_CLAIM_FIELDS})
+                try:
+                    recorded = write_safety_log_updates(
+                        log_id,
+                        {**review_updates, **request_updates},
+                        base_item=item,
+                        guard=unchanged_remediation,
+                        attempts=_write_attempts(expected_etag),
+                    )
+                except SafetyLogConflict:
+                    recorded = None
+                except Exception:
+                    _withdraw_safety_request(approval, actor, log_id)
+                    raise
+                if recorded is None:
+                    # The request exists, but the violation moved on -- another save sent a
+                    # warning or created a request, or the version this save named changed --
+                    # so nothing links the two. Withdraw it rather than leave it approvable.
+                    _withdraw_safety_request(approval, actor, log_id)
+                    return jsonify({
+                        'error': SAFETY_REQUEST_NOT_RECORDED_MESSAGE,
+                        'code': REVIEW_RECORD_CHANGED_CODE,
+                    }), 409
+            else:
+                try:
+                    written = write_safety_log_updates(
+                        log_id,
+                        review_updates,
+                        base_item=item,
+                        guard=unchanged_remediation,
+                        attempts=_write_attempts(expected_etag),
+                    )
+                except SafetyLogConflict:
+                    written = None
+                if written is None:
+                    return jsonify(_record_changed_body()), 409
 
             if restriction_requested:
                 if item.get('action_request_status') == 'pending':
@@ -1453,14 +1566,17 @@ def register_route_backend_safety(bp):
                 label = SAFETY_ACTION_LABELS[action]
                 if existing_request_status == 'executed':
                     return jsonify({
-                        'message': f'Safety log updated. The {label} was already applied, so it was not requested again.',
+                        'message': (
+                            f'Safety log updated. The {label} was already applied, so it was not requested again. '
+                            f'To request it again, select "Request this {label} again" and save.'
+                        ),
                         'approval_required': False,
                         'remediation_already_applied': True,
                     }), 200
                 return jsonify({
                     'message': (
                         f'Safety log updated. No new {label} was requested. '
-                        'Choose to request it again to create a new approval request.'
+                        f'To request it again, select "Request this {label} again" and save.'
                     ),
                     'approval_required': False,
                     'remediation_unchanged': True,

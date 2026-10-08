@@ -13,6 +13,7 @@ from functions_authentication import *
 from functions_notifications import create_notification
 from functions_review_center import (
     REVIEW_RECORD_CHANGED_CODE,
+    REVIEW_WRITE_ATTEMPTS,
     ReviewRecordConflict,
     ReviewRequestError,
     cap_review_ids,
@@ -326,6 +327,12 @@ def _feedback_record_changed_body():
     return {'error': FEEDBACK_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}
 
 
+def _feedback_write_attempts(expected_etag):
+    """How often a save may write: once when it names the version it read, so a conflict is
+    refused rather than merged onto a newer version; otherwise it is merged field by field."""
+    return 1 if expected_etag else REVIEW_WRITE_ATTEMPTS
+
+
 def _feedback_acknowledged(item):
     return bool((item.get('adminReview') or {}).get('acknowledged'))
 
@@ -528,7 +535,15 @@ def _apply_feedback_review_update(feedback_id, data, actor):
         record["adminReview"] = admin_review
 
     try:
-        stored = replace_review_record(cosmos_feedback_container, feedback_id, apply_review, base_item=feedback_doc)
+        # A save that names the version it read is written on that version or not at all;
+        # one that doesn't is merged field by field onto a newer version.
+        stored = replace_review_record(
+            cosmos_feedback_container,
+            feedback_id,
+            apply_review,
+            base_item=feedback_doc,
+            attempts=_feedback_write_attempts(expected_etag),
+        )
     except ReviewRecordConflict:
         return _feedback_record_changed_body(), 409
     except CosmosResourceNotFoundError:
@@ -574,6 +589,7 @@ def _archive_feedback(feedback_id, archived, actor, expected_etag=None):
             feedback_id,
             apply_archive,
             base_item=feedback_doc,
+            attempts=_feedback_write_attempts(expected_etag),
         )
     except CosmosResourceNotFoundError:
         return {'error': 'Feedback not found'}, 404
