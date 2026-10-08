@@ -4615,6 +4615,7 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": [
                 {"key": "enable_chat_orchestration", "equals": True},
                 {"key": "allow_user_workflows", "equals": True},
+                {"key": "enable_chat_orchestration_workflow_runs", "equals": True},
                 {"key": "enable_chat_orchestration_workflow_run_wait", "equals": True},
             ],
             "group": {"id": "limits", "label": "Limits", "variant": "limits"},
