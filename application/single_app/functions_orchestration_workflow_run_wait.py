@@ -11,6 +11,8 @@ model wrote.
 as plan replay, import it to refuse a step that waits on a saved workflow run.
 """
 
+import logging
+
 from functions_m365_workflow_binding import M365_ACTIVE_STATES
 
 
@@ -26,6 +28,14 @@ QUICK_RUN_FLOW_MAX_DEPTH = 32
 QUICK_RUN_LOOP_KINDS = frozenset({'for_each', 'repeat_until'})
 # Publication policies that finish a task only after a person approves it or indexing completes.
 QUICK_RUN_REVIEW_POLICIES = frozenset({'approved', 'indexed_ready'})
+# A waiting plan resumes in the background without the user's sign-in, so a plan that also uses
+# any of these, which need the signed-in session or evaluate the caller's roles when they run,
+# never waits.
+SESSION_NEEDING_CAPABILITIES = frozenset({
+    'web_search', 'url_fetch', 'deep_research', 'agent_invoke', 'action_invoke',
+    'workflow_handoff', 'workflow_propose',
+})
+WAIT_MARKER_VERSION = 1
 
 QUICK_RUN_REASON_WAIT_DISABLED = 'wait_disabled'
 QUICK_RUN_REASON_INVALID = 'invalid_workflow'
@@ -187,6 +197,180 @@ def quick_run_eligibility(workflow, settings):
     return True, None
 
 
+def headless_request_context(request_context):
+    """The caller's own request context as a resumed continuation sees it.
+
+    A waiting plan resumes in the background, without the user's sign-in: no roles, no email and
+    no native bridge. Everything else is the caller's own context, unchanged.
+    """
+    context = dict(request_context) if isinstance(request_context, dict) else {}
+    context.update({'user_roles': [], 'user_email': None, 'native_bridge_for_step': None})
+    return context
+
+
+def headless_capability_ids(settings, request_context, candidate_ids, *, export_catalog=None):
+    """The candidate capabilities a resumed continuation can still use. Any failure returns none."""
+    settings = settings if isinstance(settings, dict) else {}
+    candidates = {value for value in candidate_ids or () if isinstance(value, str)}
+    if not candidates:
+        return frozenset()
+    try:
+        from functions_orchestration_registry import resolve_available_capability_ids
+
+        available = resolve_available_capability_ids(
+            settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+            request_context=headless_request_context(request_context), candidate_ids=candidates,
+            export_catalog=export_catalog,
+        )
+    except Exception as exc:  # noqa: BLE001 - a plan that can't be checked simply doesn't wait
+        from functions_appinsights import log_event
+
+        log_event(
+            '[ChatOrchestrationWorkflowRunWait] Headless capability check failed; the plan will not wait.',
+            extra={'error_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        return frozenset()
+    return frozenset(value for value in available if value in candidates)
+
+
+def _enabled(step):
+    return step.get('enabled', True) is not False
+
+
+def _named_and_bound(step):
+    """The step ids a step names, and ``(step_id, output_name, optional)`` for each input binding."""
+    names, bindings = set(), []
+    depends_on = step.get('depends_on')
+    for value in depends_on if isinstance(depends_on, list) else ():
+        if isinstance(value, str):
+            names.add(value)
+    inputs = step.get('inputs')
+    for value in inputs.values() if isinstance(inputs, dict) else ():
+        binding = value.get('binding') if isinstance(value, dict) else None
+        if isinstance(binding, dict) and isinstance(binding.get('step_id'), str):
+            names.add(binding['step_id'])
+            bindings.append((binding['step_id'], binding.get('output_name'), value.get('optional') is True))
+    return names, bindings
+
+
+def waited_run_consumers_valid(steps, final_response, run_step_id):
+    """Whether a waited run's result reaches only the answer, and the answer really needs it.
+
+    The same masking rule as ``workflow_results``: a step that names the run step, or names a step
+    that does, is tainted, and only ``compose`` may name a tainted step, so no export, analysis,
+    agent or action can copy the run's result out of the answer. At least one enabled ``compose``
+    must bind the run's ``run`` output through a required input, which keeps the run step required
+    work, and the final response must not select the run step itself.
+    """
+    steps = [step for step in steps or () if isinstance(step, dict)]
+    if not isinstance(run_step_id, str) or not run_step_id:
+        return False
+    if isinstance(final_response, dict) and final_response.get('step_id') == run_step_id:
+        return False
+    named = {}
+    required_reader = False
+    for step in steps:
+        names, bindings = _named_and_bound(step)
+        named[id(step)] = names
+        if step.get('capability_id') == 'compose' and _enabled(step) and any(
+            producer == run_step_id and output == 'run' and not optional
+            for producer, output, optional in bindings
+        ):
+            required_reader = True
+    tainted = {run_step_id}
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            step_id = step.get('step_id')
+            if step_id not in tainted and named[id(step)] & tainted:
+                if step.get('capability_id') != 'compose' or not isinstance(step_id, str):
+                    return False
+                tainted.add(step_id)
+                changed = True
+    return required_reader
+
+
+def _single_run_step(steps):
+    """The plan's one enabled workflow_run step and its enabled capabilities, or None.
+
+    A plan waits only when nothing in it needs the user's session, which is checked before
+    anything else so the signed-in user's catalogs can't change the outcome, and only when it
+    starts exactly one workflow.
+    """
+    enabled = [step for step in steps if _enabled(step)]
+    capability_ids = {step.get('capability_id') for step in enabled}
+    if capability_ids & SESSION_NEEDING_CAPABILITIES:
+        return None
+    runs = [step for step in enabled if step.get('capability_id') == 'workflow_run']
+    if len(runs) != 1:
+        return None
+    run = runs[0]
+    arguments = run.get('arguments') if isinstance(run.get('arguments'), dict) else {}
+    handle = arguments.get('workflow')
+    if not isinstance(run.get('step_id'), str) or run.get('optional') is True or not isinstance(handle, str):
+        return None
+    return run, handle, capability_ids
+
+
+def compute_workflow_run_waits(steps, final_response, workflow_planning):
+    """Decide, on the server, which workflow_run step of a plan waits for its run.
+
+    Returns ``{step_id: {'version': 1, 'workflow': handle}}`` for the one step that waits, or
+    ``{}``. ``workflow_planning`` is the request's server-only planning context: the wait marker
+    is present only when an administrator configured the wait, its catalog entries carry
+    ``waitable`` only for workflows ``quick_run_eligibility`` accepted, and
+    ``headless_capability_ids`` lists what a resumed continuation can still use. Nothing a model
+    wrote is read: a step waits only when every rule holds, and anything unreadable refuses.
+    """
+    wait = workflow_planning.get('workflow_run_wait') if isinstance(workflow_planning, dict) else None
+    if not isinstance(wait, dict) or wait.get('ready') is not True:
+        return {}
+    headless = wait.get('headless_capability_ids')
+    if not isinstance(headless, (list, tuple, set, frozenset)):
+        return {}
+    steps = [step for step in steps or () if isinstance(step, dict)]
+    found = _single_run_step(steps)
+    if found is None:
+        return {}
+    run, handle, capability_ids = found
+    if not capability_ids <= {value for value in headless if isinstance(value, str)}:
+        return {}
+    from functions_orchestration_schema import workflow_run_catalog_entry
+
+    entry = workflow_run_catalog_entry(workflow_planning, handle)
+    if not isinstance(entry, dict) or entry.get('waitable') is not True:
+        return {}
+    if not waited_run_consumers_valid(steps, final_response, run['step_id']):
+        return {}
+    return {run['step_id']: {'version': WAIT_MARKER_VERSION, 'workflow': handle}}
+
+
+def stored_workflow_run_waits(marker, steps, final_response):
+    """Keep a stored plan's wait marker only where it still fits the plan exactly.
+
+    Used when a saved plan is validated again without a planning context, for example before it
+    runs. The marker was computed by the server when the plan was made, and the run step checks
+    the workflow and the settings again when it starts.
+    """
+    if not isinstance(marker, dict) or len(marker) != 1:
+        return {}
+    steps = [step for step in steps or () if isinstance(step, dict)]
+    found = _single_run_step(steps)
+    if found is None:
+        return {}
+    run, handle, _capability_ids = found
+    entry = marker.get(run['step_id'])
+    if (
+        not isinstance(entry, dict) or set(entry) != {'version', 'workflow'}
+        or entry.get('version') != WAIT_MARKER_VERSION or entry.get('workflow') != handle
+    ):
+        return {}
+    if not waited_run_consumers_valid(steps, final_response, run['step_id']):
+        return {}
+    return {run['step_id']: {'version': WAIT_MARKER_VERSION, 'workflow': handle}}
+
+
 __all__ = [
     'QUICK_RUN_FLOW_MAX_DEPTH',
     'QUICK_RUN_LOOP_KINDS',
@@ -209,8 +393,15 @@ __all__ = [
     'QUICK_RUN_REASON_WAIT_DISABLED',
     'QUICK_RUN_REVIEW_POLICIES',
     'SAVED_WORKFLOW_RUN_WAIT_KIND',
+    'SESSION_NEEDING_CAPABILITIES',
+    'WAIT_MARKER_VERSION',
     'WORKFLOW_RUN_WAIT_SETTING',
+    'compute_workflow_run_waits',
+    'headless_capability_ids',
+    'headless_request_context',
     'quick_run_eligibility',
     'quick_run_reason_text',
+    'stored_workflow_run_waits',
     'wait_configured',
+    'waited_run_consumers_valid',
 ]
