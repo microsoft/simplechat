@@ -42,9 +42,9 @@ When **Enable AI Assist in the Review Center** is on, AI can draft reviews for y
 - In the editor, **Ask AI** then **Analyze this record** suggests whether to acknowledge the feedback, analysis notes, an action, a response to the user, a theme and whether to archive it, with the AI's reason and confidence. **Apply to draft** fills your unsaved review and marks what it changed; check it, edit it, and save.
 - In the queue, check records and select **Triage with AI** to store a suggested review on each. Then open **AI suggestions** to approve them one at a time or together, or dismiss them.
 
-Approving a suggestion saves it as your review, with your name, and sets its theme. A suggested response to the user is saved like one you typed, so the user can read it with their feedback, but approving a suggestion never sends them a notification. To notify the user, open the feedback and save it with **Notify the user**.
+Approving a suggestion saves it as your review, with your name, and sets its theme. The user who gave the feedback can read a review's analysis notes, action taken and response to the user with their feedback, so the queue shows that text in full under **Visible to the user** for you to check before you approve; a field the suggestion would empty is shown as **Cleared**. Approving a suggestion never sends the user a notification. To notify the user, open the feedback and save it with **Notify the user**.
 
-The AI is sent the rating, the prompt, the response, the user's reason and the review so far, shortened, with email addresses and GUIDs in the text replaced. It is never told who the user is. An administrator turns AI assist on, and can give it your organization's review guidance, in [Security settings]({{ '/admin/security/' | relative_url }}#permissions-section).
+The AI is sent the rating, the prompt, the response, the user's reason and the review so far, shortened, with email addresses and GUIDs in the text replaced. It is never told who the user is, and it is only ever asked about one user's feedback at a time. Text it writes for a review that repeats a long passage of another feedback record in the same request is refused. An administrator turns AI assist on, and can give it your organization's review guidance, in [Security settings]({{ '/admin/security/' | relative_url }}#permissions-section).
 
 ## Archive and delete
 

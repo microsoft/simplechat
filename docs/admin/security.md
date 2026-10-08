@@ -59,7 +59,7 @@ in the V2 Review center: an analysis of one record in its editor, and a triage o
 suggestions wait in an **AI suggestions** queue for a person to approve or dismiss. It sits here
 because it extends what those reviewers can do, and it is off by default because it sends the
 records' text, without names, email addresses or ids, to the instruction-drafting model that
-**Draft with AI** uses. The model never saves or acts: a warning is sent, or a suspension or block
+**Draft with AI** uses, one user's records at a time. The model never saves or acts: a warning is sent, or a suspension or block
 requested, only when a reviewer applies a suggestion, and a suspension or block still needs a
 second reviewer's approval. Turning it off stops suggestions being made, applied or dismissed;
 stored ones stay on their records.
