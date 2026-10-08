@@ -32,8 +32,16 @@ Mail and calendar history search, and the agent stream context and
 interrupted-reply persistence repair, were added in **0.261.129**. See the
 [stream context and persistence fix](../fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md).
 
+In **0.261.302** the workflow encryption key creates itself in Key Vault,
+workflow sign-in returns to the registered `/getAToken` callback, sign-in
+results report to the window that opened them instead of showing raw JSON,
+chat status lists the sources a session can actually use, and V2 links stay in
+V2. Concurrent requests no longer erase each other's session writes, which had
+broken sign-in callbacks. See the
+[connection session race fix](../fixes/M365_CONNECTION_SESSION_RACE_FIX.md).
+
 Related version update: `application/single_app/config.py`.
-Associated issues: #1493 and #1523. Related future work: #954 and #956.
+Associated issues: #1493, #1523, #1604 and #1714. Related future work: #954 and #956.
 
 ## Overview
 
@@ -60,15 +68,29 @@ operations also pass through source-sharing checks.
   SharePoint `Sites.Selected` grants.
 - Existing chat Blob storage for retained evidence and resumable processing.
   This dependency is independent of whether enhanced-citation rendering is on.
-- Key Vault for saved workflow connections. Set the server environment variable
-  `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` to a dedicated Key Vault secret holding
-  a base64-encoded 32-byte encryption key. Preserve historical key versions
-  while rotating active connection caches.
-- Register `/api/m365/connections/callback` as a redirect URI for workflow
-  connection. This connection is separate from ordinary interactive sign-in.
+- Key Vault for saved workflow connections. Turn on Key Vault secret storage
+  in Admin Settings > Security > Secrets > Key Vault. Every user's saved
+  workflow sign-in is encrypted with one deployment-wide 256-bit key, bound to
+  that user's connection record. Since 0.261.302 SimpleChat creates the key
+  itself, as the secret `simplechat-m365-workflow-token-key`, the first time
+  anyone connects or an administrator saves settings; the application identity
+  needs Key Vault Secrets Officer, which Key Vault secret storage already
+  requires. The optional `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` app setting
+  renames the secret. Preserve historical key versions while rotating active
+  connection caches. Without Key Vault secret storage, Profile and V2 Settings
+  explain that workflow connections are not set up rather than failing on
+  Connect.
+- Workflow connection sign-in returns to the registered `/getAToken` callback
+  (since 0.261.302), routed by its `m365-workflow-` state prefix, so no extra
+  redirect URI is needed. `/api/m365/connections/callback` still completes
+  sign-ins for deployments that registered it. This connection is separate
+  from ordinary interactive sign-in.
 - Interactive chat reuses the registered `/getAToken` callback with a separate
   state/nonce/PKCE-protected flow and the existing server-side login session.
   It does not require a saved workflow connection or Key Vault.
+- A sign-in started in a popup ends on a small result page that reports the
+  outcome to the window that opened it and closes, so V2 never lands on a
+  classic page. A full-page sign-in from classic Profile returns to Profile.
 
 Admin Settings, **Agents & Actions**, offers `m365_retrieval_provider`
 (`auto` or `graph`) and `m365_trusted_download_hosts`. These hosts control

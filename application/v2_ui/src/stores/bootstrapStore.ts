@@ -17,6 +17,25 @@ import type { BootstrapPayload, PromptOption } from '../lib/types';
  */
 let refreshSequence = 0;
 
+/**
+ * When a bootstrap read last started, and how many are in flight.
+ *
+ * Focus and visibility changes ask for a refresh, and switching windows -- to a Microsoft 365
+ * sign-in popup and back, say -- fires them in bursts. The payload takes seconds to build, so
+ * `refreshWhenStale` skips a refresh while one is running or one started moments ago.
+ */
+let lastBootstrapStartedAt = 0;
+let bootstrapReadsInFlight = 0;
+
+/** Note that a bootstrap read is starting; call the returned function once it settles. */
+function startBootstrapRead(): () => void {
+    lastBootstrapStartedAt = Date.now();
+    bootstrapReadsInFlight += 1;
+    return () => {
+        bootstrapReadsInFlight -= 1;
+    };
+}
+
 interface BootstrapState {
     data: BootstrapPayload | null;
     loading: boolean;
@@ -33,6 +52,11 @@ interface BootstrapState {
      * those has to reload the browser before the change is visible without this.
      */
     refresh: () => Promise<void>;
+    /**
+     * `refresh`, unless a read is already running or one started within `minIntervalMs`.
+     * For focus and visibility changes, which arrive in bursts; a save should call `refresh`.
+     */
+    refreshWhenStale: (minIntervalMs: number) => Promise<void>;
     /** An identity-bound selection must not install a response from a different sign-in. */
     refreshRequired: (expectedViewerId?: string) => Promise<BootstrapPayload>;
     /**
@@ -55,6 +79,7 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
 
     load: async () => {
         set({ loading: true, error: null, authExpired: false });
+        const settle = startBootstrapRead();
         try {
             const data = await fetchBootstrap();
             set({ data, loading: false });
@@ -78,11 +103,14 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
                         ? error.message
                         : 'Failed to load the application.',
             });
+        } finally {
+            settle();
         }
     },
 
     refresh: async () => {
         const sequence = ++refreshSequence;
+        const settle = startBootstrapRead();
         try {
             const data = await fetchBootstrap();
             if (sequence === refreshSequence) {
@@ -95,12 +123,27 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
             // tear down the page being worked on -- unsaved edits included -- over a
             // refetch the reader never asked for. The caller's own write already
             // succeeded, so a briefly stale shell is cosmetic and the next load fixes it.
+        } finally {
+            settle();
         }
+    },
+
+    refreshWhenStale: async (minIntervalMs) => {
+        if (bootstrapReadsInFlight > 0 || Date.now() - lastBootstrapStartedAt < minIntervalMs) {
+            return;
+        }
+        await get().refresh();
     },
 
     refreshRequired: async (expectedViewerId) => {
         const sequence = ++refreshSequence;
-        const data = await fetchBootstrap();
+        const settle = startBootstrapRead();
+        let data: BootstrapPayload;
+        try {
+            data = await fetchBootstrap();
+        } finally {
+            settle();
+        }
         if (sequence !== refreshSequence) {
             throw new Error('Application availability changed during refresh. Try again.');
         }

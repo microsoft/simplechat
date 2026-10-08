@@ -3,7 +3,7 @@
 //
 // Resuming only queues the saved request again; its answer appears in the original
 // conversation. Requests that need recovery cannot be resumed from here, and workflow
-// requests are fixed by reconnecting the workflow's account in Profile.
+// requests are fixed by reconnecting the workflow's account in Settings.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -17,7 +17,8 @@ import {
     type PausedRequest,
 } from '../../lib/approvalsApi';
 import { chatHrefForConversation } from '../../lib/conversationUrl';
-import { M365_PROFILE_CONNECTION_HREF, connectMicrosoft365, m365Sources } from '../../lib/m365Connect';
+import { connectMicrosoft365, m365Sources } from '../../lib/m365Connect';
+import { M365_CONNECT_HREF } from '../../lib/m365Links';
 import { GlassButton, Skeleton } from '../ui/primitives';
 import {
     ApprovalSplit,
@@ -230,12 +231,12 @@ function PausedRequestDetail({ item }: { item: PausedRequest }) {
             ) : null}
             <div className="flex flex-wrap gap-2">
                 {item.workflow_id ? (
-                    <a
-                        href={M365_PROFILE_CONNECTION_HREF}
+                    <Link
+                        to={M365_CONNECT_HREF}
                         className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm text-accent hover:bg-accent-soft"
                     >
                         Review Microsoft 365 connection
-                    </a>
+                    </Link>
                 ) : authSources && !queued ? (
                     <GlassButton size="sm" variant="primary" disabled={busy} onClick={() => void connectAndResume()} data-testid="v2-paused-request-connect">
                         {busy ? <Loader2 size={14} className="animate-spin" /> : <PlugZap size={14} />}

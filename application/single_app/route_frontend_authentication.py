@@ -17,7 +17,7 @@ from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, create_ci_bearer_session, get_graph_authority, get_graph_endpoint, get_requested_oauth_scopes
 from functions_debug import debug_print
 from functions_settings import get_settings, sanitize_settings_for_user
-from functions_m365_connections import CHAT_AUTH_STATE_PREFIX
+from functions_m365_connections import CHAT_AUTH_STATE_PREFIX, WORKFLOW_AUTH_STATE_PREFIX
 from swagger_wrapper import swagger_route, get_auth_security
 
 def build_front_door_urls(front_door_url):
@@ -239,6 +239,10 @@ def register_route_frontend_authentication(bp):
             # The M365 flow owns state/nonce validation and preserves the current app session.
             from route_backend_m365 import complete_m365_chat_connection_callback
             return complete_m365_chat_connection_callback()
+        if (request.args.get('state') or '').startswith(WORKFLOW_AUTH_STATE_PREFIX):
+            # Saved workflow sign-in reuses this registered callback; its flow is validated server-side.
+            from route_backend_m365 import complete_m365_workflow_connection_callback
+            return complete_m365_workflow_connection_callback()
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
             error = request.args.get('error')

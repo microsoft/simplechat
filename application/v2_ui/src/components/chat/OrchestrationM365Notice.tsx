@@ -1,12 +1,9 @@
 // OrchestrationM365Notice.tsx
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { GlassButton } from '../ui/primitives';
-import {
-    M365_APPROVALS_HREF,
-    M365_PROFILE_CONNECTION_HREF,
-    connectMicrosoft365,
-    m365Sources,
-} from '../../lib/m365Connect';
+import { connectMicrosoft365, m365Sources } from '../../lib/m365Connect';
+import { M365_APPROVALS_HREF, M365_CHAT_CONNECTION_HREF } from '../../lib/m365Links';
 import type { OrchestrationFailure } from '../../lib/orchestration';
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -57,18 +54,18 @@ export function OrchestrationM365Notice({ failures }: { failures: OrchestrationF
             ) : null}
             {signIn && !sources.length ? (
                 <p>
-                    <a href={M365_PROFILE_CONNECTION_HREF} className="font-medium text-accent underline underline-offset-2">
-                        Connect Microsoft 365 in Profile settings
-                    </a>
+                    <Link to={M365_CHAT_CONNECTION_HREF} className="font-medium text-accent underline underline-offset-2">
+                        Connect Microsoft 365 in Settings
+                    </Link>
                     , then select Retry from failed step.
                 </p>
             ) : null}
             {error ? <p role="alert" className="text-danger">{error}</p> : null}
             {approval ? (
                 <p>
-                    <a href={M365_APPROVALS_HREF} className="font-medium text-accent underline underline-offset-2">
+                    <Link to={M365_APPROVALS_HREF} className="font-medium text-accent underline underline-offset-2">
                         Review the Microsoft 365 approval
-                    </a>
+                    </Link>
                     , then select Retry from failed step.
                 </p>
             ) : null}

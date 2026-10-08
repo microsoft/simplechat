@@ -1270,7 +1270,7 @@
             <p class="small">Reconnecting does not change sharing approvals or preferences, saved workflow credentials, or workflow Run as authorizations. It does not enable disabled action capabilities or fix unrelated model or storage configuration errors.</p>
             <div id="m365-chat-connection-notice" class="alert alert-success d-none" role="status" aria-live="polite"></div>
             <div id="m365-chat-connection-status" class="alert alert-info" role="status" aria-live="polite" tabindex="-1">Loading chat sign-in status...</div>
-            <p class="small text-muted">This status reflects local saved sign-in state, not a live test of Microsoft 365 access.</p>
+            <p class="small text-muted">Sources listed are those this session's sign-in already has permission for, including consent given at sign-in or by an administrator. Microsoft still checks your access each time a source runs.</p>
             <p id="m365-chat-connection-details" class="small"></p>
             <fieldset id="m365-chat-connection-fields" aria-describedby="m365-chat-source-permissions-help" disabled>
                 <legend class="fs-6">Sources to connect for chat</legend>
@@ -1290,6 +1290,8 @@
         <h6>Connect Microsoft 365 for workflows</h6>
         <p class="small">This is separate from ordinary sign-in, sharing preferences, and workflow approval. Each selected Run as workflow revision needs your explicit authorization. Disconnect stops future connected-account use and invalidates bindings; it does not sign you out of other applications.</p>
         <p class="small">This status is for saved workflow access. Interactive chat asks you to connect in the conversation when permission is needed; a disconnected workflow account does not disable chat.</p>
+        <div id="m365-connection-notice" class="alert alert-success d-none" role="status" aria-live="polite"></div>
+        <div id="m365-connection-readiness" class="alert alert-warning d-none" role="status" aria-live="polite"></div>
         <div id="m365-connection-status" class="alert alert-info" role="status" aria-live="polite">Loading workflow connection...</div>
         <dl id="m365-connection-details" class="row small"></dl>
         <fieldset id="m365-connection-fields" disabled>
@@ -1308,7 +1310,7 @@
                 <button type="button" class="btn btn-outline-danger" id="m365-disconnect-btn" disabled>Disconnect</button>
             </div>
         </fieldset>
-        <p class="form-text">Durable workflow sign-in requires the deployment's Key Vault-backed credential protection. If it is unavailable, connection fails explicitly; no plaintext or application-identity fallback is used.</p>
+        <p class="form-text">A saved workflow sign-in is encrypted with this deployment's key in Key Vault, which SimpleChat creates the first time anyone connects. There is no plaintext or application-identity fallback.</p>
         <h6 class="mt-4">Your workflow authorizations</h6>
         <div id="m365-bindings-status" class="small text-muted" role="status" aria-live="polite"></div>
         <div id="m365-workflow-bindings" class="d-grid gap-2"></div>

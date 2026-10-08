@@ -47,6 +47,9 @@ const AlertLabPage = import.meta.env.DEV
     ? lazy(() => import('./dev/AlertLabPage').then((lab) => ({ default: lab.AlertLabPage })))
     : null;
 
+/** Focus and visibility changes refresh bootstrap at most this often. */
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 15_000;
+
 function BootScreen() {
     return (
         <div className="flex h-full items-center justify-center p-6">
@@ -105,7 +108,7 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
 
 export function App() {
     const { data, loading, error, authExpired, load } = useBootstrapStore();
-    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
+    const refreshBootstrapWhenStale = useBootstrapStore((state) => state.refreshWhenStale);
     const loadUserSettings = useUserSettingsStore((state) => state.load);
     const fontSize = useUserSettingsStore(
         (state) => (state.settings.fontSizePreference as string) || 'm',
@@ -159,7 +162,9 @@ export function App() {
      * Refreshing on re-focus closes that gap for every setting at once rather than for
      * whichever one is being complained about. `refresh` is advisory -- it leaves the page
      * alone if the request fails, and never shows the boot screen -- so the worst case of a
-     * spurious wake-up is one wasted request.
+     * spurious wake-up is one wasted request. Window switches arrive in bursts, though, and
+     * the payload takes seconds to build, so a refresh is skipped while one is running or
+     * one started in the last few seconds.
      */
     useEffect(() => {
         if (standalonePage) {
@@ -167,7 +172,7 @@ export function App() {
         }
         const onVisible = () => {
             if (document.visibilityState === 'visible') {
-                void refreshBootstrap();
+                void refreshBootstrapWhenStale(FOCUS_REFRESH_MIN_INTERVAL_MS);
             }
         };
         document.addEventListener('visibilitychange', onVisible);
@@ -179,7 +184,7 @@ export function App() {
             document.removeEventListener('visibilitychange', onVisible);
             window.removeEventListener('focus', onVisible);
         };
-    }, [refreshBootstrap, standalonePage]);
+    }, [refreshBootstrapWhenStale, standalonePage]);
 
     useEffect(() => {
         const title = data?.branding?.app_title;

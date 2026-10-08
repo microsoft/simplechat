@@ -11,10 +11,10 @@
 // already published to a conversation, and the dialogs say so.
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
     Cable,
-    ExternalLink,
     KeyRound,
     Loader2,
     MessageSquare,
@@ -25,12 +25,12 @@ import {
 } from 'lucide-react';
 import { ApiError, request } from '../../lib/apiClient';
 import {
-    normalizeAuthorizationUrl,
     connectMicrosoft365,
+    connectMicrosoft365Workflow,
     m365Sources,
-    M365_APPROVALS_HREF,
     type M365Source,
 } from '../../lib/m365Connect';
+import { M365_APPROVALS_HREF } from '../../lib/m365Links';
 import { toast } from '../../stores/toastStore';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { SettingsCard } from './SettingsCard';
@@ -84,10 +84,30 @@ const ANALYSIS_DECISION_LABELS: Record<string, string> = {
 };
 
 const CHAT_STATUS_TEXT: Record<string, string> = {
-    available: 'Sign-in saved for this session',
-    not_connected: 'No Microsoft 365 sign-in is saved for this session',
-    reconnect_required: 'Reconnect Microsoft 365 before using these sources in chat',
+    available: 'Signed in to Microsoft 365 for this session',
+    not_connected: 'Not signed in to Microsoft 365 in this session',
+    reconnect_required: 'Microsoft 365 needs you to sign in again',
 };
+
+/**
+ * What the chat sign-in can do now. For a working sign-in the server lists the sources whose
+ * permissions it already holds, including consent given at sign-in or by an administrator, so
+ * this matches what chat actually does rather than only what was reconnected here.
+ */
+export function describeChatConnection(status: string, sources: M365Source[]): string {
+    const labels = sources.map((source) => M365_SOURCE_LABELS[source]).join(', ');
+    if (status === 'available') {
+        return labels
+            ? `${CHAT_STATUS_TEXT.available}. Chat can use: ${labels}. Microsoft still checks your access each time a source runs.`
+            : `${CHAT_STATUS_TEXT.available}, but no source's permissions are granted yet. Connect the sources chat should use.`;
+    }
+    if (status === 'reconnect_required') {
+        return labels
+            ? `${CHAT_STATUS_TEXT.reconnect_required} before chat can use ${labels}.`
+            : `${CHAT_STATUS_TEXT.reconnect_required} before chat can use your sources.`;
+    }
+    return `${CHAT_STATUS_TEXT.not_connected}. Chat asks you to connect the first time it needs a source, or connect here.`;
+}
 
 const SOURCE_PERMISSIONS_HELP =
     'Each source includes the permissions for all of its supported operations. Calendar includes reading events, creating invitations, mailbox timezone and recipient lookup. Email includes reading messages, managing drafts and read state, sending mail and recipient lookup. OneDrive and SPO include file discovery and reading. Microsoft shows the permissions before you consent.';
@@ -483,7 +503,7 @@ function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
         setConnecting(true);
         try {
             await connectMicrosoft365(selected);
-            toast.success('Microsoft 365 sign-in completed. Retry your original question in the conversation.');
+            toast.success('Microsoft 365 is connected for chat. Retry your original question in the conversation.');
             setReload((value) => value + 1);
         } catch (error) {
             toast.error(errorText(error, 'Microsoft 365 sign-in could not start.'));
@@ -497,7 +517,7 @@ function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
             title="Chat connection"
             sectionId="m365-chat-connection"
             Icon={MessageSquare}
-            description="Renew your interactive Microsoft 365 sign-in for chat, even when no request is waiting. It uses your current session and needs neither Key Vault nor a saved workflow connection. Reconnecting leaves sharing approvals, workflow credentials and workflow authorizations unchanged."
+            description="Your Microsoft 365 sign-in for chat in this browser session. Chat uses it to read the sources you allow, and asks you to connect when one needs more permission. It needs neither Key Vault nor a saved workflow connection, and reconnecting leaves sharing approvals, workflow credentials and workflow authorizations unchanged."
         >
             <div className="space-y-4">
                 {loadError ? (
@@ -506,9 +526,7 @@ function ChatConnectionCard({ refreshKey }: { refreshKey: number }) {
                     <StatusNote>Loading chat sign-in status…</StatusNote>
                 ) : (
                     <StatusNote tone={connection.status === 'reconnect_required' ? 'warn' : connection.status === 'available' ? 'ok' : 'info'}>
-                        {CHAT_STATUS_TEXT[connection.status]}. Sources saved for this session:{' '}
-                        {connection.sources.map((source) => M365_SOURCE_LABELS[source]).join(', ') || 'none'}. This is
-                        the saved sign-in state, not a live test; access is checked when a source runs.
+                        {describeChatConnection(connection.status, connection.sources)}
                     </StatusNote>
                 )}
                 <SourceCheckboxes
@@ -544,26 +562,51 @@ interface WorkflowConnection {
     authorized_scopes?: unknown;
 }
 
+interface WorkflowAvailability {
+    available: boolean;
+    message: string;
+}
+
+/** Whether this deployment can save workflow connections, as the server reports it. */
+export function readWorkflowAvailability(value: unknown): WorkflowAvailability {
+    const raw = (value ?? {}) as { available?: unknown; message?: unknown };
+    // An older server that does not report readiness is treated as ready; Connect then says why if not.
+    if (raw.available !== false) return { available: true, message: '' };
+    return {
+        available: false,
+        message: typeof raw.message === 'string' && raw.message.trim()
+            ? raw.message.trim()
+            : 'Workflow connections are not set up on this deployment yet. Ask an administrator.',
+    };
+}
+
 function WorkflowConnectionCard({
     refreshKey,
     onRevoke,
+    onConnected,
 }: {
     refreshKey: number;
     onRevoke: (pending: PendingRevocation) => void;
+    onConnected: () => void;
 }) {
     const [connection, setConnection] = useState<WorkflowConnection | null | undefined>(undefined);
+    const [availability, setAvailability] = useState<WorkflowAvailability>({ available: true, message: '' });
     const [selected, setSelected] = useState<M365Source[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [connecting, setConnecting] = useState(false);
 
     useEffect(() => {
         const controller = new AbortController();
-        m365Request<{ connection?: WorkflowConnection | null }>('/api/m365/connections', { signal: controller.signal })
+        m365Request<{ connection?: WorkflowConnection | null; workflow_connections?: unknown }>(
+            '/api/m365/connections',
+            { signal: controller.signal },
+        )
             .then((response) => {
                 if (!Object.prototype.hasOwnProperty.call(response, 'connection')) {
                     throw new Error('The workflow connection status could not be verified.');
                 }
                 setConnection(response.connection ?? null);
+                setAvailability(readWorkflowAvailability(response.workflow_connections));
                 setSelected(m365Sources(response.connection?.sources));
                 setLoadError(null);
             })
@@ -580,14 +623,13 @@ function WorkflowConnectionCard({
         }
         setConnecting(true);
         try {
-            const result = await m365Request<{ authorization_url?: unknown }>('/api/m365/connections/connect', {
-                method: 'POST',
-                body: { sources: selected },
-            });
-            // The sign-in returns to the classic Profile page, which confirms the saved connection.
-            window.location.assign(normalizeAuthorizationUrl(result.authorization_url));
+            // A popup, so the result comes back here rather than to a classic page.
+            await connectMicrosoft365Workflow(selected);
+            toast.success('Microsoft 365 is connected for workflows. Each Run as workflow still needs your authorization.');
+            onConnected();
         } catch (error) {
             toast.error(errorText(error, 'The workflow connection could not start.'));
+        } finally {
             setConnecting(false);
         }
     };
@@ -603,6 +645,7 @@ function WorkflowConnectionCard({
         ['Authorized sources', m365Sources(connection?.sources).map((source) => M365_SOURCE_LABELS[source]).join(', ') || 'None'],
         ['Delegated permissions', scopes.join(', ') || 'None'],
     ];
+    const blocked = !availability.available;
 
     return (
         <SettingsCard
@@ -618,6 +661,7 @@ function WorkflowConnectionCard({
                     <StatusNote>Loading workflow connection…</StatusNote>
                 ) : (
                     <>
+                        {blocked ? <StatusNote tone="warn">{availability.message}</StatusNote> : null}
                         <StatusNote tone={status === 'connected' ? 'ok' : 'info'}>
                             Workflow connection: {spaced(status)}.
                         </StatusNote>
@@ -635,18 +679,18 @@ function WorkflowConnectionCard({
                     legend="Sources to connect for workflows"
                     value={selected}
                     onChange={setSelected}
-                    disabled={connection === undefined || connecting}
+                    disabled={connection === undefined || connecting || blocked}
                     idPrefix="m365-workflow-source"
                 />
                 <div className="flex flex-wrap gap-2">
                     <button
                         type="button"
                         onClick={() => void connect()}
-                        disabled={connection === undefined || connecting}
+                        disabled={connection === undefined || connecting || blocked}
                         className={PRIMARY_BUTTON}
                     >
                         {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cable size={14} />}
-                        {connection?.id ? 'Reconnect for workflows' : 'Connect for workflows'}
+                        {connection?.id && status !== 'disconnected' ? 'Reconnect for workflows' : 'Connect for workflows'}
                     </button>
                     <button
                         type="button"
@@ -672,8 +716,8 @@ function WorkflowConnectionCard({
                     </button>
                 </div>
                 <p className="text-xs text-text-3">
-                    A saved workflow sign-in needs the deployment's Key Vault-backed credential protection. Without
-                    it, connecting fails; there is no plaintext or application-identity fallback.
+                    A saved workflow sign-in is encrypted with this deployment's key in Key Vault, which SimpleChat
+                    creates the first time anyone connects. There is no plaintext or application-identity fallback.
                 </p>
             </div>
         </SettingsCard>
@@ -740,10 +784,9 @@ function WorkflowAuthorizationsCard({
             Icon={KeyRound}
             description="The workflow revisions you have allowed to run as your Microsoft 365 account. Only your own authorizations are listed; decide pending requests from Approvals."
             actions={(
-                <a href={M365_APPROVALS_HREF} className={SECONDARY_BUTTON}>
+                <Link to={M365_APPROVALS_HREF} className={SECONDARY_BUTTON}>
                     Open Approvals
-                    <ExternalLink size={13} aria-hidden="true" />
-                </a>
+                </Link>
             )}
         >
             {loadError ? (
@@ -846,7 +889,11 @@ export function M365Cards() {
             </div>
             <SharingCard refreshKey={refreshKey} onRevoke={openRevocation} />
             <ChatConnectionCard refreshKey={refreshKey} />
-            <WorkflowConnectionCard refreshKey={refreshKey} onRevoke={openRevocation} />
+            <WorkflowConnectionCard
+                refreshKey={refreshKey}
+                onRevoke={openRevocation}
+                onConnected={() => setRefreshKey((value) => value + 1)}
+            />
             <WorkflowAuthorizationsCard refreshKey={refreshKey} onRevoke={openRevocation} />
 
             {pending && (
