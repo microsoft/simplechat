@@ -1369,8 +1369,9 @@ def build_plan_replay_result(record, answer_message=None):
             'status': execution_steps.get(step_id) or task_step_status.get(step_id) or 'not_run',
         })
     artifacts = []
-    metadata = (answer_message or {}).get('metadata') if isinstance(answer_message, dict) else {}
-    orchestration = metadata.get('orchestration') if isinstance(metadata, dict) else {}
+    metadata = answer_message.get('metadata') if isinstance(answer_message, dict) else None
+    metadata = metadata if isinstance(metadata, dict) else {}
+    orchestration = metadata.get('orchestration') if isinstance(metadata.get('orchestration'), dict) else {}
     for image in orchestration.get('generated_images') or []:
         if isinstance(image, dict) and image.get('visual_id'):
             artifacts.append({

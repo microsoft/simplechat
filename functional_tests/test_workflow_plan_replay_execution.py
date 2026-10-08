@@ -23,6 +23,7 @@ import threading
 import time
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from azure.core import MatchConditions
@@ -70,6 +71,20 @@ def _wait_for(predicate, message, timeout=10):
 @pytest.fixture
 def replay(initialized_application):
     return importlib.import_module("functions_workflow_plan_replay")
+
+
+@pytest.fixture
+def runner_helpers(initialized_application):
+    """The runner's real task sequence in this import generation, forgotten afterwards like the app."""
+    before = set(sys.modules)
+    tests = Path(__file__).resolve().parent
+    try:
+        yield importlib.import_module("test_workflow_task_sequence").load_runner_helpers
+    finally:
+        for name in set(sys.modules) - before:
+            path = getattr(sys.modules.get(name), "__file__", None)
+            if path and Path(path).resolve().is_relative_to(tests):
+                sys.modules.pop(name, None)
 
 
 def _settings(harness):
@@ -423,6 +438,11 @@ def test_the_typed_result_normalizes_ids_and_caps_the_inspector_copy(replay):
             == {k: v for k, v in value.items() if k != "final_response"}, "Only the answer text is capped.")
     require(len(value["final_response"]["text"]) == replay.PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT + 5,
             "Projecting never changes the stored result.")
+
+    # An answer that carries no orchestration metadata, or none at all, still yields a typed result.
+    for bare in (None, {"id": "answer-2"}, {"id": "answer-2", "metadata": {"orchestration": "prose"}}):
+        bare_value = replay.build_plan_replay_result(record, bare)
+        require([item["id"] for item in bare_value["artifacts"]] == ["7", "img"], bare_value["artifacts"])
 
 
 @pytest.mark.parametrize("readable", [True, False])
@@ -828,6 +848,77 @@ def test_an_interrupted_attempt_settles_its_own_run(harness, replay):
     require((record.get("failure") or {}).get("code") == "execution_interrupted", f"{record.get('failure')}")
     require(record.get("execution_lease") is None, "The stopped attempt releases its own lease.")
     _require_fenced(harness, _replay_run_id(replay, 1))
+
+
+def test_the_runner_replays_one_durable_unit_numbered_by_its_own_attempt(replay, runner_helpers, monkeypatch):
+    store_module = importlib.import_module("functions_workflow_runtime_store")
+    durable = importlib.import_module("functions_workflow_execution")
+    calls = []
+
+    def executor(workflow, task, settings, *, conversation_id, run_id, actor_user_id, attempt, check_cancelled):
+        unit = durable.current_workflow_execution().unit(UNIT_KEY)
+        calls.append({"attempt": attempt, "replay_safe": unit.get("replay_safe"), "actor": actor_user_id,
+                      "conversation": conversation_id, "run": run_id})
+        if len(calls) == 1:
+            raise ProcessDied()
+        check_cancelled()
+        value = replay.build_plan_replay_result({
+            "id": f"replay-attempt-{attempt}", "conversation_id": conversation_id, "status": "completed",
+            "outcome": "completed", "message": "The replayed content.",
+            "workflow_replay": {"plan_sha256": "a" * 64},
+        })
+        return {"reply": "The replayed content.", "authoritative_result": {"kind": "json", "value": value},
+                "plan_replay": replay.plan_replay_run_item_projection(value)}
+
+    monkeypatch.setattr(replay, "execute_plan_replay_task", executor)
+    helpers, saved_items = runner_helpers(lambda *args, **kwargs: pytest.fail("No runner answers a saved plan."))
+    # Bound to this import generation, whichever generation first loaded the shared helpers.
+    helpers.update({
+        "current_workflow_execution": durable.current_workflow_execution,
+        "workflow_unit": durable.workflow_unit,
+        "assert_workflow_execution_owned": durable.assert_workflow_execution_owned,
+        "_raise_if_workflow_run_cancelled": lambda *_args: durable.assert_workflow_execution_owned(),
+    })
+    workflow = {
+        "id": WORKFLOW_ID, "name": HOSTILE_NAME, "user_id": OWNER, "created_by": OWNER,
+        "definition_version": 2, "durable_execution": True, "runner_type": "model",
+        "document_action": {"type": "none"}, "error_handling": {"strategy": "halt", "retry_count": 2},
+        "tasks": [{"id": TASK_ID, "name": replay.PLAN_REPLAY_TASK_NAME, "type": replay.PLAN_REPLAY_TASK_TYPE,
+                   "instructions": FROZEN_INSTRUCTION, "plan_replay": {"plan_sha256": "a" * 64}}],
+    }
+    clock, results = RuntimeClock(), SavedResults()
+    store = _runtime_store(clock)
+
+    def run_sequence(lease):
+        with durable.workflow_execution_scope(_durable_execution(store, lease, results)):
+            return helpers["_execute_workflow_task_sequence"](
+                workflow, dict(REPLAY_SETTINGS), WORKFLOW_CONVERSATION, WORKFLOW_RUN, None, {},
+                actor_user_id=OWNER,
+            )
+
+    dead = store_module.WorkflowRuntimeLease(store, owner_id="worker-one", heartbeat_seconds=0)
+    dead.__enter__()
+    with pytest.raises(ProcessDied):
+        run_sequence(dead)
+    clock.now += timedelta(minutes=5)
+    with store_module.WorkflowRuntimeLease(store, owner_id="worker-two", heartbeat_seconds=0.02) as lease:
+        result = run_sequence(lease)
+
+    # The unit's own attempt numbers the replay, so a restart never reuses the dead worker's run
+    # identity; and the unit is replay-safe, so the restart replays instead of pausing for review.
+    require([call["attempt"] for call in calls] == [1, 2], f"The durable attempt numbers each replay: {calls}")
+    require(all(call["replay_safe"] is True for call in calls), f"The replay unit is replay-safe: {calls}")
+    require({(call["actor"], call["conversation"], call["run"]) for call in calls}
+            == {(OWNER, WORKFLOW_CONVERSATION, WORKFLOW_RUN)}, f"The creator replays in the workflow run: {calls}")
+    state = store.read()
+    unit = state["units"][UNIT_KEY]
+    require(unit.get("state") == "completed" and unit.get("attempt") == 2, f"The restart completes the unit: {unit}")
+    require(not state.get("gate"), f"A restart never pauses a replay for review: {state.get('gate')}")
+    require([task["status"] for task in result["task_results"]] == ["succeeded"], result["task_results"])
+    final = [item for item in saved_items if item.get("plan_replay")]
+    require(len(final) == 1, f"One run item carries the typed result: {saved_items}")
+    require((final[0].get("plan_replay") or {}).get("orchestration_run_id") == "replay-attempt-2",
+            f"The run item carries the typed result of the replay that completed: {final[0].get('plan_replay')}")
 
 
 if __name__ == "__main__":
