@@ -1,7 +1,7 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.271
+Version: 0.261.305
 Implemented in: 0.261.127
 Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
 The workflow editor takes focus and hands it back to Edit on close: 0.261.188
@@ -105,7 +105,7 @@ def test_partial_switch_has_explicit_read_only_recovery_without_replaying_patch(
     ui = group_ui
     ui.active_group = "group-a"
     ui.open("/groups/group-a")
-    ui.reject_next("GET", "/api/v2/bootstrap")
+    ui.reject_next("GET", "/api/v2/scope")
     ui.page.get_by_role("combobox", name="Group workspace").select_option("group-b")
     expect(ui.page.get_by_role("button", name="Refresh workspace selection", exact=True)).to_be_visible()
     expect(ui.page.get_by_role("combobox", name="Group workspace")).to_be_disabled()
@@ -116,6 +116,22 @@ def test_partial_switch_has_explicit_read_only_recovery_without_replaying_patch(
     expect(ui.page.get_by_text("Role: Member", exact=True)).to_be_visible()
     assert len([entry for entry in ui.writes if entry.path == "/api/groups/setActive"]) == 1
 
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_group_switch_uses_scope_confirmation_without_another_bootstrap(group_ui, width, height):
+    ui = group_ui
+    ui.active_group = "group-a"
+    ui.open("/groups/group-a", width=width, height=height)
+    expect(ui.page.get_by_text("About this group", exact=True)).to_be_visible()
+    before = len([entry for entry in ui.requests if entry.path == "/api/v2/bootstrap"])
+    ui.page.get_by_role("combobox", name="Group workspace").select_option("group-b")
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-b")
+    expect(ui.page.get_by_text("Role: Member", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("combobox", name="Group workspace")).to_have_value("group-b")
+    assert len([entry for entry in ui.requests if entry.path == "/api/v2/bootstrap"]) == before
+    assert len([entry for entry in ui.requests if entry.path == "/api/v2/scope"]) == 1
+    assert len([entry for entry in ui.writes if entry.path == "/api/groups/setActive"]) == 1
+    ui.assert_no_overflow()
 
 def test_group_delegation_editing_and_navigation_keep_the_correct_scope(group_ui):
     ui = group_ui

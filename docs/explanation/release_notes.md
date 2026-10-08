@@ -15,6 +15,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Part of #1550, refs #1543.
     *   (Ref: `functions_workflow_plan_replay.py`, `functions_workflow_runner.py`, `route_backend_orchestration.py` `/api/v2/orchestration/runs/<run_id>/plan-replay`, `PlanReplaySaveCard.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowRunHistory.tsx`, [Workflow plan replay](features/WORKFLOW_PLAN_REPLAY.md))
 
+### **(v0.261.306)**
+
+#### Bug Fixes
+
+*   **Consistent V2 Scope Response Contract**
+    *   Scope confirmation now uses the same response tuple format for successful reads and error paths, resolving the CodeQL mixed-tuple-returns finding without changing status codes, response bodies, or no-store behavior.
+    *   (Ref: `route_backend_v2.py` `v2_scope`, `test_v2_scope_and_bootstrap_timings.py`)
+
+### **(v0.261.305)**
+
+#### Bug Fixes
+
+*   **V2 Group Switching No Longer Rebuilds All Startup Data**
+    *   A group switch now confirms the saved selection through a lightweight scope read instead of waiting for the complete startup payload. Current-access checks, sign-in checks, and read-only recovery after an uncertain save remain in place.
+    *   An overlapping startup refresh cannot restore the previous selection. Startup and scope reads bypass the browser's HTTP cache.
+    *   Startup requests now report per-phase timing so the remaining first-load bottleneck can be measured; first-load optimization is a separate follow-up.
+    *   (Ref: `route_backend_v2.py`, `bootstrapStore.ts`, `groupWorkspaceStore.ts`, [V2 Group Switch Latency Fix](fixes/V2_GROUP_SWITCH_LATENCY_FIX.md), [#1725](https://github.com/microsoft/simplechat/issues/1725))
+
 ### **(v0.261.304)**
 
 #### Bug Fixes

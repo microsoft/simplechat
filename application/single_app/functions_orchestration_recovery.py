@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.304
+Version: 0.261.306
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
@@ -18,11 +18,15 @@ that confirmation: a plan step only reads Microsoft 365 data (0.261.304).
 A retry that could only resend requests a service declined is not offered.
 A run from the removed legacy contract is never retried, resumed or continued; only
 conversation deletion still reads it, to remove its saved data.
+Conversation cleanup reports safe failure stages and hashed correlations without
+logging provider text or changing the fail-closed deletion policy (0.261.306).
 """
 
 import logging
+import re
 import threading
 import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
@@ -32,14 +36,14 @@ from azure.cosmos import exceptions
 
 from content_screening.contracts import ScreeningError
 import functions_orchestration_runs as run_store
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_checkpoints import (
     CHECKPOINT_VERSION, DEPENDENCY_STATE_FIELDS, LIFECYCLE_ID, OPTIONAL_STATE_FIELDS, STATE_FIELDS,
     CheckpointError, CheckpointStore, context_binding, context_state,
     effective_plan, fingerprint, orchestration_answer_message_id, restore_context, step_input_fingerprint,
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
-from functions_orchestration_output_store import build_output_cleanup_intent
+from functions_orchestration_output_store import OutputError, build_output_cleanup_intent
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE, CAPABILITY_WORKFLOW_RESULTS, admitted_export_pairs, external_effect_capability_ids,
     get_capability,
@@ -1465,6 +1469,41 @@ class ExecutionCheckpoints:
         )
 
 
+def conversation_cleanup_failure_context(error, conversation_id, *, stage, run_id=None):
+    """Retain safe cleanup diagnostics without provider text or raw identifiers."""
+    context = {
+        **workflow_log_context(conversation_id=conversation_id, run_id=run_id),
+        'stage': stage,
+        'error_type': type(error).__name__,
+    }
+    if isinstance(error, (
+        RecoveryError, CheckpointError, PlanRevisionError, OutputError,
+        AnalysisWorkUnitConflictError, WorkflowResultIntegrityError, ResultUnavailableError,
+    )):
+        code = getattr(error, 'code', None)
+        if isinstance(code, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,79}', code):
+            context['failure_code'] = code
+    status_code = getattr(error, 'status_code', None)
+    if type(status_code) is int and 400 <= status_code <= 599:
+        context['status_code'] = status_code
+    return context
+
+
+@contextmanager
+def _conversation_cleanup_stage(conversation_id, *, stage, run_id=None):
+    try:
+        yield
+    except Exception as error:
+        log_event(
+            '[ORCHESTRATION_RUNS] Conversation cleanup stage failed.',
+            extra=conversation_cleanup_failure_context(
+                error, conversation_id, stage=stage, run_id=run_id,
+            ),
+            level=logging.ERROR, exceptionTraceback=False,
+        )
+        raise
+
+
 def cleanup_conversation_checkpoints(
     conversation_id, user_id, authorize, *, message_container=None, conversation_container=None,
     analysis_cleanup=None, analysis_fence=None, output_cleanup=None, retain_committed=False,
@@ -1473,27 +1512,29 @@ def cleanup_conversation_checkpoints(
     if not callable(authorize) or authorize() is False:
         raise RecoveryError(code='not_found', status_code=404)
     if conversation_container is not None:
-        for _ in range(8):
-            conversation = conversation_container.read_item(item=conversation_id, partition_key=conversation_id)
-            if conversation.get('user_id') != user_id:
-                raise RecoveryError(code='not_found', status_code=404)
-            replacement = run_store._strip_cosmos_metadata(conversation)
-            replacement['orchestration_deleted'] = True
-            try:
-                conversation_container.replace_item(
-                    item=conversation_id, body=replacement, etag=conversation['_etag'],
-                    match_condition=MatchConditions.IfNotModified,
-                )
-                break
-            except exceptions.CosmosAccessConditionFailedError:
-                continue
-        else:
-            raise CheckpointError()
-    rows = list(run_store.cosmos_orchestration_runs_container.query_items(
-        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id AND c.user_id = @user_id',
-        parameters=[{'name': '@conversation_id', 'value': conversation_id}, {'name': '@user_id', 'value': user_id}],
-        partition_key=conversation_id,
-    ))
+        with _conversation_cleanup_stage(conversation_id, stage='conversation_fence'):
+            for _ in range(8):
+                conversation = conversation_container.read_item(item=conversation_id, partition_key=conversation_id)
+                if conversation.get('user_id') != user_id:
+                    raise RecoveryError(code='not_found', status_code=404)
+                replacement = run_store._strip_cosmos_metadata(conversation)
+                replacement['orchestration_deleted'] = True
+                try:
+                    conversation_container.replace_item(
+                        item=conversation_id, body=replacement, etag=conversation['_etag'],
+                        match_condition=MatchConditions.IfNotModified,
+                    )
+                    break
+                except exceptions.CosmosAccessConditionFailedError:
+                    continue
+            else:
+                raise CheckpointError()
+    with _conversation_cleanup_stage(conversation_id, stage='run_discovery'):
+        rows = list(run_store.cosmos_orchestration_runs_container.query_items(
+            query='SELECT * FROM c WHERE c.conversation_id = @conversation_id AND c.user_id = @user_id',
+            parameters=[{'name': '@conversation_id', 'value': conversation_id}, {'name': '@user_id', 'value': user_id}],
+            partition_key=conversation_id,
+        ))
     visited = set()
     cleanup_runs = []
     for row in rows:
@@ -1502,100 +1543,104 @@ def cleanup_conversation_checkpoints(
         visited.add(row['id'])
         if not run_store._is_run_record(row) or row.get('user_id') != user_id:
             continue
-        for _ in range(8):
-            if authorize() is False:
-                raise RecoveryError(code='not_found', status_code=404)
-            current = read_revision_run(row['id'], user_id, conversation_id, allow_legacy=True)
-            updates = {
-                'checkpoints_deleted': True, 'execution_lease': None,
-                'recovery_blocked_code': 'context_unavailable',
-            }
-            intent = None
-            if not is_legacy_plan(current.get('plan')):
-                intent = build_output_cleanup_intent(current, retain_committed=retain_committed)
-                if intent['output_ids'] and output_cleanup is not None and not callable(output_cleanup):
-                    raise RecoveryError(
-                        'Generated-file cleanup is unavailable. The conversation was not deleted.',
-                        code='output_cleanup_required', status_code=503,
-                    )
-                updates['output_cleanup'] = intent
-            elif current.get('render_output_ids') or 'output_cleanup' in current:
-                raise CheckpointError('checkpoint_invalid')
-            store = None
-            if type(current.get('checkpoint_version')) is int and current['checkpoint_version'] == CHECKPOINT_VERSION:
-                store = checkpoint_store(current, authorize)
-                # A lost parent acknowledgment must already have genuine deletion proof.
-                store.fence(deleted=True, allow_missing=True)
-            elif intent is not None and intent['output_ids']:
-                raise CheckpointError('checkpoint_invalid')
-            fence_publication(current, message_container)
-            try:
-                current = _replace(current, updates)
-                break
-            except exceptions.CosmosAccessConditionFailedError:
-                continue
-        else:
-            raise CheckpointError()
-        if current.get('latest_attempt_run_id') and current['latest_attempt_run_id'] not in visited:
-            rows.append(read_revision_run(
-                current['latest_attempt_run_id'], user_id, conversation_id, allow_legacy=True,
-            ))
+        with _conversation_cleanup_stage(conversation_id, stage='run_fence', run_id=row['id']):
+            for _ in range(8):
+                if authorize() is False:
+                    raise RecoveryError(code='not_found', status_code=404)
+                current = read_revision_run(row['id'], user_id, conversation_id, allow_legacy=True)
+                updates = {
+                    'checkpoints_deleted': True, 'execution_lease': None,
+                    'recovery_blocked_code': 'context_unavailable',
+                }
+                intent = None
+                if not is_legacy_plan(current.get('plan')):
+                    intent = build_output_cleanup_intent(current, retain_committed=retain_committed)
+                    if intent['output_ids'] and output_cleanup is not None and not callable(output_cleanup):
+                        raise RecoveryError(
+                            'Generated-file cleanup is unavailable. The conversation was not deleted.',
+                            code='output_cleanup_required', status_code=503,
+                        )
+                    updates['output_cleanup'] = intent
+                elif current.get('render_output_ids') or 'output_cleanup' in current:
+                    raise CheckpointError('checkpoint_invalid')
+                store = None
+                if type(current.get('checkpoint_version')) is int and current['checkpoint_version'] == CHECKPOINT_VERSION:
+                    store = checkpoint_store(current, authorize)
+                    # A lost parent acknowledgment must already have genuine deletion proof.
+                    store.fence(deleted=True, allow_missing=True)
+                elif intent is not None and intent['output_ids']:
+                    raise CheckpointError('checkpoint_invalid')
+                fence_publication(current, message_container)
+                try:
+                    current = _replace(current, updates)
+                    break
+                except exceptions.CosmosAccessConditionFailedError:
+                    continue
+            else:
+                raise CheckpointError()
+            if current.get('latest_attempt_run_id') and current['latest_attempt_run_id'] not in visited:
+                rows.append(read_revision_run(
+                    current['latest_attempt_run_id'], user_id, conversation_id, allow_legacy=True,
+                ))
         cleanup_runs.append((current, store))
 
     for index, (current, store) in enumerate(cleanup_runs):
         intent = None if is_legacy_plan(current.get('plan')) else current.get('output_cleanup')
         if intent is None or not intent['output_ids']:
             continue
-        if output_cleanup is None:
-            # Initialize output services only after every deletion fence and intent is durable.
-            from functions_orchestration_bootstrap import build_orchestration_cleanup_service
+        with _conversation_cleanup_stage(conversation_id, stage='output_enrollment', run_id=current['id']):
+            if output_cleanup is None:
+                # Initialize output services only after every deletion fence and intent is durable.
+                from functions_orchestration_bootstrap import build_orchestration_cleanup_service
 
-            output_cleanup = build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup
-        enrolled = output_cleanup(current['id'])
-        expected = {
-            'run_id': current['id'], 'enrollment_status': 'completed',
-            'output_count': len(intent['output_ids']), 'retain_committed': intent['retain_committed'],
-        }
-        if (
-            type(enrolled) is not dict or enrolled != expected
-            or type(enrolled.get('output_count')) is not int
-            or type(enrolled.get('retain_committed')) is not bool
-        ):
-            raise RecoveryError(
-                'Generated-file cleanup could not be confirmed.',
-                code='output_cleanup_unconfirmed', status_code=503,
-            )
-        confirmed = read_revision_run(current['id'], user_id, conversation_id)
-        if (
-            confirmed.get('checkpoints_deleted') is not True
-            or build_output_cleanup_intent(
-                confirmed, retain_committed=intent['retain_committed'],
-            ) != {**intent, 'state': 'completed'}
-        ):
-            raise RecoveryError(
-                'Generated-file cleanup could not be confirmed.',
-                code='output_cleanup_unconfirmed', status_code=503,
-            )
+                output_cleanup = build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup
+            enrolled = output_cleanup(current['id'])
+            expected = {
+                'run_id': current['id'], 'enrollment_status': 'completed',
+                'output_count': len(intent['output_ids']), 'retain_committed': intent['retain_committed'],
+            }
+            if (
+                type(enrolled) is not dict or enrolled != expected
+                or type(enrolled.get('output_count')) is not int
+                or type(enrolled.get('retain_committed')) is not bool
+            ):
+                raise RecoveryError(
+                    'Generated-file cleanup could not be confirmed.',
+                    code='output_cleanup_unconfirmed', status_code=503,
+                )
+            confirmed = read_revision_run(current['id'], user_id, conversation_id)
+            if (
+                confirmed.get('checkpoints_deleted') is not True
+                or build_output_cleanup_intent(
+                    confirmed, retain_committed=intent['retain_committed'],
+                ) != {**intent, 'state': 'completed'}
+            ):
+                raise RecoveryError(
+                    'Generated-file cleanup could not be confirmed.',
+                    code='output_cleanup_unconfirmed', status_code=503,
+                )
         cleanup_runs[index] = (confirmed, store)
 
     # Enroll every owned run before any source-cleanup failure can stop this sweep.
     for current, store in cleanup_runs:
-        if authorize() is False:
-            raise RecoveryError(code='not_found', status_code=404)
-        if _retained_producer_steps(current):
-            if analysis_cleanup is None:
-                # Resolve private result I/O only for runs that actually planned Analyze.
-                from functions_workflow_result_store import (
-                    delete_orchestration_analysis_results,
-                    fence_orchestration_analysis_result,
-                )
-                analysis_cleanup = delete_orchestration_analysis_results
-                analysis_fence = analysis_fence or fence_orchestration_analysis_result
-            if analysis_fence is not None:
-                for step in _retained_producer_steps(current):
-                    analysis_fence(user_id, conversation_id, current['id'], step['step_id'])
+        with _conversation_cleanup_stage(conversation_id, stage='retained_result_cleanup', run_id=current['id']):
             if authorize() is False:
                 raise RecoveryError(code='not_found', status_code=404)
-            analysis_cleanup(user_id, conversation_id, current['id'])
+            if _retained_producer_steps(current):
+                if analysis_cleanup is None:
+                    # Every current-plan step can persist a private result, not just Analyze.
+                    from functions_workflow_result_store import (
+                        delete_orchestration_analysis_results,
+                        fence_orchestration_analysis_result,
+                    )
+                    analysis_cleanup = delete_orchestration_analysis_results
+                    analysis_fence = analysis_fence or fence_orchestration_analysis_result
+                if analysis_fence is not None:
+                    for step in _retained_producer_steps(current):
+                        analysis_fence(user_id, conversation_id, current['id'], step['step_id'])
+                if authorize() is False:
+                    raise RecoveryError(code='not_found', status_code=404)
+                analysis_cleanup(user_id, conversation_id, current['id'])
         if store is not None:
-            store.delete_payloads()
+            with _conversation_cleanup_stage(conversation_id, stage='checkpoint_payload_cleanup', run_id=current['id']):
+                store.delete_payloads()

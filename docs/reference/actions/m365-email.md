@@ -4,7 +4,7 @@ title: "Microsoft 365 Email"
 description: "Read and search mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
 section: "Reference"
 audience: user
-version: "0.261.303"
+version: "0.261.305"
 ---
 
 <!-- action-slug: m365-email -->
@@ -53,6 +53,7 @@ newest ones. The agent narrows a request with these parameters:
 | `folder` | `inbox` by default. Use `all` for every folder, or a folder such as `sentitems` or `archive`. |
 | `unread_only` | Returns only unread messages. |
 | `top` | Up to 25 messages per call, newest first. |
+| `select_fields` | Extra Graph fields to request. Baseline source-card metadata and `webLink` are still requested, so a custom selection does not remove the subject, sender, received time or Outlook link. |
 
 Dates and times without a time zone are read as UTC.
 
@@ -96,9 +97,16 @@ Implemented in version: **0.261.303** (`application/single_app/config.py`).
 Every email that **Read my mail** returns carries a citation value, and the answer
 cites each email it mentions with a chip that shows the subject. Clicking the chip
 opens a card with the sender, received time, read state, importance and a short
-preview, and **Open in Outlook** opens the message in the reader's own mailbox.
+preview when recorded, and **Open in Outlook** opens the specific message in
+Outlook on the web in a new tab.
 Cited emails are also listed under **Email** in the conversation's **Documents**
-pane, with **Open online**.
+pane, with **Open in Outlook**. The reply's **Sources** panel offers the same action.
+
+Refined in version: **0.261.305** (`application/single_app/config.py`). Custom
+Graph selections preserve the fields needed to build source cards, and the cards
+remain readable in light and dark themes. Existing history is unchanged: if a saved
+record has no online URL, the card explains that the link is unavailable and suggests
+recalling the email again.
 
 Lists of emails always use the same layout, so the answer reads the same from one
 request to the next:
@@ -116,7 +124,8 @@ question was about its content. The header says "matching" instead of "most
 recent" for a search.
 
 Only an `https` link from Microsoft Graph becomes a link, and stored citations
-hold no message body. See
+hold no message body. Answer guidance avoids routine source-provenance introductions,
+but still requires citations and disclosures about uncertainty or incomplete coverage. See
 [Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## Failure and approval behavior

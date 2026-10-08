@@ -287,6 +287,7 @@ Last inventoried: 2026-08-10
 - `[XSD_GENERATION]`
 - `[XSD_INGESTION]`
 - `[V2_BOOTSTRAP]`
+- `[V2_SCOPE]`
 - `[VIDEO]`
 - `[VIDEO_CHUNK]`
 - `[VIDEO_INDEXER]`
