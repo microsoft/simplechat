@@ -963,7 +963,7 @@ def execute_plan_replay_task(
     )
     snapshot = build_conversation_snapshot([], None, turn_id=turn_id)
     from functions_orchestration_runs import create_orchestration_run, get_orchestration_run
-    from functions_orchestration_plan_revisions import claim_plan_run
+    from functions_orchestration_plan_revisions import PlanRevisionError, claim_plan_run
     from functions_orchestration_recovery import ExecutionLease, fence_publication, request_cancellation
     from functions_orchestration_services import composition_profiles
 
@@ -1001,10 +1001,21 @@ def execute_plan_replay_task(
             read_conversation=read_conversation,
         )
 
-    claimed = claimer(
-        orch_run_id, user_id, conversation_id, plan_id=plan_id, conversation_context=snapshot,
-        composition_profiles=composition_profiles(), settings=settings,
-    )
+    try:
+        claimed = claimer(
+            orch_run_id, user_id, conversation_id, plan_id=plan_id, conversation_context=snapshot,
+            composition_profiles=composition_profiles(), settings=settings,
+        )
+    except PlanRevisionError as exc:
+        log_event(
+            '[WORKFLOW_PLAN_REPLAY] Replay run could not be claimed.',
+            extra={
+                'workflow_id': workflow.get('id'), 'workflow_run_id': run_id,
+                'orchestration_run_id': orch_run_id, 'error_code': getattr(exc, 'code', ''),
+            },
+            level=logging.WARNING,
+        )
+        raise PlanReplayRefused('replay_execution_failed') from exc
     lease = ExecutionLease(claimed, authorize, message_container=msg_container)
     from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
     from functions_workflow_execution import assert_workflow_execution_owned
