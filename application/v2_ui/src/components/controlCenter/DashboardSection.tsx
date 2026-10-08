@@ -1,20 +1,22 @@
 // DashboardSection.tsx
 // Overview metrics and activity charts for the V2 Control Center.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Download, MessageSquareText, RefreshCw } from 'lucide-react';
 import { api } from '../../lib/apiClient';
 import { cartesianOptions, StatsChart, type StatsChartConfigBuilder } from '../settings/StatsChart';
-import { APPROVALS_URL, KpiCard } from './ControlCenterPrimitives';
+import {
+    CHART_COLORS,
+    ChartDataTable,
+    ChartPanel,
+    MetricTile as SharedMetricTile,
+    makeDatasets,
+    type DashboardMetric,
+} from '../dashboard/DashboardParts';
+import { APPROVALS_URL } from './ControlCenterPrimitives';
 
-type Metric = {
-    value: number | null;
-    delta: number | null;
-    percent_change?: number | null;
-    previous?: number;
-    available?: boolean;
-};
+type Metric = DashboardMetric;
 
 type DashboardSummary = {
     period: { start_date: string; end_date: string; days: number; timezone: string };
@@ -103,15 +105,6 @@ const EMPTY_FILTERS: TokenFilters = {
     token_type: '',
 };
 
-const CHART_COLORS = {
-    blue: { border: '#4f8cff', fill: 'rgba(79, 140, 255, 0.24)' },
-    cyan: { border: '#22b8cf', fill: 'rgba(34, 184, 207, 0.30)' },
-    green: { border: '#37b679', fill: 'rgba(55, 182, 121, 0.28)' },
-    amber: { border: '#e8a23a', fill: 'rgba(232, 162, 58, 0.28)' },
-    purple: { border: '#a78bfa', fill: 'rgba(167, 139, 250, 0.28)' },
-    rose: { border: '#f472b6', fill: 'rgba(244, 114, 182, 0.28)' },
-};
-
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 function rangeDates(days: number): { startDate: string; endDate: string } {
@@ -120,23 +113,6 @@ function rangeDates(days: number): { startDate: string; endDate: string } {
     const start = new Date(`${endDate}T00:00:00.000Z`);
     start.setUTCDate(start.getUTCDate() - days + 1);
     return { startDate: start.toISOString().slice(0, 10), endDate };
-}
-
-function metricDetail(metric: Metric, days: number): string {
-    if (metric.value === null || metric.available === false) {
-        return 'Not available for this period';
-    }
-    if (metric.delta === null) {
-        return 'Current status; historical status snapshots are not recorded';
-    }
-    if (metric.delta === 0) {
-        return `No change vs the previous ${days}-day period`;
-    }
-    const direction = metric.delta > 0 ? '↑' : '↓';
-    const percentage = metric.percent_change === null || metric.percent_change === undefined
-        ? ''
-        : ` (${Math.abs(metric.percent_change)}%)`;
-    return `${direction} ${Math.abs(metric.delta).toLocaleString()} vs previous period${percentage}`;
 }
 
 function buildParams(
@@ -161,19 +137,6 @@ function seriesValues(series: ActivitySeries, dates: string[]): number[] {
     return dates.map((date) => Number(series[date] ?? 0));
 }
 
-function makeDatasets(series: { label: string; values: number[]; color: keyof typeof CHART_COLORS }[]) {
-    return series.map(({ label, values, color }) => ({
-        label,
-        data: values,
-        borderColor: CHART_COLORS[color].border,
-        backgroundColor: CHART_COLORS[color].fill,
-        borderWidth: 2,
-        borderRadius: 3,
-        pointRadius: 1,
-        tension: 0.3,
-    }));
-}
-
 function safeControlCenterHref(value: string): string {
     try {
         const url = new URL(value, window.location.origin);
@@ -189,77 +152,14 @@ function safeControlCenterHref(value: string): string {
     }
 }
 
-function MetricTile({
-    label,
-    metric,
-    to,
-    days,
-    valueLabel,
-}: {
+function MetricTile(props: {
     label: string;
     metric: Metric;
     to: string;
     days: number;
     valueLabel?: string;
 }) {
-    const value = metric.value === null || metric.available === false
-        ? 'Not tracked'
-        : valueLabel ?? metric.value.toLocaleString();
-    return (
-        <Link to={safeControlCenterHref(to)} className="block rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
-            <KpiCard label={label} value={value} detail={metricDetail(metric, days)} />
-        </Link>
-    );
-}
-
-function ChartDataTable({
-    title,
-    dates,
-    series,
-}: {
-    title: string;
-    dates: string[];
-    series: { label: string; values: number[] }[];
-}) {
-    return (
-        <details className="mt-3 text-xs text-text-2">
-            <summary className="cursor-pointer font-medium">View {title.toLowerCase()} as a data table</summary>
-            <div className="mt-2 max-h-56 overflow-auto rounded-lg border border-edge">
-                <table className="w-full text-left">
-                    <caption className="sr-only">{title} chart data by day</caption>
-                    <thead className="bg-surface-2">
-                        <tr>
-                            <th scope="col" className="px-2 py-1">Date</th>
-                            {series.map((item) => <th key={item.label} scope="col" className="px-2 py-1">{item.label}</th>)}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {dates.map((date, index) => (
-                            <tr key={date} className="border-t border-edge">
-                                <th scope="row" className="px-2 py-1 font-normal">{date}</th>
-                                {series.map((item) => <td key={item.label} className="px-2 py-1">{item.values[index] ?? 0}</td>)}
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </details>
-    );
-}
-
-function ChartPanel({
-    title,
-    children,
-}: {
-    title: string;
-    children: ReactNode;
-}) {
-    return (
-        <section className="min-w-0 rounded-2xl border border-edge bg-surface-1 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-text-1">{title}</h3>
-            {children}
-        </section>
-    );
+    return <SharedMetricTile {...props} safeHref={safeControlCenterHref} />;
 }
 
 function TokenFilterSelect({

@@ -1290,6 +1290,15 @@ def is_action_assistant_enabled(settings):
     return source_settings.get('enable_action_ai_assistant', True) is not False
 
 
+def is_admin_review_assistant_enabled(settings):
+    """Return True when AI assist is on for the admin Review center.
+
+    Off by default. Each assist and suggestion route still checks the caller's reviewer role
+    for its section, so this only says whether the assistant exists at all.
+    """
+    return (settings or {}).get('enable_admin_review_ai_assistant', False) is True
+
+
 def is_chat_workflow_results_enabled_for_user(settings, user_roles=None):
     """Return True when a user may ask about their personal workflow results in chat."""
     source_settings = settings or {}
@@ -2011,6 +2020,11 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_desktop_notifications': False,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
+
+        # Review center AI assist: suggested reviews for feedback and safety records, which a
+        # reviewer applies or dismisses. The guidance is admin-authored and never sent to browsers.
+        'enable_admin_review_ai_assistant': False,
+        'admin_review_ai_guidance': '',
 
         # Processing Thoughts
         'enable_thoughts': True,
@@ -4201,6 +4215,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             'support_feedback_recipient_email', 'm365_trusted_download_hosts',
             'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
             'client_key_path', 'bearer_token', 'token_url', 'embedding_vector_profile',
+            # Organization review guidance for the Review center assistant; only the model reads it.
+            'admin_review_ai_guidance',
         }:
             continue
         if k == 'agents_page_promoted_popular_agents':

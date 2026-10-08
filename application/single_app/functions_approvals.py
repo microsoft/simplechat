@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from urllib.parse import quote
+from azure.core import MatchConditions
 from content_screening.contracts import (
     ScreeningConflictError,
     ScreeningError,
@@ -34,6 +35,11 @@ from functions_m365_approvals import (
     is_m365_approval,
     is_m365_approval_subject,
     sanitize_m365_approval,
+)
+from functions_safety_remediation import (
+    SAFETY_REQUEST_DENIED,
+    SAFETY_REQUEST_EXPIRED,
+    release_safety_log_after_approval_decision,
 )
 
 # Approval request statuses
@@ -715,6 +721,9 @@ def deny_request(
         debug_print(f"Request denied: {approval_id}")
 
         _clear_pending_admin_notifications(approval_id)
+
+        if approval.get('request_type') in SAFETY_USER_APPROVAL_TYPES:
+            _release_denied_safety_request(approval, auto_denied)
         
         # Create notification for requester (only if not auto-denied)
         if not auto_denied:
@@ -753,6 +762,83 @@ def deny_request(
         })
         debug_print(f"Error denying request: {e}")  
         raise
+
+
+def _release_denied_safety_request(approval: Dict[str, Any], auto_denied: bool) -> None:
+    """Unlock the violation a denied or expired warn, suspend or block request was for.
+
+    The denial itself has already been saved. A failure here is logged rather than raised:
+    the violation is settled again the next time a reviewer lists or opens it.
+    """
+    try:
+        release_safety_log_after_approval_decision(
+            approval,
+            SAFETY_REQUEST_EXPIRED if auto_denied else SAFETY_REQUEST_DENIED,
+        )
+    except Exception as exc:
+        log_event("[APPROVALS] The safety violation could not be released after its request was denied.", {
+            'approval_id': approval.get('id'),
+            'request_type': approval.get('request_type'),
+            'auto_denied': auto_denied,
+            'error_type': type(exc).__name__,
+        }, level=logging.WARNING)
+
+
+def withdraw_approval_request(
+    approval_id: str,
+    group_id: str,
+    withdrawn_by_id: str,
+    withdrawn_by_email: str,
+    withdrawn_by_name: str,
+    comment: str,
+) -> Optional[Dict[str, Any]]:
+    """Deny a pending request its own creator could not record, and remove its notices.
+
+    Used when the record a request was raised from changed while the request was being
+    created, so nothing links the two and the request must never be approved. The denial is
+    written only while the request is still pending, conditionally on the version read, so it
+    never overwrites a decision made meanwhile. The notices the request sent -- that it waits
+    for reviewers, and that it was submitted -- are removed: the requester was already told
+    nothing was requested. Returns the denied request, or None when it was already decided.
+    """
+    current = cosmos_approvals_container.read_item(item=approval_id, partition_key=group_id)
+    if current.get('status') != STATUS_PENDING:
+        log_event("[APPROVALS] A request to withdraw was already decided, so it was left as it is.", {
+            'approval_id': approval_id,
+            'request_type': current.get('request_type'),
+            'status': current.get('status'),
+        }, level=logging.WARNING)
+        return None
+
+    current.update({
+        'status': STATUS_DENIED,
+        'approved_by_id': withdrawn_by_id,
+        'approved_by_email': withdrawn_by_email,
+        'approved_by_name': withdrawn_by_name,
+        'approved_at': datetime.utcnow().isoformat(),
+        'approval_comment': comment,
+        'ttl': -1,
+    })
+    etag = current.get('_etag')
+    if etag:
+        stored = cosmos_approvals_container.replace_item(
+            item=approval_id,
+            body=current,
+            etag=etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    else:
+        stored = cosmos_approvals_container.upsert_item(current)
+
+    _clear_pending_admin_notifications(approval_id)
+    _clear_requester_pending_notification(approval_id)
+    log_event("[APPROVALS] Request withdrawn", {
+        'approval_id': approval_id,
+        'request_type': current.get('request_type'),
+        'group_id': group_id,
+        'withdrawn_by': withdrawn_by_email,
+    })
+    return stored if isinstance(stored, dict) else current
 
 
 def mark_approval_executed(
@@ -1104,6 +1190,104 @@ def _can_user_deny(
     return _can_user_approve(approval, user_id, user_roles)
 
 
+APPROVAL_STATS_OLDEST_LIMIT = 5
+APPROVAL_STATS_SCAN_LIMIT = 10000
+APPROVAL_STATS_OUTCOMES = {
+    STATUS_APPROVED: 'approved',
+    STATUS_DENIED: 'denied',
+    STATUS_EXECUTED: 'executed',
+    STATUS_FAILED: 'failed',
+    STATUS_AUTO_DENIED: 'expired',
+    'expired': 'expired',
+}
+
+
+def _parse_approval_time(value: Any) -> Optional[datetime]:
+    """Return a stored approval time as naive UTC, as the approval records write it."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def summarize_visible_approvals(
+    approvals: List[Dict[str, Any]],
+    user_id: str,
+    user_roles: List[str],
+    days: int,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Summarize approval requests for the Approvals dashboard.
+
+    ``approvals`` must be what ``get_pending_approvals`` returned for this user, which has
+    already applied the visibility rules; nothing here widens them, so a request the caller
+    cannot see is never counted. "Waiting on me" counts pending requests the caller may
+    approve; decided requests are counted when their decision falls in the last ``days``.
+    """
+    current = now or datetime.utcnow()
+    window_start = current - timedelta(days=days)
+    soon = current + timedelta(hours=24)
+    safe_roles = _normalize_user_roles(user_roles)
+
+    pending = [approval for approval in approvals if approval.get('status') == STATUS_PENDING]
+    actionable = [approval for approval in pending if _can_user_approve(approval, user_id, safe_roles)]
+
+    decided = {'approved': 0, 'denied': 0, 'executed': 0, 'failed': 0, 'expired': 0}
+    for approval in approvals:
+        outcome = APPROVAL_STATS_OUTCOMES.get(str(approval.get('status') or '').lower())
+        if not outcome:
+            continue
+        decided_at = None
+        for field in ('executed_at', 'approved_at', 'decided_at', 'updated_at'):
+            decided_at = _parse_approval_time(approval.get(field))
+            if decided_at:
+                break
+        if decided_at and decided_at >= window_start:
+            decided[outcome] += 1
+
+    pending_by_type: Dict[str, int] = {}
+    for approval in pending:
+        request_type = str(approval.get('request_type') or 'unknown')
+        pending_by_type[request_type] = pending_by_type.get(request_type, 0) + 1
+
+    def expires_soon(approval):
+        expires_at = _parse_approval_time(approval.get('expires_at'))
+        return bool(expires_at and expires_at <= soon)
+
+    oldest = sorted(actionable, key=_get_approval_sort_value)[:APPROVAL_STATS_OLDEST_LIMIT]
+    return {
+        'window': {'days': days},
+        'waiting_on_me': len(actionable),
+        'my_pending_requests': sum(1 for approval in pending if approval.get('requester_id') == user_id),
+        'expiring_within_24h': sum(1 for approval in actionable if expires_soon(approval)),
+        'pending_visible': len(pending),
+        'decided_in_window': decided,
+        'pending_by_type': [
+            {'request_type': request_type, 'count': count}
+            for request_type, count in sorted(pending_by_type.items(), key=lambda pair: (-pair[1], pair[0]))
+        ],
+        'oldest_actionable': [
+            {
+                'id': approval.get('id'),
+                'group_id': approval.get('group_id'),
+                'request_type': approval.get('request_type'),
+                'group_name': approval.get('group_name'),
+                'created_at': approval.get('created_at'),
+                'expires_at': approval.get('expires_at'),
+            }
+            for approval in oldest
+        ],
+    }
+
+
 def _create_approval_notifications(
     approval: Dict[str, Any],
     group: Optional[Dict[str, Any]]
@@ -1281,6 +1465,20 @@ def _create_requester_pending_notification(approval: Dict[str, Any]) -> None:
             'approval_id': approval['id']
         }, level=logging.WARNING)
         debug_print(f"Error notifying requester of pending approval {approval['id']}: {e}")
+
+
+def _clear_requester_pending_notification(approval_id: str) -> None:
+    """Remove the requester's "request submitted" notice for a request that was withdrawn."""
+    try:
+        delete_notifications_by_metadata(
+            metadata_filters={'approval_id': approval_id},
+            notification_types=['approval_request_pending_submitter'],
+        )
+    except Exception as e:
+        log_event("[APPROVALS] Error clearing the requester's pending notification", {
+            'error_type': type(e).__name__,
+            'approval_id': approval_id,
+        }, level=logging.WARNING)
 
 
 def _clear_pending_admin_notifications(approval_id: str, *, safe_errors=False) -> None:

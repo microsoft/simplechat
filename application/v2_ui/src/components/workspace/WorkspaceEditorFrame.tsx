@@ -138,9 +138,10 @@ export function WorkspaceEditorFrame({
             state.workspaceEditorFrom === currentLocation.key;
         // A save navigates to backTo (the collection or the agent return path). Personal editors
         // live under /workspace, but a group editor returns to /groups/<id>/actions, so the bypass
-        // matches the frame's own backTo as well as the personal family it always did.
+        // matches the frame's own backTo as well as the personal family it always did. A Review
+        // center editor's backTo carries the list's filters, so only its path is compared.
         if (currentEditorTransition && state.workspaceEditorSaved === true
-            && (nextLocation.pathname === backTo || /^\/workspace\/(?:agents|actions)(?:\/|$)/.test(nextLocation.pathname))) return false;
+            && (nextLocation.pathname === backTo.split(/[?#]/)[0] || /^\/workspace\/(?:agents|actions)(?:\/|$)/.test(nextLocation.pathname))) return false;
         if (currentEditorTransition && state.preserveWorkspaceDraft === true) {
             const goingToAction = isActionEditorNewPath(nextLocation.pathname) &&
                 isAgentEditorPath(currentLocation.pathname) &&

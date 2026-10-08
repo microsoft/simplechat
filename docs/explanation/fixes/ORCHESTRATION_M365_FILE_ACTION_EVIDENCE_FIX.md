@@ -1,8 +1,8 @@
 # Orchestration Microsoft 365 File Action Evidence Fix
 
-**Version: 0.261.297**
+**Version: 0.261.300**
 
-Fixed in version: **0.261.297**, recorded in
+Fixed in version: **0.261.300**, recorded in
 `application/single_app/config.py`.
 
 This affects the React V2 branch (`paullizer-react-v2-ui`) and deployments built
@@ -146,7 +146,7 @@ The V2 run details show both messages. No UI change was needed.
 | `functions_m365_agent_continuation.py` | `M365AnalysisModel`, `get_m365_analysis_model()` and `m365_step_model_binder()`. |
 | `functions_m365_analysis_runtime.py` | Reads its model through `get_m365_analysis_model()`. |
 | `functions_orchestration_schema.py` | `m365_model_limits_required` and `m365_evidence_unavailable`. |
-| `config.py` | Version `0.261.297`. |
+| `config.py` | Version `0.261.300`. |
 
 ## Validation
 

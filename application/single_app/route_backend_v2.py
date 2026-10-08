@@ -144,6 +144,7 @@ from functions_settings import (
     get_settings,
     get_user_settings,
     is_action_assistant_enabled,
+    is_admin_review_assistant_enabled,
     is_admin_settings_redacted_secret,
     is_agent_assistant_enabled,
     is_chat_file_upload_enabled_for_user,
@@ -170,6 +171,7 @@ from functions_keyvault import (
     keyvault_model_endpoint_save_helper,
 )
 from functions_keyvault_errors import KeyVaultSecretStorageError
+from functions_safety_remediation import count_pending_safety_warnings
 from functions_source_review import (
     get_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
@@ -976,6 +978,10 @@ def register_route_backend_v2(bp):
                 # Only hides Ask AI; each assist route re-checks the scope permission.
                 "enable_agent_ai_assistant": is_agent_assistant_enabled(settings),
                 "enable_action_ai_assistant": is_action_assistant_enabled(settings),
+                # Only shows the Review center's AI entry points; every assist and suggestion
+                # route re-checks the toggle and the caller's reviewer role. The guidance text
+                # itself is never sent.
+                "enable_admin_review_ai_assistant": is_admin_review_assistant_enabled(settings),
                 # Only hides the chip and entry points; the server re-checks every read.
                 "enable_chat_workflow_results": is_chat_workflow_results_enabled_for_user(
                     settings, user_roles=current_user_roles
@@ -1112,6 +1118,20 @@ def register_route_backend_v2(bp):
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to resolve workspace sections: {exc}")
 
+            # Safety warnings an administrator sent that still need the user's
+            # acknowledgment. Only the count rides here, so the interface asks for the
+            # warnings themselves only when there are some. A failed read counts none; the
+            # next bootstrap, on reload or when the tab comes back, reads again.
+            pending_safety_warnings = 0
+            try:
+                pending_safety_warnings = count_pending_safety_warnings(user_id)
+            except Exception as exc:
+                log_event(
+                    "[V2_BOOTSTRAP] Pending safety warnings could not be counted.",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    level=logging.WARNING,
+                )
+
             payload = {
                 "version": VERSION,
                 "user": {
@@ -1148,6 +1168,7 @@ def register_route_backend_v2(bp):
                 "notices": _build_notices(public_settings, user_settings_dict),
                 "workspace": workspace,
                 "workspace_uploads": _build_workspace_uploads(public_settings),
+                "safety_warnings": {"pending": pending_safety_warnings},
                 "settings": public_settings,
             }
 

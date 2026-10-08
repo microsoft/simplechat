@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for SharePoint and OneDrive actions in chat orchestration.
-Version: 0.261.297
-Implemented in: 0.261.297
+Version: 0.261.300
+Implemented in: 0.261.300
 
 An orchestration "Use an action" step calls its model without a chat agent. SharePoint and
 OneDrive file functions bound the content they return by the model's token budget, which

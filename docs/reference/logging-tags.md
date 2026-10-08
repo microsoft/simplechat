@@ -24,6 +24,7 @@ Last inventoried: 2026-08-10
 - `[RATE_LIMIT]`
 - `[WORKFLOW_ALERTS]`
 - `[YAMCS_PLUGIN]`
+- `[ACCESS_RESTRICTION]`
 - `[ACTIVITY_LOGGING]`
 - `[ADMIN_FEEDBACK]`
 - `[ADMIN_RELEASE_NOTIFICATIONS]`
@@ -129,6 +130,7 @@ Last inventoried: 2026-08-10
 - `[FACT_MEMORY_PLUGIN]`
 - `[FALLBACK_FAILURE]`
 - `[FEEDBACK_LIFECYCLE]`
+- `[FEEDBACK_REVIEW]`
 - `[FILE_PROCESSING_LOGS]`
 - `[FILE_SYNC]`
 - `[FOUNDRY_AGENT]`
@@ -216,10 +218,13 @@ Last inventoried: 2026-08-10
 - `[REDIS_TEST]`
 - `[RESULT_REQUIRES_MESSAGE_RELOAD]`
 - `[RETENTION_POLICY]`
+- `[REVIEW_ASSIST]`
+- `[REVIEW_CENTER]`
 - `[ROCKSDB_PLUGIN]`
 - `[SAFETY_LIFECYCLE]`
 - `[SAFETY_REMEDIATION]`
 - `[SAFETY_VIOLATIONS]`
+- `[SAFETY_WARNINGS]`
 - `[SAVE_CHUNKS]`
 - `[SAVE_CHUNKS_BATCH]`
 - `[SEARCH_CACHE_DEBUG]`
@@ -278,6 +283,7 @@ Last inventoried: 2026-08-10
 - `[USER_SETTINGS_CACHE]`
 - `[XSD_GENERATION]`
 - `[XSD_INGESTION]`
+- `[V2_BOOTSTRAP]`
 - `[VIDEO]`
 - `[VIDEO_CHUNK]`
 - `[VIDEO_INDEXER]`
@@ -395,7 +401,7 @@ file names, file content, prompts, or model responses.
 | `[ORCHESTRATION] Retrying the answer model without a JSON response format.` | Information | `sc_reason` (`json_format_retry`), `sc_stage`, `sc_error_type`. Content preparation asks the endpoint for a JSON object; an endpoint that refuses that option is asked again without it. |
 | `[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.` | Warning | `sc_stage`, `sc_failure_code`, `sc_execution_code`, such as `native_compute_source_identity_mismatch` when a saved spreadsheet location now points at a different revision. |
 | `[CONTENT_SCREENING] Current source authority could not be verified.` | Warning | `sc_failure_code`, `sc_authority_reason`, `sc_error_type`. |
-| `[ORCHESTRATION_M365] A Microsoft 365 step stopped.` | Warning | Since **0.261.238**. `sc_failure_code` (`m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation`, `m365_read_only` or `external_session_required`), `sc_authority_reason` (the Microsoft 365 refusal code, such as `interactive_auth_required`, `authentication_required`, `m365_action_not_authorized` or `m365_shared_conversation_unsupported`), `sc_capability_id`, and `sc_source_count`. Since **0.261.297**, a SharePoint or OneDrive step can also stop with `m365_model_limits_required`, with an authority reason such as `model_generation_unbounded` or `model_context_unavailable`, or `m365_evidence_unavailable`, with an authority reason such as `memory_unavailable`. |
+| `[ORCHESTRATION_M365] A Microsoft 365 step stopped.` | Warning | Since **0.261.238**. `sc_failure_code` (`m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation`, `m365_read_only` or `external_session_required`), `sc_authority_reason` (the Microsoft 365 refusal code, such as `interactive_auth_required`, `authentication_required`, `m365_action_not_authorized` or `m365_shared_conversation_unsupported`), `sc_capability_id`, and `sc_source_count`. Since **0.261.300**, a SharePoint or OneDrive step can also stop with `m365_model_limits_required`, with an authority reason such as `model_generation_unbounded` or `model_context_unavailable`, or `m365_evidence_unavailable`, with an authority reason such as `memory_unavailable`. |
 | `[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.` | Warning | `sc_operation`. Since **0.261.238**, also `sc_failure_code`, the refusal code (for example `m365_context_required`), and `sc_resource`, the source (`email`, `calendar`, `onedrive` or `spo`). Earlier versions logged only the code's length, `sc_error_code_length`. |
 
 Every `[ORCHESTRATION_EXECUTOR]`, `[ORCHESTRATION_ADAPTERS]` and

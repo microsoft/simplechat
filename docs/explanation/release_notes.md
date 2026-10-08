@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.297)**
+### **(v0.261.300)**
 
 #### Bug Fixes
 
@@ -21,6 +21,101 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   File evidence that can't be saved or read for the conversation now stops the step with the new `m365_evidence_unavailable` failure. Previously both reached the model as findings, so the step completed with a misleading answer.
     *   Bounded-coverage outcomes, such as a full context window or a request's file limits, are still reported as findings.
     *   (Ref: `functions_orchestration_m365.py` `result_refusal`, `failure_code`, `functions_orchestration_schema.py` `FAILURE_MESSAGES`, `M365_STEP_FAILURE_CODES`)
+
+### **(v0.261.299)**
+
+#### New Features
+
+*   **AI Assist In The Admin Review Center**
+    *   An optional assistant suggests reviews for user feedback and safety violations in the V2 Review center. **Ask AI** in a record's editor analyzes it and fills the unsaved draft, marking each field it changed and offering **Undo**. **Triage with AI** on the workbenches' bulk bar sends the checked records ten at a time, each user's records together, with progress and **Cancel**, and stores a suggested review on each; records that get none stay checked. A new **AI suggestions** page in each section lists them with what each would change and why, and shows in full, under **Visible to the user**, the text each saves that its user can read. Any eligible reviewer can approve them one at a time or together, edit the user's notification first, or dismiss them.
+    *   The model never writes or acts. Its answers are checked on the server against a strict schema, with one correction round, and approving a suggestion runs the same save as a hand-written review: a warning is sent when it is approved, and a suspension or block creates an approval request for a second reviewer. Suspensions and blocks are never part of **Approve all**, the confirmation counts the warnings and requests an approval sets off and the reviews that save text a user can read, and the queue never requests again a suspension or block the violation already records.
+    *   Records are read on the server by id and shown to the model under request-local handles, without ids, names or email addresses; email addresses and GUIDs in the text are replaced and long text is shortened. A model call only ever covers one user's records, so text one user wrote can't steer what the model writes for another user; records it doesn't reach in time are answered `deferred` and sent again by the browser. Text a user can read is refused when it is too long or repeats a long passage of another record in the request. Policy is enforced by the server: never Escalate, no warning or restriction over AI-generated content, and never a weaker action than one already applied. When the model service's content filter declines a group, each record is retried alone, so the others still get suggestions.
+    *   A stored suggestion carries a fingerprint of the fields it was based on, and for a violation its request and warning state, so one whose record changes afterwards reads as out of date and can only be dismissed. Storing, applying or dismissing a suggestion doesn't refuse a reviewer's open editor: the lists and record reads return the fingerprint, editors send it with their version, and a save whose fingerprint still matches goes ahead on the current version. Approvals and dismissals are recorded in the admin activity log and credited to the suggestion, and one whose record can't be read fails on its own without stopping the rest of the request.
+    *   New settings on **Security > Access & Roles**: **Enable AI Assist in the Review Center** (`enable_admin_review_ai_assistant`, off by default) and **Review Guidance for the AI Assistant** (`admin_review_ai_guidance`, up to 2,000 characters, sent only to the model). Each reviewer can send 60 assist requests per 10 minutes. While it is off, no suggestion can be made, applied or dismissed.
+    *   New APIs: `POST /api/admin/review/feedback/assist` and `POST /api/admin/review/safety/assist`. Bulk `update` operations accept `suggestion_id`, `dismiss_suggestion` is a new bulk operation, the review lists and their `/ids` routes accept `ai=pending`, the `/ids` routes return each record's user as `owners`, and record saves accept `fingerprint` alongside `etag`.
+    *   (Ref: `functions_review_assist.py`, `functions_review_assist_runtime.py`, `functions_review_center.py`, `route_backend_feedback.py`, `route_backend_safety.py`, `ReviewAskAiPanel.tsx`, `useReviewTriage.ts`, `SuggestionsQueue.tsx`, `lib/reviewSuggestions.ts`, `lib/reviewAssistApi.ts`, [AI Assist in the Admin Review Center](features/ADMIN_REVIEW_AI_ASSISTANT.md))
+
+*   **Feedback Themes**
+    *   Feedback reviews have a **Theme**: Accuracy, Citations, Retrieval, Formatting, Tone, Speed, Safety, Praise or Other. Reviewers set it in the editor, or approving an AI suggestion sets it. The feedback dashboard counts the period's feedback by theme and how much is not classified yet, each theme opens the filtered list, and the queue filters by theme. Users never see the theme.
+    *   (Ref: `route_backend_feedback.py` `theme`, `theme_mix`, `unthemed_count_in_window`, `FeedbackDashboard.tsx`, `FeedbackEditorPage.tsx`, `FeedbackWorkbench.tsx`)
+
+### **(v0.261.298)**
+
+#### New Features
+
+*   **Admin Review Center**
+    *   The V2 Feedback Review and Safety Violations pages are replaced by one **Review center**, opened from a single account menu entry when either section is open to you. A rail lists each section's pages: a **Dashboard**, a workbench, and for safety the **Unchecked chat content** queue. Section access follows the same roles and feature switches as the server: FeedbackAdmin or Admin with user feedback on, SafetyViolationAdmin or Admin with content safety or screening on. A user with neither section sees a clear not-available state.
+    *   Dashboards cover the last 7, 30 or 90 days. Feedback shows feedback awaiting review, negative feedback, the acknowledgement rate, archived feedback, feedback per day by rating and the oldest feedback awaiting review. Safety shows open violations, remediation awaiting approval, users restricted now, warnings sent and acknowledged, unchecked chat content, violations per day by category, severity and action breakdowns, and repeat users. Every figure opens the workbench filtered to what it counts, and every chart offers a data table.
+    *   Workbenches list records beside the selected record's detail, with search (including the user's name), filters, page and selection in the address. Check rows, Shift+click a range or select every matching record (up to 500), then act on all of them: Acknowledge, Archive, Restore or Delete feedback; Set status, Archive, Restore or Delete violations; recheck unchecked messages one after another. Each record is changed as its own save would change it, and the report names every record that could not be changed and why.
+    *   Records open in full-page editors with **Back**, a prompt before discarding unsaved changes, and **Reload** when the record changed underneath. The feedback editor records who reviewed it and can notify the user with the response. The violation editor prefills the notification, offers 24-hour, 7-day, 30-day or custom suspensions, and shows the approval request and warning acknowledgment.
+    *   New and extended APIs: list `search` and filters with display names, `GET /feedback/review/ids` and `GET /api/safety/logs/ids`, `days` on both stats endpoints (existing fields unchanged), `GET /api/safety/logs/<id>`, and `POST /feedback/review/bulk` and `POST /api/safety/logs/bulk` (up to 100 operations, per-item results). Exports now take the list filters. The old V2 addresses redirect; the classic pages are unchanged.
+    *   (Ref: `pages/review/`, `components/review/`, `CategoryRail.tsx`, `DashboardParts.tsx`, `lib/reviewAccess.ts`, `lib/reviewCenter.ts`, `functions_review_center.py`, `route_backend_feedback.py`, `route_backend_safety.py`, [V2 Admin Review Center](features/V2_ADMIN_REVIEW_CENTER.md))
+
+*   **Approvals Dashboard And Safety Remediation Category**
+    *   The V2 Approvals rail adds a **Dashboard**: requests waiting on you and those expiring within 24 hours, your own pending requests, decisions in the last 7, 30 or 90 days by outcome, pending requests by type, and the oldest waiting on you. Each figure opens the list filtered through its address. **All requests** is still where the page opens.
+    *   A **Safety remediation** category lists warn, suspend and block requests for the Admin, ControlCenterAdmin and SafetyViolationAdmin roles, and **Group requests** no longer includes them.
+    *   `GET /api/approvals/stats` counts only the requests `GET /api/approvals` shows the caller.
+    *   (Ref: `ApprovalsPage.tsx`, `ApprovalsDashboard.tsx`, `GenericApprovalsPanel.tsx`, `functions_approvals.py` `summarize_visible_approvals`, `route_backend_control_center.py`)
+
+#### Bug Fixes
+
+*   **Denied And Expired Remediation Requests Unlock Their Violation**
+    *   Denying a suspend or block request, or letting it expire, left its violation pending for good: it could not be edited or deleted. The violation is now released as denied or expired when the request is decided, and any violation still waiting on a request that was decided or no longer exists is settled the next time it is listed or opened. A request that is still pending keeps its violation locked.
+    *   (Ref: `functions_approvals.py` `deny_request`, `functions_safety_remediation.py` `release_safety_log_after_approval_decision`, `reconcile_pending_safety_logs`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **An Applied Suspension Or Block Is Not Requested Twice**
+    *   Saving a violation whose suspension or block was already applied or requested, for example to change only its status or notes, created another approval request. A new request is now created only when the action changes or the reviewer asks to request it again (`reissue`); otherwise the save reports `remediation_already_applied` or `remediation_unchanged`.
+    *   Both the classic **Safety Violations** review and the V2 violation editor offer **Request this suspension again** (or block) whenever the violation already records that action and no request is waiting, including after a request was denied, expired or failed. Until it is ticked they say where the last request stands and send no notification or restore time; ticking it sends the new ones with the request. The classic dialog no longer offers a restore time that has passed.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `admin-safety-violations.js`, `admin_safety_violations.html`, `SafetyEditorPage.tsx`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **Overlapping Safety Saves Leave One Consistent Request**
+    *   A suspension or block saved while another reviewer's warning was being sent, or while another suspension or block was saved, could be recorded over the other save: the violation could read as applied while its request still waited for approval, a warning could go untracked, or a request could stay approvable with nothing linked to it. The request is now recorded only on the violation as the save read it. Otherwise the save is refused with `409 record_changed`, and its request is withdrawn with its notices removed.
+    *   An approved warn, suspend or block request is carried out only while its violation waits on it, so a request that couldn't be withdrawn still changes nothing.
+    *   (Ref: `route_backend_safety.py`, `functions_approvals.py` `withdraw_approval_request`, `functions_safety_remediation.py` `safety_remediation_state`, `safety_log_awaits_request`, `route_backend_control_center.py` `_execute_safety_violation_request`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **Review Saves No Longer Overwrite Concurrent Changes**
+    *   Safety and feedback review saves replaced the whole record, so a warning acknowledged while a reviewer was saving could be lost. Saves, archives and deletes are now conditional on the stored version and write only their own fields.
+    *   A save that names the version it read (`etag`), as the V2 editors do and bulk operations can, is written on that version or not at all. A conflict is refused with `409 record_changed` rather than merged onto the newer version, which the V2 editors offer to reload. This covers PATCH, archive and the bulk `update` and `archive` operations.
+    *   (Ref: `functions_safety_remediation.py` `write_safety_log_updates`, `functions_review_center.py` `replace_review_record`, `route_backend_feedback.py`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+### **(v0.261.297)**
+
+#### New Features
+
+*   **Access Restricted Screen For Suspended And Blocked Users**
+    *   A user whose access an administrator suspended or blocked can still sign in, but every page now opens an **Access restricted** screen instead of a bare "Access Denied" error. It shows the notice the user was sent, whether access returns on its own and when (in the user's own time zone), the safety violation reference, and **Sign out**. Once the suspension ends or access is restored, the screen offers **Continue**.
+    *   V2 pages go to `/v2/access-restricted` and classic pages to `/access-restricted`. API calls get `403 {"error": "access_restricted", "message", "restriction", "restricted_url"}` with the caller's own restriction, and the V2 interface follows it to the screen from any page, including when a restriction is applied while a tab is open.
+    *   An approved safety suspension or block now stores the notice with the restriction, using the same title and message as the notification. Control Center restrictions carry no notice and show generic text; restoring access from Control Center clears it.
+    *   The screen's routes require sign-in but not an unrestricted account, describe only the signed-in user's own restriction, and are exempt from the Terms of Use gate so a restricted user is never bounced between the two. Idle-session timeout still applies. Accounts with the Admin role are still never restricted.
+    *   (Ref: `functions_access_restriction.py`, `functions_authentication.py` `user_required`, `get_user_access_restriction`, `route_access_restriction.py`, `access_restricted.html`, `AccessRestrictedPage.tsx`, `apiClient.ts`, [Access Restricted Sign-In Screen](features/ACCESS_RESTRICTED_SIGN_IN_SCREEN.md))
+
+*   **Safety Warnings Must Be Acknowledged**
+    *   A warning from a safety reviewer now opens a dialog, **A warning from your administrators**, the next time the user opens the V2 interface, and appears again in every tab and on every device until they select **I understand**. Escape and clicks outside the dialog don't dismiss it.
+    *   Reviewers see **Warning acknowledged** with the date, or **Not yet acknowledged**, on the violation, and users see the same state in **Settings > Violations**. Warnings sent before this version are never shown again.
+    *   A reviewer can warn about the same violation again. The user then has to acknowledge the newer warning, even in a tab where they acknowledged the earlier one, and an acknowledgment is only recorded against the warning the user read: one replaced while on screen is answered with the newer warning instead.
+    *   New routes `GET /api/safety/warnings/pending` and `POST /api/safety/warnings/<id>/acknowledge` return and change only the caller's own warnings. Bootstrap carries the pending count, so a user with no warnings makes no extra request.
+    *   (Ref: `functions_safety_remediation.py`, `route_backend_safety.py`, `route_backend_v2.py` bootstrap `safety_warnings`, `SafetyWarningDialog.tsx`, `useSafetyWarningRuntime.ts`, `ViolationsTab.tsx`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+
+#### Bug Fixes
+
+*   **Safety Warnings Are Sent Without A Second Reviewer**
+    *   In a deployment with one administrator, **Warn user** created an approval request that nobody could approve, because a requester can never approve their own request, so the warning was never sent. A warning restricts nothing, so it is now sent as soon as the reviewer saves the review, and recorded in the activity log. Saving the record again, for example to resolve it, doesn't send it twice.
+    *   Two saves that overlap, such as a double-click or two reviewers at once, send it once. A save claims the violation with a write conditional on the version it read before anything is sent, and the other save is refused with `409 safety_warning_in_progress`. While a warning is being sent the violation reads **Sending**, can't be changed or deleted, and never counts as a warning to acknowledge. A claim left by a save that stopped is released after five minutes. The classic page also disables **Save Review** while its request is in flight.
+    *   **Suspend user** and **Block user** still create an approval request that another eligible reviewer must approve. A **Warn User** request created before this version still completes when approved.
+    *   The review's guidance text in both interfaces now describes which actions wait for a second reviewer.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `functions_safety_remediation.py` `claim_safety_warning_send`, `record_safety_warning_send`, `route_backend_control_center.py` `_execute_safety_violation_request`, `AdminSafetyViolationsPage.tsx`, `admin-safety-violations.js`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+
+#### Breaking Changes
+
+*   **Escalate Removed As A Safety Action**
+    *   **Escalate** was a label with no workflow behind it. It can no longer be chosen in either interface, and the API rejects a change to `Escalate` with 400. Records that already carry it keep it, are labelled **Escalated (legacy)**, and can still be saved. `escalate_count` remains in the statistics; the V2 "Escalated or blocked" tile is now **Blocked**.
+    *   **Migration**: None required. Resolve or re-action legacy escalated records as needed.
+    *   (Ref: `route_backend_safety.py`, `AdminSafetyViolationsPage.tsx`, `ViolationsTab.tsx`, `admin_safety_violations.html`, `my_safety_violations.html`, `profile.html`)
+
+*   **Access-Restriction Responses Changed**
+    *   API calls from a restricted user now return `403` with `"error": "access_restricted"` and a structured `restriction`, instead of `"error": "Access Denied"` with the reason as `message`. Browser page requests are redirected to the Access restricted screen instead of returning a plain-text 403.
+    *   **Migration**: Integrations that matched the old `Access Denied` error string should check for `access_restricted` instead.
+    *   (Ref: `functions_authentication.py` `access_restricted_response`)
 
 ### **(v0.261.296)**
 

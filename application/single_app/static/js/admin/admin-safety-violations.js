@@ -13,11 +13,17 @@
     const SAFETY_VIEW_STORAGE_KEY = 'simplechat.admin.safetyViolations.viewMode';
 
     const SAFETY_REMEDIATION_ACTIONS = new Set(['WarnUser', 'SuspendUser', 'BlockUser']);
+    // Escalate is no longer an action. A record that already carries it keeps it, labelled
+    // as legacy, and only that record's editor offers it again.
+    const LEGACY_ESCALATE_ACTION = 'Escalate';
+    // Every value the action select can hold. The select is read through this list, so only
+    // these constant strings, never text taken from the page, reach data attributes or a save.
+    const ACTION_VALUES = ['None', 'WarnUser', 'SuspendUser', 'BlockUser', LEGACY_ESCALATE_ACTION];
     const ACTION_LABELS = {
         None: 'None',
         WarnUser: 'Warn user',
         SuspendUser: 'Suspend user',
-        Escalate: 'Escalate',
+        Escalate: 'Escalated (legacy)',
         BlockUser: 'Block user',
     };
 
@@ -415,6 +421,8 @@
         const requestStatus = String(logItem.action_request_status || '').toLowerCase();
         if (requestStatus === 'pending') {
             actionLabel += ' (Pending approval)';
+        } else if (requestStatus === 'sending') {
+            actionLabel += ' (Sending)';
         } else if (requestStatus === 'failed') {
             actionLabel += ' (Execution failed)';
         }
@@ -470,10 +478,99 @@
         return messageLines.join('\n');
     }
 
+    function isExecutedWarning(logItem) {
+        return logItem.action === 'WarnUser'
+            && String(logItem.action_request_status || '').toLowerCase() === 'executed';
+    }
+
+    function isRestrictionAction(action) {
+        return action === 'SuspendUser' || action === 'BlockUser';
+    }
+
+    // The action chosen in the review, as the matching entry of ACTION_VALUES. An empty or
+    // unknown value reads as None, as an empty one always has.
+    function readSelectedAction() {
+        const selectedValue = document.getElementById('editAction')?.value || '';
+        return ACTION_VALUES.find(function (value) {
+            return value === selectedValue;
+        }) || 'None';
+    }
+
+    // A suspension or block the violation already records is requested again only on purpose,
+    // whatever became of the last request, and never while one is waiting or a warning is sent.
+    function offersReissue(logItem, action) {
+        const requestStatus = String(logItem.action_request_status || '').toLowerCase();
+        return isRestrictionAction(action)
+            && logItem.action === action
+            && requestStatus !== 'pending'
+            && requestStatus !== 'sending';
+    }
+
+    function describeExistingRestriction(logItem, action) {
+        const noun = action === 'BlockUser' ? 'block' : 'suspension';
+        const requestStatus = String(logItem.action_request_status || '').toLowerCase();
+        if (requestStatus === 'pending') {
+            return `This ${noun} is waiting for another eligible reviewer to approve it. The violation can't be changed until the request is decided.`;
+        }
+        const states = {
+            executed: `This ${noun} was approved and applied.`,
+            denied: `This ${noun} request was denied.`,
+            expired: `This ${noun} request expired without a decision.`,
+            failed: `This ${noun} was approved but could not be applied.`,
+        };
+        const where = states[requestStatus] || `This violation already records a ${noun}.`;
+        return `${where} Saving updates the review only and requests nothing new. To ask another eligible reviewer to approve it again, select "Request this ${noun} again".`;
+    }
+
+    function isFutureDate(isoValue) {
+        const parsedDate = isoValue ? new Date(isoValue) : null;
+        return Boolean(parsedDate) && !Number.isNaN(parsedDate.getTime()) && parsedDate.getTime() > Date.now();
+    }
+
+    function syncLegacyEscalateOption(selectElement, logItem) {
+        if (!selectElement) {
+            return;
+        }
+
+        const existingOption = Array.from(selectElement.options).find(function (option) {
+            return option.value === LEGACY_ESCALATE_ACTION;
+        });
+        if (logItem.action === LEGACY_ESCALATE_ACTION) {
+            if (!existingOption) {
+                const legacyOption = document.createElement('option');
+                legacyOption.value = LEGACY_ESCALATE_ACTION;
+                legacyOption.textContent = ACTION_LABELS.Escalate;
+                selectElement.appendChild(legacyOption);
+            }
+        } else if (existingOption) {
+            existingOption.remove();
+        }
+    }
+
+    function updateWarningAcknowledgment(logItem) {
+        const acknowledgmentElement = document.getElementById('safetyWarningAcknowledgment');
+        if (!acknowledgmentElement) {
+            return;
+        }
+
+        const status = isExecutedWarning(logItem) ? logItem.warning_acknowledgment_status : null;
+        let text = '';
+        if (status === 'acknowledged') {
+            text = `Warning acknowledged ${formatDateTime(logItem.warning_acknowledged_at)}`;
+        } else if (status === 'pending') {
+            text = 'Warning sent. Not yet acknowledged by the user.';
+        } else if (status === 'not_tracked') {
+            text = 'Warning sent before acknowledgment was tracked.';
+        }
+        acknowledgmentElement.textContent = text;
+        setElementHidden(acknowledgmentElement, !text);
+    }
+
     function updateRemediationFields(logItem, forcePopulate) {
-        const action = document.getElementById('editAction')?.value || 'None';
+        const action = readSelectedAction();
         const remediationFields = document.getElementById('safetyRemediationFields');
         const remediationHelp = document.getElementById('safetyRemediationHelp');
+        const notificationGroup = document.getElementById('safetyNotificationGroup');
         const notificationMessage = document.getElementById('editNotificationMessage');
         const suspendGroup = document.getElementById('safetySuspendUntilGroup');
         const suspendInput = document.getElementById('editSuspendUntil');
@@ -484,22 +581,55 @@
 
         const shouldShow = SAFETY_REMEDIATION_ACTIONS.has(action);
         setElementHidden(remediationFields, !shouldShow);
+        const reissueGroup = document.getElementById('safetyReissueGroup');
+        const reissueInput = document.getElementById('editReissue');
+        const reissueOffered = shouldShow && offersReissue(logItem, action);
+        if (reissueGroup && reissueInput) {
+            setElementHidden(reissueGroup, !reissueOffered);
+            if (forcePopulate || !reissueOffered) {
+                reissueInput.checked = false;
+            }
+            const noun = action === 'BlockUser' ? 'block' : 'suspension';
+            document.getElementById('editReissueLabel').textContent = `Request this ${noun} again`;
+            document.getElementById('editReissueHelp').textContent = action === 'SuspendUser'
+                ? 'Creates a new approval request with the notification and restore date below. It applies only after another eligible reviewer approves it.'
+                : 'Creates a new approval request with the notification below. It applies only after another eligible reviewer approves it.';
+        }
+        // Saving the same suspension or block again, without asking for it again, requests
+        // nothing, so the notification and restore date would not be used. Nor would they for
+        // one still waiting for approval, which can't be changed until it is decided.
+        const awaitingApproval = isRestrictionAction(action)
+            && logItem.action === action
+            && String(logItem.action_request_status || '').toLowerCase() === 'pending';
+        const requestsNothing = awaitingApproval || (reissueOffered && !(reissueInput && reissueInput.checked));
+
         if (!shouldShow) {
             remediationHelp.textContent = '';
             notificationMessage.value = '';
             notificationMessage.dataset.generatedMessage = '';
             notificationMessage.dataset.action = action;
             suspendInput.value = '';
+            suspendInput.dataset.action = action;
             setElementHidden(suspendGroup, true);
             return;
         }
 
+        // A warning already sent is not sent again, so saving this record again only updates it.
+        const warningAlreadySent = action === 'WarnUser' && isExecutedWarning(logItem);
+        setElementHidden(notificationGroup, warningAlreadySent || requestsNothing);
+
         const helpTextMap = {
-            WarnUser: 'Warn user sends a notification to the affected user. If this reviewer also has the required Control Center approval role, the warning is approved and sent immediately.',
-            SuspendUser: 'Suspend user uses the Control Center access restriction workflow. Reviewers without approval authority create a pending request instead of applying the suspension immediately.',
-            BlockUser: 'Block user applies a permanent access restriction through the same Control Center access workflow, with no automatic restore date.',
+            WarnUser: 'Warn user sends the warning to the affected user as soon as you save, without a second reviewer. The user must acknowledge it the next time they use SimpleChat.',
+            SuspendUser: 'Suspend user restricts access until the restore date. Because it restricts access, saving creates an approval request, and the suspension applies only after another eligible reviewer approves it.',
+            BlockUser: 'Block user restricts access with no automatic restore date. Saving creates an approval request, and the block applies only after another eligible reviewer approves it.',
         };
-        remediationHelp.textContent = helpTextMap[action] || '';
+        if (warningAlreadySent) {
+            remediationHelp.textContent = 'This warning was already sent. Saving updates the review without sending the warning again.';
+        } else if (requestsNothing) {
+            remediationHelp.textContent = describeExistingRestriction(logItem, action);
+        } else {
+            remediationHelp.textContent = helpTextMap[action] || '';
+        }
 
         const generatedMessage = buildDefaultNotificationMessage(logItem, action);
         const savedMessage = logItem.action === action ? logItem.action_notification_message : '';
@@ -512,14 +642,16 @@
         notificationMessage.dataset.generatedMessage = nextMessage;
         notificationMessage.dataset.action = action;
 
-        const showSuspendUntil = action === 'SuspendUser';
+        const showSuspendUntil = action === 'SuspendUser' && !requestsNothing;
         setElementHidden(suspendGroup, !showSuspendUntil);
-        if (showSuspendUntil) {
-            const restoreDate = logItem.action === action ? logItem.action_datetime_to_allow : '';
-            suspendInput.value = toLocalDateTimeInputValue(restoreDate);
-        } else {
-            suspendInput.value = '';
+        if (forcePopulate || suspendInput.dataset.action !== action) {
+            // The last restore time is offered again only while it is still ahead.
+            const restoreDate = logItem.action === action && isFutureDate(logItem.action_datetime_to_allow)
+                ? logItem.action_datetime_to_allow
+                : '';
+            suspendInput.value = action === 'SuspendUser' ? toLocalDateTimeInputValue(restoreDate) : '';
         }
+        suspendInput.dataset.action = action;
     }
 
     function createTextCell(text, className, title) {
@@ -594,7 +726,7 @@
         setTextContent('safetyResolvedCount', data.resolved_count || 0);
         setTextContent('safetyDismissedCount', data.dismissed_count || 0);
         setTextContent('safetyRecentCount', data.recent_30_day_count || 0);
-        setTextContent('safetyEscalatedCount', (data.escalate_count || 0) + (data.block_user_count || 0));
+        setTextContent('safetyBlockedCount', data.block_user_count || 0);
 
         setTextContent('safetyStatsNewSummary', data.new_count || 0);
         setTextContent('safetyStatsInReviewSummary', data.in_review_count || 0);
@@ -603,7 +735,12 @@
         setTextContent('safetyStatsNoneActionSummary', data.none_action_count || 0);
         setTextContent('safetyStatsWarnSummary', data.warn_user_count || 0);
         setTextContent('safetyStatsSuspendSummary', data.suspend_user_count || 0);
-        setTextContent('safetyStatsEscalateSummary', (data.escalate_count || 0) + (data.block_user_count || 0));
+        setTextContent('safetyStatsBlockSummary', data.block_user_count || 0);
+        // Escalations recorded before the action was removed are still counted, and only
+        // shown when there are any.
+        const legacyEscalations = data.escalate_count || 0;
+        setTextContent('safetyStatsLegacyEscalateSummary', legacyEscalations);
+        setElementHidden(document.getElementById('safetyStatsLegacyEscalateRow'), legacyEscalations <= 0);
     }
 
     async function renderSafetyRows(items) {
@@ -752,6 +889,7 @@
         setTextContent('editMessage', item.message || '');
         appendCategoryBadges(document.getElementById('editCategories'), item, 'No triggered categories');
         document.getElementById('editStatus').value = item.status || 'New';
+        syncLegacyEscalateOption(document.getElementById('editAction'), item);
         document.getElementById('editAction').value = item.action || 'None';
         for (const option of document.getElementById('editAction').options) {
             option.disabled = item.content_origin === 'assistant' && SAFETY_REMEDIATION_ACTIONS.has(option.value);
@@ -759,6 +897,7 @@
         document.getElementById('editNotes').value = item.notes || '';
         document.getElementById('editLogId').value = item.id || '';
         setTextContent('safetyEditStatus', '');
+        updateWarningAcknowledgment(item);
         const archiveButton = document.getElementById('archiveSafetyBtn');
         if (archiveButton) {
             archiveButton.dataset.archived = item.isArchived ? 'true' : 'false';
@@ -782,14 +921,18 @@
             return;
         }
 
-        const action = document.getElementById('editAction')?.value || 'None';
+        const action = readSelectedAction();
         const payload = {
             status: document.getElementById('editStatus')?.value || 'New',
             action: action,
             notes: document.getElementById('editNotes')?.value || '',
         };
 
-        if (SAFETY_REMEDIATION_ACTIONS.has(action)) {
+        // A suspension or block is requested when it is newly chosen, or asked for again.
+        const activeItem = state.activeItem || {};
+        const reissue = offersReissue(activeItem, action) && Boolean(document.getElementById('editReissue')?.checked);
+        const requestsRestriction = isRestrictionAction(action) && (activeItem.action !== action || reissue);
+        if (action === 'WarnUser' || requestsRestriction) {
             payload.notification_message = document.getElementById('editNotificationMessage')?.value || '';
 
             if (action === 'SuspendUser') {
@@ -798,7 +941,13 @@
                 if (!payload.datetime_to_allow) {
                     throw new Error('Restore access date is required for a suspension.');
                 }
+                if (!isFutureDate(payload.datetime_to_allow)) {
+                    throw new Error('Choose a restore date and time in the future.');
+                }
             }
+        }
+        if (reissue) {
+            payload.reissue = true;
         }
 
         if (statusElement) {
@@ -986,12 +1135,21 @@
 
         if (saveButton) {
             saveButton.addEventListener('click', function () {
+                if (saveButton.disabled) {
+                    return;
+                }
+                // A second click while the save is in flight would send a second request.
+                saveButton.disabled = true;
+                saveButton.setAttribute('aria-busy', 'true');
                 saveSafetyChanges().catch(function (error) {
                     const statusElement = document.getElementById('safetyEditStatus');
                     if (statusElement) {
                         statusElement.textContent = error.message;
                         statusElement.className = 'small text-danger me-auto';
                     }
+                }).finally(function () {
+                    saveButton.disabled = false;
+                    saveButton.removeAttribute('aria-busy');
                 });
             });
         }
@@ -1003,6 +1161,15 @@
                 }
 
                 updateRemediationFields(state.activeItem, false);
+            });
+        }
+
+        const reissueInput = document.getElementById('editReissue');
+        if (reissueInput) {
+            reissueInput.addEventListener('change', function () {
+                if (state.activeItem) {
+                    updateRemediationFields(state.activeItem, false);
+                }
             });
         }
 
