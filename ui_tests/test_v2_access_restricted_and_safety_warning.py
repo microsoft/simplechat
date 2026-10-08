@@ -9,8 +9,9 @@ boundary. Check that a restricted user whose first call is refused lands on the 
 restricted page instead of an error, sees the administrator's notice as text, when access
 returns in their own locale, the violation reference and a Sign out link; that a block and
 a restored account read differently; that a safety warning appears in a dialog that Escape
-does not dismiss, is acknowledged with "I understand", shows the next waiting warning, and
-stays when an acknowledgment fails; and that warnings are read only when bootstrap counts
+does not dismiss, is acknowledged with "I understand" naming when the warning read was sent,
+shows the next waiting warning, shows the newer warning when the one on screen was replaced,
+and stays when an acknowledgment fails; and that warnings are read only when bootstrap counts
 some, including when the reader comes back to the tab. Unexpected requests and page errors
 fail.
 """
@@ -80,6 +81,7 @@ class RestrictionFixture:
         self.warnings = []
         self.pending_reads = 0
         self.acknowledgments = []
+        self.acknowledgment_bodies = []
         self.fail_next_acknowledgment = False
         self.errors = []
         self.unexpected_requests = []
@@ -149,10 +151,19 @@ class RestrictionFixture:
             route.fulfill(json={"warnings": self.warnings, "count": len(self.warnings)})
         elif method == "POST" and path.startswith("/api/safety/warnings/") and path.endswith("/acknowledge"):
             warning_id = path.removeprefix("/api/safety/warnings/").removesuffix("/acknowledge")
+            body = request.post_data_json or {}
             self.acknowledgments.append(warning_id)
+            self.acknowledgment_bodies.append(body)
             if self.fail_next_acknowledgment:
                 self.fail_next_acknowledgment = False
                 route.fulfill(status=500, json={"error": "Your acknowledgment could not be saved. Try again."})
+                return
+            current = next((item for item in self.warnings if item["id"] == warning_id), None)
+            if current and body.get("issued_at") and body["issued_at"] != current["issued_at"]:
+                route.fulfill(status=409, json={
+                    "error": "A newer warning replaced this one. Read the newer warning, then acknowledge it.",
+                    "code": "safety_warning_replaced",
+                })
                 return
             self.warnings = [item for item in self.warnings if item["id"] != warning_id]
             route.fulfill(json={"success": True, "already_acknowledged": False, "warning": {"id": warning_id}})
@@ -250,6 +261,40 @@ def test_safety_warning_must_be_acknowledged(restriction_ui):
     dialog.get_by_role("button", name="I understand").click()
     expect(page.get_by_role("dialog", name="A warning from your administrators")).to_have_count(0)
     assert restriction_ui.acknowledgments == ["log-1", "log-2"]
+    # Each acknowledgment names when the warning read was sent.
+    assert restriction_ui.acknowledgment_bodies == [
+        {"issued_at": WARNINGS[0]["issued_at"]},
+        {"issued_at": WARNINGS[1]["issued_at"]},
+    ]
+
+
+def test_a_warning_replaced_while_on_screen_shows_the_newer_one(restriction_ui):
+    restriction_ui.warnings = copy.deepcopy(WARNINGS[:1])
+    restriction_ui.open("/v2/approvals")
+    page = restriction_ui.page
+
+    dialog = page.get_by_role("dialog", name="A warning from your administrators")
+    expect(dialog.get_by_role("heading", name="Safety Violation Warning")).to_be_visible()
+
+    # While it is on screen, a reviewer warns about the same violation again.
+    restriction_ui.warnings = [{
+        **copy.deepcopy(WARNINGS[0]),
+        "title": "Updated warning",
+        "message": "Please read this newer warning.",
+        "issued_at": "2026-10-08T09:00:00+00:00",
+    }]
+    dialog.get_by_role("button", name="I understand").click()
+    expect(dialog.get_by_role("heading", name="Updated warning")).to_be_visible()
+    expect(dialog.get_by_test_id("v2-safety-warning-message")).to_have_text("Please read this newer warning.")
+    expect(dialog.get_by_role("alert")).to_have_count(0)
+    assert restriction_ui.pending_reads == 2
+
+    dialog.get_by_role("button", name="I understand").click()
+    expect(page.get_by_role("dialog", name="A warning from your administrators")).to_have_count(0)
+    assert restriction_ui.acknowledgment_bodies == [
+        {"issued_at": "2026-10-07T12:00:00+00:00"},
+        {"issued_at": "2026-10-08T09:00:00+00:00"},
+    ]
 
 
 def test_failed_acknowledgment_keeps_the_warning(restriction_ui):

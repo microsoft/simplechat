@@ -11,7 +11,7 @@
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
-import { describeSafetyWarningCategories, formatSafetyWarningDate } from '../../lib/safetyWarnings';
+import { describeSafetyWarningCategories, formatSafetyWarningDate, safetyWarningKey } from '../../lib/safetyWarnings';
 import { refreshNotificationCount } from '../../stores/notificationStore';
 import { useSafetyWarningStore } from '../../stores/safetyWarningStore';
 
@@ -24,7 +24,7 @@ function keepOpen(): void {
 export function SafetyWarningDialogHost() {
     const warning = useSafetyWarningStore((state) => state.warnings[0] ?? null);
     const waiting = useSafetyWarningStore((state) => state.warnings.length);
-    const acknowledgingId = useSafetyWarningStore((state) => state.acknowledgingId);
+    const acknowledgingKey = useSafetyWarningStore((state) => state.acknowledgingKey);
     const error = useSafetyWarningStore((state) => state.error);
     const acknowledge = useSafetyWarningStore((state) => state.acknowledge);
 
@@ -32,12 +32,12 @@ export function SafetyWarningDialogHost() {
         return null;
     }
 
-    const busy = acknowledgingId === warning.id;
+    const busy = acknowledgingKey === safetyWarningKey(warning);
     const issued = formatSafetyWarningDate(warning.issuedAt);
     const categories = describeSafetyWarningCategories(warning.categories);
 
     const onAcknowledge = async () => {
-        if (await acknowledge(warning.id)) {
+        if (await acknowledge(warning)) {
             // The warning's notice in the bell was marked read with it.
             void refreshNotificationCount();
         }

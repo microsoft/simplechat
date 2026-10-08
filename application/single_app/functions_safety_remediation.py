@@ -38,6 +38,14 @@ WARNING_ACKNOWLEDGMENT_PENDING = 'pending'
 WARNING_ACKNOWLEDGMENT_ACKNOWLEDGED = 'acknowledged'
 WARNING_ACKNOWLEDGMENT_NOT_TRACKED = 'not_tracked'
 
+# A reviewer can warn about the same violation again, which replaces the warning on it. An
+# acknowledgment of the earlier one is refused with this code rather than recorded against
+# a warning the user has not read.
+SAFETY_WARNING_REPLACED_CODE = 'safety_warning_replaced'
+SAFETY_WARNING_REPLACED_MESSAGE = (
+    'A newer warning replaced this one. Read the newer warning, then acknowledge it.'
+)
+
 
 def get_safety_log_item(log_id: str) -> Dict[str, Any]:
     """Return a safety log item by its document id."""
@@ -321,6 +329,11 @@ def _user_safe_categories(log_item: Dict[str, Any]) -> List[Dict[str, Any]]:
     return categories
 
 
+def _warning_issued_at(log_item: Dict[str, Any]) -> Optional[str]:
+    """When the warning now on a violation was sent. Each warning sent on it has its own."""
+    return log_item.get('warning_issued_at') or log_item.get('action_executed_at')
+
+
 def serialize_safety_warning_for_user(log_item: Dict[str, Any]) -> Dict[str, Any]:
     """Return only what the warned user may see of a warning: what they were sent, and when."""
     return {
@@ -329,7 +342,7 @@ def serialize_safety_warning_for_user(log_item: Dict[str, Any]) -> Dict[str, Any
         'title': str(log_item.get('warning_title') or '').strip()
         or _default_notification_title(SAFETY_REMEDIATION_WARNING),
         'message': str(log_item.get('warning_message') or '').strip() or SAFETY_WARNING_FALLBACK_MESSAGE,
-        'issued_at': log_item.get('warning_issued_at') or log_item.get('action_executed_at'),
+        'issued_at': _warning_issued_at(log_item),
         'acknowledged_at': log_item.get('warning_acknowledged_at'),
         'triggered_categories': _user_safe_categories(log_item),
     }
@@ -416,18 +429,26 @@ def _mark_warning_notification_read(log_item: Dict[str, Any], user_id: str) -> N
         )
 
 
-def acknowledge_safety_warning(log_id: str, user_id: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+def acknowledge_safety_warning(
+    log_id: str,
+    user_id: str,
+    issued_at: Optional[str] = None,
+) -> Tuple[str, Optional[Dict[str, Any]]]:
     """Record that the signed-in user acknowledged their own warning.
 
-    Returns ``(status, warning)``. ``status`` is ``acknowledged``, ``already_acknowledged``
-    or ``not_found``. A record that doesn't exist, belongs to someone else, or isn't a
-    warning that asks for acknowledgment is ``not_found``, so the answer never confirms
-    another user's record. The write is conditional on the stored ETag and retried, so a
+    Returns ``(status, warning)``. ``status`` is ``acknowledged``, ``already_acknowledged``,
+    ``replaced`` or ``not_found``. A record that doesn't exist, belongs to someone else, or
+    isn't a warning that asks for acknowledgment is ``not_found``, so the answer never
+    confirms another user's record. ``issued_at`` is when the warning the user read was
+    sent: when the violation now holds a warning sent at another time, the one they read was
+    replaced, and nothing is recorded (``replaced``). Without it, the warning now on the
+    violation is acknowledged. The write is conditional on the stored ETag and retried, so a
     reviewer saving the record at the same moment is never overwritten.
     """
     normalized_id = str(log_id or '').strip()
     if not normalized_id or not user_id:
         return 'not_found', None
+    expected_issued_at = str(issued_at or '').strip()
 
     for _attempt in range(SAFETY_WARNING_WRITE_ATTEMPTS):
         try:
@@ -436,6 +457,8 @@ def acknowledge_safety_warning(log_id: str, user_id: str) -> Tuple[str, Optional
             return 'not_found', None
         if not _is_acknowledgeable_warning(item, user_id):
             return 'not_found', None
+        if expected_issued_at and expected_issued_at != str(_warning_issued_at(item) or '').strip():
+            return 'replaced', None
         if item.get('warning_acknowledged_at'):
             _mark_warning_notification_read(item, user_id)
             return 'already_acknowledged', serialize_safety_warning_for_user(item)

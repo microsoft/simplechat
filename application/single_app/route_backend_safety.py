@@ -39,6 +39,8 @@ from functions_safety_remediation import (
     SAFETY_REMEDIATION_BLOCK,
     SAFETY_REMEDIATION_SUSPEND,
     SAFETY_REMEDIATION_WARNING,
+    SAFETY_WARNING_REPLACED_CODE,
+    SAFETY_WARNING_REPLACED_MESSAGE,
     acknowledge_safety_warning,
     build_safety_action_execution_updates,
     execute_safety_violation_action,
@@ -1028,13 +1030,21 @@ def register_route_backend_safety(bp):
 
         Repeating it changes nothing. Any record that isn't the caller's own warning is
         answered 404, so the response never confirms that another user's record exists.
+        The body may carry ``issued_at``, as listed by the pending route: when the
+        violation has since been warned about again, the warning the user read was
+        replaced, and 409 ``safety_warning_replaced`` records nothing.
         """
         user_id = _get_safety_session_user_id()
         if not user_id:
             return jsonify({"error": "No user ID found in session"}), 403
 
+        payload = request.get_json(silent=True)
+        issued_at = payload.get('issued_at') if isinstance(payload, dict) else None
+        if issued_at is not None and not isinstance(issued_at, str):
+            return jsonify({"error": "issued_at must be a string."}), 400
+
         try:
-            status, warning = acknowledge_safety_warning(log_id, user_id)
+            status, warning = acknowledge_safety_warning(log_id, user_id, issued_at=issued_at)
         except Exception as e:
             log_event(
                 "[SAFETY_WARNINGS] A safety warning acknowledgment could not be saved.",
@@ -1045,6 +1055,11 @@ def register_route_backend_safety(bp):
 
         if status == 'not_found':
             return jsonify({"error": "Warning not found."}), 404
+        if status == 'replaced':
+            return jsonify({
+                "error": SAFETY_WARNING_REPLACED_MESSAGE,
+                "code": SAFETY_WARNING_REPLACED_CODE,
+            }), 409
         return jsonify({
             "success": True,
             "already_acknowledged": status == 'already_acknowledged',

@@ -16,6 +16,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Safety Warnings Must Be Acknowledged**
     *   A warning from a safety reviewer now opens a dialog, **A warning from your administrators**, the next time the user opens the V2 interface, and appears again in every tab and on every device until they select **I understand**. Escape and clicks outside the dialog don't dismiss it.
     *   Reviewers see **Warning acknowledged** with the date, or **Not yet acknowledged**, on the violation, and users see the same state in **Settings > Violations**. Warnings sent before this version are never shown again.
+    *   A reviewer can warn about the same violation again. The user then has to acknowledge the newer warning, even in a tab where they acknowledged the earlier one, and an acknowledgment is only recorded against the warning the user read: one replaced while on screen is answered with the newer warning instead.
     *   New routes `GET /api/safety/warnings/pending` and `POST /api/safety/warnings/<id>/acknowledge` return and change only the caller's own warnings. Bootstrap carries the pending count, so a user with no warnings makes no extra request.
     *   (Ref: `functions_safety_remediation.py`, `route_backend_safety.py`, `route_backend_v2.py` bootstrap `safety_warnings`, `SafetyWarningDialog.tsx`, `useSafetyWarningRuntime.ts`, `ViolationsTab.tsx`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
 

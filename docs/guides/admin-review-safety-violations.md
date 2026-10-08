@@ -35,13 +35,13 @@ Each action sends the user the notification text in the review. Leave it as gene
 
 Suspensions and blocks need a second reviewer because they take away a person's access; requiring two people for that decision protects users from a single mistaken or malicious reviewer. A record with a pending approval can't be changed or deleted until the request is decided.
 
-Saving a warned record again, for example to resolve it, doesn't send the warning a second time.
+Saving a warned record again, for example to resolve it, doesn't send the warning a second time. If you change the action away from **Warn user**, save, and later choose **Warn user** again, a new warning is sent. It replaces the earlier one on the record, and the user has to acknowledge the new warning even if they acknowledged the earlier one.
 
 ### Warning acknowledgment
 
 A warning has to be acknowledged. The V2 interface shows it in a dialog the next time the user opens SimpleChat, and again in every tab and on every device until they select **I understand**. In the classic interface the warning arrives as a notification.
 
-The review shows **Warning acknowledged** with the date, or **Not yet acknowledged**, so you can tell whether the user has read it before deciding on a further step. Warnings sent before version 0.261.297 are shown as sent before acknowledgment was tracked, and are never shown to the user again.
+The review shows **Warning acknowledged** with the date, or **Not yet acknowledged**, so you can tell whether the user has read it before deciding on a further step. An acknowledgment always belongs to the warning the user read: if a newer warning replaces it while it is on their screen, selecting **I understand** shows the newer warning instead of recording anything. Warnings sent before version 0.261.297 are shown as sent before acknowledgment was tracked, and are never shown to the user again.
 
 ### What a suspended or blocked user sees
 

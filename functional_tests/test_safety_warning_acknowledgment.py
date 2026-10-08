@@ -9,10 +9,11 @@ This test ensures that a safety reviewer's warning is sent as the review is save
 an approval request, and is sent once per violation; that the warned user can list and
 acknowledge only their own warnings, with only what they were sent; that acknowledging is
 idempotent, marks the delivering notification read and never overwrites a concurrent
-reviewer save; that warnings sent before acknowledgment was tracked never ask for it; that
-the user-facing routes are not gated on the content checks report; and that a failed send
-is recorded and can be retried. Real modules run in fresh processes with network access
-blocked, under normal and optimized Python.
+reviewer save; that an acknowledgment of a warning since withdrawn or replaced by a newer
+warning on the same violation records nothing; that warnings sent before acknowledgment was
+tracked never ask for it; that the user-facing routes are not gated on the content checks
+report; and that a failed send is recorded and can be retried. Real modules run in fresh
+processes with network access blocked, under normal and optimized Python.
 """
 
 import ast
@@ -164,6 +165,52 @@ with offline_app_imports(), ExitStack() as stack:
     check(logs["log-warn"]["warning_acknowledgment_status"] == "acknowledged", str(logs["log-warn"]))
     check(logs["log-warn"]["warning_acknowledged_at"] == first_acknowledgment, str(logs["log-warn"]))
 
+    # A violation can be warned about again. An acknowledgment names the warning the user
+    # read, so one read before a withdrawal or a newer warning is never recorded against it.
+    container.seed({**base, "id": "log-resend", "user_id": "user-1"})
+    response = client.patch("/api/safety/logs/log-resend", json={"status": "In-Review", "action": "WarnUser"})
+    check(response.status_code == 200, f"first warning not sent: {response.get_json()}")
+    first_sent_at = "2026-10-02T09:00:00+00:00"
+    container.items["log-resend"]["warning_issued_at"] = first_sent_at
+    sign_in(client, "user-1")
+    pending = {item["id"]: item for item in client.get("/api/safety/warnings/pending").get_json()["warnings"]}
+    check(pending["log-resend"]["issued_at"] == first_sent_at, str(pending))
+    sign_in(client, "reviewer-1", roles=("Admin",))
+    response = client.patch("/api/safety/logs/log-resend", json={"status": "In-Review", "action": "None"})
+    check(response.status_code == 200, "the warning could not be withdrawn")
+    sign_in(client, "user-1")
+    response = client.post("/api/safety/warnings/log-resend/acknowledge", json={"issued_at": first_sent_at})
+    check(response.status_code == 404, "a withdrawn warning was acknowledged")
+    sign_in(client, "reviewer-1", roles=("Admin",))
+    response = client.patch("/api/safety/logs/log-resend", json={
+        "status": "In-Review", "action": "WarnUser", "notification_message": "A second warning.",
+    })
+    check(response.status_code == 200 and response.get_json().get("warning_already_sent") is not True, "not re-sent")
+    resent = container.items["log-resend"]
+    second_sent_at = resent["warning_issued_at"]
+    check(second_sent_at != first_sent_at and resent["warning_acknowledged_at"] is None, str(resent))
+    sign_in(client, "user-1")
+    response = client.post("/api/safety/warnings/log-resend/acknowledge", json={"issued_at": first_sent_at})
+    check(response.status_code == 409 and response.get_json() == {
+        "error": remediation.SAFETY_WARNING_REPLACED_MESSAGE, "code": "safety_warning_replaced",
+    }, f"a replaced warning: {response.status_code} {response.get_json()}")
+    check(container.items["log-resend"]["warning_acknowledged_at"] is None, "the newer warning was acknowledged unread")
+    pending = {item["id"]: item for item in client.get("/api/safety/warnings/pending").get_json()["warnings"]}
+    check(pending["log-resend"]["issued_at"] == second_sent_at, str(pending))
+    check(pending["log-resend"]["message"] == "A second warning.", str(pending))
+    for bad_body in ({"issued_at": 5}, {"issued_at": ["x"]}):
+        response = client.post("/api/safety/warnings/log-resend/acknowledge", json=bad_body)
+        check(response.status_code == 400, f"accepted {bad_body}")
+    response = client.post("/api/safety/warnings/log-resend/acknowledge", json={"issued_at": second_sent_at})
+    check(response.status_code == 200 and response.get_json()["already_acknowledged"] is False, "newer ack refused")
+    response = client.post("/api/safety/warnings/log-resend/acknowledge", json={"issued_at": second_sent_at})
+    check(response.status_code == 200 and response.get_json()["already_acknowledged"] is True, "newer ack repeat")
+    # Another user naming the right send time still learns nothing.
+    sign_in(client, "user-2")
+    response = client.post("/api/safety/warnings/log-resend/acknowledge", json={"issued_at": first_sent_at})
+    check(response.status_code == 404 and response.get_json() == {"error": "Warning not found."}, "cross-user replaced")
+    sign_in(client, "reviewer-1", roles=("Admin",))
+
     # A failed send is recorded without exception text, and saving again retries it.
     container.seed({**base, "id": "log-fail", "user_id": "user-1"})
     h.fail_notifications = True
@@ -289,7 +336,12 @@ def test_v2_warning_dialog_and_settings_are_wired():
     assert "dangerouslySetInnerHTML" not in dialog
     client = (v2 / "lib" / "safetyWarnings.ts").read_text(encoding="utf-8")
     assert "/api/safety/warnings/pending" in client
-    assert "/api/safety/warnings/${encodeURIComponent(id)}/acknowledge" in client
+    assert "/api/safety/warnings/${encodeURIComponent(warning.id)}/acknowledge" in client
+    # The acknowledgment names the warning read, so the server can refuse a replaced one.
+    assert "warning.issuedAt ? { issued_at: warning.issuedAt } : {}" in client
+    store = (v2 / "stores" / "safetyWarningStore.ts").read_text(encoding="utf-8")
+    assert "acknowledgedKeys.has(safetyWarningKey(warning))" in store
+    assert "SAFETY_WARNING_REPLACED_CODE" in store and "fetchPendingSafetyWarnings()" in store
     violations = (v2 / "components" / "settings" / "ViolationsTab.tsx").read_text(encoding="utf-8")
     assert "warning_acknowledgment_status" in violations
     admin_page = (v2 / "pages" / "AdminSafetyViolationsPage.tsx").read_text(encoding="utf-8")

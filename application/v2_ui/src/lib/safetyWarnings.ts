@@ -13,7 +13,10 @@ export interface SafetyWarningCategory {
 }
 
 export interface SafetyWarning {
-    /** The safety violation the warning was sent for. */
+    /**
+     * The safety violation the warning was sent for. A reviewer can warn about the same
+     * violation again, so one warning is this with `issuedAt`: see safetyWarningKey.
+     */
     id: string;
     /** Plain text. Rendered as text, never as HTML. */
     title: string;
@@ -23,7 +26,15 @@ export interface SafetyWarning {
     categories: SafetyWarningCategory[];
 }
 
+/** The server's answer when the warning acknowledged was replaced by a newer one. */
+export const SAFETY_WARNING_REPLACED_CODE = 'safety_warning_replaced';
+
 const FALLBACK_TITLE = 'Safety Violation Warning';
+
+/** Identifies one warning sent: the violation, and when it was sent. */
+export function safetyWarningKey(warning: Pick<SafetyWarning, 'id' | 'issuedAt'>): string {
+    return JSON.stringify([warning.id, warning.issuedAt]);
+}
 
 function text(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
@@ -79,8 +90,15 @@ export async function fetchPendingSafetyWarnings(signal?: AbortSignal): Promise<
     return parsePendingSafetyWarnings(await api.get<unknown>('/api/safety/warnings/pending', signal));
 }
 
-export async function acknowledgeSafetyWarning(id: string): Promise<void> {
-    await api.post(`/api/safety/warnings/${encodeURIComponent(id)}/acknowledge`, {});
+/**
+ * Acknowledge the warning the user read. Sending when it was sent lets the server refuse
+ * (409 SAFETY_WARNING_REPLACED_CODE) when the violation has since been warned about again.
+ */
+export async function acknowledgeSafetyWarning(warning: Pick<SafetyWarning, 'id' | 'issuedAt'>): Promise<void> {
+    await api.post(
+        `/api/safety/warnings/${encodeURIComponent(warning.id)}/acknowledge`,
+        warning.issuedAt ? { issued_at: warning.issuedAt } : {},
+    );
 }
 
 /** The flagged categories as one line, such as "Hate (severity 4), Violence (severity 2)". */

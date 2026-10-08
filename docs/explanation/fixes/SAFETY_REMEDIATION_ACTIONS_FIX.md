@@ -66,6 +66,7 @@ New user routes, which require a signed-in, unrestricted User session and are de
 
 - `GET /api/safety/warnings/pending` returns `{"warnings": [...], "count": n}`, oldest first, `Cache-Control: no-store`. Each warning holds only `id`, `violation_id`, `title`, `message`, `issued_at`, `acknowledged_at` and `triggered_categories`.
 - `POST /api/safety/warnings/<id>/acknowledge` records `warning_acknowledged_at` and marks the delivering notification read. Repeating it changes nothing and returns `already_acknowledged: true`. A record that isn't the caller's own executed warning returns 404 `Warning not found.`, the same answer as a record that doesn't exist. The write is conditional on the record's ETag and retried, so a reviewer saving the record at the same moment is never overwritten.
+- A reviewer can warn about the same violation again by changing the action away from **Warn user** and back. The new warning replaces the earlier one's fields and clears `warning_acknowledged_at`, so one warning is the violation `id` together with `issued_at`. The acknowledge body may carry the `issued_at` the pending route listed, and the V2 dialog always sends it. When the violation now holds a warning sent at another time, the route returns 409 `{"error": ..., "code": "safety_warning_replaced"}` and records nothing, so an acknowledgment is never recorded against a warning the user hasn't read. A body that omits `issued_at` acknowledges the warning the violation now holds. A non-string `issued_at` returns 400.
 
 V2 bootstrap carries `safety_warnings.pending`, the count of waiting warnings. The V2 interface reads the warnings only when that count is above zero, after bootstrap loads and again whenever the tab comes back to the front, so a user with nothing to acknowledge makes no extra request. A modal dialog, **A warning from your administrators**, shows each warning's title, message, when it was sent and its flagged categories. It has no close button, and Escape or a click outside it leaves it open; **I understand** acknowledges the warning and shows the next one. It appears again in any tab, on any device, until acknowledged.
 
@@ -79,7 +80,7 @@ Reviewers see the state on the record: the admin list and detail JSON add `warni
 
 ### Testing Approach
 
-- `functional_tests/test_safety_warning_acknowledgment.py`
+- `functional_tests/test_safety_warning_acknowledgment.py` (including a warning withdrawn or replaced by a newer one on the same violation)
 - `functional_tests/test_safety_escalate_removal.py`
 - `functional_tests/test_safety_violation_remediation_approvals.py` (updated to run offline, and to cover the second-reviewer rule and the restriction notice)
 - `functional_tests/test_v2_access_restriction_and_safety_warning_logic.mjs`
