@@ -1,9 +1,14 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.232**
+**Version: 0.261.303**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
+
+Since **0.261.303**, a settings save made by a background task no longer
+invalidates saved progress, and an attempt that ended while a step was waiting
+can be retried. See the
+[runs failing while their work was still running fix](../fixes/ORCHESTRATION_SETTINGS_WRITE_RECOVERY_FIX.md).
 
 Since **0.261.232**, restored retained references take their access from their
 conversation and run: their source documents are not reread. See
@@ -104,6 +109,19 @@ stays paused. Open it and use **Run prepared retry** to start that saved attempt
 **Check saved status** reconciles uncertain execution state, while **View current
 attempt** and **View previous attempt** navigate history without executing work.
 
+### When an attempt ends while a step is waiting
+
+A step that hands work to a long computation, such as a native tabular analysis,
+waits in the same attempt until its result is ready. If the attempt then fails or
+is stopped as a whole, nothing will finish that wait. Since **0.261.303**:
+
+- The Run view shows the waiting step, and any step still pending or running, as
+  **Not finished**, and the deliverable it produces as **Not delivered**.
+- **Retry from failed step** is offered. The new attempt runs the waiting step
+  again, with the steps after it, and reuses the steps that completed.
+- A waiting attempt that can still continue doesn't offer a retry; its wait isn't
+  finished yet.
+
 ## External effects and checkpoint boundaries
 
 A checkpoint represents one completed orchestration step. An agent step can
@@ -129,10 +147,12 @@ retry review lists them as work that will execute:
   supersedes that attempt's files, so a retry never reuses a render step. The new attempt
   renders its files again from saved or newly prepared content, which calls no model, and
   the earlier attempt's files are then shown as superseded. A restart of the same attempt
-  still reuses its completed files. React V2 offers **Retry from failed step** only for an
-  attempt without files. An attempt with files is recovered one file at a time with
-  **Retry file**, which never repeats plan steps or withdraws an available file. A
-  whole-run retry prepared through the retry API follows the rule above.
+  still reuses its completed files. React V2 offers **Retry from failed step** for an
+  attempt with files only when a failed file can't be retried on its own and no file is
+  still being prepared (since **0.261.303**). Otherwise an attempt with files is
+  recovered one file at a time with **Retry file**, which never repeats plan steps or
+  withdraws an available file. A whole-run retry prepared through the retry API follows
+  the rule above.
 - **Steps that completed without an optional input.** When the retry runs that input's
   failed producer again, the steps that completed without it, and every step computed
   from them, run again so they can use what the first attempt missed.
@@ -565,12 +585,33 @@ exception remains server-side in `__cause__`.
 | `ownership_lost` | The current execution no longer owns its guarded writes. |
 | `result_unavailable` | Ownership, producer or integrity validation failed, or a document the step reads as an input is denied or held; no preview may replace it. |
 
+The settings part of a saved run's binding is the configuration its work ran
+under. Since **0.261.303** it leaves out what the settings document holds that
+isn't configuration, listed in `functions_settings_runtime_state.py`: storage
+metadata that changes on every save (`_etag`, `_ts`, `_rid`, `_self`,
+`_attachments`, `_settings_revision`, `id`) and runtime state that background
+tasks save, such as the Cosmos DB throughput monitor's readings and scale history.
+A save by one of those tasks no longer makes a waiting run or a retry report
+`recovery_changed`; a configuration change by an administrator still does. A new
+attempt also no longer restores the pending result an earlier attempt left for a
+step it runs again.
+
 Since **0.261.209**, external-source identity comes from the signed-in session,
 which a scheduler continuation doesn't have. A step, saved wait or final-answer
 check refused only for that reason (`external_identity_session_unavailable`)
 reports the step failure `external_session_required`, which asks the user to
 send the request again, instead of `result_unavailable`. The refusal code is
 logged as `sc_authority_reason`; it is never shown to the user.
+
+Since **0.261.303**, publishing a file is authorized by the rendering service
+that ran its attempt (`render_attempt_scope`), so a run started from the chat
+publishes with the sign-in it started with. A file whose sources still can't be
+checked without a session, such as one rendered in the background, fails as
+`output_sign_in_required` with that reason, and its step reports
+`file_sign_in_required`. Neither the automatic nor the file-only retry can help,
+because both run in the background, so the chat offers **Retry from failed step**.
+See the
+[files from external results fix](../fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md).
 
 Render authorization must translate `checkpoint_storage_unavailable` to its
 storage/service-unavailable path rather than returning `False` or raising an

@@ -11,6 +11,8 @@ A retry renders its own files: it never reuses a render step or inherits the par
 file admissions, because preparing the retry supersedes the parent's files.
 A retry runs again a step that finished without the chart or diagram the plan asked of it,
 and asks for confirmation when that step can have external effects (0.261.293).
+A wait left unfinished by an attempt that failed or was stopped no longer blocks a retry;
+the retry runs the waiting step again (0.261.303).
 An action step that stopped for Microsoft 365 sign-in, approval or policy is retried without
 that confirmation: a plan step only reads Microsoft 365 data (0.261.304).
 A retry that could only resend requests a service declined is not offered.
@@ -502,7 +504,9 @@ def recovery_projection(record):
         reason, message = 'legacy_no_checkpoints', 'This run has no durable checkpoints and cannot resume. Create a new plan.'
     elif _live(record):
         reason, message = 'execution_live', 'This attempt is still running. Wait for it to finish or stop it.'
-    elif any(step.get('status') == 'waiting' for step in steps):
+    elif record.get('status') not in _TERMINAL and any(step.get('status') == 'waiting' for step in steps):
+        # A wait only blocks retry while its attempt can still continue. Once the attempt has
+        # ended, the waiting step and the steps after it run again in the new attempt.
         reason, message = 'result_not_ready', build_failure('result_not_ready')['message']
     elif any(step.get('status') == 'running' for step in steps):
         reason, message = 'result_commit_unconfirmed', build_failure('result_commit_unconfirmed')['message']
@@ -1152,6 +1156,10 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
             saved = source_steps.get(step['step_id']) or {}
             if saved.get('status') == 'waiting':
                 if not allow_waiting:
+                    if source.get('status') in _TERMINAL:
+                        # The attempt that waited has ended, so nothing will finish this wait.
+                        # A new attempt runs the step again instead of reusing it.
+                        continue
                     raise CheckpointError('result_not_ready')
                 source_store = checkpoint_store(source, authorize)
                 if not source_store.has_manifest(step['step_id'], waiting=True):
