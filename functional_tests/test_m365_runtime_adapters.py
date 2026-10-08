@@ -1,9 +1,9 @@
 # test_m365_runtime_adapters.py
 """
 Integration tests for staged file processing and subject-owned resume adapters.
-Version: 0.261.294
+Version: 0.261.297
 Implemented in: 0.261.029
-Analysis reads its model through get_m365_analysis_model in: 0.261.294
+Analysis reads its model through get_m365_analysis_model in: 0.261.297
 
 Real memory manifests and batch execution are used with mocked external model
 I/O. Resume tests prove that authenticated decisions enqueue only their own job.

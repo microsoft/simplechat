@@ -14,10 +14,10 @@ SharePoint and OneDrive file functions also need the model's token budget, and d
 analysis needs a model. Chat supplies both through the selected agent. An action step has no
 agent, so ``file_step_filter`` binds the step's own model around each of its function calls.
 
-Version: 0.261.294
+Version: 0.261.297
 Implemented in: 0.261.238
 Agent steps get their own Microsoft 365 scope in: 0.261.270
-File action steps get their model's token budget and analysis model in: 0.261.294
+File action steps get their model's token budget and analysis model in: 0.261.297
 """
 
 import hashlib
@@ -169,7 +169,7 @@ def file_step_filter(context, *, service, model_token_budget, tool_schemas, sour
 
     File functions bound the content they return by the model's token budget, and deeper
     file analysis needs a model. Chat supplies both through the selected agent. An action
-    step has none, so before 0.261.294 every file read was refused with
+    step has none, so before 0.261.297 every file read was refused with
     ``model_context_unavailable`` and the step still completed. The step's own model must
     have verified token limits: without them the step stops here, before its model or
     Microsoft Graph is called.
