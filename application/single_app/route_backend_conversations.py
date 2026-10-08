@@ -62,7 +62,13 @@ from functions_notifications import mark_chat_response_notifications_read_for_co
 from flask import Response, current_app, request, stream_with_context
 from werkzeug.utils import secure_filename
 from functions_debug import debug_print
+from functions_collaboration_generated_documents import (
+    authorize_generated_document_download,
+    can_download_generated_document,
+    collect_generated_documents,
+)
 from functions_documents import (
+    build_document_download_response,
     delete_chat_upload_workspace_documents_for_conversation,
     serialize_chat_upload_workspace_documents_for_conversation,
 )
@@ -968,6 +974,54 @@ def hydrate_m365_pending_action_cards(messages, viewer_user_id, conversation_id)
     return functions_msgraph_pending_actions.hydrate_m365_pending_action_cards(
         messages, viewer_user_id, conversation_id,
     )
+
+
+def _list_personal_conversation_generated_documents(conversation_item):
+    """Return the documents SimpleChat upload actions created in a personal conversation.
+
+    ``conversation_item`` must already be authorized with ``_authorize_personal_conversation_read``.
+    Only messages the thread shows are read, filtered the way ``/api/get_messages`` filters them:
+    deleted messages, the assistant artifact store, hidden generated chat files and replaced
+    thread attempts are left out. A citation stored in compact form is rebuilt from its artifact
+    record first, because the created document's id is in the full tool result.
+    """
+    conversation_id = conversation_item['id']
+    raw_messages = list(cosmos_messages_container.query_items(
+        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        partition_key=conversation_id,
+    ))
+    raw_messages.sort(key=lambda item: (
+        str(item.get('timestamp') or ''),
+        int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
+        str(item.get('id') or ''),
+    ))
+    raw_messages = exclude_soft_deleted_messages(raw_messages)
+    artifact_payload_map = build_message_artifact_payload_map(raw_messages)
+
+    visible_messages = []
+    for item in filter_assistant_artifact_items(raw_messages):
+        metadata = item.get('metadata') if isinstance(item.get('metadata'), dict) else {}
+        if metadata.get('is_generated_chat_artifact', False):
+            continue
+        thread_info = metadata.get('thread_info') if isinstance(metadata.get('thread_info'), dict) else {}
+        active_thread = thread_info.get('active_thread')
+        if active_thread is True or active_thread is None:
+            visible_messages.append(item)
+
+    documents = collect_generated_documents(
+        hydrate_agent_citations_from_artifacts(visible_messages, artifact_payload_map),
+    )
+    log_event(
+        '[CONVERSATION_GENERATED_DOCUMENTS] Listed generated documents for a personal conversation.',
+        extra={
+            'conversation_id': conversation_id,
+            'message_count': len(visible_messages),
+            'document_count': len(documents),
+        },
+        debug_only=True,
+    )
+    return documents
 
 
 def _rebuild_authorized_personal_conversation_used_documents(
@@ -2282,6 +2336,105 @@ def register_route_backend_conversations(bp):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
+
+    @bp.route('/api/conversations/<conversation_id>/generated-documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_personal_conversation_generated_documents_api(conversation_id):
+        """List the documents agents created in this conversation, and which the reader may download.
+
+        The personal counterpart of the shared conversation list: the same documents, read from the
+        SimpleChat upload actions' results, under the same workspace download rules.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+            settings = get_settings()
+            documents = [
+                {
+                    'document_id': document['document_id'],
+                    'file_name': document['file_name'],
+                    'workspace_scope': document['workspace_scope'],
+                    'preview': document['preview'],
+                    'message_id': document['message_id'],
+                    'created_at': document['created_at'],
+                    'can_download': can_download_generated_document(user_id, document, settings=settings),
+                }
+                for document in _list_personal_conversation_generated_documents(conversation_item)
+            ]
+            return jsonify({'documents': documents}), 200
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except Exception as exc:
+            log_event(
+                '[CONVERSATION_GENERATED_DOCUMENTS] Failed to list generated documents.',
+                extra={'conversation_id': conversation_id, 'exception_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to list generated documents'}), 500
+
+    @bp.route(
+        '/api/conversations/<conversation_id>/generated-documents/<document_id>/download',
+        methods=['GET'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def download_personal_conversation_generated_document_api(conversation_id, document_id):
+        """Download a document an agent created in this conversation, under its workspace's rules."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+
+        try:
+            # Only a document this conversation produced can be fetched through it.
+            document = next(
+                (
+                    candidate
+                    for candidate in _list_personal_conversation_generated_documents(conversation_item)
+                    if candidate['document_id'] == document_id
+                ),
+                None,
+            )
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+            try:
+                document_record, group_id = authorize_generated_document_download(user_id, document)
+            except LookupError:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            return build_document_download_response(
+                document_record,
+                user_id=user_id,
+                group_id=group_id,
+            )
+        except FileNotFoundError:
+            return jsonify({'error': 'This document is not available yet.'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You do not have permission to download this document'}), 403
+        except ScreeningError as error:
+            return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+        except Exception as exc:
+            log_event(
+                '[CONVERSATION_GENERATED_DOCUMENTS] Failed to download a generated document.',
+                extra={'conversation_id': conversation_id, 'exception_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
 
     @bp.route('/api/conversations/<conversation_id>/kind', methods=['GET'])
     @swagger_route(security=get_auth_security())
