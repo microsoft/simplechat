@@ -2,13 +2,14 @@
 # test_route_unauthenticated_policy_contract.py
 """
 Functional test for route unauthenticated access policy contract.
-Version: 0.261.298
+Version: 0.261.299
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
 Workflow run status coverage: 0.261.227
 Workflow hand-off coverage: 0.261.250
 Access restricted screen coverage: 0.261.297
 Review center ids, bulk and approvals summary coverage: 0.261.298
+Review center AI assist coverage: 0.261.299
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external
@@ -369,6 +370,12 @@ def test_review_center_routes_are_never_public_or_bearer_only() -> None:
         "/api/safety/logs/bulk": ("bulk_update_safety_logs", "session_user_401_or_redirect", "safety_violation_admin_required"),
         "/feedback/review/ids": ("feedback_review_ids", "session_specialized_admin_401_or_redirect", "feedback_admin_required"),
         "/feedback/review/bulk": ("feedback_review_bulk", "session_specialized_admin_401_or_redirect", "feedback_admin_required"),
+        "/api/admin/review/feedback/assist": (
+            "feedback_review_assist", "session_admin_401_or_redirect", "feedback_admin_required",
+        ),
+        "/api/admin/review/safety/assist": (
+            "safety_review_assist", "session_admin_401_or_redirect", "safety_violation_admin_required",
+        ),
         "/api/approvals/stats": ("api_get_approval_stats", "session_login_401_or_redirect", "login_required"),
     }
     routes = {route.path: route for route in iter_route_functions() if route.path in expected}

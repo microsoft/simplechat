@@ -1,9 +1,10 @@
 # safety_review_harness.py
 """Closed-world harnesses for the safety review, safety warning and access-gate routes.
 
-Version: 0.261.298
+Version: 0.261.299
 Implemented in: 0.261.297
 Review center coverage (approvals lookup, user names, feedback routes): 0.261.298
+Review center AI assist coverage (route modules read the harness settings): 0.261.299
 
 Used inside ``offline_app_imports()`` by fresh-process probes. The real route modules,
 decorators and helpers run on a real Flask app and session. Only the storage and delivery
@@ -219,7 +220,12 @@ def _patch_user_settings(stack, user_docs, writes):
         stack.enter_context(patch.object(module, "update_user_settings", update_user_settings))
 
 
-def _patch_app_settings(stack, settings):
+def _patch_app_settings(stack, settings, *modules):
+    """Serve ``settings`` to the authentication decorators and to each module that reads them.
+
+    A route module that star-imports ``functions_settings`` holds its own ``get_settings``, so
+    each one that reads the settings itself is named here.
+    """
     import functions_authentication as auth
     import functions_settings
 
@@ -228,6 +234,8 @@ def _patch_app_settings(stack, settings):
 
     stack.enter_context(patch.object(functions_settings, "get_settings", get_settings))
     stack.enter_context(patch.object(auth, "get_settings", get_settings))
+    for module in modules:
+        stack.enter_context(patch.object(module, "get_settings", get_settings))
     return get_settings
 
 
@@ -271,7 +279,7 @@ def build_safety_app(stack):
         before_notification=None,
         unchecked_count=0,
     )
-    _patch_app_settings(stack, state.settings)
+    _patch_app_settings(stack, state.settings, safety_routes)
     _patch_user_settings(stack, state.user_docs, state.access_writes)
     stack.enter_context(patch.object(remediation, "cosmos_safety_container", container))
     stack.enter_context(patch.object(safety_routes, "cosmos_safety_container", container))
@@ -375,7 +383,7 @@ def build_feedback_app(stack):
         settings=copy.deepcopy(APP_SETTINGS),
         fail_notifications=False,
     )
-    _patch_app_settings(stack, state.settings)
+    _patch_app_settings(stack, state.settings, feedback_routes)
     _patch_user_settings(stack, state.user_docs, state.access_writes)
     stack.enter_context(patch.object(feedback_routes, "cosmos_feedback_container", container))
     stack.enter_context(patch.object(
@@ -408,6 +416,8 @@ def build_feedback_app(stack):
     app.register_blueprint(blueprint)
     state.app = app
     state.client = _test_client(app)
+    # Another browser: a second reviewer, or the user who sent the feedback.
+    state.new_client = lambda: _test_client(app)
     return state
 
 

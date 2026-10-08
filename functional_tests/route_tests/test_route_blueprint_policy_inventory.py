@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.298
+Version: 0.261.299
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -19,6 +19,7 @@ Control Center dashboard route policy coverage: 0.261.279
 V2 Support menu Latest Features route policy coverage: 0.261.296
 Access restricted screen and safety warning policy coverage: 0.261.297
 Review center ids, bulk, detail and approvals summary policy coverage: 0.261.298
+Review center AI assist policy coverage: 0.261.299
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -367,6 +368,14 @@ SENSITIVE_ROUTE_POLICIES = {
     ),
     ("route_backend_feedback.py", "feedback_review_ids"): ("login_required", "feedback_admin_required", "enabled_required"),
     ("route_backend_feedback.py", "feedback_review_bulk"): ("login_required", "feedback_admin_required", "enabled_required"),
+    # The Review center's AI assist: the same reviewer role and feature gate as the records it
+    # reads; the assistant's own Admin Settings toggle is checked in the route body.
+    ("route_backend_feedback.py", "feedback_review_assist"): (
+        "login_required", "feedback_admin_required", "enabled_required",
+    ),
+    ("route_backend_safety.py", "safety_review_assist"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
     # The Approvals dashboard: any signed-in user, counting only the requests GET /api/approvals shows them.
     ("route_backend_control_center.py", "api_get_approval_stats"): ("login_required",),
     # The Access restricted screen: login-only, see REGISTERED_BLUEPRINT_POLICIES.
@@ -710,7 +719,7 @@ def test_access_restricted_routes_are_login_only() -> None:
 
 
 def test_review_center_routes_keep_their_reviewer_policy() -> None:
-    """The Review center's ids, detail, bulk and summary routes keep their exact guards.
+    """The Review center's ids, detail, bulk, AI assist and summary routes keep their exact guards.
 
     Each feedback and safety route needs its section's reviewer role and feature gate, after
     the swagger and login decorators. The approvals summary only needs a session: it counts
@@ -723,6 +732,8 @@ def test_review_center_routes_keep_their_reviewer_policy() -> None:
         ("route_backend_safety.py", "/api/safety/logs/bulk"): ("bulk_update_safety_logs", safety),
         ("route_backend_feedback.py", "/feedback/review/ids"): ("feedback_review_ids", feedback),
         ("route_backend_feedback.py", "/feedback/review/bulk"): ("feedback_review_bulk", feedback),
+        ("route_backend_feedback.py", "/api/admin/review/feedback/assist"): ("feedback_review_assist", feedback),
+        ("route_backend_safety.py", "/api/admin/review/safety/assist"): ("safety_review_assist", safety),
         ("route_backend_control_center.py", "/api/approvals/stats"): (
             "api_get_approval_stats", ("bp.route", "swagger_route", "login_required"),
         ),
