@@ -50,6 +50,7 @@ from functions_review_center import (
     parse_review_bulk_operations,
     parse_review_date,
     parse_review_window,
+    refuse_suggestion_operations_while_off,
     replace_review_record,
     resolve_review_users,
     review_bulk_result,
@@ -1658,7 +1659,8 @@ def register_route_backend_safety(bp):
         ``suggestion_id`` applies the violation's pending AI suggestion as the reviewer edited
         it, through that same save, and ``dismiss_suggestion`` dismisses one; a suggestion that
         is stale or no longer pending is refused with ``suggestion_stale`` or
-        ``suggestion_not_pending``.
+        ``suggestion_not_pending``, and while AI assist is off both are refused with
+        ``review_assistant_disabled``.
         """
         actor = _get_safety_actor_context()
         if not actor.get('id'):
@@ -1667,6 +1669,10 @@ def register_route_backend_safety(bp):
             operations = parse_review_bulk_operations(request.get_json(silent=True))
         except ReviewRequestError as error:
             return jsonify({'error': error.message, 'code': error.code}), error.status
+        if any(operation.get('suggestion_id') for operation in operations):
+            operations = refuse_suggestion_operations_while_off(
+                operations, is_admin_review_assistant_enabled(get_settings()),
+            )
 
         results = []
         for operation in operations:

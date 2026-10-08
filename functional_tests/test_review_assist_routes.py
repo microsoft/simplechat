@@ -282,6 +282,16 @@ with offline_app_imports(), ExitStack() as stack:
     check(any(entry["action"] == "feedback_ai_suggestion_dismissed" for entry in h.audits), "the dismissal was not audited")
     check(client.get("/feedback/review?ai=pending").get_json()["feedback"] == [], "decided suggestions are still queued")
 
+    # While AI assist is off, suggestion operations are refused; the rest of the request runs.
+    h.settings["enable_admin_review_ai_assistant"] = False
+    results = bulk(client, "/feedback/review/bulk", [
+        {"id": "fb-3", "op": "dismiss_suggestion", "suggestion_id": "a" * 32},
+        {"id": "fb-2", "op": "update", "changes": {"acknowledged": True}},
+    ])
+    check(results["fb-3"]["status"] == 403 and results["fb-3"]["code"] == "review_assistant_disabled", str(results["fb-3"]))
+    check(results["fb-2"]["ok"] and container.items["fb-2"]["adminReview"]["acknowledged"] is True, str(results["fb-2"]))
+    h.settings["enable_admin_review_ai_assistant"] = True
+
     # Themes: a filter and a dashboard breakdown; users never see the classification or the suggestion.
     themed = client.get("/feedback/review?theme=accuracy&archive=all").get_json()["feedback"]
     check([item["id"] for item in themed] == ["fb-1"], str([item["id"] for item in themed]))
@@ -450,6 +460,18 @@ with offline_app_imports(), ExitStack() as stack:
     h.settings["require_member_of_safety_violation_admin"] = False
     h.settings["enable_admin_review_ai_assistant"] = False
     closed(post_assist(client, "safety", {"mode": "analyze", "ids": ["log-1"]}), 403, "review_assistant_disabled")
+    # While it is off, stored suggestions can be neither applied nor dismissed; other operations still run.
+    log2_pending = container.items["log-2"]["ai_suggestion"]["id"]
+    results = bulk(client, "/api/safety/logs/bulk", [
+        {"id": "log-2", "op": "dismiss_suggestion", "suggestion_id": log2_pending},
+        {"id": "log-1", "op": "update", "suggestion_id": "f" * 32, "changes": {"status": "Resolved"}},
+        {"id": "log-4", "op": "archive", "archived": True},
+    ])
+    for record_id in ("log-2", "log-1"):
+        check(results[record_id]["status"] == 403 and results[record_id]["code"] == "review_assistant_disabled",
+              str(results[record_id]))
+    check(container.items["log-2"]["ai_suggestion"]["status"] == "pending", "a suggestion was dismissed while AI assist was off")
+    check(results["log-4"]["ok"] and container.items["log-4"]["is_archived"] is True, str(results["log-4"]))
     h.settings["enable_admin_review_ai_assistant"] = True
     h.settings["enable_content_safety"] = False
     response = post_assist(client, "safety", {"mode": "analyze", "ids": ["log-1"]})

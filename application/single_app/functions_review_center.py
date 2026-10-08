@@ -449,6 +449,32 @@ REVIEW_SUGGESTION_RECORD_CHANGED_MESSAGE = (
 REVIEW_SUGGESTION_NOT_MARKED_WARNING = (
     'The review was saved, but the AI suggestion could not be marked as applied. Dismiss it from the queue.'
 )
+REVIEW_ASSISTANT_DISABLED_CODE = 'review_assistant_disabled'
+REVIEW_ASSISTANT_OFF_MESSAGE = (
+    'AI assist for the Review center is turned off in Admin Settings, so AI suggestions cannot be applied '
+    'or dismissed.'
+)
+
+
+def refuse_suggestion_operations_while_off(operations, assistant_enabled):
+    """While AI assist is off, refuse each operation that applies or dismisses an AI suggestion.
+
+    The rest of the request runs as usual. Turning the assistant off therefore stops a suggestion
+    reaching a review even from a page loaded while it was on; stored suggestions stay on their
+    records and are offered again if it is turned back on.
+    """
+    if assistant_enabled:
+        return operations
+    checked = []
+    for operation in operations:
+        if not operation.get('error') and operation.get('suggestion_id'):
+            operation = dict(operation)
+            operation['error'] = {
+                'status': 403,
+                'body': {'error': REVIEW_ASSISTANT_OFF_MESSAGE, 'code': REVIEW_ASSISTANT_DISABLED_CODE},
+            }
+        checked.append(operation)
+    return checked
 
 
 def _utc_now_iso():
