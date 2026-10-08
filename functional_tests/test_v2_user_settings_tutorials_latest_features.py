@@ -2,15 +2,19 @@
 # test_v2_user_settings_tutorials_latest_features.py
 """
 Functional test for V2 guided tours and the Latest Features shortcut.
-Version: 0.261.281
+Version: 0.261.294
 Implemented in: 0.261.280
 URL sink hardening updated in: 0.261.281
+Support menu pages updated in: 0.261.294
 
 The V2 interface now has guided tours for chat and the workspace, with a master switch
 shared with the classic tutorial buttons plus a per-tour choice, and a Latest Features
 shortcut in the navigation rail that a user can hide until the next release. This file
 pins the backend validation, the bootstrap navigation entry, the tour anchors, and the
 pure resolution logic the rail and the Preferences page share.
+
+Since 0.261.294 the shortcut lives in the rail's Support menu and opens the V2 Latest
+Features page rather than the classic one (test_v2_support_menu.py covers the menu).
 """
 
 import json
@@ -103,11 +107,18 @@ def test_tours_are_launchable_and_configurable():
         assert "display:none" not in _read(path).replace(" ", "")
 
     # Navigation URLs crossing from API data into the browser have an explicit safe boundary.
-    latest_link = _read(V2_SRC / "components" / "layout" / "LatestFeaturesLink.tsx")
+    # The rail's Latest Features entry is a router link to a constant V2 path, never a URL
+    # taken from the payload.
+    support_menu = _read(V2_SRC / "components" / "layout" / "SupportMenu.tsx")
+    support_paths = _read(V2_SRC / "lib" / "supportMenu.ts")
     guided_tour = _read(V2_SRC / "components" / "tour" / "GuidedTour.tsx")
     message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
     workspace_shell = _read(V2_SRC / "components" / "workspace" / "WorkspaceShell.tsx")
-    assert 'href="/support/latest-features"' in latest_link
+    assert "to={SUPPORT_LATEST_FEATURES_PATH}" in support_menu
+    assert "export const SUPPORT_LATEST_FEATURES_PATH = '/support/latest-features';" in support_paths
+    assert "to={SUPPORT_LATEST_FEATURES_PATH}" in guidance, (
+        "The Preferences card must open the V2 Latest Features page, not the classic one"
+    )
     assert "candidate.dataset.tour === step.target" in guided_tour
     assert "href={safeStreamAuthUrl}" in message_list
     assert "normalizeWorkspaceUrl(" in workspace_shell
@@ -121,7 +132,8 @@ def test_bootstrap_exposes_latest_features_nav():
     for needle in ("enable_support_latest_features", "has_visible_support_latest_features", "hidden_by_development"):
         assert needle in route, f"The navigation entry must consider {needle}"
     sidebar = _read(V2_SRC / "components" / "layout" / "Sidebar.tsx")
-    assert "<LatestFeaturesLink" in sidebar
+    assert "<SupportMenu" in sidebar, "The rail must draw the Support menu that carries the shortcut"
+    assert "LatestFeaturesLink" not in sidebar, "The old classic-page link must not linger in the rail"
 
 
 NODE_SCRIPT = r"""

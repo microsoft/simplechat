@@ -2,8 +2,9 @@
 # test_v2_bootstrap_branding_and_navigation.py
 """
 Functional test for the V2 bootstrap branding and navigation blocks.
-Version: 0.261.047
+Version: 0.261.294
 Implemented in: 0.261.047
+Send Feedback navigation entry added in: 0.261.294
 
 The V2 SPA cannot read Jinja context, so everything the classic interface gets from
 ``app_settings`` and the ``inject_settings`` context processor has to arrive in the
@@ -48,6 +49,7 @@ LIFTED_FUNCTIONS = (
     "_menu_name",
     "_build_navigation",
     "_build_latest_features_nav",
+    "_build_send_feedback_nav",
 )
 
 branding_urls = import_app_module("functions_branding_urls")
@@ -412,6 +414,46 @@ def test_latest_features_entry_follows_the_classic_gate():
     return True
 
 
+def test_send_feedback_entry_follows_the_classic_gate():
+    """Send Feedback appears only where the classic Support menu would offer it."""
+    print("\nTesting the Send Feedback navigation entry...")
+
+    assert_app_version_at_least("0.261.294")
+    on = {
+        "enable_support_menu": True,
+        "enable_support_send_feedback": True,
+        "support_feedback_recipient_email": "help@contoso.example",
+        "support_menu_name": "Help Desk",
+    }
+
+    entry = load_builders()["_build_navigation"](on, ["User"])["send_feedback"]
+    assert entry == {
+        "available": True,
+        "url": "/support/send-feedback",
+        "menu_name": "Help Desk",
+    }, entry
+    assert "help@contoso.example" not in repr(entry), (
+        "The recipient mailbox must reach the browser only in reply to a submission"
+    )
+
+    build = load_builders()["_build_send_feedback_nav"]
+    assert build(on, [])["available"] is False, "A caller with no app role must not see it"
+    assert build(on, ["Admin"])["available"] is True
+    assert build({**on, "enable_support_menu": False}, ["User"])["available"] is False
+    assert build({**on, "enable_support_send_feedback": False}, ["User"])["available"] is False
+    assert build({k: v for k, v in on.items() if k != "enable_support_send_feedback"}, ["User"])[
+        "available"
+    ] is True, "The destination defaults to on, as it does on the classic page"
+    for recipient in ("", "   ", None, "not-an-address"):
+        assert build({**on, "support_feedback_recipient_email": recipient}, ["User"])[
+            "available"
+        ] is False, f"Recipient {recipient!r} would make every submission fail"
+    assert build({**on, "support_menu_name": "  "}, ["User"])["menu_name"] == "Support"
+
+    print("  The Send Feedback entry follows the classic gate.")
+    return True
+
+
 def test_bootstrap_payload_carries_the_navigation_block():
     """The rail reads navigation from bootstrap; nothing else supplies it."""
     print("\nTesting the bootstrap payload wiring...")
@@ -437,6 +479,7 @@ if __name__ == "__main__":
         test_external_links_are_gated_by_role_and_validated,
         test_custom_pages_group_survives_a_failing_lookup,
         test_latest_features_entry_follows_the_classic_gate,
+        test_send_feedback_entry_follows_the_classic_gate,
         test_bootstrap_payload_carries_the_navigation_block,
     ]
 

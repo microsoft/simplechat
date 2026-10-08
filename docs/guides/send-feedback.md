@@ -21,7 +21,7 @@ Use the feedback form when admins need enough context to reproduce a problem or 
 
 ## Before you start
 
-- Admins must enable `enable_support_menu` and `enable_support_send_feedback`; see [General settings]({{ '/admin/appearance/' | relative_url }}).
+- Admins must enable `enable_support_menu` and `enable_support_send_feedback`, and set a support recipient email; see [Help settings]({{ '/admin/help/' | relative_url }}).
 - Your device needs a local mail client or mail handler.
 - Collect reproduction steps, screenshots, business impact, or desired outcome before filling the form.
 
@@ -47,6 +47,19 @@ Use the feedback form when admins need enough context to reproduce a problem or 
 
 7. Review the email draft in your mail client and send it when ready.
 
+## In the V2 interface
+
+V2 offers the same destination from the **Support** menu in its navigation rail. Your administrators may have given the menu another name. Select **Send Feedback** to open the page.
+
+V2 asks for your contact details once instead of showing two forms side by side:
+
+1. Under **What are you sending?**, choose **Bug Report** or **Feature Request**.
+2. Check **Name** and **Email**, which are filled in from your account, and enter your **Organization**.
+3. Describe the problem or the improvement under **Bug Details** or **Feature Request Details**. Each choice keeps its own text, so switching between them does not overwrite what you wrote.
+4. Select **Open Bug Report Draft** or **Open Feature Request Draft**.
+
+If a required field is empty, the page names it and nothing is sent. When the draft is ready, a confirmation shows the support address. If your mail app does not open, select **open the draft** in that confirmation.
+
 ## Verify it worked
 
 Your mail client opens a draft addressed according to tenant feedback configuration, and the draft includes the details you entered.
@@ -55,11 +68,11 @@ Your mail client opens a draft addressed according to tenant feedback configurat
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Send Feedback is missing | The support menu or destination is disabled | Ask an admin to enable `enable_support_menu` and `enable_support_send_feedback`. |
-| No email draft opens | No local mail handler is configured | Set a default mail app or copy the content into email manually. |
+| Send Feedback is missing | The support menu or destination is disabled, or no support recipient email is set | Ask an admin to enable `enable_support_menu` and `enable_support_send_feedback` and to set the support recipient email. |
+| No email draft opens | No local mail handler is configured | Set a default mail app or copy the content into email manually. In V2, select **open the draft** in the confirmation. |
 
 ## Related
 
+- [Browse latest features]({{ '/guides/browse-latest-features/' | relative_url }})
 - [Update profile preferences]({{ '/guides/update-profile-preferences/' | relative_url }})
-- [General settings]({{ '/admin/appearance/' | relative_url }})
-- [Send Feedback settings]({{ '/admin/help/' | relative_url }})
+- [Help settings]({{ '/admin/help/' | relative_url }})
