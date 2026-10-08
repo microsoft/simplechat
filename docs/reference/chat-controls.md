@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.303"
+version: "0.261.305"
 ---
 
 ## How to use this reference
@@ -141,6 +141,7 @@ draft. **Do not send the retained draft again.** See
 ## Microsoft 365 citations and Open online
 
 Implemented in version: **0.261.303** (`application/single_app/config.py`).
+Source cards and Outlook opening refined in version: **0.261.305**.
 
 When an answer uses SharePoint or OneDrive files, emails or calendar events
 through a Microsoft 365 action, in chat with an agent or in an orchestrated
@@ -150,15 +151,19 @@ always use one numbered line per item, with times in your browser's time zone.
 | Control | What it does | Why you would use it | Availability |
 | --- | --- | --- | --- |
 | Microsoft 365 citation chip (V2 interface) | Shows the file name, or an email's or event's subject, with an icon for the kind of item, where the answer cites it. | See at a glance which file, message or meeting a statement came from. | Any Microsoft 365 Email, Calendar, SharePoint Online or OneDrive action |
-| Source card (V2 interface) | Opens from a chip. A file shows its location, modified date and size; an email its sender, received time, read state, importance and preview; an event its time, place and organizer. An item no longer on the message says the source is no longer available. | Check the item before opening it, without leaving the conversation. | Same as the chip |
+| Source card (V2 interface) | Opens from a chip in a readable light/dark dialog with contained keyboard focus. A file shows its location, modified date and size; an email its sender, received time, read state, importance and preview; an event its time, place and organizer. An item no longer on the message says the source is no longer available. | Check the item before opening it, without leaving the conversation. | Same as the chip |
 | Open in SharePoint, Open in OneDrive, Open in Outlook (V2 interface) | Opens the item where it lives, in a new tab, with your own sign-in. Shown only for an `https` link that Microsoft 365 supplied. | Read the whole file, message or meeting, which a citation only points to. | Same as the chip |
 | SharePoint & OneDrive, Email and Calendar (Documents drawer, V2 interface) | List every cited item, and every file whose content was read for an answer, with a secondary line (location and modified date, sender and received time, or time and place). Only the conversation owner sees them. | Get back to a file, message or meeting the conversation used without scrolling to the answer that cited it. | Same as the chip |
-| Open online (Documents drawer, V2 interface) | Opens the listed item in SharePoint, OneDrive or Outlook in a new tab. There is no download. | Same as the Open in links, from the conversation's source list. | Same as the chip |
-| Microsoft 365 in Sources (V2 interface) | Lists a reply's Microsoft 365 items in the message's **Sources** panel, with **Open online**, and marks items the reply read but did not cite. | Audit everything a reply drew on, not only what it cited. | Same as the chip |
+| Open online (Documents drawer, V2 interface) | Opens a listed SharePoint or OneDrive file in a new tab. There is no download. | Return to a file from the conversation's source list. | Same as the chip |
+| Open in Outlook (Documents drawer, V2 interface) | Opens the specific recalled email or calendar event in Outlook on the web, in a new tab. A missing or unsafe URL produces no link. | Read the complete message or meeting from the conversation's source list. | Same as the chip |
+| Microsoft 365 in Sources (V2 interface) | Lists a reply's Microsoft 365 items in the message's **Sources** panel, with **Open online** for files and **Open in Outlook** for emails/events, and marks items the reply read but did not cite. | Audit everything a reply drew on, not only what it cited. | Same as the chip |
 | Microsoft 365 citation link (classic interface) | Shows the cited item's title as a link that opens it in SharePoint, OneDrive or Outlook, or as text when no link was recorded. It never opens the workspace citation viewer. | Open a cited item from the classic chat. | Same as the chip |
 
 An **Open in Outlook** link works only for the mailbox owner. File links follow
-SharePoint and OneDrive permissions. See
+SharePoint and OneDrive permissions. A saved record without an online URL keeps
+its details; the source card explains that its link is unavailable. Recall the
+item again to capture current details and a Graph URL if available. History is
+not rewritten. See
 [Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## Generated image editor

@@ -1,16 +1,20 @@
 # test_v2_m365_source_citations.py
 """
 UI test for Microsoft 365 items as first-class citations in the V2 and classic chat.
-Version: 0.261.303
+Version: 0.261.305
 Implemented in: 0.261.303
+Source-card contrast, focus and Outlook opening refined in: 0.261.305
 
 This test ensures that an answer citing SharePoint or OneDrive files, emails and calendar events
 renders compact citation chips in V2 that open a source card with the item's details and an "Open
 in SharePoint / OneDrive / Outlook" link with safe attributes, never calling the workspace
 citation endpoint; that a record the message no longer has shows a friendly notice; that the V2
 chat request carries the browser time zone; that the Documents pane lists the items under
-SharePoint & OneDrive, Email and Calendar with "Open online" links, dropping any non-https link;
-and that the classic chat links each item to where it lives without fetching a passage.
+SharePoint & OneDrive, Email and Calendar with "Open online" file links and "Open in Outlook"
+mail/event links, dropping any non-https link; and that the classic chat links each item to
+where it lives without fetching a passage. Production CSS checks cover light/dark contrast,
+desktop/phone layouts, keyboard containment/restoration, unavailable historic links and
+literal metadata. Outlook actions open the exact recalled item in a new tab.
 
 It drives the real bundled V2 components and the real classic modules over a local static server
 with synthetic HTTP boundaries, so no Azure credentials or network access are needed.
@@ -22,6 +26,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
+from ui_tests.fixtures.color_contrast import CONTRAST_RATIO_SCRIPT
 from ui_tests.fixtures.playwright_connection import connect_options  # noqa: F401
 from ui_tests.fixtures.orchestration import harness_build
 
@@ -33,6 +38,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 pytestmark = pytest.mark.ui
 IMPLEMENTED_IN = "0.261.303"
+REFINED_IN = "0.261.305"
 CONVERSATION_ID = "conversation-m365"
 OUTLOOK_LINK = "https://outlook.office365.com/owa/?ItemID=AAMkAD%2Bx&exvsurl=1&viewmodel=ReadMessageItem"
 EVENT_LINK = "https://outlook.office365.com/owa/?itemid=AAMkAE&exvsurl=1&path=/calendar/item"
@@ -83,6 +89,63 @@ def _open_v2_harness(page, origin):
     response = page.goto(f"{origin}/{harness_build.HARNESS_HTML_REL}")
     assert response is not None and response.ok
     page.wait_for_function("() => Boolean(window.OrchHarness)")
+    styles = sorted((ROOT / "application" / "single_app" / "static" / "v2" / "assets").glob("*.css"))
+    assert styles, "Build the V2 UI before checking citation styles."
+    for stylesheet in styles:
+        page.add_style_tag(content=stylesheet.read_text(encoding="utf-8"))
+
+
+def _mount_saved_sources(page, records, with_drawer=False):
+    page.evaluate(
+        """({answer, records, withDrawer}) => {
+            window.m365HarnessRequests = [];
+            window.m365Injected = false;
+            window.fetch = async (url) => {
+                window.m365HarnessRequests.push(String(url));
+                return new Response(JSON.stringify({ success: true, messages: [] }), {
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            };
+            const H = window.OrchHarness;
+            H.reset();
+            H.stores.bootstrap.useBootstrapStore.setState({
+                data: { features: {}, settings: {}, catalogs: { models: [], agents: [], prompts: [] },
+                    user: { id: 'owner', display_name: 'Tester' }, scope: {} },
+            });
+            H.stores.chat.useChatStore.setState({
+                activeConversationId: 'conversation-m365', activeConversationKind: 'personal',
+                messages: [{
+                    id: 'reply-m365', role: 'assistant', content: answer, augmented: true,
+                    m365_citations: records,
+                }],
+                streaming: false, loadingMessages: false, drawerMode: withDrawer ? 'documents' : null,
+                metadataLoading: false, metadataError: null,
+                metadata: {
+                    conversation_id: 'conversation-m365', title: 'Microsoft 365 recall',
+                    used_documents_tracking_version: 1, used_documents: [], used_m365_items: records,
+                },
+            });
+            H.mount('mount-a', 'MessageList');
+            if (withDrawer) H.mount('mount-b', 'ConversationDrawer');
+        }""",
+        {"answer": ANSWER, "records": records, "withDrawer": with_drawer},
+    )
+
+
+def _assert_dialog_fits(card, viewport):
+    panel = card.locator(".glass-modal")
+    box = panel.bounding_box()
+    assert box is not None
+    assert box["x"] >= 0 and box["y"] >= 0
+    assert box["x"] + box["width"] <= viewport["width"] + 1
+    assert box["y"] + box["height"] <= viewport["height"] + 1
+    fits = panel.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+    assert fits, "Source details overflow the dialog horizontally."
+
+
+def _assert_no_workspace_citation_fetch(page):
+    requests = page.evaluate("() => window.m365HarnessRequests")
+    assert not any("/api/get_citation" in url for url in requests)
 
 
 def _citation_requests(page):
@@ -99,6 +162,7 @@ def _expect_safe_link(link, href):
 
 def test_version_is_at_least_the_implementing_release():
     assert_app_version_at_least(IMPLEMENTED_IN)
+    assert_app_version_at_least(REFINED_IN)
 
 
 def test_streamed_answer_chips_open_source_cards_with_safe_links(page):
@@ -201,7 +265,7 @@ def test_streamed_answer_chips_open_source_cards_with_safe_links(page):
     assert errors == []
 
 
-def test_documents_pane_lists_m365_items_with_open_online_links(page):
+def test_documents_pane_lists_m365_items_with_source_specific_links(page):
     try:
         harness_build.ensure_bundle()
     except harness_build.HarnessUnavailable as exc:
@@ -252,16 +316,159 @@ def test_documents_pane_lists_m365_items_with_open_online_links(page):
         email = drawer.get_by_role("region", name="Email")
         expect(email).to_contain_text("Microsoft Security \u00b7 Oct 7, 2026, 12:52 PM EDT")
         expect(email).to_contain_text("Cited")
-        _expect_safe_link(email.get_by_role("link", name="Open online: PIM: Role activated"), OUTLOOK_LINK)
+        _expect_safe_link(email.get_by_role("link", name="Open in Outlook: PIM: Role activated"), OUTLOOK_LINK)
 
         calendar = drawer.get_by_role("region", name="Calendar")
         expect(calendar).to_contain_text("Thu, Oct 8, 2026, 2:00 PM \u2013 2:30 PM EDT \u00b7 Teams")
-        _expect_safe_link(calendar.get_by_role("link", name="Open online: Standup"), EVENT_LINK)
+        _expect_safe_link(calendar.get_by_role("link", name="Open in Outlook: Standup"), EVENT_LINK)
 
         # Narrow viewport: each row's link stays reachable in the drawer.
         page.set_viewport_size({"width": 390, "height": 844})
-        expect(email.get_by_role("link", name="Open online: PIM: Role activated")).to_be_in_viewport()
+        expect(email.get_by_role("link", name="Open in Outlook: PIM: Role activated")).to_be_in_viewport()
     assert errors == []
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
+def test_source_dialog_is_readable_and_keyboard_contained(page, theme, viewport):
+    harness_build.ensure_bundle()
+    page.set_viewport_size(viewport)
+    page.emulate_media(reduced_motion="reduce")
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    with harness_build.start_static_server() as origin:
+        _open_v2_harness(page, origin)
+        page.evaluate("theme => document.documentElement.classList.toggle('dark', theme === 'dark')", theme)
+        _mount_saved_sources(page, [EMAIL, EVENT, FILE])
+        for record, label in [(EMAIL, "Open in Outlook"), (EVENT, "Open in Outlook"), (FILE, "Open in SharePoint")]:
+            chip = page.locator(f"#mount-a button[data-m365-citation-id='{record['citation_id']}']")
+            chip.click()
+            card = page.get_by_role("dialog", name="Microsoft 365 source", exact=True)
+            expect(card).to_be_visible()
+            action = card.get_by_role("link", name=f"{label}: {record['title']}", exact=True)
+            _expect_safe_link(action, record["web_url"])
+            for element in [
+                action, card.get_by_role("heading", name=record["title"], exact=True),
+                card.locator("dt").first, card.locator("dd").first, card.locator("p").first,
+            ]:
+                ratio = element.evaluate(CONTRAST_RATIO_SCRIPT, "color")
+                assert ratio >= 4.5, f"{theme} source text contrast {ratio:.2f} is below 4.5:1."
+            action.hover()
+            hover_ratio = action.evaluate(CONTRAST_RATIO_SCRIPT, "color")
+            assert hover_ratio >= 4.5
+            outside_markdown = card.evaluate("element => !element.closest('#mount-a')")
+            assert outside_markdown, "The source dialog must escape the answer's Markdown styles."
+            _assert_dialog_fits(card, viewport)
+            expect(action).to_be_in_viewport()
+            close = card.get_by_role("button", name="Close source", exact=True)
+            expect(close).to_be_focused()
+            page.keyboard.press("Shift+Tab")
+            expect(action).to_be_focused()
+            page.keyboard.press("Tab")
+            expect(close).to_be_focused()
+            page.keyboard.press("Escape")
+            expect(card).to_have_count(0)
+            expect(chip).to_be_focused()
+        _assert_no_workspace_citation_fetch(page)
+    assert errors == []
+
+
+@pytest.mark.parametrize("record", [EMAIL, EVENT], ids=["email", "calendar"])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_outlook_links_open_specific_items_from_sidebar_popup_and_sources_in_new_tabs(page, record, theme):
+    harness_build.ensure_bundle()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def serve_outlook(route):
+        route.fulfill(content_type="text/html", body="<h1>Synthetic Outlook item</h1>")
+
+    page.context.route("https://outlook.office365.com/**", serve_outlook)
+    try:
+        with harness_build.start_static_server() as origin:
+            _open_v2_harness(page, origin)
+            page.evaluate("theme => document.documentElement.classList.toggle('dark', theme === 'dark')", theme)
+            _mount_saved_sources(page, [EMAIL, EVENT, FILE], with_drawer=True)
+            label = f"Open in Outlook: {record['title']}"
+            sidebar_action = page.locator("#mount-b").get_by_role("link", name=label, exact=True)
+            _expect_safe_link(sidebar_action, record["web_url"])
+            sidebar_ratio = sidebar_action.evaluate(CONTRAST_RATIO_SCRIPT, "color")
+            assert sidebar_ratio >= 4.5
+            with page.expect_popup() as opened:
+                sidebar_action.click()
+            outlook = opened.value
+            expect(outlook.get_by_role("heading", name="Synthetic Outlook item")).to_be_visible()
+            assert outlook.url == record["web_url"]
+            outlook.close()
+
+            page.locator(f"#mount-a button[data-m365-citation-id='{record['citation_id']}']").click()
+            card = page.get_by_role("dialog", name="Microsoft 365 source", exact=True)
+            popup_action = card.get_by_role("link", name=label, exact=True)
+            _expect_safe_link(popup_action, record["web_url"])
+            with page.expect_popup() as opened:
+                popup_action.click()
+            outlook = opened.value
+            expect(outlook.get_by_role("heading", name="Synthetic Outlook item")).to_be_visible()
+            assert outlook.url == record["web_url"]
+            outlook.close()
+            card.get_by_role("button", name="Close source").click()
+
+            page.get_by_role("button", name="Show sources (3)", exact=True).click()
+            sources = page.locator("#mount-a")
+            source_action = sources.get_by_role("link", name=label, exact=True)
+            _expect_safe_link(source_action, record["web_url"])
+            _expect_safe_link(sources.get_by_role("link", name="Open online: 20170010188.pdf"), SPO_LINK)
+            source_ratio = source_action.evaluate(CONTRAST_RATIO_SCRIPT, "color")
+            assert source_ratio >= 4.5
+            with page.expect_popup() as opened:
+                source_action.click()
+            outlook = opened.value
+            expect(outlook.get_by_role("heading", name="Synthetic Outlook item")).to_be_visible()
+            assert outlook.url == record["web_url"]
+            outlook.close()
+            _assert_no_workspace_citation_fetch(page)
+    finally:
+        page.context.unroute("https://outlook.office365.com/**", serve_outlook)
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "web_url",
+    [None, "javascript:alert(1)", "https://username:secret@outlook.office365.com/owa/"],
+    ids=["historic-missing-link", "unsafe-scheme", "embedded-credentials"],
+)
+def test_source_card_wraps_literal_metadata_and_explains_unavailable_links(page, web_url):
+    harness_build.ensure_bundle()
+    viewport = {"width": 390, "height": 844}
+    page.set_viewport_size(viewport)
+    record = {
+        **EMAIL,
+        "title": "Budget <img src=x onerror=window.m365Injected=true>",
+        "from_address": f"{'a' * 220}@contoso.com",
+        "preview": "Source text " * 60,
+        "web_url": web_url,
+    }
+    with harness_build.start_static_server() as origin:
+        _open_v2_harness(page, origin)
+        _mount_saved_sources(page, [record])
+        chip = page.locator(f"#mount-a button[data-m365-citation-id='{EMAIL_ID}']")
+        chip.click()
+        card = page.get_by_role("dialog", name="Microsoft 365 source", exact=True)
+        expect(card.get_by_role("heading", name=record["title"], exact=True)).to_be_visible()
+        expect(card.get_by_role("link")).to_have_count(0)
+        expect(card.get_by_text("No online link is available for this source.", exact=False)).to_be_in_viewport()
+        expect(card.locator("img, script")).to_have_count(0)
+        expect(card).not_to_contain_text("secret")
+        _assert_dialog_fits(card, viewport)
+        injected = page.evaluate("() => window.m365Injected")
+        assert injected is False
+        close = card.get_by_role("button", name="Close source", exact=True)
+        page.keyboard.press("Tab")
+        expect(close).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(card).to_have_count(0)
+        expect(chip).to_be_focused()
+        _assert_no_workspace_citation_fetch(page)
 
 
 def test_classic_chat_links_m365_items_and_never_fetches_passages(page):

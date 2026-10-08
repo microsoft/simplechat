@@ -4,7 +4,7 @@ title: "Microsoft 365 Calendar"
 description: "Read and search calendar events in any time range and prepare invitations using delegated Microsoft 365 access."
 section: "Reference"
 audience: user
-version: "0.261.303"
+version: "0.261.305"
 ---
 
 <!-- action-slug: m365-calendar -->
@@ -54,6 +54,7 @@ with these parameters:
 | `order` | `oldest_first` (default) or `newest_first`, for example to find the most recent past meeting on a topic. |
 | `starts_in_range` | Leaves out events that were already in progress at `start_datetime`. |
 | `top` | Up to 25 events per call. |
+| `select_fields` | Extra Graph fields to request. Event identity, subject, times, location, organizer, all-day state and `webLink` are still requested for source cards. |
 
 Dates and times without a time zone are read as UTC, and event times are
 returned in UTC. Since **0.261.303** each event also carries a `when_display`
@@ -100,9 +101,16 @@ Implemented in version: **0.261.303** (`application/single_app/config.py`).
 Every event that **Read my calendar events** returns carries a citation value, and
 the answer cites each event it mentions with a chip that shows the event's title.
 Clicking the chip opens a card with when, where and the organizer, and **Open in
-Outlook** opens the event in the reader's own calendar. Cited events are also
-listed under **Calendar** in the conversation's **Documents** pane, with **Open
-online**.
+Outlook** opens the specific event in Outlook on the web in a new tab. Cited events
+are also listed under **Calendar** in the conversation's **Documents** pane, with
+**Open in Outlook**. The reply's **Sources** panel offers the same action.
+
+Refined in version: **0.261.305** (`application/single_app/config.py`). Custom
+selections and keyword matching retain baseline citation metadata when temporary
+scan-only fields are removed. Source cards stay readable in light and dark themes.
+Saved history is unchanged: a record without an online URL explains that its link
+is unavailable. Recall the event again to refresh its details and capture a Graph
+link if one is available.
 
 Lists of events always use the same layout:
 
@@ -114,6 +122,8 @@ Lists of events always use the same layout:
 
 The time span is in the reader's browser time zone, an all-day event shows
 "All day", and the location and organizer parts are left out when they are empty.
+Direct-answer guidance avoids routine provenance introductions without removing
+meeting locations, organizers, citations or incomplete-coverage disclosures.
 See [Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## Workflow identity

@@ -300,7 +300,7 @@ class MSGraphPlugin(BasePlugin):
                     {
                         "name": "select_fields",
                         "type": "str",
-                        "description": "Optional comma-separated Graph fields to include.",
+                        "description": "Optional comma-separated Graph fields to include. Source-card metadata and webLink are always requested.",
                         "required": False,
                     },
                     {
@@ -360,7 +360,7 @@ class MSGraphPlugin(BasePlugin):
                     {
                         "name": "select_fields",
                         "type": "str",
-                        "description": "Optional comma-separated Graph fields to include.",
+                        "description": "Optional comma-separated Graph fields to include. Source-card metadata and webLink are always requested.",
                         "required": False,
                     },
                     {
@@ -1530,7 +1530,9 @@ class MSGraphPlugin(BasePlugin):
             str,
             "End of the time range as an ISO 8601 date or date and time. Requires start_datetime; a date alone includes that whole UTC day.",
         ] = "",
-        select_fields: Annotated[str, "Optional comma-separated Graph event fields to include."] = "",
+        select_fields: Annotated[
+            str, "Optional comma-separated Graph event fields. Source-card metadata and webLink are always requested.",
+        ] = "",
         query: Annotated[
             str,
             "Optional plain words that must all appear in the subject, location, organizer, attendees, categories, or description.",
@@ -1576,10 +1578,14 @@ class MSGraphPlugin(BasePlugin):
                 return self._invalid_parameter_error(operation_name, "start_datetime must be earlier than end_datetime.")
 
         normalized_top = self._normalize_top(top)
+        citation_select, _ = self._merge_select_fields(
+            select_fields or self.DEFAULT_EVENT_SELECT, self.DEFAULT_EVENT_SELECT.split(","),
+        )
         scan_fields = ["start"]
         if terms:
             scan_fields += ["subject", "location", "organizer", "attendees", "categories", "bodyPreview"]
-        select, added_fields = self._merge_select_fields(select_fields or self.DEFAULT_EVENT_SELECT, scan_fields)
+        # Only query-only fields may be stripped before the source card is captured.
+        select, added_fields = self._merge_select_fields(citation_select, scan_fields)
         params, headers = self._build_odata_params(
             top=normalized_top,
             select_fields=select,
@@ -1875,7 +1881,9 @@ class MSGraphPlugin(BasePlugin):
             "Folder to read: inbox, sentitems, drafts, deleteditems, archive, junkemail, a folder id, or all for every folder.",
         ] = "inbox",
         unread_only: Annotated[bool, "If true, only unread messages are returned."] = False,
-        select_fields: Annotated[str, "Optional comma-separated Graph message fields to include."] = "",
+        select_fields: Annotated[
+            str, "Optional comma-separated Graph message fields. Source-card metadata and webLink are always requested.",
+        ] = "",
         search: Annotated[
             str,
             "Optional plain words to find in the sender, subject, or body. Every word must match; operators and field prefixes are ignored.",
@@ -1914,7 +1922,7 @@ class MSGraphPlugin(BasePlugin):
             path = f"/v1.0/me/mailFolders/{quote(normalized_folder, safe='')}/messages"
 
         default_select = self.DEFAULT_MESSAGE_SELECT + (",bodyPreview" if terms else "")
-        required_fields = ["receivedDateTime"] + (["isRead"] if normalized_unread else [])
+        required_fields = self.DEFAULT_MESSAGE_SELECT.split(",")
         select, _ = self._merge_select_fields(select_fields or default_select, required_fields)
         params, headers = self._build_odata_params(top=normalized_top, select_fields=select)
         scan: Dict[str, Any] = {"last": None}
