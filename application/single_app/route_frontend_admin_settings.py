@@ -511,6 +511,9 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
         'enable_chat_orchestration_workflow_runs': (
             form_data.get('enable_chat_orchestration_workflow_runs') == 'on'
         ),
+        'enable_chat_orchestration_workflow_run_wait': (
+            form_data.get('enable_chat_orchestration_workflow_run_wait') == 'on'
+        ),
         'enable_chat_orchestration_workflow_handoff': (
             form_data.get('enable_chat_orchestration_workflow_handoff') == 'on'
         ),
@@ -547,6 +550,9 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
         ),
         'chat_orchestration_max_workflow_handoffs_per_day': _clamped(
             'chat_orchestration_max_workflow_handoffs_per_day', 5, 1, 100
+        ),
+        'chat_orchestration_workflow_run_wait_max_seconds': _clamped(
+            'chat_orchestration_workflow_run_wait_max_seconds', 300, 60, 1800
         ),
         'chat_orchestration_planner_deployment': str(
             form_data.get('chat_orchestration_planner_deployment') or ''

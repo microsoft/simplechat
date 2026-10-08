@@ -138,6 +138,21 @@
                         <input
                             type="checkbox"
                             class="form-check-input"
+                            id="enable_chat_orchestration_workflow_run_wait"
+                            name="enable_chat_orchestration_workflow_run_wait"
+                            aria-describedby="chat-orchestration-workflow-run-wait-help"
+                            {% if settings.enable_chat_orchestration_workflow_run_wait %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_orchestration_workflow_run_wait">
+                            Wait For Quick Workflows In Chat
+                        </label>
+                        <div class="form-text" id="chat-orchestration-workflow-run-wait-help">
+                            Off by default, so a plan never holds a chat turn open for a workflow unless you choose to. Requires Chat Orchestration, Enable Personal Workflows, Run Workflows From Chat and Use Workflow Results In Chat. When a user asks to run a saved workflow and then use what it found, such as "run my sales digest, then compare its totals with the Q3 report", the plan waits for the run and uses its result in the same answer. Only quick workflows qualify: durable execution on, no For each or Repeat until loops, nothing that waits for a person, and at most 5 tasks. The wait is capped by Wait for a workflow from chat under Limits and by the plan's own time limit; if the run is still going when the wait ends, the answer says so and the result is posted to the chat when it finishes.
+                        </div>
+                    </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
                             id="enable_chat_orchestration_workflow_handoff"
                             name="enable_chat_orchestration_workflow_handoff"
                             aria-describedby="chat-orchestration-workflow-handoff-help"
@@ -232,6 +247,12 @@
                             <input type="number" class="form-control" id="chat_orchestration_max_workflow_handoffs_per_day" name="chat_orchestration_max_workflow_handoffs_per_day" min="1" max="100" step="1"
                                 value="{{ settings.chat_orchestration_max_workflow_handoffs_per_day if settings.chat_orchestration_max_workflow_handoffs_per_day is not none else 5 }}">
                             <div class="form-text">How many hand-offs one user may start from chat in any rolling 24 hours. Applies only when Hand Off Large Work From Chat is on; hand-off workflows do not count toward the workflows-per-user limit.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_workflow_run_wait_max_seconds">Wait for a workflow from chat (seconds)</label>
+                            <input type="number" class="form-control" id="chat_orchestration_workflow_run_wait_max_seconds" name="chat_orchestration_workflow_run_wait_max_seconds" min="60" max="1800" step="1"
+                                value="{{ settings.chat_orchestration_workflow_run_wait_max_seconds if settings.chat_orchestration_workflow_run_wait_max_seconds is not none else 300 }}">
+                            <div class="form-text">The longest a plan may wait for a quick saved workflow before the answer moves on and the result is posted to the chat instead. The plan's run timeout also caps every wait. Applies only when Wait For Quick Workflows In Chat is on.</div>
                         </div>
                     </div>
                 </div>

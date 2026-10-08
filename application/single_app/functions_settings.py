@@ -88,12 +88,14 @@ from functions_workflow_limits import (
     CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
     CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
+    CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
     validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
     validate_chat_orchestration_min_workflow_interval_seconds,
+    validate_chat_orchestration_workflow_run_wait_max_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
     validate_workflow_min_schedule_interval_seconds,
@@ -1644,6 +1646,12 @@ def get_settings(use_cosmos=False, include_source=False):
         # asks for it. Off by default and independent of proposals; such a plan always waits for
         # the user to approve it, whatever the approval mode.
         'enable_chat_orchestration_workflow_runs': False,
+        # Lets a plan that starts a quick saved workflow wait for it and use its result in the
+        # same answer. Off by default; it also needs workflow runs and Use Workflow Results In Chat,
+        # because a wait that runs out falls back to posting the result to the chat.
+        'enable_chat_orchestration_workflow_run_wait': False,
+        # The longest one such wait may last, before the plan's own remaining time also caps it.
+        'chat_orchestration_workflow_run_wait_max_seconds': CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
         # Lets a chat plan hand work too large for a plan to a one-time durable workflow, which the
         # user approves on the plan and again on a hand-off card. Off by default and separate from
         # proposals and runs, so an upgrade never turns it on by itself.
@@ -2467,6 +2475,23 @@ def update_settings(new_settings, *, expected_etag=None):
         new_settings = {
             **new_settings,
             'enable_chat_orchestration_workflow_runs': new_settings['enable_chat_orchestration_workflow_runs'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_run_wait' in new_settings:
+        # Only a real boolean true lets a plan wait for a saved workflow; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflow_run_wait': (
+                new_settings['enable_chat_orchestration_workflow_run_wait'] is True
+            ),
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_workflow_run_wait_max_seconds' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_workflow_run_wait_max_seconds': (
+                validate_chat_orchestration_workflow_run_wait_max_seconds(
+                    new_settings['chat_orchestration_workflow_run_wait_max_seconds']
+                )
+            ),
         }
     if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_handoff' in new_settings:
         # Only a real boolean true lets chat plans hand work off; anything else saves as off.
