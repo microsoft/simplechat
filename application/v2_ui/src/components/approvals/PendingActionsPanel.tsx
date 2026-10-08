@@ -27,7 +27,8 @@ import {
     type PendingAction,
 } from '../../lib/approvalsApi';
 import { chatHrefForConversation } from '../../lib/conversationUrl';
-import { M365_PROFILE_CONNECTION_HREF, connectMicrosoft365, m365Sources } from '../../lib/m365Connect';
+import { connectMicrosoft365, m365Sources } from '../../lib/m365Connect';
+import { M365_CHAT_CONNECTION_HREF, M365_CONNECT_HREF } from '../../lib/m365Links';
 import { GlassButton, Skeleton } from '../ui/primitives';
 import {
     ApprovalSplit,
@@ -529,14 +530,14 @@ function PendingActionDetail({
                                 Reconnect Microsoft 365
                             </GlassButton>
                         ) : null}
-                        <a
-                            href={M365_PROFILE_CONNECTION_HREF}
+                        <Link
+                            to={action.workflow_id ? M365_CONNECT_HREF : M365_CHAT_CONNECTION_HREF}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm text-accent hover:bg-accent-soft"
                         >
-                            {action.workflow_id ? 'Reconnect workflow account in Profile' : 'Open Profile connection settings'}
-                        </a>
+                            {action.workflow_id ? 'Reconnect workflow account in Settings' : 'Open Microsoft 365 settings'}
+                        </Link>
                     </>
                 ) : null}
                 <GlassButton size="sm" variant="ghost" disabled={busy || loading} onClick={() => void refresh({ clearNotice: true })}>
