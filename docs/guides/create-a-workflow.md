@@ -178,6 +178,8 @@ shows:
 - **Cadence**: the shortest repeat interval allowed.
 - **Step cap**: the most steps a saved plan can have.
 - **Runs as**: you, in the workflow's own conversation.
+- **Alerts**: If a run fails, you'll get a 'Run failed' notification in the
+  bell. You can change this in the workflow's alerts.
 - Every step, numbered, with its title and the kind of work it does.
 
 Only steps that **Search documents**, **Analyse documents**, **Compare
@@ -201,6 +203,12 @@ description, schedule, alerts and whether the workflow is on. To change the
 steps, ask again in chat and save the new plan. The Classic workflow page sends
 you to V2 to edit it.
 
+The workflow starts with one alert rule, **Run failed**. When a run fails or
+finishes with task errors, it sends a high-severity notification to your bell,
+never a pop-up; a run that succeeds sends nothing. You can rename, change or
+delete the rule under **Alerts** in the workflow editor, and saving the same
+plan again doesn't add it back.
+
 Every run:
 
 - Runs as you, the person who saved it, whether it was started by the schedule
@@ -217,7 +225,8 @@ Every run:
 If a check fails, the run stops without running any step and shows a fixed
 reason, such as "Repeating chat plans is turned off" or "A document, group or
 public workspace this plan reads is no longer available to you", in the run
-history and in any failure alert you set up.
+history and in the **Run failed** notification in your bell, unless you changed
+the workflow's alerts.
 
 ## Run on a calendar schedule
 

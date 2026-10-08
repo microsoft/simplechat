@@ -14,6 +14,7 @@ import {
     type WorkflowScope,
 } from '../../lib/workflowEditor';
 import {
+    PLAN_REPLAY_ALERT_NOTICE,
     describePlanReplayTimeHandling,
     fetchPlanReplayPreview,
     planReplayError,
@@ -189,6 +190,7 @@ export function PlanReplaySaveCard({
                         <Detail term="Runs as">
                             You, in the workflow&apos;s own conversation. It only reads sources this plan read, and access is checked again.
                         </Detail>
+                        <Detail term="Alerts">{PLAN_REPLAY_ALERT_NOTICE}</Detail>
                     </dl>
                     <ol aria-label="Frozen plan steps" className="space-y-2">
                         {preview.steps.map((step) => (

@@ -312,14 +312,38 @@ and `@workflow_user_required`:
 The card fetches the preview only when the user opens it. Before anything is
 saved, it discloses the request, how dates are handled and in which time zone,
 the shortest interval allowed, the step cap, that runs act as the user in the
-workflow's own conversation, and every frozen step with its title and
-capability label. A refused plan lists each refusal under **This plan has
-replay notes** and can't be saved. Saving is always a manual choice, and the
-workflow is saved paused unless the user turns on **Turn on the schedule now**.
+workflow's own conversation, the default failure alert, and every frozen step
+with its title and capability label. A refused plan lists each refusal under
+**This plan has replay notes** and can't be saved. Saving is always a manual
+choice, and the workflow is saved paused unless the user turns on **Turn on the
+schedule now**.
 
 The workflow id is derived from the user, the source run and the hash, so
 saving the same plan twice returns the existing workflow. A workflow that was
 deleted can be created again from the same card.
+
+### Default alert
+
+A replay workflow usually runs on a schedule nobody is watching, so a run that
+is refused or fails must still reach its creator. The saved workflow therefore
+starts with one alert rule, and the card says so before saving: "If a run fails,
+you'll get a 'Run failed' notification in the bell. You can change this in the
+workflow's alerts."
+
+| Field | Value |
+| --- | --- |
+| When to alert (`alert_mode`) | `rules`, shown as **Only when a condition is met** |
+| Rule name | `Run failed` (`PLAN_REPLAY_DEFAULT_ALERT_RULE_NAME`) |
+| Condition | The run finished as `failed` or `completed_with_task_errors` |
+| Scope | `final`; a run-status rule applies to the whole run |
+| Severity | `high` |
+| Delivery | `notify_only`, shown as **Notification bell only**, so it never pops up |
+
+The rule goes through the same alert normalization as a rule saved in the
+editor, and it stays editable: the creator can rename, change, turn off or
+delete it, or turn alerts off. A successful run matches no rule and sends
+nothing. Saving the same plan again returns the existing workflow unchanged, so
+the rule is never added twice, and a rule the creator removed never comes back.
 
 ### Editor
 
@@ -408,17 +432,21 @@ Every refusal is a fixed message from `REFUSAL_MESSAGES`, never model output.
 | `invalid_request`, `service_unavailable` | Bad request, store failure | 422, 503 | Card error, without detail. |
 
 A run-time refusal isn't retried. The run fails with the fixed text, which
-shows on the run's task in the run inspector and in the run history. Alerts
-follow the workflow's own alert settings, as for any failed run. There is no
-separate replay alert, and nothing is sent to the bell unless the workflow's
-alert settings send one.
+shows on the run's task in the run inspector and in the run history. The
+workflow's default **Run failed** rule (see [Default alert](#default-alert))
+then sends a high-severity notification to the creator's bell, through the same
+alert path as any failed workflow run. It carries the fixed reason, links to the
+workflow's own conversation, and holds no request, plan or model text. If the
+creator changed or removed the rule, alerts follow the workflow's alert
+settings instead.
 
 ### When the setting is turned off or a capability is removed
 
 Nothing is deleted or rewritten. The **Repeat on a schedule** button
 disappears, the routes refuse with `replay_disabled`, and every existing replay
 workflow fails its next run with the fixed `replay_disabled` reason before
-running any step. Turning the setting back on lets the same workflows run again.
+running any step. With the default alert, the creator sees that reason in the
+bell. Turning the setting back on lets the same workflows run again.
 
 When an admin turns off or removes an allowed capability, a replay workflow
 with that step fails its next run with `capability_unavailable` until the
@@ -458,11 +486,11 @@ builds and run-history redaction against a golden captured from base
 | `functional_tests/test_workflow_plan_replay_off_golden.py` | Off-golden against the base, the fixed reason while off, default off and the save-path coercion. |
 | `functional_tests/test_workflow_plan_replay_freeze.py` | Allowlist reasons and every refused class, wait kinds including Phase 6c's, Phase 6c's stored wait marker (matched, unmatched and unreadable), freeze eligibility, the hash, edit invalidation, per-run setting, capability, role, question and source checks, creator-only actor, group refusal, manual and scheduled parity. |
 | `functional_tests/test_workflow_plan_replay_execution.py` | End-to-end replay under the headless harness with the model and search stubbed, the conversation binding and later sharing, creator-only runs, deleted or changed workflows, cancellation, budget and lease loss, durable restart, adoption and reconciliation, typed output and redaction, relative time. |
-| `functional_tests/test_workflow_plan_replay_routes.py` | Preview disclosure, paused save, hash binding, settings, cadence floor, shared chats, refused steps, group access lost at save, quota and conflicts, read-only saves, the chat-route 409s. |
+| `functional_tests/test_workflow_plan_replay_routes.py` | Preview disclosure, paused save, hash binding, settings, cadence floor, shared chats, refused steps, group access lost at save, quota and conflicts, read-only saves, the chat-route 409s, the exact default **Run failed** rule and that a re-save never adds it back, and a refused scheduled run reaching the bell with its fixed reason through the production runner. |
 | `functional_tests/test_workflow_plan_replay_boundaries.py` | Import order and boundaries, scheduler exclusion. |
 | `functional_tests/route_tests/test_route_blueprint_policy_inventory.py`, `test_route_unauthenticated_policy_contract.py` | Route policy for the two new routes. |
-| `functional_tests/test_v2_workflow_plan_replay_client.mjs` | V2 client parsing, disclosure text, time-zone fallback and editor payloads. |
-| `ui_tests/test_v2_workflow_plan_replay_card.py` | The card, refusals and save in a browser, with hostile step titles and workflow names. |
+| `functional_tests/test_v2_workflow_plan_replay_client.mjs` | V2 client parsing, disclosure text, time-zone fallback, editor payloads, and the alert notice naming the server's rule. |
+| `ui_tests/test_v2_workflow_plan_replay_card.py` | The card, refusals, the alert notice and save in a browser, with hostile step titles and workflow names. |
 | `ui_tests/test_workflow_classic_advanced_guard.py` | The Classic page routes replay workflows to V2. |
 
 ## Limits and follow-ups

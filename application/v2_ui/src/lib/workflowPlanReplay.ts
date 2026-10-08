@@ -7,6 +7,10 @@ import type { WorkflowDefinition } from './workflowEditor';
 export const PLAN_REPLAY_INVALID_RESPONSE = 'The saved chat plan returned an invalid response.';
 export const PLAN_REPLAY_GENERIC_ERROR = 'The saved chat plan could not be updated. Reload the chat and try again.';
 export const PLAN_REPLAY_RESULT_CONTRACT = 'plan-replay-result-v1';
+// The server saves every replay workflow with one editable alert rule under this name.
+export const PLAN_REPLAY_ALERT_RULE_NAME = 'Run failed';
+export const PLAN_REPLAY_ALERT_NOTICE =
+    `If a run fails, you'll get a '${PLAN_REPLAY_ALERT_RULE_NAME}' notification in the bell. You can change this in the workflow's alerts.`;
 
 const HASH = /^[a-f0-9]{64}$/;
 const SERVER_TEXT_CODES = new Set(['cadence_below_minimum', 'invalid_workflow_settings', 'invalid_workflow_alerts']);

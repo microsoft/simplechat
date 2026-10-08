@@ -53,6 +53,7 @@ HOSTILE_TITLE = '"><svg onload="window.__hostile = 2">Find invoices'
 HOSTILE_WORKFLOW = '<img src=x onerror="window.__hostile = 3"> Replay invoices'
 STEP_REFUSAL = "Step 1 (Search the web) needs your signed-in session, which a repeated run doesn't have."
 PLAN_REFUSAL = "This plan delivers something a saved workflow can't create."
+ALERT_NOTICE = "If a run fails, you'll get a 'Run failed' notification in the bell. You can change this in the workflow's alerts."
 
 
 def editor_options():
@@ -327,6 +328,7 @@ def test_card_fetches_on_click_discloses_steps_and_saves_paused(plan_replay_ui):
     expect(page.get_by_text("Search documents")).to_be_visible()
     expect(page.get_by_text("Prepare content")).to_be_visible()
     expect(page.get_by_text("At least every 15 minutes.")).to_be_visible()
+    expect(page.get_by_text(ALERT_NOTICE, exact=True)).to_be_visible()
     assert [request["method"] for request in api.requests[:2]] == ["GET", "GET"]
 
     page.get_by_role("button", name="Save workflow").click()

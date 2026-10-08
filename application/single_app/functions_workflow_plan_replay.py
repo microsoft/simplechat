@@ -48,6 +48,7 @@ PLAN_REPLAY_RESULT_CONTRACT = 'plan-replay-result-v1'
 PLAN_REPLAY_TIME_HANDLING = 'frozen_with_run_time_line'
 PLAN_REPLAY_MAX_STEPS = 8
 PLAN_REPLAY_TASK_NAME = 'Repeat saved plan'
+PLAN_REPLAY_DEFAULT_ALERT_RULE_NAME = 'Run failed'
 # The run inspector's copy of the final answer matches the task preview's cap; the full answer
 # stays in the workflow conversation and in the task's stored json result.
 PLAN_REPLAY_RUN_ITEM_TEXT_LIMIT = 4000
@@ -679,7 +680,26 @@ def _workflow_name_from_request(request):
     return f'Repeat: {text[:80]}' if text else 'Repeat saved plan'
 
 
-def _workflow_payload_from_body(body, request):
+def _default_alert_fields(workflow_id):
+    # A scheduled replay can be refused or fail with nobody watching, so every created replay
+    # workflow starts with one editable rule that puts failed runs in the creator's bell.
+    return {
+        'alert_mode': 'rules',
+        'alert_priority': 'none',
+        'alert_evaluation': {'on_error': 'skip'},
+        'alert_rules': [{
+            'id': str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-replay:alert:{workflow_id}:run-failed')),
+            'name': PLAN_REPLAY_DEFAULT_ALERT_RULE_NAME,
+            'enabled': True,
+            'severity': 'high',
+            'delivery': 'notify_only',
+            'scope': {'type': 'final', 'task_id': ''},
+            'condition': {'type': 'run_status', 'statuses': ['failed', 'completed_with_task_errors']},
+        }],
+    }
+
+
+def _workflow_payload_from_body(body, request, workflow_id):
     body = body if isinstance(body, dict) else {}
     trigger = body.get('trigger') if isinstance(body.get('trigger'), dict) else {}
     schedule = body.get('schedule') if isinstance(body.get('schedule'), dict) else trigger.get('schedule')
@@ -705,6 +725,7 @@ def _workflow_payload_from_body(body, request):
             'instructions': request,
             'runner': {'type': 'inherit'},
         }],
+        **_default_alert_fields(workflow_id),
     }
 
 
@@ -756,7 +777,7 @@ def create_plan_replay_workflow(user_id, run_id, body, settings, *, read_run=Non
     try:
         workflow, created = create_personal_workflow_if_absent(
             user_id,
-            _workflow_payload_from_body(body, freeze['request']),
+            _workflow_payload_from_body(body, freeze['request'], workflow_id),
             workflow_id=workflow_id,
             origin=origin,
             actor_user_id=user_id,

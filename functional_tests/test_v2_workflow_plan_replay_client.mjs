@@ -31,6 +31,8 @@ globalThis.fetch = async (url, init = {}) => {
 
 const {
     ERROR_TEXT,
+    PLAN_REPLAY_ALERT_NOTICE,
+    PLAN_REPLAY_ALERT_RULE_NAME,
     PLAN_REPLAY_CAPABILITY_LABELS,
     PLAN_REPLAY_GENERIC_ERROR,
     PLAN_REPLAY_INVALID_RESPONSE,
@@ -92,7 +94,10 @@ def literal(module, name):
         if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
             return ast.literal_eval(node.value)
     raise AssertionError(f'{module}.{name} not found')
-print(json.dumps({'refusals': literal('functions_workflow_plan_replay', 'REFUSAL_MESSAGES')}))
+print(json.dumps({
+    'refusals': literal('functions_workflow_plan_replay', 'REFUSAL_MESSAGES'),
+    'alert_rule_name': literal('functions_workflow_plan_replay', 'PLAN_REPLAY_DEFAULT_ALERT_RULE_NAME'),
+}))
 `;
     return JSON.parse(runPython(source));
 }
@@ -281,6 +286,12 @@ test('client refusal text mirrors server constants and handles generic refusals'
     })).text, 'Minimum cadence is 15 minutes.');
     assert.equal(planReplayError(new ApiError('changed', 409, { code: 'plan_hash_mismatch', error: 'ignored' })).text,
         ERROR_TEXT.plan_hash_mismatch);
+});
+
+test('the card names the failure alert rule the server saves on every replay workflow', () => {
+    assert.equal(PLAN_REPLAY_ALERT_RULE_NAME, serverConstants().alert_rule_name);
+    assert.equal(PLAN_REPLAY_ALERT_NOTICE,
+        "If a run fails, you'll get a 'Run failed' notification in the bell. You can change this in the workflow's alerts.");
 });
 
 test('typed run result parser accepts only the plan replay contract', () => {

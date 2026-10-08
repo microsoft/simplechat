@@ -11,7 +11,10 @@ every frozen step and writes nothing. Saving needs the previewed hash, creates o
 workflow under the creator, and a repeat returns the same workflow. A refused step, a schedule that
 is too frequent, a lost source, a stale hash or the setting being off creates nothing, with a fixed
 reason. A workflow's frozen plan stays read-only through the ordinary save path, and the chat
-routes never run, retry, edit, revise or cancel a replay run that a workflow run owns.
+routes never run, retry, edit, revise or cancel a replay run that a workflow run owns. A saved
+workflow starts with one editable 'Run failed' alert rule that a re-save never adds back, and a
+refused scheduled run reaches the creator's bell with its fixed reason through the production
+workflow runner.
 
 The production Flask routes, Blueprint guards, replay module and personal workflow store run
 unchanged against in-memory storage, with the network blocked.
@@ -281,6 +284,122 @@ def test_saving_creates_one_paused_personal_workflow_that_repeats_the_frozen_pla
     require(again["workflow"]["id"] == workflow["id"] and len(stored(h)) == 1, "Saving again adopts the first save.")
     require(len(h.state.created) == 1, "Only a created workflow is logged.")
     _require_no_hostile_text_in_logs(h)
+
+
+RUN_FAILED_RULE = {
+    "name": "Run failed", "enabled": True, "severity": "high", "delivery": "notify_only",
+    "scope": {"type": "final", "task_id": ""},
+    "condition": {"type": "run_status", "statuses": ["failed", "completed_with_task_errors"]},
+    "order": 1,
+}
+
+
+def _rules_without_ids(workflow):
+    rules = deepcopy(workflow.get("alert_rules") or [])
+    for rule in rules:
+        rule.pop("id", None)
+    return rules
+
+
+def test_a_saved_replay_workflow_starts_with_one_editable_run_failed_alert(h):
+    seed_run(h)
+    login(h)
+    # The server picks the starting alert; alert fields in the request body are ignored.
+    status, body = save_previewed(h, alert_mode="off", alert_rules=[], alert_priority="high")
+    require(status == 201, f"{status} {body}")
+    workflow = stored(h)[0]
+    require(workflow.get("alert_mode") == "rules", f"A failed run reaches the bell: {workflow.get('alert_mode')}")
+    require(_rules_without_ids(workflow) == [RUN_FAILED_RULE], f"Exactly one default rule: {workflow.get('alert_rules')}")
+    rule_id = workflow["alert_rules"][0]["id"]
+    require(str(uuid.UUID(rule_id)) == rule_id, f"The rule has a stable UUID: {rule_id}")
+    require(workflow.get("alert_priority") == "none", "No pop-up on every run.")
+
+    again_status, again = save_previewed(h)
+    require(again_status == 200 and again["created"] is False, f"{again_status} {again}")
+    require(stored(h)[0]["alert_rules"] == workflow["alert_rules"], "Saving the plan again never adds a second rule.")
+
+    editor = json.loads(json.dumps(body["workflow"]))
+    editor["alert_mode"] = "off"
+    editor["alert_rules"] = []
+    saved = h.personal.save_personal_workflow(OWNER, editor, actor_user_id=OWNER)
+    require(saved["alert_mode"] == "off" and saved["alert_rules"] == [], "The creator can change the alert.")
+    require(saved["tasks"][0]["plan_replay"] == workflow["tasks"][0]["plan_replay"], "Editing alerts leaves the plan alone.")
+    status, again = save_previewed(h)
+    require(status == 200 and again["created"] is False, f"{status} {again}")
+    require(stored(h)[0]["alert_rules"] == [] and stored(h)[0]["alert_mode"] == "off",
+            "Saving the plan again never puts back an alert the creator removed.")
+
+
+def test_a_refused_replay_run_reaches_the_bell_with_its_fixed_reason(h, monkeypatch):
+    runner = importlib.import_module("functions_workflow_runner")
+    seed_run(h)
+    login(h)
+    status, body = save_previewed(h, enabled=True)
+    require(status == 201, f"{status} {body}")
+    workflow = stored(h)[0]
+    require(workflow["durable_execution"] is True and workflow["tasks"][0]["type"] == h.replay.PLAN_REPLAY_TASK_TYPE,
+            "The saved replay workflow is the one the scheduler runs.")
+    # An admin turns repeating off after the workflow was saved, so its next scheduled run is refused.
+    h.state.settings["enable_workflow_plan_replay"] = False
+    saved_items, notifications, harness, runner_logs = [], [], [], []
+    conversation = {"id": "workflow-conversation", "user_id": OWNER, "chat_type": "workflow", "workflow_id": workflow["id"]}
+
+    def never_replayed(*args, **kwargs):
+        harness.append(kwargs)
+        raise AssertionError("A refused replay never reaches the harness.")
+
+    def notify(**kwargs):
+        notifications.append(deepcopy(kwargs))
+        return {"id": "notification-1", **kwargs}
+
+    # The production runner, task sequence, replay task and alert rules run; only storage and the bell are stubbed.
+    for name, value in (
+        ("get_settings", lambda: deepcopy(h.state.settings)),
+        ("_get_workflow_run_record", lambda workflow, run_id: None),
+        ("_save_workflow_run_record", lambda workflow, record: record),
+        ("_save_workflow_run_item_record", lambda workflow, item: saved_items.append(deepcopy(item)) or item),
+        ("_is_workflow_run_cancellation_requested", lambda workflow, run_id: False),
+        ("_ensure_workflow_conversation", lambda workflow: dict(conversation)),
+        ("_create_user_message", lambda *args, **kwargs: {"id": "user-message", "conversation_id": conversation["id"]}),
+        ("_initialize_workflow_assistant_tracking", lambda *args, **kwargs: ("assistant-message", None)),
+        ("_prepare_workflow_url_access_context", lambda *args, **kwargs: {}),
+        ("create_workflow_priority_notification", notify),
+        ("log_workflow_run", lambda **kwargs: None),
+        ("log_event", _log_recorder(runner_logs, runner.__name__)),
+    ):
+        monkeypatch.setattr(runner, name, value)
+    monkeypatch.setattr(h.replay, "_authorize_current_workflow", never_replayed)
+    monkeypatch.setattr(h.modules.runs, "create_orchestration_run", never_replayed)
+
+    result = runner._run_authorized_workflow_impl(
+        deepcopy(workflow), trigger_source="scheduled", actor_user_id=OWNER, run_id="workflow-run-1",
+    )
+    reason = h.replay.REFUSAL_MESSAGES["replay_disabled"]
+    run = result["run"]
+    require(result["success"] is False and run["status"] == "failed", f"The run fails: {run}")
+    require(reason in run["error"], f"The run carries the fixed reason: {run['error']}")
+    require(harness == [], "The refusal comes before anything is replayed.")
+    failed = [item for item in saved_items if item.get("status") == "failed"]
+    require(len(failed) == 1 and failed[0]["error"] == reason, f"The task shows the fixed reason: {saved_items}")
+    require(len(notifications) == 1, f"Exactly one bell notification: {notifications} {runner_logs}")
+    note = notifications[0]
+    metadata = note["metadata"]
+    require(note["user_id"] == OWNER and note["priority"] == "high", f"The creator's bell, high: {note}")
+    require(note["title"] == f"High priority workflow alert: {runner._normalize_workflow_alert_title_text(HOSTILE_NAME)} failed",
+            f"The bell names the failed workflow: {note['title']}")
+    require(reason.split(". ")[0] in note["message"], f"The bell message carries the reason: {note['message']}")
+    require(metadata["delivery"] == "notify_only" and metadata["alert_mode"] == "rules", f"The default rule: {metadata}")
+    require([rule["rule_name"] for rule in metadata["matched_rules"]] == ["Run failed"], str(metadata["matched_rules"]))
+    require(metadata["trigger_source"] == "scheduled" and metadata["status"] == "failed", str(metadata))
+    require(reason in metadata["error"] and reason in metadata["alert_detail"], f"The full fixed reason: {metadata}")
+    require(metadata["conversation_id"] == conversation["id"], "The bell links to the workflow's own conversation.")
+    require(conversation["id"] in note["link_url"] and CONVERSATION not in note["link_url"],
+            f"The bell opens the workflow's conversation, never the source chat: {note['link_url']}")
+    require(result["notification"]["id"] == "notification-1", "The run returns the bell notification.")
+    require(run["alert_decision"]["should_alert"] is True, f"The run explains its alert: {run.get('alert_decision')}")
+    text = json.dumps(note, default=str, ensure_ascii=False)
+    for secret in ("SECRET_REQUEST", HOSTILE_TITLE, "Summarize the notes"):
+        require(secret not in text, f"No request, plan or model text reaches the bell: {secret}")
 
 
 def test_saving_can_turn_the_workflow_on_when_the_creator_chooses(h):
