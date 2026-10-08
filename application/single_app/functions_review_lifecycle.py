@@ -7,9 +7,12 @@ from functions_activity_logging import log_general_admin_action
 
 ARCHIVE_STATE_ACTIVE = 'active'
 ARCHIVE_STATE_ARCHIVED = 'archived'
+# Both: the Review center's dashboard counts and its links to what they counted.
+ARCHIVE_STATE_ALL = 'all'
 ALLOWED_ARCHIVE_STATES = {
     ARCHIVE_STATE_ACTIVE,
     ARCHIVE_STATE_ARCHIVED,
+    ARCHIVE_STATE_ALL,
 }
 
 
@@ -17,13 +20,15 @@ def normalize_archive_state(value):
     """Normalize an archive-state query value, defaulting to active records."""
     normalized_value = str(value or ARCHIVE_STATE_ACTIVE).strip().lower()
     if normalized_value not in ALLOWED_ARCHIVE_STATES:
-        raise ValueError("Archive state must be 'active' or 'archived'.")
+        raise ValueError("Archive state must be 'active', 'archived' or 'all'.")
     return normalized_value
 
 
 def append_archive_query_filter(where_clauses, archive_state):
     """Add a backward-compatible archive predicate to a Cosmos SQL query."""
     normalized_state = normalize_archive_state(archive_state)
+    if normalized_state == ARCHIVE_STATE_ALL:
+        return
     if normalized_state == ARCHIVE_STATE_ARCHIVED:
         where_clauses.append("IS_DEFINED(c.is_archived) AND c.is_archived = true")
     else:
