@@ -41,7 +41,6 @@ export const ERROR_TEXT: Readonly<Record<string, string>> = {
     replay_budget_exceeded: 'The repeated plan took longer than its time limit and was stopped.',
     replay_execution_failed: 'The repeated plan could not finish. Open the run for details.',
     plan_replay_read_only: 'A saved plan can\'t be edited. Create it again from chat.',
-    workflow_replay_managed: 'This workflow repeats a saved chat plan; only its name, schedule and alerts can change.',
     workflow_replay_run_managed: 'This plan runs as part of a saved workflow. Open the workflow to run or cancel it.',
     model_unavailable: 'The model this plan used is no longer available. Create it again from chat.',
     quota_exceeded: 'You already have the most saved chat-plan workflows allowed. Delete one before adding another.',

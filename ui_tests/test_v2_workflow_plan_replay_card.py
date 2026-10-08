@@ -51,6 +51,8 @@ WORKFLOW_HREF = f"/workspace/workflows?workflow_id={WORKFLOW_ID}"
 HOSTILE_REQUEST = '<img src=x onerror="window.__hostile = 1"> summarize <script>bad()</script>'
 HOSTILE_TITLE = '"><svg onload="window.__hostile = 2">Find invoices'
 HOSTILE_WORKFLOW = '<img src=x onerror="window.__hostile = 3"> Replay invoices'
+STEP_REFUSAL = "Step 1 (Search the web) needs your signed-in session, which a repeated run doesn't have."
+PLAN_REFUSAL = "This plan delivers something a saved workflow can't create."
 
 
 def editor_options():
@@ -61,16 +63,25 @@ def editor_options():
 
 
 def preview(eligible=True):
-    refusals = [] if eligible else [{
-        "code": "capability_not_replayable", "step_number": 1, "step_id": "web", "capability_id": "web_search",
-        "message": "A step in this plan can't be repeated by a saved workflow.",
-    }]
+    # Server-shaped refusals: a step refusal already starts with "Step N (label)"; a whole-plan one is step 0.
+    refusals = [] if eligible else [
+        {"code": "role_required", "step_number": 1, "step_id": "web", "capability_id": "web_search",
+         "message": STEP_REFUSAL},
+        {"code": "capability_not_replayable", "step_number": 0, "step_id": "", "capability_id": "",
+         "message": PLAN_REFUSAL},
+    ]
+    first_step = (
+        {"number": 1, "step_id": "search", "title": HOSTILE_TITLE, "capability_id": "document_search",
+         "capability_label": "Search documents", "enabled": True}
+        if eligible else
+        {"number": 1, "step_id": "web", "title": HOSTILE_TITLE, "capability_id": "web_search",
+         "capability_label": "Search the web", "enabled": True}
+    )
     return {
         "eligible": eligible,
         "request": HOSTILE_REQUEST,
         "steps": [
-            {"number": 1, "step_id": "search", "title": HOSTILE_TITLE, "capability_id": "document_search",
-             "capability_label": "Search documents", "enabled": True},
+            first_step,
             {"number": 2, "step_id": "compose", "title": "Write answer", "capability_id": "compose",
              "capability_label": "Prepare content", "enabled": True},
         ],
@@ -331,7 +342,9 @@ def test_ineligible_preview_shows_refusals_without_save_form(plan_replay_ui):
     api.preview = preview(eligible=False)
     mount_messages(page)
     page.get_by_role("button", name="Repeat on a schedule").click()
-    expect(page.get_by_text("Step 1: A step in this plan can't be repeated by a saved workflow.")).to_be_visible()
+    notes = page.get_by_role("status").filter(has_text="This plan has replay notes:")
+    expect(notes.get_by_role("listitem")).to_have_text([STEP_REFUSAL, f"Whole plan: {PLAN_REFUSAL}"])
+    expect(page.get_by_text("Step 1: Step 1")).to_have_count(0)
     expect(page.get_by_role("button", name="Save workflow")).to_have_count(0)
 
 

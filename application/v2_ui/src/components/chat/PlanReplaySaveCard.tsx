@@ -204,8 +204,8 @@ export function PlanReplaySaveCard({
                             <ul className="mt-1 list-disc space-y-1 pl-5">
                                 {preview.refusals.map((refusal, index) => (
                                     <li key={`${refusal.code}-${refusal.step_number}-${index}`}>
-                                        {refusal.step_number > 0 ? `Step ${refusal.step_number}: ` : 'Whole plan: '}
-                                        {refusal.message}
+                                        {/* A step refusal already starts with "Step N (label)". */}
+                                        {refusal.step_number > 0 ? refusal.message : `Whole plan: ${refusal.message}`}
                                     </li>
                                 ))}
                             </ul>
