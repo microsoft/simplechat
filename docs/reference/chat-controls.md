@@ -621,6 +621,56 @@ aren't available right now."
 
 {% include media.html src="reference/chat-controls-workflow-proposal-run-summary.png" alt="A created workflow proposal card showing Next run and Last run, with Open latest results and Follow up." title="Created workflow card" capture="Capture a created workflow proposal card for a scheduled workflow that has run, showing Next run with its time zone, Last run with its status, and the Open latest results and Follow up buttons. Redact the workflow name." %}
 
+## Workflow hand-offs (V2 interface)
+
+Implemented in **0.261.295** (Refs: microsoft/simplechat#1549). Some requests are
+too big for one chat plan, such as "review every contract in my Legal workspace
+and list the renewal terms". When **Hand Off Large Work From Chat**
+(`enable_chat_orchestration_workflow_handoff`) and the settings it requires are on,
+the plan can prepare a one-time workflow that reviews each document and then writes
+one report. Approving the plan only prepares it. A **Workflow hand-off** card follows
+the answer, and nothing is created or run until you accept it there. Hand-offs are
+offered only in a conversation that's private to you. See
+[Hand large work off to a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}#hand-large-work-off-to-a-workflow).
+
+{% include media.html src="reference/chat-controls-workflow-handoff-card.png" alt="Workflow hand-off card under a plan answer, showing what the workflow covers, its two tasks, when the offer expires, and the Accept, Edit and Decline buttons." title="Workflow hand-off card" capture="Capture a pending Workflow hand-off card under a plan answer, showing its Covers and Workspaces lines, the two tasks with what each runs on, the sentence saying when you can decide until, and the Accept, Edit and Decline buttons. Redact the conversation title, workflow name and workspace names." %}
+
+| Control or state | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Hand-off notice | On the plan card, says the plan hands work off to a one-time workflow, so it always waits for your approval, and that approving it only prepares the workflow. | Know that approving the plan starts nothing. A countdown or Auto never approves a hand-off plan. | `enable_chat_orchestration_workflow_handoff` and the settings it requires, for a plan with a hand-off step |
+| Hand off large work (Run view) | Puts the hand-off step in words: the workflow's name, what it reviews, for example "3 named documents" or "a search of 2 workspaces, the 50 best matches", and its task titles. The tasks' instructions and the document references aren't shown. | Check what the step prepares before you approve the plan. | Same as Hand-off notice |
+| Workflow hand-off card | Shows the workflow's name and description, what it covers, for example "200 documents" or "up to 500 best-matching documents", the workspaces a search reads, that it runs once and isn't scheduled, the Info alert it sends, and each task with the model or agent it runs on. While the hand-off waits, the card says when the offer expires. | See exactly what the workflow will review before anything is created. | Your own private conversation, under an answer whose plan prepared a hand-off |
+| Status label | Reads **Awaiting your decision**, **Creating**, **Workflow created**, **Run queued**, **Declined**, **Expired**, **Unavailable**, **Can't be used** or **Workflow deleted**, with a sentence on what that means. For a hand-off that can't be used, the sentence gives the reason, for example that the request covers more documents than one hand-off can review. | Know whether the hand-off still needs you and, if it can't go ahead, why. | Always, on the card |
+| Accept | Asks you to confirm, repeating what the workflow covers, then creates the workflow turned off, so it never runs on a schedule, and starts its one run. | Start the review when the card matches what you asked for. | The hand-off is waiting for your decision |
+| Edit | Opens the prepared workflow in the workflow editor. **Save** asks you to confirm, then creates the workflow as edited and starts its one run. An edit must keep the manual trigger and the For each over documents or a workspace search, and its tasks can use only your own local agents. URL Access and Run as aren't available. If the edit is refused, the editor stays open with your draft and says why. | Change the name, a task's wording or what it runs on before anything is created. | Same as Accept |
+| Decline | Asks you to confirm, then declines the hand-off. Nothing is created. | Say you don't want this work done. You can ask again in chat at any time. | The hand-off is waiting for your decision, or it can't be used and hasn't expired |
+| Start its run | Asks you to confirm, then starts the one run of the workflow the hand-off already created. | Finish an accept that created the workflow but couldn't start its run. | The workflow exists but its run hasn't started |
+| Open workflow | Opens the created workflow in Workflows. | Look at the workflow the hand-off created. | The workflow exists and the card isn't showing its run |
+| Handed-off workflow | Shows the run like a run on the **Started workflows** card: its status, the step it's on and the time elapsed, with **Cancel run**, **Retry**, **Review and approve**, **Reconnect Microsoft 365**, **Open run** and **Results posted below** as they apply. Until the run is first checked, or when runs aren't tracked, it shows the run's status as of when the message loaded, with **Open run**. | Follow the review without leaving the chat. The run's outcome is posted in the chat when it ends. | You accepted the hand-off and its run was queued. Runs are tracked while `allow_user_workflows` and `enable_chat_orchestration_workflow_runs` are both on |
+| Check now | Reads this chat's runs again straight away. The card then shows when they were last checked. | Get the run's latest status without waiting for the next automatic check. | Runs are tracked and the hand-off's run was queued |
+| Check again | Reads the hand-off's status again after automatic checking stops. | Confirm the result when creating the workflow takes longer than expected, for example after you accepted it in another tab. | The hand-off is still being created |
+| Try again | Retries an accept that can still succeed, such as one that created the workflow but couldn't queue its run, which queues that same run. On a failed read, it loads the hand-offs again. | Recover from a busy or temporary failure without asking again in chat. | The accept was refused in a way that can succeed, or the hand-offs couldn't be loaded |
+
+The card offers only what the hand-off allows at that moment. A hand-off that's
+declined, expired or whose run was queued offers nothing, and an offer expires 14
+days after the plan prepared it. Each hand-off workflow created in the last 24
+hours counts toward a daily limit your administrator sets, until it's deleted; at
+the limit, Accept says "You reached the daily limit for workflow hand-offs. Try
+again later." If your administrator turns hand-offs off, an earlier answer keeps
+its card, which then says the hand-off isn't available.
+
+A search for every matching document pauses before it reviews any if, when the
+run starts, more documents match than one hand-off can review. The run's row
+shows **Needs you** and "Paused before reviewing any documents because more
+matched than one hand-off can review. Cancel it, then ask again with a narrower
+request." It offers **Cancel run** and **Open run**, because the workflow can't be
+resumed.
+
+An answer whose plan handed work off shows the hand-off card instead of the
+**Proposed workflow** and **Started workflows** cards. A plan can't both hand work
+off and propose or start a workflow, so nothing is hidden, and the run shows only
+once.
+
 ## Workflow runs (V2 interface)
 
 Implemented in **0.261.212** (Refs: microsoft/simplechat#1551). When you ask chat

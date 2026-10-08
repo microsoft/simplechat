@@ -1,1 +1,5 @@
 harness.bundle.js
+harness.bundle.js.map
+harness.bundle.css
+harness.bundle.css.map
+__pycache__/
