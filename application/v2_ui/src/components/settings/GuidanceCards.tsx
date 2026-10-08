@@ -6,8 +6,8 @@
 // interface holds in the other. The tours add a per-tour choice the classic page does not
 // have; its master switch, `showTutorialButtons`, still turns every tour off at once.
 
-import { useNavigate } from 'react-router-dom';
-import { CircleHelp, Play, Sparkles } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { CircleHelp, Play, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import type { UserSettings } from '../../lib/userSettings';
@@ -16,6 +16,7 @@ import {
     resolveLatestFeaturesNav,
     type LatestFeaturesStatus,
 } from '../../lib/latestFeaturesNav';
+import { SUPPORT_LATEST_FEATURES_PATH } from '../../lib/supportMenu';
 import { isTourEnabled, requestTour, TOURS, withTourVisibility } from '../../lib/tours';
 import { Toggle } from '../ui/primitives';
 import { SettingsCard } from './SettingsCard';
@@ -42,7 +43,7 @@ export function LatestFeaturesCard({
     return (
         <SettingsCard
             title="Latest Features"
-            Icon={Sparkles}
+            Icon={Zap}
             description="A shortcut in the navigation rail to what changed in recent releases. Hiding it lasts until the next release, so you still hear about new features. Shared with the classic interface."
         >
             <div className="flex flex-wrap items-center gap-3">
@@ -72,12 +73,12 @@ export function LatestFeaturesCard({
                 )}
             </div>
             {nav?.available && state.status !== 'development' && (
-                <a
-                    href="/support/latest-features"
+                <Link
+                    to={SUPPORT_LATEST_FEATURES_PATH}
                     className="mt-3 inline-block text-xs font-medium text-accent hover:underline"
                 >
                     Open Latest Features
-                </a>
+                </Link>
             )}
         </SettingsCard>
     );

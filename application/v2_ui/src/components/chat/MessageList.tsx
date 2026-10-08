@@ -40,6 +40,7 @@ import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { WorkflowProposalCards } from './WorkflowProposalCard';
 import { WorkflowRunLinks } from './WorkflowRunLinks';
 import { WorkflowRunCard } from './WorkflowRunCard';
+import { WorkflowHandoffCards } from './WorkflowHandoffCard';
 import { WorkflowDeliveryFooter } from './WorkflowDeliveryFooter';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
@@ -93,6 +94,7 @@ import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
 import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRuns';
+import { orchestrationHandedOffWorkflow } from '../../lib/workflowHandoffs';
 import { readWorkflowDelivery } from '../../lib/workflowDelivery';
 import { workflowRunTrackerShouldRun } from '../../lib/workflowRunTracker';
 import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
@@ -1161,17 +1163,27 @@ function MessageBubbleInner({
                         {/* A proposed workflow is decided by the person who asked, in their own conversation. */}
                         {orchestration.run_id && masks.ranges.length === 0 && personalConversation
                             && message.conversation_id === activeConversationId
-                            && orchestrationProposedWorkflow(message.metadata?.orchestration) ? (
+                            && orchestrationProposedWorkflow(message.metadata?.orchestration)
+                            && !orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
                             <WorkflowProposalCards conversationId={message.conversation_id} runId={orchestration.run_id} />
                         ) : null}
                         {/* A started workflow's runs only for the person who asked, in their own conversation:
                             live while the tab keeps a run tracker, else as they stood when the answer loaded. */}
                         {orchestration.run_id && masks.ranges.length === 0 && personalConversation
                             && message.conversation_id === activeConversationId
-                            && orchestrationStartedWorkflow(message.metadata?.orchestration) ? (
+                            && orchestrationStartedWorkflow(message.metadata?.orchestration)
+                            && !orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
                             liveRunStatus
                                 ? <WorkflowRunCard conversationId={message.conversation_id} runId={orchestration.run_id} />
                                 : <WorkflowRunLinks conversationId={message.conversation_id} runId={orchestration.run_id} />
+                        ) : null}
+                        {/* Work a plan handed off to a one-time workflow is decided by the person who asked, in
+                            their own conversation. The server refuses a plan that also proposes or starts one. */}
+                        {orchestration.run_id && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
+                            <WorkflowHandoffCards conversationId={message.conversation_id} runId={orchestration.run_id}
+                                liveRunStatus={liveRunStatus} />
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}

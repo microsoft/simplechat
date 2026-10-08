@@ -11,6 +11,8 @@
 // GET; the dedicated setActive routes say plainly what they do and report why they refused.
 
 import { api } from './apiClient';
+import { groupWorkspacePath } from './groupWorkspaceNavigation';
+import { publicWorkspacePath } from './publicWorkspaceNavigation';
 import { isRecord } from './workspaceAuthoring';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 
@@ -54,6 +56,12 @@ export interface WorkspaceKind {
     list: (page: number, pageSize: number, search: string, signal?: AbortSignal) => Promise<WorkspacePage>;
     /** Make one active. Rejects with a message the server supplied. */
     setActive: (id: string) => Promise<void>;
+    /**
+     * Where Open goes for a row: the V2 workspace page, addressed by its immutable id. Opening
+     * never activates anything here; as with the directories' Open, the page decides. A group
+     * page activates the group it shows, and a public page leaves the active one alone.
+     */
+    openPath: (id: string) => string;
     /** What one of these is called, for empty states and labels. */
     noun: string;
     pluralNoun: string;
@@ -107,6 +115,7 @@ export const GROUP_WORKSPACES: WorkspaceKind = {
         // 400 missing id, 404 unknown group, 403 not a member — all surfaced as written.
         await api.patch('/api/groups/setActive', { groupId: id });
     },
+    openPath: (id) => groupWorkspacePath(id),
     noun: 'group',
     pluralNoun: 'groups',
     classicHref: '/profile?tab=groups',
@@ -137,6 +146,7 @@ export const PUBLIC_WORKSPACES: WorkspaceKind = {
     setActive: async (id) => {
         await api.patch('/api/public_workspaces/setActive', { workspaceId: id });
     },
+    openPath: (id) => publicWorkspacePath(id),
     noun: 'public workspace',
     pluralNoun: 'public workspaces',
     classicHref: '/profile?tab=public-workspaces',

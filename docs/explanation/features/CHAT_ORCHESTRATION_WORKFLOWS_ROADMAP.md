@@ -7,7 +7,7 @@ doesn't change the version. Each phase records the version it ships in.
 
 Planning branch: `paullizer-orchestration-workflows-capability`.
 
-Status updated: **2026-10-03**, with `paullizer-react-v2-ui` at 0.261.232. The PRs for this work target that branch
+Status updated: **2026-10-08**, with `paullizer-react-v2-ui` at 0.261.295. The PRs for this work target that branch
 (§10).
 
 This is the master plan for letting chat orchestration propose, create, run and hand off saved workflows. It's the
@@ -29,9 +29,9 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 | 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | [#1548](https://github.com/microsoft/simplechat/issues/1548) | 3a: — · 3b: 2, A2 · 3c: 3a, 3b, A1 | **3a done**: [#1569](https://github.com/microsoft/simplechat/pull/1569), v0.261.203. **3b done**: [#1577](https://github.com/microsoft/simplechat/pull/1577), v0.261.208. **3c done**: [#1593](https://github.com/microsoft/simplechat/pull/1593), v0.261.213. Phase 3 is complete. Follow-up [#1596](https://github.com/microsoft/simplechat/pull/1596), v0.261.215, makes personal **Draft Workflow Instructions** follow the assistant setting |
 | 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | **Done**: [#1580](https://github.com/microsoft/simplechat/pull/1580), v0.261.207, behind **Propose Workflows From Chat** (off by default). It includes personal File Sync authoring in the V2 editor (gotcha 58) |
 | 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | **Done**: [#1594](https://github.com/microsoft/simplechat/pull/1594), v0.261.212, behind **Run Workflows From Chat** (off by default) |
-| 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | **6a done**: [#1592](https://github.com/microsoft/simplechat/pull/1592), v0.261.214, behind **Use Workflow Results In Chat** (off by default). **The `workflow_results` planner capability is done**: [#1607](https://github.com/microsoft/simplechat/pull/1607), v0.261.217, under the same setting. **6b-1 done**: [#1610](https://github.com/microsoft/simplechat/pull/1610), v0.261.227 (server delivery and the status route). **In progress**: 6b-2 (V2 run card, tracker and chat-list indicator). 6c not started |
-| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | **In progress**: 7a, the server part of the hand-off, behind `enable_chat_orchestration_workflow_handoff` (off by default). §6 has its settled design. 7b, the V2 part, follows |
-| 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started |
+| 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | **6a done**: [#1592](https://github.com/microsoft/simplechat/pull/1592), v0.261.214, behind **Use Workflow Results In Chat** (off by default). **The `workflow_results` planner capability is done**: [#1607](https://github.com/microsoft/simplechat/pull/1607), v0.261.217, under the same setting. **6b-1 done**: [#1610](https://github.com/microsoft/simplechat/pull/1610), v0.261.227 (server delivery and the status route). **6b-2 done**: [#1639](https://github.com/microsoft/simplechat/pull/1639), v0.261.251 (V2 run card, tracker and chat-list indicator). 6c, the in-plan wait, is optional and not started |
+| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | **7a done**: [#1640](https://github.com/microsoft/simplechat/pull/1640), v0.261.250, the server part of the hand-off, behind **Hand Off Large Work From Chat** (`enable_chat_orchestration_workflow_handoff`, off by default). Follow-up [#1647](https://github.com/microsoft/simplechat/pull/1647), v0.261.252, re-proves a hand-off report's lineage before reading it. **7b done**: [#1683](https://github.com/microsoft/simplechat/pull/1683), v0.261.295, the V2 hand-off card, where the user accepts, edits or declines a hand-off and follows its run. Phase 7 is complete |
+| 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started. Optional follow-ons, each scoped on its own |
 | A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | **Done**: [#1564](https://github.com/microsoft/simplechat/pull/1564), v0.261.200 |
 | A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | [#1556](https://github.com/microsoft/simplechat/issues/1556) | A1 | **Done**: [#1568](https://github.com/microsoft/simplechat/pull/1568), v0.261.201. It merged into A1's branch and landed with #1564 |
 | N1 | V2 notifications: bell and panel with deep links; the existing Desktop notifications preference works in V2 | [#1554](https://github.com/microsoft/simplechat/issues/1554) | — | **Done**: [#1563](https://github.com/microsoft/simplechat/pull/1563), v0.261.195 |
@@ -43,19 +43,29 @@ Track A (AI-assist UX) is independent of the workflow phases, and both of its pa
 shipped as three PRs: 3a (change tracking), 3b (the assist endpoint) and 3c (the **Ask AI** tab, which also works on a
 proposal opened with **Edit**). Phase 5 (#1594) lets a plan start a saved workflow and link to the run, and 6a (#1592)
 lets chat answer from a finished run's stored result, with **Follow up**. The `workflow_results` planner capability
-(#1607) lets a plan read a finished run, and 6b-1 (#1610) posts a run's results back into the private chat that
-started it. 6b-2 (the V2 run card, tracker and chat-list indicator) and 7a (the server part of Phase 7's hand-off) are
-in progress. Tracks N (V2 notifications) and P (document provenance) are independent too, and all three of their items
-have landed, so 6b can rely on the V2 bell for undeliverable results. Two related changes have also landed: saved
-results take their access from the workflow, run or chat that holds them (#1621: #1628, #1631 and #1632), and a
-revision the Run as user saved runs as them without a separate approval (#1630). §7 and gotchas 4, 15 and 36
-reflect both.
+(#1607) lets a plan read a finished run, 6b-1 (#1610) posts a run's results back into the private chat that started
+it, and 6b-2 (#1639) follows those runs in V2 with a run card, one tracker per tab and a running tag in the chat list.
+7a (#1640, with the lineage follow-up #1647) is the server part of Phase 7's hand-off, and 7b (#1683) is the V2 card
+where the user accepts, edits or declines a hand-off and follows its run. Tracks N (V2 notifications) and P (document
+provenance) are independent too, and all three of their items have landed, so 6b can rely on the V2 bell for
+undeliverable results. Two related changes have also landed: saved results take their access from the workflow, run or
+chat that holds them (#1621: #1628, #1631 and #1632), and a revision the Run as user saved runs as them without a
+separate approval (#1630). §7 and gotchas 4, 15 and 36 reflect both.
+
+With 7b, the capability works end to end in V2. Chat can propose a saved workflow, including one on a calendar schedule,
+which the user can refine with **Ask AI** before saving (Phases 1–4). It can start a saved workflow and post the run's
+results back into the chat (Phases 5 and 6b), answer from a finished run's results with **Follow up** (6a), and hand a
+large one-time job off to a durable workflow (Phase 7). Each of the four chat capabilities is off by default, behind its
+own admin setting: **Propose Workflows From Chat**, **Run Workflows From Chat**, **Use Workflow Results In Chat** and
+**Hand Off Large Work From Chat**. What's left is optional: 6c, an in-plan wait, only if planners need a workflow's
+output later in the same plan; Phase 8's follow-ons, each scoped on its own; and the follow-ups under Phase 7 and below.
 
 Repository follow-ups found along the way, not tied to one phase:
 
 - The generated release-notes pages under `docs/explanation/release-notes/` are stale, so
-  `test_docs_release_notes_integrity.py` fails on the base, with 168 stale releases at 0.261.232. The PRs above leave
-  them alone; regenerate them once, in a docs-only change, after the in-flight PRs land.
+  `test_docs_release_notes_integrity.py` fails on the base: at 0.261.295, 223 releases in the source are missing from
+  the generated pages. The PRs above leave them alone; regenerate them once, in a docs-only change, after the in-flight
+  PRs land.
 - Other docs pages have pre-existing broken relative links (`test_docs_link_integrity.py`).
 - **Fixed in [#1576](https://github.com/microsoft/simplechat/pull/1576)** (#1571): the PR guardrail workflows (broken
   access control, XSS sinks, Swagger routes, Python syntax, the malicious-PR review and CodeQL) now run on PRs into
@@ -141,6 +151,17 @@ Repository follow-ups found along the way, not tied to one phase:
   plus one per task attempt. A loop with one task pauses with `execution_budget_exceeded` after about 2,500 items,
   after that work is done, and nothing checks this when the workflow is saved. 7a caps its hand-off loops at 2,000
   for this reason.
+- **Fixed in [#1683](https://github.com/microsoft/simplechat/pull/1683)**: `e65ab0dbc` (v0.261.260) deleted
+  `ui_tests/fixtures/agent_delegation/harness_build.py`, which five V2 UI tests import, so they failed at collection on
+  `paullizer-react-v2-ui`. #1683 restored it, and made `ui_tests/fixtures/foundry_consent/.gitignore` ignore the same
+  bundle outputs as its sibling fixtures.
+- `ui_tests/test_v2_notifications_bell.py` and `ui_tests/test_v2_workflow_alert_notices.py` end with 11 teardown errors
+  (10 and 1) on `paullizer-react-v2-ui`, because they don't stub five Settings page requests that #1691 added in
+  `M365Cards.tsx` and `FactMemoryBench.tsx`: `/api/m365/preferences`, `/api/m365/chat/connection`,
+  `/api/m365/connections`, `/api/m365/bindings?page_size=20` and `/api/profile/fact-memory`. The fix is stubs in those
+  two tests.
+- `test_open_run_goes_to_the_run_in_its_workspace` in `ui_tests/test_v2_workflow_alert_notices.py` is flaky. Run alone
+  at `49a52bb5c`, it timed out waiting for an alert's **Open** button in 3 of 6 runs.
 
 ## 1. Goal
 
@@ -1218,8 +1239,8 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
 #### 6b — Post-back delivery, run card and chat-list indicator
 
 **6b-1 done** in [#1610](https://github.com/microsoft/simplechat/pull/1610), v0.261.227: the server delivery and the
-status route. **6b-2**, the V2 part, is in progress; it branches from `paullizer-react-v2-ui` now that #1610 has
-merged.
+status route. **6b-2 done** in [#1639](https://github.com/microsoft/simplechat/pull/1639), v0.261.251: the V2 run card,
+tracker, running tag and posted-message footers. The last bullet of the **V2** list below records how it shipped.
 
 **Server**
 
@@ -1274,8 +1295,9 @@ merged.
     runtime deadline plus 24 hours.
   - The chat is marked unread before the message is created.
   - A delivered result uses the normal chat-response ("AI responded") notice, `Results from "X" are in your chat`. An
-    undeliverable or expired one gets a `workflow_chat_delivery` notice that links to the classic `/workflow-activity`
-    page for now; the V2 bell labels it a generic "Notification" until 6b-2.
+    undeliverable or expired one gets a `workflow_chat_delivery` notice whose link is the classic `/workflow-activity`
+    path. The V2 bell showed it as a generic "Notification" until 6b-2, which labels it **Workflow results** and opens
+    the run in V2.
   - A deleted workflow or a missing runtime control closes the delivery silently, with no notice.
   - Classic Retry and Edit refuse any message a workflow run posted.
   - The status route is `GET /api/v2/orchestration/workflow-runs/status[?conversation_id=]`, owner-only.
@@ -1315,6 +1337,33 @@ merged.
   - the card moves through Running, Needs you, and Finished or Failed on the agreed cadence, and Check now works
   - a deleted or shared chat, or lost access, gets no post and exactly one bell notice
   - a delivery never lands mid-stream
+- **6b-2 done** in [#1639](https://github.com/microsoft/simplechat/pull/1639), v0.261.251, with no new server route
+  or setting (`CHAT_WORKFLOW_RESULT_DELIVERY.md`, "V2 experience (6b-2)"). V2 tracks chat-started runs only when
+  `allow_user_workflows` and **Run Workflows From Chat** are both on; otherwise an answer keeps Phase 5's **Started
+  workflows** links. Where it differs from, or settles, the plan above:
+  - Nothing is approved on the card. **Review and approve** opens the run in Workflows, where the gate's own prompt
+    and choices are shown, so the card never calls `/runtime/decision`.
+  - **Cancel run**, **Retry** and **Review and approve** come from the status row's `actions`, never from its status
+    alone. Cancel uses the run-level cancel. Retry reads the run's runtime first, then sends `/runtime/resume` with
+    exactly `{expected_version, request_id}`.
+  - The badges are Queued, Running, Needs you, Completed, Partly completed, Failed, Timed out, Cancelled and Status
+    unavailable. An unknown status, a missing field, or a run that dropped out of a complete read shows **Status
+    unavailable**, with only **Open run**.
+  - The tracker (`useWorkflowRunTracker`) makes one global status read per tick, never one per run. While a run is in
+    flight it checks after 15 s, 30 s, 1 min and 2 min, then every 5 min. A hidden tab pauses, unless desktop
+    notifications are on, and then checks every 5 min. Failed reads back off, and a 401, a 403 or a 400 on the global
+    read halts it. A per-chat baseline means a reload never announces a result twice.
+  - A result lands through the chat store's `settleCompletedReply`, the path a streamed reply takes. In the open
+    chat, V2 waits until nothing is streaming, then re-reads the messages.
+  - The running tag reads "Running Weekly digest", or "Running 2 workflows", and hides while the chat is unread.
+  - A posted message gets a footer: **Follow up** on a result, **Retry workflow run** on a failed note (it resumes the
+    same run, never a new one), and **Open run**.
+  - The recurring-workflow card adds the next run, the last run, **Open latest results** and **Follow up**. It reads
+    once when the card renders, and never polls.
+  - Every V2 run link uses the query form, `v2WorkflowRunPath` now returns it, and the bell labels
+    `workflow_chat_delivery` notices **Workflow results**.
+  - A chat with more than 20 chat-started runs shows Phase 5's links for the older ones. `step_label` is always null,
+    so no step name is shown.
 
 #### 6c — In-plan wait (later, optional)
 
@@ -1330,8 +1379,8 @@ merged.
   (gotcha #55).
 - One-time lifecycle: auto-disable after completion, marked in provenance.
 - **Done when** a 200-document review is handed off, runs durably, and posts one summary back.
-- **7a in progress**, the server part; 7b adds the V2 card. Its approved plan settles these points, and its PR
-  records any that change:
+- **7a done** in [#1640](https://github.com/microsoft/simplechat/pull/1640), v0.261.250, the server part
+  (`CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md`). 7a's approved plan settled these points:
   - A new admin setting, `enable_chat_orchestration_workflow_handoff`, off by default. Hand-off also needs Chat
     Orchestration, personal workflows, **Propose Workflows From Chat**, **Run Workflows From Chat** and **Use Workflow
     Results In Chat** on, and it's offered only to users with the WorkflowUser role, in their own private
@@ -1355,6 +1404,50 @@ merged.
     Other v3 runs still answer `workflow_result_unsupported`.
   - Where it differs from the bullets above: the workflow is created disabled, so nothing needs disabling after it
     runs, and the run records how it ended in a `one_time_status`.
+  - How it shipped, where it settles the bullets above:
+    - The setting is **Hand Off Large Work From Chat**. The WorkflowUser role is needed only when **Require
+      WorkflowUser App Role** is on. The **Analyze** document action must be on (`handoff_analyze_unavailable`), and a
+      narrowed **Capabilities** list must include **Hand off large work**.
+    - The daily limit is **Hand-Offs From Chat Per User Per Day**
+      (`chat_orchestration_max_workflow_handoffs_per_day`). It counts the hand-off workflows that exist, so a deleted
+      hand-off stops counting, and two accepts at the same moment can both pass it.
+    - An accept claims the hand-off for 120 seconds, so a second accept gets `handoff_busy`. It rebuilds the workflow
+      with fresh authorization and keeps the disclosed document count: if the admin lowered the loop limit below it,
+      the accept is refused with `handoff_limit_changed`.
+    - Phase 4's accept refuses a hand-off workflow with `proposal_kind_mismatch`, and a `workflow_run` step refuses a
+      one-time workflow with `workflow_one_time`.
+    - A query covers at most 100 workspaces, and the run has a 24-hour deadline.
+  - **Follow-up done** in [#1647](https://github.com/microsoft/simplechat/pull/1647), v0.261.252: before it describes
+    or excerpts a hand-off report, the reader re-proves the report's lineage with the shared node lineage authorizer,
+    the walk the general path runs for every task row. A receipt that doesn't chain, or a damaged parent, is
+    `workflow_result_invalid`, and a missing parent is `workflow_result_not_found`. Each read walks the lineage again,
+    about seven result-store loads per document, so a 200-document report read makes 1,409
+    (`WORKFLOW_HANDOFF_RESULT_LINEAGE_FIX.md`).
+- **7b done** in [#1683](https://github.com/microsoft/simplechat/pull/1683), v0.261.295: the V2 hand-off card
+  (`CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md`, "The V2 hand-off card"). With it, both halves of Phase 7 have merged.
+  - The card appears in private personal chats, under an answer whose plan completed a hand-off step. It shows what the
+    workflow covers, the workspaces a search reads, each task and the model or agent it runs on, and when the offer
+    expires.
+  - **Accept** creates the workflow and starts its one run, and **Decline** creates nothing. **Edit** opens the prepared
+    workflow in the workflow editor, where **Save** creates the edited workflow and starts its run; an untouched save
+    isn't recorded as an edit. All three ask for confirmation first.
+  - After an accept, the card follows the run through the tab's run tracker, and the outcome is posted back into the
+    chat like any run started from chat.
+  - V2 makes any plan with an enabled hand-off step wait for approval, so a countdown or Auto never runs it, even if the
+    server's approval-floor marker is missing.
+  - Follow-ups, none blocking:
+    - No count of a workspace query's matches before Accept (§9).
+    - The bell has no row specific to a hand-off.
+    - The over-limit pause has no reason code, so the card keys its pause text on the waiting reason `paused`. A server
+      reason code would make it exact.
+    - Retry on a failed hand-off run is hidden when the Capabilities list includes `workflow_handoff` but not
+      `workflow_run`, because the status route's `available` flag needs `workflow_run`. The resume route would accept
+      the retry.
+    - The editor round-trip test fails, rather than skips, without `application/v2_ui/node_modules`, so CI would need
+      `npm ci` first.
+    - Three client checks have no test that fails without them: an edited save passing a 401 to the editor unchanged,
+      the URL Access check on the save payload (the server refuses such a draft anyway), and the condition that limits
+      **Try again** to an accept that can still succeed.
 
 ### Phase 8 — Follow-ons (separately scoped)
 
@@ -1566,7 +1659,7 @@ merged.
 | 4 | Proposal expiry; where Deny state persists | **Settled in #1580**: proposals expire 14 days after they're created, and every decision, Deny included, is stored on the producing run's document. |
 | 6a | How long run results stay available for Follow up | **Settled in #1592**: until the run is deleted. There's no retention setting yet. |
 | 6b | How long to keep trying to deliver | **Settled in #1610**: until `expires_at`, the runtime deadline plus 24 hours. After that the delivery closes as expired, and the bell gets one notice that links to the run. |
-| 6b | Run deep-link route | **Decided for 6b-2**: reuse P's query form (`?workflow_id=…&run_id=…` on the personal or group workflows page) through one scope-aware helper that both `v2WorkflowRunPath` (`lib/notificationLinks.ts`, after the checks in gotcha 61) and `workflowRunHref` (`lib/workflowRunLink.ts`) use. No separate run page. |
+| 6b | Run deep-link route | **Settled in #1639**: reuse P's query form (`?workflow_id=…&run_id=…` on the personal or group workflows page) through one scope-aware helper that both `v2WorkflowRunPath` (`lib/notificationLinks.ts`, after the checks in gotcha 61) and `workflowRunHref` (`lib/workflowRunLink.ts`) use. No separate run page. |
 | 6c | Add an in-plan wait? | Only if planners need a workflow's output later in the same plan |
 | N1 | Where the bell sits in the sidebar | **Settled in #1563**: beside the brand mark in the header row, with a dot when collapsed |
 | N2 | Which entrance style ships | **Settled in the lab review**: A, the sidebar callout. It was judged with the rail collapsed and on a 360 px phone, not only on an expanded desktop |
@@ -1574,7 +1667,8 @@ merged.
 | N2 | Keep the alert lab after the choice? | **Settled in #1567**: kept, dev-only, at `/v2/dev/alert-lab`, as the test bed for later alert changes |
 | P | Search-index provenance fields | **Deferred in #1562** until a search use case appears. It needs the index schema and deployer change |
 | — | Detached orchestration answers don't mark the chat unread today (gotcha #34) | A small, separate fix that reuses 6b's helper |
-| 7 | Auto-archive vs. disable one-time workflows | **Decided for 7a**: the workflow is created disabled, with a one-time marker in its origin, and is never archived or deleted automatically. The user can delete it. |
+| 7 | Auto-archive vs. disable one-time workflows | **Settled in #1640**: the workflow is created disabled, with a one-time marker in its origin, and is never archived or deleted automatically. The user can delete it. |
+| 7 | Count a workspace query's matches before Accept? | **Deferred in #1683**: the card shows the bound instead. A best-matches query reviews at most its limit, and an all-matches query that matches more than its limit pauses when it runs. A count needs the draft's iterable and a loop preview, two requests per card. |
 
 ## 10. How to resume in a new conversation
 

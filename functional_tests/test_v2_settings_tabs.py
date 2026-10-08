@@ -2,8 +2,9 @@
 """
 Functional test for the V2 settings tabs and the routes behind them.
 
-Version: 0.261.161
+Version: 0.261.296
 Implemented in: 0.261.022
+Groups and Public workspaces rows open their workspace page: 0.261.296
 
 Each tab reads a different set of endpoints, and every field name and query parameter here
 was taken from the route rather than inferred. The point of pinning them is that a rename on
@@ -15,6 +16,9 @@ setting, and writing it to /api/user/settings does work -- but the route pops it
 separately, and never returns it from a later GET, so a client treating it as a setting sees
 what looks like a lost save. The dedicated setActive routes report *why* they refused, which
 is the difference between "you are not a member of that group" and silence.
+
+Each Groups and Public workspaces row also offers Open, which goes to that workspace's V2 page
+by id. Like the directories' Open it only navigates: activation is left to the page it lands on.
 """
 
 import re
@@ -112,6 +116,67 @@ def test_set_active_uses_the_dedicated_routes():
         )
 
     print("Set-active flow test passed!")
+    return True
+
+
+def test_rows_open_their_workspace_without_activating():
+    """Open goes to the workspace's V2 page by id; the page it lands on owns any activation."""
+    print("Testing the Open action on settings rows...")
+
+    client = _read(V2_SRC / "lib" / "workspaces.ts")
+    tab = _read(V2_SRC / "components" / "settings" / "WorkspaceListTab.tsx")
+    app = _read(V2_SRC / "App.tsx")
+    checker = _read(REPO_ROOT / "scripts" / "check_xss_sinks.py")
+
+    # Each kind owns its path, built with the same builders the workspace pages navigate with.
+    assert "openPath: (id: string) => string;" in client, "WorkspaceKind must declare openPath"
+    group_kind = client[client.index("export const GROUP_WORKSPACES"):client.index("export const PUBLIC_WORKSPACES")]
+    public_kind = client[client.index("export const PUBLIC_WORKSPACES"):]
+    assert "openPath: (id) => groupWorkspacePath(id)," in group_kind, (
+        "A group row must open its group page"
+    )
+    assert "openPath: (id) => publicWorkspacePath(id)," in public_kind, (
+        "A public workspace row must open its public workspace page"
+    )
+
+    # Navigation is an XSS sink, so the builders must stay on the checker's reviewed list.
+    builders = re.search(r"TS_SAME_ORIGIN_URL_BUILDERS = frozenset\(\{(.*?)\}\)", checker, re.S)
+    assert builders, "Could not find the reviewed same-origin URL builders"
+    for builder in ("groupWorkspacePath", "publicWorkspacePath"):
+        assert f"'{builder}'" in builders.group(1), (
+            f"{builder} must stay a reviewed same-origin URL builder; Open navigates with it"
+        )
+
+    # The paths are real routes rather than the catch-all, which would send the user home.
+    assert '<Route path="/groups/:groupId" element={<GroupWorkspacePage />} />' in app
+    assert '<Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />' in app
+
+    # Open only navigates. A group page activates the group it shows and a public page does not,
+    # exactly as the directories' Open leaves it, so the tab must not activate on its own.
+    handler = re.search(
+        r"const openWorkspace = \(workspace: WorkspaceSummary\) => \{(.*?)\n    \};", tab, re.S
+    )
+    assert handler, "Could not find the Open handler"
+    body = handler.group(1)
+    assert "kind.openPath(workspace.id)" in body and "navigate(path)" in body, (
+        "Open must navigate to the kind's path for the row"
+    )
+    for activation in ("setActive", "activate(", "reconcile(", "refreshRequired"):
+        assert activation not in body, f"Open must not activate from the settings tab ({activation})"
+    assert "setActionError(" in body, "An id the path builder refuses must be reported, not thrown"
+
+    assert "onClick={() => openWorkspace(workspace)}" in tab
+    assert "aria-label={`Open ${workspace.name || 'Untitled'}`}" in tab, (
+        "Open must be named for its workspace, as the directories' Open is"
+    )
+    # Open waits for an in-flight Set active or reconcile like Set active does, so two
+    # activations can never race.
+    assert tab.count("disabled={activating !== null || needsReconciliation}") == 2, (
+        "Open and Set active must share the same busy gating"
+    )
+
+    assert_app_version_at_least("0.261.296")
+    print("Settings Open action test passed!")
     return True
 
 
@@ -251,6 +316,7 @@ if __name__ == "__main__":
     tests = [
         test_workspace_lists_match_their_routes,
         test_set_active_uses_the_dedicated_routes,
+        test_rows_open_their_workspace_without_activating,
         test_feedback_and_violations_read_the_right_fields,
         test_stats_uses_an_allowed_window_and_local_charts,
         test_every_registered_tab_has_a_component,

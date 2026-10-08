@@ -4,6 +4,8 @@
 // `GET /api/v2/admin/latest-features` serves two release catalogues the server has
 // already resolved (`functions_support_latest_features.py`): what administrators read on
 // Admin Latest Features, and what end users see on the Support menu's Latest Features page.
+// `GET /api/v2/support/latest-features` serves end users the same announcement shape, but
+// only what an administrator shared, with each shortcut already filtered by the server.
 // The decisions kept here are the ones worth testing rather than reading by eye: which
 // announcements are shared, which shortcuts a user would really see given the settings
 // being edited, and where an admin shortcut lands in V2.
@@ -65,6 +67,18 @@ export interface LatestFeaturesPayload {
     version: string;
     admin: LatestFeatureGroup[];
     user: LatestFeatureGroup[];
+}
+
+/** Where the Support menu's Latest Features page reads what users were given. */
+export const USER_LATEST_FEATURES_ENDPOINT = '/api/v2/support/latest-features';
+
+/**
+ * `GET /api/v2/support/latest-features`: only the shared announcements, and only the
+ * shortcuts the stored settings allow. A release group with nothing shared is absent.
+ */
+export interface UserLatestFeaturesPayload {
+    version: string;
+    groups: LatestFeatureGroup[];
 }
 
 /** The settings key the user-facing choices are saved under. */
