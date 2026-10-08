@@ -8,6 +8,7 @@ from functions_conversation_memory import PublicationGrant
 from functions_m365_approvals import (
     M365ApprovalRequired, M365PolicyError, material_fingerprint, strictest_sharing_policy,
 )
+from functions_m365_citations import message_m365_sources
 from functions_m365_execution import M365ExecutionContext
 from functions_m365_operations import M365_LEGACY_OPERATION_SOURCES, M365_SOURCES
 
@@ -37,6 +38,11 @@ def history_sources(messages):
             if source in M365_SOURCES:
                 if source not in (metadata.get("m365_source_policies") or {}):
                     sources[source] = strictest_sharing_policy(sources.get(source), "request")
+        # Cited emails, events and files are Microsoft 365 data even when the message's
+        # compact tool citations no longer name their source.
+        for source in message_m365_sources(message):
+            if source in M365_SOURCES and source not in (metadata.get("m365_source_policies") or {}):
+                sources[source] = strictest_sharing_policy(sources.get(source), "request")
         purpose = metadata.get("memory_purpose") or ""
         for source in ("onedrive", "spo"):
             if purpose in {f"m365_file_{source}", f"m365_search_{source}", f"m365_discovery_{source}"}:

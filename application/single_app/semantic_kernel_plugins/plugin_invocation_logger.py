@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from functions_debug import debug_print
+from functions_m365_citations import captured_m365_records
 
 
 REDACTED_INVOCATION_VALUE = "***REDACTED***"
@@ -218,6 +219,9 @@ class PluginInvocation:
     invocation_id: Optional[str] = None
     error_message: Optional[str] = None
     provenance: Optional[Dict[str, Any]] = None
+    # Citation records a Microsoft 365 plugin attached to its own result, kept before any
+    # serialization or truncation; None for every other tool.
+    m365_items: Optional[List[Dict[str, Any]]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -740,6 +744,24 @@ def log_plugin_invocation_started(
     _plugin_logger.log_invocation_start(invocation_start)
 
 
+def _capture_m365_items(result: Any) -> Optional[List[Dict[str, Any]]]:
+    """Keep the citation records a Microsoft 365 plugin attached to its own result.
+
+    Records come only from the result object the plugin built from Microsoft Graph data. Nothing
+    is read back out of a result's shape, which any other tool could imitate. Never fails the call.
+    """
+    try:
+        items = captured_m365_records(result)
+    except Exception as exc:
+        log_event(
+            "[PLUGIN_INVOCATION] Microsoft 365 citation records could not be captured",
+            extra={"error_type": type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return None
+    return items or None
+
+
 def log_plugin_invocation(plugin_name: str, function_name: str, 
                          parameters: Dict[str, Any], result: Any,
                          start_time: float, end_time: float, 
@@ -765,6 +787,7 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
         success=success,
         error_message=error_message,
         provenance=provenance or _execution_provenance(),
+        m365_items=_capture_m365_items(result) if success else None,
     )
     
     _plugin_logger.log_invocation(invocation)

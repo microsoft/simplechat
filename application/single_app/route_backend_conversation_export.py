@@ -55,6 +55,7 @@ from functions_citation_tracking import (
     get_message_reference_citation_buckets,
     get_message_source_citation_buckets,
 )
+from functions_m365_citations import sanitize_m365_citation_record
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
 from functions_group import get_group_model_endpoints, get_user_groups
@@ -846,8 +847,20 @@ def _sanitize_message(
         'legacy_citations': source_citation_buckets['legacy'],
         'hybrid_citations': source_citation_buckets['hybrid'],
         'web_search_citations': source_citation_buckets['web'],
-        'agent_citations': source_citation_buckets['agent']
+        'agent_citations': source_citation_buckets['agent'],
+        'm365_citations': _export_m365_citations(message),
     }
+
+
+def _export_m365_citations(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The message's Microsoft 365 citation records, re-validated and without the owner id."""
+    records = []
+    for value in message.get('m365_citations') or []:
+        record = sanitize_m365_citation_record(value)
+        if record:
+            record.pop('data_user_id', None)
+            records.append(record)
+    return records
 
 
 def _sanitize_thought(thought: Dict[str, Any]) -> Dict[str, Any]:
@@ -2018,10 +2031,21 @@ def _append_citations_markdown(lines: List[str], message: Dict[str, Any]):
     web_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'web']
     agent_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'agent_tool']
     legacy_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'legacy']
+    m365_citations = [record for record in message.get('m365_citations', []) if record.get('cited')]
 
-    if not any([document_citations, web_citations, agent_citations, legacy_citations]):
+    if not any([document_citations, web_citations, agent_citations, legacy_citations, m365_citations]):
         lines.append('_No citations were recorded for this message._')
         return
+
+    if m365_citations:
+        lines.append('#### Microsoft 365 References')
+        lines.append('')
+        for index, record in enumerate(m365_citations, start=1):
+            title = _escape_markdown_link_text(record.get('title') or 'Microsoft 365 item')
+            location = record.get('location_label') or 'Microsoft 365'
+            url = str(record.get('web_url') or '').replace('(', '%28').replace(')', '%29')
+            lines.append(f"{index}. [{title}]({url}) ({location})" if url else f"{index}. {title} ({location})")
+        lines.append('')
 
     if document_citations:
         lines.append('#### Document References')
@@ -2124,6 +2148,14 @@ def _append_code_block(lines: List[str], value: Any, indent: str = ''):
     for line in code_block.splitlines() or ['']:
         lines.append(f"{indent}{line}")
     lines.append(f"{indent}```")
+
+
+def _escape_markdown_link_text(value: Any) -> str:
+    """Link text that cannot close its own brackets or start an escape sequence."""
+    text = str(value or '')
+    for character in ('\\', '[', ']'):
+        text = text.replace(character, f'\\{character}')
+    return text
 
 
 def _format_markdown_key(key: str) -> str:

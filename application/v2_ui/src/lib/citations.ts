@@ -9,8 +9,10 @@
 // existing interface does. Left unparsed, these markers render as literal noise in the
 // middle of an answer.
 
+import { isM365CitationId } from './m365Citations';
+
 /** How a citation resolves, which determines what clicking it should do. */
-export type CitationKind = 'document' | 'web' | 'agent';
+export type CitationKind = 'document' | 'web' | 'agent' | 'm365';
 
 export interface ParsedCitation {
     /** Full citation id, conventionally `${documentId}_${pageNumber}`. */
@@ -44,6 +46,11 @@ const CITATION_MARKER =
 /** A bare `[#id]` run left over when a marker was emitted without its Source prefix. */
 const ORPHAN_BRACKET_RUN = /(?:[ \t]*\[#[^\]]*\])+/g;
 
+/** A bare run of Microsoft 365 ids, which still resolve to a chip because the id names the item. */
+const ORPHAN_M365_RUN = /(?:[ \t]*\[#\s*m365-[0-9a-f]{16}\s*\])+/g;
+
+const M365_ID = /m365-[0-9a-f]{16}/g;
+
 function splitCitationId(rawId: string): ParsedCitation {
     const citationId = rawId.startsWith('#') ? rawId.slice(1) : rawId;
     const separator = citationId.lastIndexOf('_');
@@ -55,7 +62,12 @@ function splitCitationId(rawId: string): ParsedCitation {
     };
 }
 
-function classify(fileName: string): CitationKind {
+function classify(fileName: string, citations: ParsedCitation[]): CitationKind {
+    // A Microsoft 365 item is recognised by the id the server minted, never by the label the
+    // model copied, because the label is free text and the id is not.
+    if (citations.length > 0 && citations.every((citation) => isM365CitationId(citation.citationId))) {
+        return 'm365';
+    }
     if (/^https?:\/\//i.test(fileName.trim())) {
         return 'web';
     }
@@ -133,7 +145,7 @@ export function parseCitations(message: string): ParsedMessage {
             const groupIndex = groups.length;
             groups.push({
                 id: `cite-${groupIndex}`,
-                kind: classify(fileName),
+                kind: classify(fileName, citations),
                 fileName: fileName.trim(),
                 locationLabel,
                 citations,
@@ -142,6 +154,26 @@ export function parseCitations(message: string): ParsedMessage {
             return `${CITATION_PLACEHOLDER(groupIndex)}${trailingWhitespace}`;
         },
     );
+
+    // A Microsoft 365 id copied without its Source prefix still names one item exactly, so it
+    // becomes a chip rather than being dropped with the other orphaned ids.
+    text = text.replace(ORPHAN_M365_RUN, (run: string) => {
+        const ids = [...new Set(run.match(M365_ID) ?? [])];
+        const groupIndex = groups.length;
+        groups.push({
+            id: `cite-${groupIndex}`,
+            kind: 'm365',
+            fileName: '',
+            locationLabel: 'Location',
+            citations: ids.map((citationId) => ({
+                citationId,
+                locationValue: '',
+                documentId: citationId,
+                pageNumber: '',
+            })),
+        });
+        return `${/^[ \t]/.test(run) ? ' ' : ''}${CITATION_PLACEHOLDER(groupIndex)}`;
+    });
 
     // Any bracket run that survives had no Source prefix to give it meaning, so it is
     // removed rather than shown to the user as raw ids.

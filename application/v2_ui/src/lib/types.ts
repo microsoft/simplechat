@@ -168,6 +168,8 @@ export interface ChatMessage {
     feedbackType?: 'positive' | 'negative';
     /** Reasoning steps captured while this message was streaming. */
     thoughts?: ThoughtEntry[];
+    /** Microsoft 365 items the answer drew on, which its citation chips resolve against. */
+    m365_citations?: M365Citation[];
     [key: string]: unknown;
 }
 
@@ -680,6 +682,59 @@ export interface UsedDocument {
     [key: string]: unknown;
 }
 
+/** What a Microsoft 365 citation names. */
+export type M365CitationKind = 'file' | 'email' | 'event';
+
+/** Which Microsoft 365 source an item came from: SharePoint (`spo`), OneDrive, Outlook mail or calendar. */
+export type M365CitationSource = 'spo' | 'onedrive' | 'email' | 'calendar';
+
+/**
+ * A Microsoft 365 email, calendar event or SharePoint/OneDrive file an answer drew on, under
+ * `m365_citations` on an assistant message. Built by functions_m365_citations.py.
+ *
+ * `cited` says whether the answer's text references it with `[#citation_id]`. `web_url` is only
+ * ever an https link taken from Microsoft Graph, never from model text, and is checked again
+ * before it becomes a link.
+ */
+export interface M365Citation {
+    citation_id: string;
+    kind: M365CitationKind;
+    source: M365CitationSource;
+    title: string;
+    location_label?: string;
+    web_url?: string;
+    cited?: boolean;
+    content_read?: boolean;
+    file_name?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    modified_at?: string;
+    modified_display?: string;
+    from_name?: string;
+    from_address?: string;
+    received_at?: string;
+    received_display?: string;
+    is_read?: boolean;
+    importance?: string;
+    preview?: string;
+    start?: string;
+    end?: string;
+    time_zone?: string;
+    is_all_day?: boolean;
+    when_display?: string;
+    location?: string;
+    organizer_name?: string;
+}
+
+/**
+ * A Microsoft 365 item listed in the conversation's Documents pane, under `used_m365_items` on
+ * the metadata response: every cited item and every file whose content was read, newest first.
+ */
+export interface UsedM365Item extends M365Citation {
+    message_ids?: string[];
+    last_used_at?: string;
+}
+
 /**
  * Generated conversation summary, present once one has been produced.
  *
@@ -726,6 +781,8 @@ export interface ConversationMetadata {
     workflow_id?: string | null;
     summary?: ConversationSummary | null;
     linked_workspace_documents?: UsedDocument[];
+    /** The owner's own Microsoft 365 items; empty for anyone else. */
+    used_m365_items?: UsedM365Item[];
     [key: string]: unknown;
 }
 

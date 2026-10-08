@@ -93,12 +93,14 @@ import {
     fetchWorkflowResultDescriptor,
     latestWorkflowResult,
     parseWorkflowResultDescriptor,
+    requestTimeZone,
     turnAsksAboutWorkflowResult,
     workflowResultContext,
     workflowResultFetchErrorMessage,
     workflowResultRefusal,
     type SelectedWorkflowResult,
 } from '../lib/workflowResults';
+import { readM365Citations } from '../lib/m365Citations';
 import type { RunStreamEvent } from '../lib/orchestration';
 import {
     applySelection,
@@ -1354,6 +1356,7 @@ function buildStreamHandlers(
             if (!isCurrent()) {
                 return;
             }
+            const m365Citations = readM365Citations(event.m365_citations);
             const finalMessage: ChatMessage = {
                 id: String(event.message_id ?? STREAMING_MESSAGE_ID),
                 conversation_id: conversationId,
@@ -1364,6 +1367,9 @@ function buildStreamHandlers(
                 agent_display_name: event.agent_display_name,
                 augmented: event.augmented,
                 metadata: completionMetadata(event),
+                // Carried onto the finished message so its Microsoft 365 citation chips resolve
+                // without reading the thread again.
+                ...(m365Citations.length > 0 && !event.blocked ? { m365_citations: m365Citations } : {}),
                 // Carried onto the finished message so the reasoning steps stay
                 // available after the stream ends instead of disappearing with the
                 // streaming placeholder.
@@ -1393,6 +1399,11 @@ function buildStreamHandlers(
             const workflowResult = latestWorkflowResult([finalMessage]);
             if (workflowResult) {
                 getState().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
+            }
+            // The Documents pane lists the conversation's Microsoft 365 items, which the server
+            // extends once the reply is saved, so loaded metadata is read again.
+            if (m365Citations.length > 0 && !event.blocked && getState().metadata) {
+                void getState().loadMetadata(conversationId);
             }
         },
         onCancelled: (_event, accumulated) => {
@@ -3103,6 +3114,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             deep_research_enabled: options.deepResearch,
             url_access_enabled: options.urlAccess,
         };
+        // Microsoft 365 email and event times in the answer are written in the reader's zone.
+        const timeZone = requestTimeZone();
+        if (timeZone) {
+            requestBody.time_zone = timeZone;
+        }
         if (imageReferences.length > 0) {
             requestBody.image_references = imageReferences;
         }
@@ -3489,6 +3505,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             web_search_citations:
                 event.web_search_citations as ChatMessage['web_search_citations'],
             agent_citations: event.agent_citations as ChatMessage['agent_citations'],
+            // Microsoft 365 emails, events and files the answer cites, for its chips.
+            ...(event.blocked ? {} : { m365_citations: readM365Citations(event.m365_citations) }),
             metadata: {
                 ...event.metadata,
                 ...reasoningMetadataForEvent(event),
