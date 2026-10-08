@@ -12,6 +12,7 @@ as plan replay, import it to refuse a step that waits on a saved workflow run.
 """
 
 import logging
+from datetime import datetime, timedelta
 
 from functions_m365_workflow_binding import M365_ACTIVE_STATES
 
@@ -36,6 +37,17 @@ SESSION_NEEDING_CAPABILITIES = frozenset({
     'workflow_handoff', 'workflow_propose',
 })
 WAIT_MARKER_VERSION = 1
+
+# The wait's bound. A wait never starts with less than a minute left: a shorter one would end before
+# most quick runs report back, and the plan would only add a timeout notice.
+WAIT_MIN_SECONDS = 60
+# Time the plan keeps for itself after the wait: a scheduler tick and a lease for the continuation
+# that notices the run finished, before the steps that use the result each get a step timeout.
+WAIT_RESERVE_SECONDS = 90
+# How long the chat post-back stays held after the wait's deadline. The continuation that ends the
+# wait comes back within a tick and a lease of the deadline, about 75 seconds, so the hold outlives
+# that, and it lapses on its own if the plan never comes back.
+WAIT_HOLD_GRACE_SECONDS = 120
 
 QUICK_RUN_REASON_WAIT_DISABLED = 'wait_disabled'
 QUICK_RUN_REASON_INVALID = 'invalid_workflow'
@@ -440,6 +452,59 @@ def stored_workflow_run_waits(marker, steps, final_response):
     return {run['step_id']: {'version': WAIT_MARKER_VERSION, 'workflow': handle}}
 
 
+def waited_run_dependents(steps, run_step_id):
+    """How many enabled steps use the waited run step's result, directly or through another step."""
+    steps = [step for step in steps or () if isinstance(step, dict) and _enabled(step)]
+    reached = {run_step_id}
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            step_id = step.get('step_id')
+            if isinstance(step_id, str) and step_id not in reached and _named_and_bound(step)[0] & reached:
+                reached.add(step_id)
+                changed = True
+    return len(reached) - 1
+
+
+def _aware_moment(value):
+    if isinstance(value, str) and value:
+        try:
+            value = datetime.fromisoformat(value[:-1] + '+00:00' if value.endswith('Z') else value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value
+
+
+def workflow_run_wait_deadline(*, now, execution_deadline_at, cap_seconds, step_timeout_seconds, dependents):
+    """When a plan stops waiting for its run: at the admin cap or the plan's own time budget.
+
+    Before its budget runs out the plan keeps ``WAIT_RESERVE_SECONDS`` plus a step timeout for each
+    step that uses the result, so it can still write its answer after the wait. Returns None, so the
+    plan doesn't wait, when less than ``WAIT_MIN_SECONDS`` would be left or a bound can't be read.
+    """
+    moment = _aware_moment(now)
+    budget_end = _aware_moment(execution_deadline_at)
+    if moment is None or budget_end is None or type(cap_seconds) is not int or cap_seconds <= 0:
+        return None
+    if type(step_timeout_seconds) not in (int, float) or step_timeout_seconds < 0:
+        return None
+    count = dependents if type(dependents) is int and dependents > 0 else 1
+    reserve = timedelta(seconds=WAIT_RESERVE_SECONDS + step_timeout_seconds * count)
+    deadline = min(moment + timedelta(seconds=cap_seconds), budget_end - reserve)
+    if deadline - moment < timedelta(seconds=WAIT_MIN_SECONDS):
+        return None
+    return deadline
+
+
+def workflow_run_hold_until(deadline):
+    """How long the chat post-back stays held for a wait that ends at ``deadline``."""
+    moment = _aware_moment(deadline)
+    return None if moment is None else moment + timedelta(seconds=WAIT_HOLD_GRACE_SECONDS)
+
+
 __all__ = [
     'QUICK_RUN_FLOW_MAX_DEPTH',
     'QUICK_RUN_LOOP_KINDS',
@@ -464,6 +529,9 @@ __all__ = [
     'SAVED_WORKFLOW_RUN_WAIT_KIND',
     'SESSION_NEEDING_CAPABILITIES',
     'WAIT_MARKER_VERSION',
+    'WAIT_HOLD_GRACE_SECONDS',
+    'WAIT_MIN_SECONDS',
+    'WAIT_RESERVE_SECONDS',
     'WORKFLOW_RUN_WAIT_SETTING',
     'compute_workflow_run_waits',
     'headless_capability_ids',
@@ -475,7 +543,10 @@ __all__ = [
     'wait_configured',
     'waitable_projection',
     'waited_run_consumers_valid',
+    'waited_run_dependents',
     'with_headless_capability_ids',
+    'workflow_run_hold_until',
+    'workflow_run_wait_deadline',
     'workflow_run_wait_possible',
     'workflow_run_wait_ready',
 ]

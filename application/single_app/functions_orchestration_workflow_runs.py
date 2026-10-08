@@ -36,6 +36,7 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 
+from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
@@ -75,12 +76,19 @@ from functions_orchestration_workflow_context import (
 )
 from functions_orchestration_workflow_run_wait import compute_workflow_run_waits, workflow_run_wait_ready
 from functions_workflow_chat_delivery import (
+    CHAT_DELIVERY_KEY,
+    PLAN_WAIT_ENDED,
     WORKFLOW_RUN_DELIVERY_FOLLOW_UP,
     WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY,
+    apply_plan_wait_consume,
+    apply_plan_wait_hold,
+    apply_plan_wait_release,
     build_chat_delivery_seed,
     chat_delivery_applies,
+    control_summary,
     normalize_model_selection,
     normalize_requester_roles,
+    signal_workflow_chat_delivery,
 )
 
 
@@ -210,6 +218,9 @@ _CONFLICT_REASONS = {
 # request id, so it links a run this plan already started instead of starting another.
 FAILURE_RUNTIME_UNAVAILABLE = 'workflow_runtime_unavailable'
 FAILURE_SESSION_REQUIRED = 'external_session_required'
+# How many times a waiting plan's write to its run's delivery record reads the run again after
+# another writer, such as the chat post-back worker, changed it first.
+_DELIVERY_WRITE_RETRIES = 5
 _STEP_SUMMARIES = {
     WORKFLOW_RUN_STATUS_QUEUED: 'Started the saved workflow.',
     WORKFLOW_RUN_STATUS_RUNNING: 'Started the saved workflow.',
@@ -580,6 +591,143 @@ def _runtime_errors():
     from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 
     return RuntimeUnavailable, WorkflowRuntimeConflict
+
+
+# ---------------------------------------------------------------------------
+# A waited run's chat post-back
+# ---------------------------------------------------------------------------
+
+def _runs_container():
+    from config import cosmos_personal_workflow_runs_container
+
+    return cosmos_personal_workflow_runs_container
+
+
+def _status_code(exc):
+    code = getattr(exc, 'status_code', None)
+    return code if type(code) is int else None
+
+
+def _runtime_store(user_id, workflow_id, run_id):
+    from functions_workflow_runtime_store import workflow_runtime_store
+
+    return workflow_runtime_store({'id': workflow_id, 'user_id': user_id}, run_id)
+
+
+def read_run_control_summary(user_id, workflow_id, run_id):
+    """The run's runtime control, summarized as the post-back reads it, or None when it can't be read now.
+
+    A personal store's identity is the workflow ID and owner only, so the control of a run whose
+    workflow was deleted still reads, as tombstoned, and a control that was never written reads as
+    missing.
+    """
+    unavailable, conflict = _runtime_errors()
+    try:
+        control = _runtime_store(user_id, workflow_id, run_id).read(allow_deleted=True)
+    except conflict as exc:
+        return control_summary(None) if getattr(exc, 'code', None) == 'not_found' else None
+    except unavailable:
+        return None
+    except Exception as exc:
+        _log('A waited workflow run could not be read.', logging.WARNING, error_type=type(exc).__name__)
+        return None
+    return control_summary(control)
+
+
+def _write_plan_wait(user_id, run_id, apply, *, orchestration_run_id, step_id, signal=False):
+    """Decide with ``apply(record)`` and write the result with the run document's ETag.
+
+    ``apply`` returns ``(updated, decision)``. It runs again on a fresh read whenever another writer,
+    such as the post-back worker claiming the run, changed the run first, so every decision is made
+    on the record its write replaces. Returns the decision, or None when the run can't be read or
+    written right now.
+    """
+    log_ids = {'run_id': orchestration_run_id, 'step_id': step_id}
+    try:
+        container = _runs_container()
+    except Exception as exc:
+        _log('Workflow runs are unavailable.', logging.WARNING, error_type=type(exc).__name__, **log_ids)
+        return None
+    for _attempt in range(_DELIVERY_WRITE_RETRIES + 1):
+        try:
+            run = container.read_item(item=run_id, partition_key=user_id)
+        except Exception as exc:
+            if _status_code(exc) == 404:
+                return PLAN_WAIT_ENDED
+            _log('A waited workflow run could not be read.', logging.WARNING, error_type=type(exc).__name__, **log_ids)
+            return None
+        if not isinstance(run, dict) or run.get('user_id') != user_id or run.get('id') != run_id:
+            return PLAN_WAIT_ENDED
+        updated, decision = apply(run.get(CHAT_DELIVERY_KEY))
+        if updated is None:
+            return decision
+        try:
+            container.replace_item(
+                item=run_id, body={**run, CHAT_DELIVERY_KEY: updated}, etag=run.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except Exception as exc:
+            code = _status_code(exc)
+            if code == 412:
+                continue
+            if code == 404:
+                return PLAN_WAIT_ENDED
+            _log(
+                'A waited workflow run could not be updated.', logging.WARNING,
+                error_type=type(exc).__name__, code=code, **log_ids,
+            )
+            return None
+        if signal:
+            signal_workflow_chat_delivery(user_id, run_id)
+        return decision
+    _log('A waited workflow run kept changing; the plan will try again.', logging.WARNING, **log_ids)
+    return None
+
+
+def hold_chat_delivery(user_id, run_id, *, orchestration_run_id, step_id, until, now=None):
+    """Hold the run's chat post-back for the plan step that waits on it, until ``until`` at the latest.
+
+    Returns ``held``, or the post-back's own outcome when it already owns the run's result
+    (``posted``, or ``ended`` when it can't post), or None when storage couldn't be reached.
+    """
+    return _write_plan_wait(
+        user_id, run_id,
+        lambda record: apply_plan_wait_hold(
+            record, orchestration_run_id=orchestration_run_id, step_id=step_id, until=until, now=now,
+        ),
+        orchestration_run_id=orchestration_run_id, step_id=step_id,
+    )
+
+
+def consume_chat_delivery(user_id, run_id, summary, *, orchestration_run_id, step_id, now=None):
+    """Mark the run's result as used in this plan's answer, so it's never posted to the chat as well.
+
+    Returns ``consumed`` when the plan may use the result, ``held`` while the run hasn't finished,
+    the post-back's ``posted`` or ``ended`` when it owns the result instead, or None when storage
+    couldn't be reached.
+    """
+    return _write_plan_wait(
+        user_id, run_id,
+        lambda record: apply_plan_wait_consume(
+            record, summary, orchestration_run_id=orchestration_run_id, step_id=step_id, now=now,
+        ),
+        orchestration_run_id=orchestration_run_id, step_id=step_id,
+    )
+
+
+def release_chat_delivery(user_id, run_id, *, orchestration_run_id, step_id, now=None):
+    """Stop holding the run's chat post-back, so the result is posted to the chat when the run finishes.
+
+    Returns ``released``, ``consumed`` when this step already used the result, the post-back's
+    ``posted`` or ``ended``, or None when storage couldn't be reached; the hold then lapses on its own.
+    """
+    return _write_plan_wait(
+        user_id, run_id,
+        lambda record: apply_plan_wait_release(
+            record, orchestration_run_id=orchestration_run_id, step_id=step_id, now=now,
+        ),
+        orchestration_run_id=orchestration_run_id, step_id=step_id, signal=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1053,9 +1201,13 @@ __all__ = [
     'WORKFLOW_RUN_VERSION',
     'adapter_workflow_run',
     'chat_delivery_seed_for',
+    'consume_chat_delivery',
     'drop_workflow_runs',
+    'hold_chat_delivery',
     'prepare_workflow_run_arguments',
+    'read_run_control_summary',
     'rebuild_workflow_run',
+    'release_chat_delivery',
     'started_workflow_run_id',
     'workflow_run_failure_message',
     'workflow_run_link',
