@@ -41,6 +41,7 @@ import { WorkflowProposalCards } from './WorkflowProposalCard';
 import { WorkflowRunLinks } from './WorkflowRunLinks';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { WorkflowHandoffCards } from './WorkflowHandoffCard';
+import { PlanReplaySaveCard } from './PlanReplaySaveCard';
 import { WorkflowDeliveryFooter } from './WorkflowDeliveryFooter';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
@@ -816,6 +817,11 @@ function MessageBubbleInner({
     const messages = useChatStore((state) => state.messages);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const personalConversation = useChatStore((state) => state.activeConversationKind === 'personal');
+    const planReplayAvailable = useBootstrapStore((state) => Boolean(
+        state.data?.features?.enable_workflow_plan_replay
+        && state.data?.features?.enable_chat_orchestration
+        && state.data?.features?.allow_user_workflows,
+    ));
     // Live run status comes from the tab's workflow run tracker, which runs only while both flags are on.
     const liveRunStatus = useBootstrapStore((state) => workflowRunTrackerShouldRun(state.data?.features));
     // A result or note a chat-started workflow run posted back to this conversation.
@@ -1184,6 +1190,14 @@ function MessageBubbleInner({
                             && orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
                             <WorkflowHandoffCards conversationId={message.conversation_id} runId={orchestration.run_id}
                                 liveRunStatus={liveRunStatus} />
+                        ) : null}
+                        {planReplayAvailable && orchestration.run_id && orchestration.outcome === 'completed'
+                            && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && !orchestrationProposedWorkflow(message.metadata?.orchestration)
+                            && !orchestrationStartedWorkflow(message.metadata?.orchestration)
+                            && !orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
+                            <PlanReplaySaveCard conversationId={message.conversation_id} runId={orchestration.run_id} />
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}

@@ -4265,7 +4265,8 @@ function resetWorkflowForm() {
 
 // Calendar schedules come first: the classic form edits only fixed intervals, and saving one here
 // would replace the calendar schedule. The classic form has no Merge files action either, so it
-// would save a merge task as a task with no document action.
+// would save a merge task as a task with no document action. A saved chat plan is frozen, and only
+// V2 shows its steps.
 function workflowNativeEditorReason(workflow) {
     if (!workflow || typeof workflow !== "object") {
         return "";
@@ -4273,10 +4274,13 @@ function workflowNativeEditorReason(workflow) {
     if (isWorkflowCalendarSchedule(workflow.schedule)) {
         return "a calendar schedule";
     }
+    const tasks = Array.isArray(workflow.tasks) ? workflow.tasks : [];
+    if (tasks.some((task) => task?.type === "plan_replay")) {
+        return "a saved chat plan";
+    }
     if ((workflow.definition_version !== undefined && workflow.definition_version !== 1) || workflow.flow !== undefined) {
         return "advanced data flow";
     }
-    const tasks = Array.isArray(workflow.tasks) ? workflow.tasks : [];
     if ([workflow.document_action, ...tasks.map((task) => task?.document_action)].some(
         (action) => normalizeText(action?.type).toLowerCase() === "merge"
     )) {
