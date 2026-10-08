@@ -4,7 +4,7 @@ title: "Review approval requests"
 description: "Find, approve, or deny requests that need reviewer action."
 section: "Guides"
 audience: user
-version: "0.261.038"
+version: "0.261.296"
 ---
 
 ## What this does
@@ -87,6 +87,12 @@ decisions. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conv
 ## Verify it worked
 
 The request status changes in the table. Approved executable requests complete the requested action, while denied requests remain recorded with the decision.
+
+## Safety violation actions
+
+From **0.261.296**, a safety reviewer's **Warn user** is sent as soon as the review is saved and no longer creates an approval request: a warning restricts nothing, so it does not need a second person. **Suspend user** and **Block user** still create one, because they take away a person's access. Another eligible reviewer must approve them; the reviewer who requested one can deny it to cancel it but can never approve it. Eligible reviewers hold the `Admin` role, or `ControlCenterAdmin` when Control Center requires that role. A **Warn User** request created before 0.261.296 can still be approved, and the warning is then sent.
+
+When an approved suspension or block takes effect, the user sees an **Access restricted** screen whenever they sign in, with the notification from the request and, for a suspension, when access returns. Accounts with the `Admin` role are not affected by access restrictions. See [Review safety violations]({{ '/guides/admin-review-safety-violations/' | relative_url }}).
 
 ## Review screened document content
 

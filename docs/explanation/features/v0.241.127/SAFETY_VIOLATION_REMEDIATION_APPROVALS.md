@@ -67,3 +67,10 @@ Validation performed
 Known limitations
 
 - `Escalate` remains unchanged because the repository does not currently include a downstream escalation workflow beyond the existing label.
+
+Updated in version: **0.261.296**
+
+- `Warn user` no longer creates an approval request: the warning is sent when the reviewer saves the review, and the user must acknowledge it. `Suspend user` and `Block user` still require approval by another eligible reviewer.
+- `Escalate` can no longer be chosen. Records that already carry it are labelled `Escalated (legacy)`.
+- An executed suspension or block stores the notice the user was sent, which a restricted user sees on the Access restricted screen at sign-in.
+- See [Safety Remediation Actions Fix](../../fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md) and [Access Restricted Sign-In Screen](../ACCESS_RESTRICTED_SIGN_IN_SCREEN.md).

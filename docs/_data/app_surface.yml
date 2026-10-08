@@ -8,7 +8,7 @@ counts:
   actions: 32
   chat_controls: 47
   sub_elements: 3
-  app_pages: 29
+  app_pages: 30
   feature_surfaces: 25
 capabilities:
 - key: enable_action_ai_assistant
@@ -1187,6 +1187,9 @@ app_pages:
 - template: acceptable_use_policy.html
   slug: acceptable-use-policy
   route_url: /acceptable_use_policy.html
+- template: access_restricted.html
+  slug: access-restricted
+  route_url: /access-restricted
 - template: admin_feedback_review.html
   slug: admin-feedback-review
   route_url: /admin/feedback_review
