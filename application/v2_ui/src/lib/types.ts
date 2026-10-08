@@ -1068,6 +1068,18 @@ export interface LatestFeaturesNav {
     menu_name: string;
 }
 
+/**
+ * Whether this deployment offers the Support menu's Send Feedback destination.
+ *
+ * The recipient mailbox is deliberately absent: the browser learns it only in the reply to
+ * a submission, as the classic page does.
+ */
+export interface SendFeedbackNav {
+    available: boolean;
+    url: string;
+    menu_name: string;
+}
+
 export interface BootstrapFeatures extends Record<string, boolean | undefined> {
     enable_workflow_alert_sounds?: boolean;
 }
@@ -1121,6 +1133,8 @@ export interface BootstrapPayload {
         external_links: NavGroup<ExternalLinkNavItem>;
         /** The Support menu's Latest Features shortcut. Absent from older servers. */
         latest_features?: LatestFeaturesNav;
+        /** The Support menu's Send Feedback destination. Absent from older servers. */
+        send_feedback?: SendFeedbackNav;
     };
     features: BootstrapFeatures;
     control_center: ControlCenterCapabilities;

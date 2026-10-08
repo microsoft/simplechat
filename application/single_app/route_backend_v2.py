@@ -185,7 +185,10 @@ from functions_terms_of_use import (
     record_terms_of_use_decline,
 )
 from functions_workspace_sections import build_workspace_section_availability
-from functions_support_latest_features import build_latest_features_payload
+from functions_support_latest_features import (
+    build_latest_features_payload,
+    build_user_latest_features_payload,
+)
 from functions_workspace_context import (
     WorkspaceContextError,
     build_group_workspace_context,
@@ -443,6 +446,7 @@ def _build_navigation(raw_settings, user_roles):
             "items": external_links,
         },
         "latest_features": _build_latest_features_nav(raw_settings, user_roles),
+        "send_feedback": _build_send_feedback_nav(raw_settings, user_roles),
     }
 
 
@@ -478,6 +482,48 @@ def _build_latest_features_nav(raw_settings, user_roles):
         "url": "/support/latest-features",
         "menu_name": _menu_name(raw_settings.get("support_menu_name"), "Support"),
     }
+
+
+def _build_send_feedback_nav(raw_settings, user_roles):
+    """Describe the Support menu's Send Feedback destination for the SPA rail.
+
+    Mirrors the gate in ``_sidebar_nav.html``: a real application role, the Support menu
+    and its Send Feedback destination switched on, and a recipient mailbox configured.
+    The recipient must also look like an address, because that is what
+    ``/api/support/send_feedback_email`` accepts; offering a form whose every submission
+    is refused would be worse than not offering it. The address itself never leaves the
+    server here -- the browser receives it only in reply to a submission.
+    """
+    may_see_support = any(role in ("Admin", "User") for role in user_roles or [])
+    recipient = str(raw_settings.get("support_feedback_recipient_email") or "").strip()
+    available = bool(
+        may_see_support
+        and raw_settings.get("enable_support_menu")
+        and raw_settings.get("enable_support_send_feedback", True)
+        and "@" in recipient
+    )
+    return {
+        "available": available,
+        "url": "/support/send-feedback",
+        "menu_name": _menu_name(raw_settings.get("support_menu_name"), "Support"),
+    }
+
+
+def _latest_feature_endpoint_url(endpoint):
+    """Resolve a Latest Features shortcut's Flask endpoint, or '' when it is not registered.
+
+    Shared by the admin catalogue and the end-user page, so a shortcut naming an endpoint
+    that no longer exists is dropped the same way on both.
+    """
+    try:
+        return url_for(endpoint)
+    except BuildError:
+        log_event(
+            "[SUPPORT_LATEST_FEATURES] A Latest Features shortcut names an unknown endpoint.",
+            extra={"endpoint": endpoint},
+            level=logging.WARNING,
+        )
+        return ""
 
 
 def _build_feature_flags(public_settings, per_user_overrides):
@@ -851,6 +897,46 @@ def register_route_backend_v2(bp):
             200,
             {"Cache-Control": "no-store"},
         )
+
+    @bp.route("/api/v2/support/latest-features", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_support_menu")
+    def v2_support_latest_features():
+        """Return the Latest Features announcements administrators shared with end users.
+
+        The V2 counterpart of the classic ``/support/latest-features`` page, behind the
+        same gates: an application role, the Support menu, and its Latest Features
+        destination. Whether this user hid the rail shortcut until the next release is
+        not a gate here, as it is not on the classic page: hiding the shortcut is not
+        losing the page.
+        """
+        session_user = session.get("user") or {}
+        roles = session_user.get("roles") if isinstance(session_user, dict) else None
+        if not isinstance(roles, list) or not any(role in ("Admin", "User") for role in roles):
+            return jsonify({"error": "The Support menu is available to signed-in app users only."}), 403
+
+        settings = get_settings()
+        if not settings.get("enable_support_latest_features", True):
+            return jsonify({"error": "Latest Features is not available."}), 404
+
+        try:
+            payload = build_user_latest_features_payload(
+                settings,
+                resolve_endpoint_url=_latest_feature_endpoint_url,
+                resolve_static_url=lambda path: url_for("static", filename=path),
+                version=VERSION,
+            )
+            return jsonify(payload), 200
+        except Exception as exc:
+            log_event(
+                "[SUPPORT_LATEST_FEATURES] Failed to load the shared Latest Features announcements.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load Latest Features."}), 500
 
     @bp.route("/api/v2/bootstrap", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -1858,18 +1944,6 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Unable to check for application updates."}), 500
-
-    def _latest_feature_endpoint_url(endpoint):
-        """Resolve a catalogue shortcut's Flask endpoint, or '' when it is not registered."""
-        try:
-            return url_for(endpoint)
-        except BuildError:
-            log_event(
-                "[V2_ADMIN_SETTINGS] A Latest Features shortcut names an unknown endpoint.",
-                extra={"endpoint": endpoint},
-                level=logging.WARNING,
-            )
-            return ""
 
     @bp.route("/api/v2/admin/latest-features", methods=["GET"])
     @swagger_route(security=get_auth_security())

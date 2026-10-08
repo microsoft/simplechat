@@ -4,7 +4,7 @@ title: "Review safety violations"
 description: "Review flagged activity, warn, suspend, or block a user, and recheck chat messages whose required safety checks did not finish."
 section: "Guides"
 audience: admin
-version: "0.261.296"
+version: "0.261.297"
 ---
 
 ## What this covers
@@ -41,7 +41,7 @@ Saving a warned record again, for example to resolve it, doesn't send the warnin
 
 A warning has to be acknowledged. The V2 interface shows it in a dialog the next time the user opens SimpleChat, and again in every tab and on every device until they select **I understand**. In the classic interface the warning arrives as a notification.
 
-The review shows **Warning acknowledged** with the date, or **Not yet acknowledged**, so you can tell whether the user has read it before deciding on a further step. Warnings sent before version 0.261.296 are shown as sent before acknowledgment was tracked, and are never shown to the user again.
+The review shows **Warning acknowledged** with the date, or **Not yet acknowledged**, so you can tell whether the user has read it before deciding on a further step. Warnings sent before version 0.261.297 are shown as sent before acknowledgment was tracked, and are never shown to the user again.
 
 ### What a suspended or blocked user sees
 
@@ -59,4 +59,4 @@ The unchecked queue shows check metadata, not message bodies. Filter it by conve
 
 ## Version
 
-Implemented in version **0.261.277** (`application/single_app/config.py`). Warnings without a second reviewer, warning acknowledgment, the Access restricted screen and the removal of Escalate were added in version **0.261.296**.
+Implemented in version **0.261.277** (`application/single_app/config.py`). Warnings without a second reviewer, warning acknowledgment, the Access restricted screen and the removal of Escalate were added in version **0.261.297**.

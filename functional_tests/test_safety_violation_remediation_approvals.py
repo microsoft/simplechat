@@ -2,9 +2,9 @@
 # test_safety_violation_remediation_approvals.py
 """
 Functional test for safety violation remediation approvals.
-Version: 0.261.296
+Version: 0.261.297
 Implemented in: 0.241.030
-Warnings sent without approval, restriction notice persisted: 0.261.296
+Warnings sent without approval, restriction notice persisted: 0.261.297
 
 This test ensures warn, suspend, and block actions collect user-facing remediation
 details; that a warning is sent as soon as a reviewer saves it, while a suspension or block

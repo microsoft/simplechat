@@ -1,8 +1,8 @@
 # test_classic_safety_review_and_access_restricted.py
 """
 Browser coverage for the classic safety review changes and the classic Access restricted page.
-Version: 0.261.296
-Implemented in: 0.261.296
+Version: 0.261.297
+Implemented in: 0.261.297
 
 Render the real classic templates with Jinja and run the real local scripts behind a closed,
 in-memory API. Check that the admin review no longer offers Escalate, labels a legacy

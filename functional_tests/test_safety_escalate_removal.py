@@ -2,8 +2,8 @@
 # test_safety_escalate_removal.py
 """
 Functional test for removing Escalate as a safety action.
-Version: 0.261.296
-Implemented in: 0.261.296
+Version: 0.261.297
+Implemented in: 0.261.297
 
 This test ensures that Escalate can no longer be chosen in either interface or set through
 the API, while records that already carry it stay editable, are labelled
@@ -139,7 +139,7 @@ def test_backend_keeps_the_legacy_action_and_statistic():
 
 
 def test_version():
-    assert_app_version_at_least("0.261.296")
+    assert_app_version_at_least("0.261.297")
 
 
 if __name__ == "__main__":

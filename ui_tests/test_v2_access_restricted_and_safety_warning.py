@@ -1,8 +1,8 @@
 # test_v2_access_restricted_and_safety_warning.py
 """
 Browser coverage for the V2 Access restricted page and the safety warning dialog.
-Version: 0.261.296
-Implemented in: 0.261.296
+Version: 0.261.297
+Implemented in: 0.261.297
 
 Serve the real built SPA through Playwright request interception with a closed API
 boundary. Check that a restricted user whose first call is refused lands on the Access
@@ -88,7 +88,7 @@ class RestrictionFixture:
 
     def _bootstrap(self):
         return {
-            "version": "0.261.296",
+            "version": "0.261.297",
             "user": {"id": "user-1", "display_name": "Test User", "email": "test.user@contoso.test",
                      "is_admin": False, "roles": ["User"]},
             "branding": {"app_title": "SimpleChat", "show_logo": False, "hide_app_title": False},

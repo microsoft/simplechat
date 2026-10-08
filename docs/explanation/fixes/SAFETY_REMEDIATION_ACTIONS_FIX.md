@@ -1,6 +1,6 @@
 # Safety Remediation Actions Fix
 
-Fixed/Implemented in version: **0.261.296**
+Fixed/Implemented in version: **0.261.297**
 
 ## Issue Description
 

@@ -1,6 +1,6 @@
 // test_v2_access_restriction_and_safety_warning_logic.mjs
-// Version: 0.261.296
-// Implemented in: 0.261.296
+// Version: 0.261.297
+// Implemented in: 0.261.297
 // Executes the real V2 modules (lib/apiClient.ts, lib/accessRestriction.ts, lib/safetyWarnings.ts
 // and stores/safetyWarningStore.ts) against controlled HTTP. Pins that a 403 from the server's
 // access gate sends the tab to the Access restricted page once, without looping on that page;

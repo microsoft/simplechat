@@ -1,6 +1,6 @@
 # Access Restricted Sign-In Screen
 
-Implemented in version: **0.261.296**
+Implemented in version: **0.261.297**
 
 ## Overview and Purpose
 

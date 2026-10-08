@@ -1,8 +1,8 @@
 # safety_review_harness.py
 """Closed-world harnesses for the safety review, safety warning and access-gate routes.
 
-Version: 0.261.296
-Implemented in: 0.261.296
+Version: 0.261.297
+Implemented in: 0.261.297
 
 Used inside ``offline_app_imports()`` by fresh-process probes. The real route modules,
 decorators and helpers run on a real Flask app and session. Only the storage and delivery

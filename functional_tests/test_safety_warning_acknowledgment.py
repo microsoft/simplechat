@@ -2,8 +2,8 @@
 # test_safety_warning_acknowledgment.py
 """
 Functional test for immediate, must-acknowledge safety warnings.
-Version: 0.261.296
-Implemented in: 0.261.296
+Version: 0.261.297
+Implemented in: 0.261.297
 
 This test ensures that a safety reviewer's warning is sent as the review is saved, without
 an approval request, and is sent once per violation; that the warned user can list and
@@ -299,7 +299,7 @@ def test_v2_warning_dialog_and_settings_are_wired():
 
 
 def test_version():
-    assert_app_version_at_least("0.261.296")
+    assert_app_version_at_least("0.261.297")
 
 
 if __name__ == "__main__":

@@ -68,7 +68,7 @@ Known limitations
 
 - `Escalate` remains unchanged because the repository does not currently include a downstream escalation workflow beyond the existing label.
 
-Updated in version: **0.261.296**
+Updated in version: **0.261.297**
 
 - `Warn user` no longer creates an approval request: the warning is sent when the reviewer saves the review, and the user must acknowledge it. `Suspend user` and `Block user` still require approval by another eligible reviewer.
 - `Escalate` can no longer be chosen. Records that already carry it are labelled `Escalated (legacy)`.

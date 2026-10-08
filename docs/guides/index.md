@@ -112,6 +112,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | --- | --- | --- |
 | [Update profile preferences]({{ '/guides/update-profile-preferences/' | relative_url }}) | Adjust personal SimpleChat preferences such as appearance, tutorials, notifications, memory, and retention. | Users |
 | [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }}) | Review, filter, search, and mark SimpleChat notifications as read. | Users |
+| [Browse latest features]({{ '/guides/browse-latest-features/' | relative_url }}) | Find out what changed in recent releases and jump to the page where each capability lives. | Users |
 | [Send feedback]({{ '/guides/send-feedback/' | relative_url }}) | Prepare a bug report or feature request email for your SimpleChat administrators. | Users |
 | [Create custom pages]({{ '/guides/create-custom-pages/' | relative_url }}) | Create custom pages for tailored app experiences. | Admins |
 | [Solution demos]({{ '/guides/solution-demos/' | relative_url }}) | Explore demonstration scenarios and examples for SimpleChat solutions. | Everyone |

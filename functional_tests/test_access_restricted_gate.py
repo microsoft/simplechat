@@ -2,8 +2,8 @@
 # test_access_restricted_gate.py
 """
 Functional test for the Access restricted sign-in screen and the access gate.
-Version: 0.261.296
-Implemented in: 0.261.296
+Version: 0.261.297
+Implemented in: 0.261.297
 
 This test ensures that a suspended or blocked user can still sign in but is sent to an
 Access restricted screen by every app surface: API calls get a structured 403 with the
@@ -344,7 +344,7 @@ def test_v2_access_restricted_page_is_wired():
 
 
 def test_version():
-    assert_app_version_at_least("0.261.296")
+    assert_app_version_at_least("0.261.297")
 
 
 if __name__ == "__main__":

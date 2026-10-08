@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.296)**
+### **(v0.261.297)**
 
 #### New Features
 
@@ -38,6 +38,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   API calls from a restricted user now return `403` with `"error": "access_restricted"` and a structured `restriction`, instead of `"error": "Access Denied"` with the reason as `message`. Browser page requests are redirected to the Access restricted screen instead of returning a plain-text 403.
     *   **Migration**: Integrations that matched the old `Access Denied` error string should check for `access_restricted` instead.
     *   (Ref: `functions_authentication.py` `access_restricted_response`)
+
+### **(v0.261.296)**
+
+#### User Interface Enhancements
+
+*   **Open Groups and Public Workspaces From User Settings**
+    *   In V2 **User Settings**, every row on the **Groups** and **Public** tabs now has **Open** next to **Set active**, so you can go straight to a workspace you own or use instead of only making it active.
+    *   **Open** goes to the workspace by its ID, like **Open** in the group and public directories. Opening a group also makes it your active group, because a group's pages work in the active group. Opening a public workspace leaves your active one unchanged.
+    *   On narrow screens the row's buttons wrap below the workspace name, so the name and role badge are no longer squeezed.
+    *   (Ref: `WorkspaceListTab.tsx`, `lib/workspaces.ts` `WorkspaceKind.openPath`, [V2 User Settings Redesign](features/V2_USER_SETTINGS_REDESIGN.md), `ui_tests/test_v2_settings_workspace_open.py`)
 
 ### **(v0.261.295)**
 

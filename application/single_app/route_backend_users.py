@@ -569,6 +569,9 @@ def register_route_backend_users(bp):
                     'v2UserSettingsRailCollapsed',
                     # Whether the V2 Control Center section rail is collapsed to icons.
                     'v2ControlCenterRailCollapsed',
+                    # V2 Control Center Activity Logs: named filter combinations (saved views)
+                    # and display preferences (time zone, density, trend strip visibility).
+                    'v2ActivityLogSavedViews', 'v2ActivityLogPrefs',
                     # V2 document explorer: how the workspace documents list is presented
                     # (view mode, visible columns, page size, details pane) and the saved
                     # filter combinations pinned in its navigation rail.

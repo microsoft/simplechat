@@ -27,6 +27,20 @@ from functions_control_center_activity import (
     parse_activity_filters,
     query_activity_rows,
 )
+from functions_control_center_activity_display import (
+    ACTIVITY_LOOKUP_LIMIT,
+    ActivityNameCache,
+    activity_csv_columns,
+    activity_filter_labels,
+    activity_type_catalog,
+    empty_activity_names,
+    label_activity_facets,
+    present_activity_rows,
+    resolve_activity_names,
+    search_activity_people,
+    search_activity_people_ids,
+    search_activity_workspaces,
+)
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
@@ -98,6 +112,52 @@ DASHBOARD_INVALID_RANGE_ERROR = (
 )
 _control_center_dashboard_cache = {}
 _control_center_group_snapshot_cache = {}
+_control_center_activity_name_cache = ActivityNameCache()
+
+
+def _activity_search_people(filters):
+    """People whose name or email matches the search, so search finds what they did.
+
+    The page, summary and export each widen the same search, so a term's matches are cached
+    briefly with the names. A lookup failure narrows the search back to the stored fields.
+    """
+    term = filters["search"].strip().casefold()
+    if not term:
+        return [], False
+    hit, cached = _control_center_activity_name_cache.get("search", term)
+    if hit:
+        return cached
+    try:
+        result = search_activity_people_ids(cosmos_user_settings_container, filters["search"])
+    except Exception as ex:
+        log_event('[CONTROL_CENTER] Activity people search failed; searching stored fields only.',
+                  extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                  level=logging.WARNING)
+        return [], False
+    _control_center_activity_name_cache.set("search", term, result)
+    return result
+
+
+def _activity_names(records, filters=None):
+    """Display names for a page; a lookup failure leaves IDs on screen instead of failing it."""
+    try:
+        return resolve_activity_names(
+            records, filters,
+            user_container=cosmos_user_settings_container,
+            groups_container=cosmos_groups_container,
+            public_container=cosmos_public_workspaces_container,
+            cache=_control_center_activity_name_cache,
+        )
+    except Exception as ex:
+        log_event('[CONTROL_CENTER] Activity name lookup failed; showing IDs.',
+                  extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                  level=logging.WARNING)
+        return empty_activity_names()
+
+
+def _activity_export_columns(rows):
+    names = _activity_names(rows)
+    return [activity_csv_columns(view) for view in present_activity_rows(rows, names)]
 
 
 def _control_center_group_inventory(force_refresh=False):
@@ -3540,19 +3600,30 @@ def register_route_backend_control_center(bp):
     @login_required
     @control_center_required('activity_logs')
     def api_v2_control_center_activity_logs():
+        """A page of activity with readable presentation and names for the active filters."""
         try:
             filters = parse_activity_filters(request.args)
+            page_size = int(request.args.get('page_size', 50))
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters, page size, or cursor. Use a UTC date range of up to 366 days.'}), 400
+        search_ids, search_truncated = _activity_search_people(filters)
+        try:
             payload = activity_page(
                 cosmos_activity_logs_container, filters,
-                page_size=int(request.args.get('page_size', 50)), cursor_value=request.args.get('cursor'),
+                page_size=page_size, cursor_value=request.args.get('cursor'), search_user_ids=search_ids,
             )
-            return jsonify(payload)
         except ValueError:
             return jsonify({'error': 'Invalid activity filters, page size, or cursor. Use a UTC date range of up to 366 days.'}), 400
         except Exception as ex:
             log_event('[CONTROL_CENTER] Activity feed query failed.',
-                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
             return jsonify({'error': 'Unable to load activity logs. Check the activity-log composite index in App Maintenance, then retry.'}), 500
+        names = _activity_names(payload['items'], filters)
+        payload['presentation'] = present_activity_rows(payload['items'], names)
+        payload['filter_labels'] = activity_filter_labels(filters, names)
+        payload['search_people'] = {'matched': len(search_ids), 'truncated': search_truncated}
+        return jsonify(payload)
 
     @bp.route('/api/v2/control-center/activity-logs/summary', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -3561,13 +3632,19 @@ def register_route_backend_control_center(bp):
     def api_v2_control_center_activity_summary():
         try:
             filters = parse_activity_filters(request.args)
-            return jsonify(activity_summary(cosmos_activity_logs_container, filters))
         except ValueError:
             return jsonify({'error': 'Invalid activity filters. Use a UTC date range of up to 366 days.'}), 400
+        search_ids, _ = _activity_search_people(filters)
+        try:
+            summary = activity_summary(cosmos_activity_logs_container, filters, search_user_ids=search_ids)
         except Exception as ex:
             log_event('[CONTROL_CENTER] Activity summary query failed.',
-                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
             return jsonify({'error': 'Unable to load the activity summary. Check App Maintenance indexing status and retry.'}), 500
+        summary['facets'] = label_activity_facets(summary['facets'])
+        summary['type_catalog'] = activity_type_catalog()
+        return jsonify(summary)
 
     @bp.route('/api/v2/control-center/activity-logs/export.csv', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -3576,17 +3653,25 @@ def register_route_backend_control_center(bp):
     def api_v2_control_center_activity_export():
         try:
             filters = parse_activity_filters(request.args)
-            rows, snapshot = query_activity_rows(cosmos_activity_logs_container, filters, ACTIVITY_PAGE_MAX)
         except ValueError:
             return jsonify({'error': 'Invalid activity export filters. Use a UTC date range of up to 366 days.'}), 400
+        search_ids, _ = _activity_search_people(filters)
+        try:
+            rows, snapshot = query_activity_rows(
+                cosmos_activity_logs_container, filters, ACTIVITY_PAGE_MAX, search_user_ids=search_ids,
+            )
         except Exception as ex:
             log_event('[CONTROL_CENTER] Activity export query failed.',
-                      extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
             return jsonify({'error': 'Unable to export activity logs. Check App Maintenance indexing status and retry.'}), 500
 
         def generate():
             try:
-                yield from activity_csv_stream(cosmos_activity_logs_container, filters, rows, snapshot)
+                yield from activity_csv_stream(
+                    cosmos_activity_logs_container, filters, rows, snapshot,
+                    search_user_ids=search_ids, present_rows=_activity_export_columns,
+                )
             except Exception as ex:
                 log_event('[CONTROL_CENTER] Activity export stream interrupted.',
                           extra={'error_type': type(ex).__name__}, level=logging.ERROR)
@@ -3597,6 +3682,42 @@ def register_route_backend_control_center(bp):
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Export-Row-Limit'] = '10000'
         return response
+
+    @bp.route('/api/v2/control-center/activity-logs/people', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_people():
+        """SimpleChat users matching a name, email or ID, for the Activity Logs person filter."""
+        term = (request.args.get('q') or '').strip()
+        if len(term) > 200:
+            return jsonify({'error': 'Search text is too long.'}), 400
+        try:
+            return jsonify({'people': search_activity_people(cosmos_user_settings_container, term, ACTIVITY_LOOKUP_LIMIT)})
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity people lookup failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to search people. Retry.'}), 500
+
+    @bp.route('/api/v2/control-center/activity-logs/workspaces', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_workspaces():
+        """Groups and public workspaces matching a name or ID, for the workspace filter."""
+        term = (request.args.get('q') or '').strip()
+        if len(term) > 200:
+            return jsonify({'error': 'Search text is too long.'}), 400
+        try:
+            return jsonify({'workspaces': search_activity_workspaces(
+                cosmos_groups_container, cosmos_public_workspaces_container, term, ACTIVITY_LOOKUP_LIMIT,
+            )})
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity workspace lookup failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to search workspaces. Retry.'}), 500
 
     
     # User Management APIs
@@ -4396,7 +4517,8 @@ def register_route_backend_control_center(bp):
             return jsonify({"error": "Invalid group filters."}), 400
         except Exception as ex:
             log_event("[CONTROL_CENTER] V2 group list failed.",
-                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+                      extra={"error_type": type(ex).__name__, "status_code": getattr(ex, "status_code", None)},
+                      level=logging.ERROR)
             return jsonify({"error": "Unable to retrieve groups."}), 500
 
     @bp.route('/api/v2/control-center/groups/<group_id>', methods=['GET'])
@@ -4419,10 +4541,10 @@ def register_route_backend_control_center(bp):
             activity = list(cosmos_activity_logs_container.query_items(
                 query=(
                     "SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, "
-                    "c.user_id, c.admin_user_id, c.admin_email, c.group, c.workspace_context, "
+                    "c.user_id, c.admin_user_id, c.admin_email, c['group'], c.workspace_context, "
                     "c.status_change, c.added_member, c.removed_member, c.member_email, "
                     "c.member_name, c.member_role, c.document, c.usage, c.token_type "
-                    "FROM c WHERE c.group_id = @group_id OR c.group.group_id = @group_id "
+                    "FROM c WHERE c.group_id = @group_id OR c['group']['group_id'] = @group_id "
                     "OR c.workspace_context.group_id = @group_id ORDER BY c.timestamp DESC"
                 ),
                 parameters=[{"name": "@group_id", "value": group_id}],
@@ -4459,7 +4581,9 @@ def register_route_backend_control_center(bp):
             return jsonify({"error": "Group not found."}), 404
         except Exception as ex:
             log_event("[CONTROL_CENTER] V2 group detail failed.",
-                      extra={"group_id": group_id, "error_type": type(ex).__name__}, level=logging.ERROR)
+                      extra={"group_id": group_id, "error_type": type(ex).__name__,
+                             "status_code": getattr(ex, "status_code", None)},
+                      level=logging.ERROR)
             return jsonify({"error": "Unable to retrieve group details."}), 500
 
     @bp.route('/api/v2/control-center/groups/bulk-status', methods=['POST'])
@@ -5231,17 +5355,19 @@ def register_route_backend_control_center(bp):
                     pass
             
             # Build queries - use two separate queries to avoid nested property access issues
-            # Query 1: Activities with c.group.group_id (member/status changes)
+            # Query 1: Activities with the nested group.group_id (member/status changes)
             # Query 2: Activities with c.workspace_context.group_id (document operations)
             
             time_filter = "AND c.timestamp >= @cutoff_date" if cutoff_date else ""
             
-            # Query 1: Member and status activities (all activity types with c.group.group_id)
+            # Query 1: Member and status activities (all activity types with a nested group.group_id).
+            # GROUP is a reserved word in Cosmos SQL, so the property is read as c['group'];
+            # the dotted form is a syntax error that made this query fail on every call.
             # Use SELECT * to get complete raw documents for modal display
             query1 = f"""
                 SELECT *
                 FROM c
-                WHERE c.group.group_id = @group_id
+                WHERE c['group']['group_id'] = @group_id
                 {time_filter}
             """
             

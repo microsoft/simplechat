@@ -22,6 +22,11 @@ route passes in the two resolvers it needs.
     visibility. Shortcuts keep their ``requires_settings`` so the V2 preview can
     show or hide them as the draft changes; the documentation guide buttons
     depend on a switch in the same section.
+
+``build_user_latest_features_payload`` serves the end-user page itself rather than
+the admin preview: only the announcements an administrator shared, with each
+shortcut already filtered against the stored settings, exactly as the classic
+Support page renders them.
 """
 
 import re
@@ -31,6 +36,7 @@ from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
     get_default_support_latest_features_visibility,
     get_support_latest_feature_release_groups_for_preview,
+    get_visible_support_latest_feature_groups,
 )
 
 
@@ -231,5 +237,22 @@ def build_latest_features_payload(settings, *, resolve_endpoint_url, resolve_sta
                 visibility_defaults=visibility_defaults,
             )
             for group in get_support_latest_feature_release_groups_for_preview(settings)
+        ],
+    }
+
+
+def build_user_latest_features_payload(settings, *, resolve_endpoint_url, resolve_static_url, version):
+    """Return the Latest Features announcements shared with end users, for the V2 page.
+
+    Mirrors the classic Support page: only the announcements an administrator left
+    visible, each shortcut already filtered against the stored settings, and a
+    release group left out entirely when nothing in it is shared. The resolvers are
+    the same ones the admin payload takes, so both apply one set of URL rules.
+    """
+    return {
+        "version": _text(version),
+        "groups": [
+            _serialize_group(group, resolve_endpoint_url, resolve_static_url)
+            for group in get_visible_support_latest_feature_groups(settings)
         ],
     }
