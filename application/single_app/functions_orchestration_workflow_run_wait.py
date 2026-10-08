@@ -233,6 +233,75 @@ def headless_capability_ids(settings, request_context, candidate_ids, *, export_
     return frozenset(value for value in available if value in candidates)
 
 
+def with_headless_capability_ids(workflow_planning, settings, request_context, available_ids, *,
+                                 export_catalog=None):
+    """Add what a resumed continuation can still use to a planning context with the wait marker.
+
+    The planner and the plan editor call this with the caller's own request context and the
+    capabilities this request offers. A context without the marker comes back unchanged, so with
+    waiting off nothing is computed. A plan revision reuses the turn's stored context, so the
+    marker is dropped when waiting is no longer configured.
+    """
+    marker = workflow_planning.get('workflow_run_wait') if isinstance(workflow_planning, dict) else None
+    if not isinstance(marker, dict) or marker.get('ready') is not True:
+        return workflow_planning
+    if not wait_configured(settings) or (isinstance(settings, dict) and settings.get('require_member_of_workflow_user')):
+        return {key: value for key, value in workflow_planning.items() if key != 'workflow_run_wait'}
+    available = [value for value in available_ids or () if isinstance(value, str)]
+    ids = headless_capability_ids(settings, request_context, available, export_catalog=export_catalog)
+    return {**workflow_planning, 'workflow_run_wait': {**marker, 'headless_capability_ids': sorted(ids)}}
+
+
+def workflow_run_wait_ready(workflow_planning):
+    """Whether this planning context carries the server's wait marker.
+
+    The marker is added only when an administrator configured the wait and the conversation and
+    user allow it, so without it a plan is checked exactly as it was before waits existed.
+    """
+    marker = workflow_planning.get('workflow_run_wait') if isinstance(workflow_planning, dict) else None
+    return isinstance(marker, dict) and marker.get('ready') is True
+
+
+def workflow_run_wait_possible(workflow_planning):
+    """Whether any plan made with this planning context could wait for a workflow run."""
+    marker = workflow_planning.get('workflow_run_wait') if isinstance(workflow_planning, dict) else None
+    headless = marker.get('headless_capability_ids') if isinstance(marker, dict) else None
+    return (
+        workflow_run_wait_ready(workflow_planning)
+        and isinstance(headless, (list, tuple)) and {'workflow_run', 'compose'} <= set(headless)
+    )
+
+
+def waitable_projection(projection, workflow_planning):
+    """The planner's projection, with every ``waitable`` flag removed when no plan could wait.
+
+    The flags are what the planner's wait instructions key on, so the instructions appear only
+    when the server would accept a wait. A projection without flags comes back unchanged.
+    """
+    catalog = projection.get('catalog') if isinstance(projection, dict) else None
+    entries = catalog.get('workflows') if isinstance(catalog, dict) else None
+    if not isinstance(entries, list) or not any(
+        isinstance(entry, dict) and 'waitable' in entry for entry in entries
+    ):
+        return projection
+    if workflow_run_wait_possible(workflow_planning):
+        return projection
+    stripped = [
+        {key: value for key, value in entry.items() if key != 'waitable'} if isinstance(entry, dict) else entry
+        for entry in entries
+    ]
+    return {**projection, 'catalog': {**catalog, 'workflows': stripped}}
+
+
+def projection_offers_wait(projection):
+    """Whether the planner's projection marks any workflow as one a plan may wait for."""
+    catalog = projection.get('catalog') if isinstance(projection, dict) else None
+    entries = catalog.get('workflows') if isinstance(catalog, dict) else None
+    return isinstance(entries, list) and any(
+        isinstance(entry, dict) and entry.get('waitable') is True for entry in entries
+    )
+
+
 def _enabled(step):
     return step.get('enabled', True) is not False
 
@@ -399,9 +468,14 @@ __all__ = [
     'compute_workflow_run_waits',
     'headless_capability_ids',
     'headless_request_context',
+    'projection_offers_wait',
     'quick_run_eligibility',
     'quick_run_reason_text',
     'stored_workflow_run_waits',
     'wait_configured',
+    'waitable_projection',
     'waited_run_consumers_valid',
+    'with_headless_capability_ids',
+    'workflow_run_wait_possible',
+    'workflow_run_wait_ready',
 ]

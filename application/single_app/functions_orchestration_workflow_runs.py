@@ -73,6 +73,7 @@ from functions_orchestration_workflow_context import (
     workflow_run_ready,
     workflow_run_settings_gate,
 )
+from functions_orchestration_workflow_run_wait import compute_workflow_run_waits, workflow_run_wait_ready
 from functions_workflow_chat_delivery import (
     WORKFLOW_RUN_DELIVERY_FOLLOW_UP,
     WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY,
@@ -96,6 +97,8 @@ RULE_LIMIT = 'workflow_run_limit'
 RULE_CONTEXT_UNAVAILABLE = 'workflow_context_unavailable'
 
 REASON_INVALID = 'workflow_run_invalid'
+# A plan read a run's result, and the server would not let this plan wait for that run.
+REASON_NOT_WAITABLE = 'workflow_run_not_waitable'
 
 # Why a workflow the plan named was not started. Application-owned text only: it reaches the plan
 # card, the planner's failure message and the reply, so it never repeats a handle or a name.
@@ -118,6 +121,11 @@ WORKFLOW_RUN_SKIP_REASONS = {
         'naming the workflow to start.'
     ),
     RULE_CONTEXT_UNAVAILABLE: 'Your saved workflows could not be checked for this request. Try again later.',
+    REASON_NOT_WAITABLE: (
+        "A plan can use a workflow's results only when the workflow is a quick run and the rest of "
+        'the plan can continue without you, so it was left out. Ask to start it in a new message; '
+        'its result is posted to this chat when it finishes.'
+    ),
 }
 _REASON_FOR_RULE = {
     RULE_UNKNOWN: RULE_UNKNOWN,
@@ -353,10 +361,13 @@ def drop_workflow_runs(plan, *, workflow_planning=None, drop_all=False):
 
     Used when a run step could not be repaired (each run step is checked again on its own, in plan
     order, and only the failing ones are dropped), or could not be checked at all (``drop_all``).
-    A run step that another step or the final response reads is dropped as invalid. Every
+    A run step that another step or the final response reads is dropped as invalid, unless the
+    request's planning context lets the plan wait for that run (see
+    ``functions_orchestration_workflow_run_wait``): then a step the server would wait for is kept,
+    and any other one is dropped as not waitable. Every
     dependency, input binding and final response naming a dropped step is removed, so nothing can
-    read it. When no single step fails its check, every run step is dropped, so a plan can always
-    be planned without them.
+    read it. When no single step fails its check, every run step the plan does not wait for is
+    dropped, so a plan can always be planned without them.
 
     Returns ``(plan, notes, remaining)``: ``notes`` lists ``{'reason', 'name'}`` once for each
     distinct reason and workflow, where ``name`` is the saved name when the request offered the
@@ -369,13 +380,20 @@ def drop_workflow_runs(plan, *, workflow_planning=None, drop_all=False):
     ]
     run_ids = {step.get('step_id') for step in run_steps if isinstance(step.get('step_id'), str)}
     consumed = _consumed_step_ids(steps, plan.get('final_response'), run_ids)
+    wait_ready = workflow_run_wait_ready(workflow_planning)
+    waits = (
+        compute_workflow_run_waits(steps, plan.get('final_response'), workflow_planning)
+        if wait_ready and consumed and not drop_all else {}
+    )
     seen = set()
     dropped = []
     for step in run_steps:
         if drop_all:
             reason = RULE_CONTEXT_UNAVAILABLE
-        elif _named(step.get('step_id'), consumed):
+        elif _named(step.get('step_id'), consumed) and not wait_ready:
             reason = REASON_INVALID
+        elif _named(step.get('step_id'), consumed) and step.get('step_id') not in waits:
+            reason = REASON_NOT_WAITABLE
         else:
             try:
                 prepare_workflow_run_arguments(
@@ -386,7 +404,8 @@ def drop_workflow_runs(plan, *, workflow_planning=None, drop_all=False):
                 reason = _REASON_FOR_RULE.get(exc.rule, REASON_INVALID)
         dropped.append((step, reason))
     if not dropped:
-        dropped = [(step, REASON_INVALID) for step in run_steps]
+        # A step the plan waits for passed every check a single run step can fail, so it stays.
+        dropped = [(step, REASON_INVALID) for step in run_steps if step.get('step_id') not in waits]
 
     notes = []
     for step, reason in dropped:

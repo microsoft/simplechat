@@ -80,6 +80,8 @@ from functions_orchestration_result_contracts import (
     ResultContractError, StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
+# The wait rules import this module lazily, so importing them here does not form a cycle.
+from functions_orchestration_workflow_run_wait import compute_workflow_run_waits, stored_workflow_run_waits
 # The merge engine imports only the standard library; plan validation shares its option rules.
 from functions_tabular_merge import (
     TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_inspect_options_from_arguments,
@@ -690,9 +692,17 @@ def _reject_workflow_proposal_consumers(steps, final_response):
         )
 
 
-def _reject_workflow_run_consumers(steps, final_response):
-    """Starting a workflow only links to its run, so no step and no answer may read the step."""
-    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_RUN}
+def _reject_workflow_run_consumers(steps, final_response, waits=None):
+    """Starting a workflow only links to its run, so no step and no answer may read the step.
+
+    The one exception is a step in ``waits``: the server decided that the plan waits for that run,
+    and ``compute_workflow_run_waits`` already checked that only answer steps read it.
+    """
+    waited = set(waits) if isinstance(waits, dict) else set()
+    producers = {
+        step['step_id'] for step in steps
+        if step['capability_id'] == CAPABILITY_WORKFLOW_RUN and step['step_id'] not in waited
+    }
     if not producers:
         return
     named = set()
@@ -1104,7 +1114,13 @@ def validate_dependency_plan(
         _require_assembled_render_sources(accepted, existing_results)
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
-        _reject_workflow_run_consumers(accepted, plan.get('final_response'))
+        # Whether a run step waits is the server's decision: computed from the server-side planning
+        # context when there is one, and otherwise kept from the stored plan only while it still fits.
+        if workflow_planning is not None:
+            waits = compute_workflow_run_waits(accepted, plan.get('final_response'), workflow_planning)
+        else:
+            waits = stored_workflow_run_waits(plan.get('workflow_run_waits'), accepted, plan.get('final_response'))
+        _reject_workflow_run_consumers(accepted, plan.get('final_response'), waits=waits)
         _reject_workflow_results_consumers(accepted, plan.get('final_response'))
         _reject_workflow_handoff_consumers(accepted, plan.get('final_response'))
         bindings = [step_result_bindings(step) for step in accepted]
@@ -1147,6 +1163,9 @@ def validate_dependency_plan(
     compiled = deepcopy(plan)
     if final_binding is None:
         compiled.pop('final_response', None)
+    compiled.pop('workflow_run_waits', None)
+    if waits:
+        compiled['workflow_run_waits'] = waits
     compiled.update({
         'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         'deliverables': deliverables,
@@ -1516,6 +1535,8 @@ def normalize_plan(
 
     # Bindings are server-owned. A planner response cannot authorize a deployment.
     plan.pop('model_routing', None)
+    # So is waiting for a workflow run: the validator computes it from the server's planning context.
+    plan.pop('workflow_run_waits', None)
     for step in plan.get('steps') or []:
         if isinstance(step, dict):
             step.pop('model_binding', None)

@@ -462,6 +462,19 @@ def _read_workflows(user_id):
     ))
 
 
+def _read_wait_workflows(user_id, workflow_ids):
+    """The full saved definitions of the catalog's workflows, read only to decide which are quick."""
+    from config import cosmos_personal_workflows_container
+    ids = [value for value in workflow_ids or () if isinstance(value, str)]
+    if not ids:
+        return []
+    return list(cosmos_personal_workflows_container.query_items(
+        query='SELECT * FROM c WHERE c.user_id = @user_id AND ARRAY_CONTAINS(@ids, c.id)',
+        parameters=[{'name': '@user_id', 'value': user_id}, {'name': '@ids', 'value': ids}],
+        partition_key=user_id,
+    ))
+
+
 def _count_quota(user_id):
     from functions_personal_workflows import count_personal_orchestration_workflows
     return count_personal_orchestration_workflows(user_id, 'orchestration')
@@ -518,6 +531,7 @@ _DEFAULT_READERS = {
     'govern': _govern_actions,
     'sources': _read_sources,
     'workflows': _read_workflows,
+    'wait_workflows': _read_wait_workflows,
     'quota_count': _count_quota,
     'max_tasks': _max_tasks,
     'default_model': _default_model_valid,
@@ -972,6 +986,11 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
     always carries ``time_zone`` and ``request_local_time``: a results step names the local day a
     run finished on.
 
+    When waiting for quick workflows is configured as well, and personal workflows don't require
+    the WorkflowUser role, the catalog entries of quick workflows carry ``"waitable": true`` and
+    the context carries the server-only ``workflow_run_wait: {'ready': True}``; see
+    ``_with_run_wait``. With waiting off, the context is exactly what it was before.
+
     When handing work off to a one-time workflow is open to the user, the context also carries a
     self-contained ``workflow_handoff`` marker: its own catalog and handle map of the documents
     named this turn, the workspaces this chat searches (from ``scope_seeds``: the composer's
@@ -995,6 +1014,7 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
         settings, user_id=user_id, user_info=user_info, conversation=conversation, time_zone=time_zone,
         now=now, documents=documents, readers=readers, request_text=request_text,
     )
+    context = _with_run_wait(context, settings=settings, user_id=user_id, readers=readers)
     if not handoff or context.get('conversation_private') is not True:
         return context
     return _with_handoff_marker(
@@ -1031,6 +1051,56 @@ def _planning_context(settings, *, user_id, user_info, conversation, time_zone, 
         context, user_id=user_id, readers=readers, request_text=request_text,
         runs=runs, results=results, time_zone=time_zone, now=now,
     )
+
+
+def _with_run_wait(context, *, settings, user_id, readers):
+    """Mark the catalog's quick workflows, the ones a plan may wait for, when waiting is configured.
+
+    Only for a context that can start saved workflows, with Wait For Quick Workflows In Chat
+    configured, and only when personal workflows don't require the WorkflowUser role: a waiting
+    plan resumes without the user's sign-in, where that role can't be checked again. Each catalog
+    entry whose saved definition ``quick_run_eligibility`` accepts gets ``"waitable": true``, and
+    the context gets the server-only marker ``workflow_run_wait: {'ready': True}``. A failed read
+    leaves the context exactly as it was, so nothing waits. With waiting off, nothing changes.
+    """
+    if not user_id or not workflow_run_ready(context):
+        return context
+    from functions_orchestration_workflow_run_wait import quick_run_eligibility, wait_configured
+    settings = settings if isinstance(settings, dict) else {}
+    if not wait_configured(settings) or settings.get('require_member_of_workflow_user'):
+        return context
+    handles = context['handles']['workflows']
+    entries = context['catalog']['workflows']
+    ids = {}
+    for entry in entries:
+        handle = entry.get('handle') if isinstance(entry, dict) else None
+        record = handles.get(handle) if isinstance(handle, str) else None
+        if isinstance(record, dict) and _record_id(record.get('id')):
+            ids[handle] = record['id']
+    try:
+        workflows = {
+            workflow['id']: workflow
+            for workflow in readers['wait_workflows'](user_id, sorted(set(ids.values()))) or ()
+            if isinstance(workflow, dict) and isinstance(workflow.get('id'), str)
+            and workflow.get('user_id') == user_id
+        }
+    except Exception as exc:
+        _log_context(
+            'The saved workflows could not be read; no plan waits for one this turn.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return context
+    marked = []
+    for entry in entries:
+        workflow = workflows.get(ids.get(entry.get('handle'))) if isinstance(entry, dict) else None
+        if workflow is not None and quick_run_eligibility(workflow, settings)[0] is True:
+            entry = {**entry, 'waitable': True}
+        marked.append(entry)
+    return {
+        **context,
+        'catalog': {**context['catalog'], 'workflows': marked},
+        'workflow_run_wait': {'ready': True},
+    }
 
 
 def _with_workflow_markers(context, *, runs, results, time_zone=None, now=None):
