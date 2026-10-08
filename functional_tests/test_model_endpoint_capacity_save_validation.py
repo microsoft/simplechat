@@ -1,7 +1,7 @@
 # test_model_endpoint_capacity_save_validation.py
 """
 Functional tests for safe capacity validation at existing endpoint save routes.
-Version: 0.261.035
+Version: 0.261.052
 Implemented in: 0.261.035
 
 Fresh normal/optimized processes import the real application, settings normalizer,
@@ -311,6 +311,7 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
 
     def save_user(_user_id, changes):
         stores["user"] = copy.deepcopy(changes["personal_model_endpoints"])
+        return True
 
     def save_group(_group_id, endpoints):
         stores["group"] = copy.deepcopy(endpoints)

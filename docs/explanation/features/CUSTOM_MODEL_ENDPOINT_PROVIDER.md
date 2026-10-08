@@ -6,6 +6,14 @@ The Custom provider lets administrators and authorized workspace owners configur
 
 **Implemented in version: 0.250.172**
 
+Current extensions in **0.261.052**: per-model protocol/path choices, clearer
+catalog/request identity and effective capacities, shared CA trust selection,
+and a named [GenAI.mil profile](./GENAI_MIL_MODEL_PROFILE.md). Historical API-key
+limitations below describe the original implementation; generic Custom now
+supports the [documented authentication schemes](./CUSTOM_MODEL_ENDPOINT_AUTH.md).
+Generic Custom discovery remains unavailable; GenAI.mil has its protected,
+documented `/v1/models` discovery contract.
+
 **Issue:** [#1222](https://github.com/microsoft/simplechat/issues/1222)
 
 ## Dependencies

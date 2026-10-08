@@ -2,16 +2,16 @@
 
 ## Status and Version
 
-- Status: Phases 0-2 are implemented and pushed to draft PR #1514. Phase 3 runtime hardening and explicit activation are implemented locally in **0.261.046**. Beta deployment validation is blocked by Azure resource authorization; no build or deployment ran. Live provider acceptance is not complete. Phase 4 GenAI.mil and Phase 5 release/rollout remain planned.
+- Status: Phases 0-3 implementation is committed through `262ccbce`. The approved editor refinements, shared CA bundle manager, and Phase 4 GenAI.mil profile are implemented in the working tree in **0.261.052**. Local regression validation is recorded below; live provider acceptance, release promotion, and deployment remain separate.
 - Date: 2026-09-21.
-- Decisions last reviewed: 2026-09-25; beta selected for Phase 3 live testing of Foundry Claude/GPT through APIM and AOAI. Agents remain excluded; UI refinements and CA bundle management are recorded as post-Phase 3 work. GenAI.mil remains planned in Phase 4, with live access unavailable to the current tester.
+- Decisions last reviewed: 2026-10-05. Shared CA certificates use a dedicated private container in the existing Blob account and metadata in the existing Cosmos DB, independent of Enhanced Citations. Agents remain excluded from new per-model routing. Live GenAI.mil access remains unavailable to the current tester.
 - Baseline application version: **0.261.039**, from `application/single_app/config.py`.
 - Phase 0 closeout version: **0.261.040**, for test-fixture repairs and required version metadata only; that version did not implement new routing.
-- Implemented in version: **0.261.041** for the Phase 1 contract, migration planner, and resolver; **0.261.042** for Phase 2 editors, library selection, and previews; **0.261.044** for initial local Phase 3 runtime wiring; **0.261.045** for workflow authorization, deferred context, and adapter-boundary repairs; **0.261.046** for request capability enforcement, queued owner binding, protocol-consistent budgets, cancellation cleanup, and explicit activation. `application/single_app/config.py` is **0.261.046**.
+- Implemented in version: **0.261.041** for Phase 1, **0.261.042** for Phase 2, **0.261.044-0.261.046** for Phase 3 runtime hardening/activation, and **0.261.052** for editor usability, shared CA storage/trust selection, and the named GenAI.mil profile. `application/single_app/config.py` is **0.261.052**.
 - Working branch: `feature/customendpoints`, created from refreshed `origin/Development`.
 - Baseline commit: `f1be106ec2088cf9105293a7b1dac16e668e2685`.
 - Source reviewed: [Paullizer's React v2 branch in the main repository](https://github.com/microsoft/simplechat/tree/3f896d7b6c45800c593599f3100b9aa7c7251159), `origin/paullizer-react-v2-ui`, commit `3f896d7b6c45800c593599f3100b9aa7c7251159`, version **0.261.126** at inspection. The user identified the deployed UI as **0.261.123**; pin the source commit rather than assuming the deployed UI is the latest branch tip.
-- Tracking: [issue #1518](https://github.com/microsoft/simplechat/issues/1518), assigned to `Bionic711`, with roadmap priority **P0**, size **L**, and status **In progress**. [Draft PR #1514](https://github.com/microsoft/simplechat/pull/1514) contains the specification and pushed Phase 0-2 implementation at `87c0891f`; Phase 3 work remains local and uncommitted. Existing issue #1222 is not the tracker for this scope.
+- Tracking: [issue #1518](https://github.com/microsoft/simplechat/issues/1518) and [PR #1514](https://github.com/microsoft/simplechat/pull/1514). The prior local/uncommitted Phase 3 statements below describe historical checkpoints; Phase 3 is now committed. New **0.261.052** changes are not committed or deployed by this implementation task. Live GitHub status was not reverified because SSO authorization was unavailable. Existing issue #1222 is not the tracker for this scope.
 
 ## Problem and Evidence
 
@@ -699,7 +699,10 @@ No commit, push, release-note edit, or issue comment was made in this continuati
 #### Post-Phase 3 Follow-Up: Endpoint Usability and CA Bundles
 
 Recorded from the lead's review and the user's deferral on 2026-09-25. These are
-pending work items, not implemented features or changes to Phase 3 acceptance.
+historical pending work items. They are implemented in **0.261.052**, not changes
+to Phase 3's live acceptance requirements. See
+[shared CA bundles](./CUSTOM_ENDPOINT_CA_BUNDLES.md) and
+[the GenAI.mil profile](./GENAI_MIL_MODEL_PROFILE.md).
 Complete Phase 3 runtime validation first; implement the editor refinements and
 CA registry as separately testable increments afterward. Track with issue #1518.
 
@@ -713,7 +716,8 @@ CA registry as separately testable increments afterward. Track with issue #1518.
 
 ### Phase 4: GenAI.mil
 
-GenAI.mil is deferred from Phase 3, not removed from the overall plan and not
+GenAI.mil implementation is complete locally in **0.261.052**, with live
+verification still unavailable. It is separate from Phase 3, not removed from the overall plan and not
 excluded because of a protocol mismatch. The supplied documentation maps its
 inference to the existing `openai` Chat Completions contract, using
 `https://api.genai.mil/v1` and bearer-key authentication. Reuse that adapter rather

@@ -7,7 +7,9 @@ from functions_authentication import *
 from functions_governance import ensure_governance_access
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
-from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_capabilities import (
+    ModelTokenBudgetError, preview_model_token_limits, project_model_budget_metadata,
+)
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
 from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
 from functions_model_endpoint_types import (
@@ -40,6 +42,9 @@ from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
 import re
 import requests
+from model_endpoint_ca_bundles import CABundleError
+from functions_genai_mil import fetch_genai_mil_models
+from model_endpoint_profiles import GENAI_MIL_PROFILE, GenAIMilRequestError, get_custom_endpoint_profile
 
 
 def _get_configured_models(settings, setting_key):
@@ -421,6 +426,8 @@ def register_route_backend_models(bp):
             )
 
             if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                if get_custom_endpoint_profile(data) == GENAI_MIL_PROFILE:
+                    return jsonify({"models": fetch_genai_mil_models(data, get_settings())})
                 return build_safe_error_response(
                     "Model discovery is not available for Custom endpoints. Add models manually.",
                     400,
@@ -481,6 +488,8 @@ def register_route_backend_models(bp):
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except GenAIMilRequestError as error:
+            return jsonify(error.payload), error.status_code if error.status_code in (401, 403, 404, 429, 502) else 502
         except LookupError as exc:
             log_event(
                 "[MODELS] Fetch model list blocked because the model endpoint was not found",
@@ -524,10 +533,21 @@ def register_route_backend_models(bp):
                 "id": endpoint_id or "preview",
                 "routing_schema_version": data.get("routing_schema_version"),
                 "provider": data.get("provider"),
+                "profile": data.get("profile") or "",
                 "connection": data.get("connection"),
                 "models": [data.get("model")],
+                **project_model_budget_metadata(data),
             })
             resolved = resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+            budget = preview_model_token_limits(
+                endpoint["models"][0], endpoint, resolved["protocol"],
+            )
+        except ModelTokenBudgetError as exc:
+            log_models_exception(
+                "Model limit preview validation failed", exc,
+                extra={"scope": scope, "code": exc.code}, level=logging.WARNING,
+            )
+            return jsonify(exc.payload), 400
         except (ValueError, TypeError):
             return build_safe_error_response(
                 "Invalid model routing. Check API Type, API Path, URL Handling, model identifier, and version.",
@@ -537,6 +557,7 @@ def register_route_backend_models(bp):
         return jsonify({
             "preview_only": True,
             "resolved": {"method": "POST", **{field: resolved[field] for field in fields}},
+            "budget": budget,
         }), 200
 
     def handle_explicit_model_test(data, scope, saved_endpoint=None):
@@ -994,6 +1015,8 @@ def register_route_backend_models(bp):
                 return jsonify({"success": True, "count": count})
 
             return jsonify({"error": "Model provider not found."}), 400
+        except GenAIMilRequestError as error:
+            return jsonify(error.payload), error.status_code if error.status_code in (401, 403, 404, 429, 502) else 502
         except LookupError as e:
             log_event(
                 "[MODELS] Test connection blocked because the model endpoint was not found",
@@ -1076,6 +1099,10 @@ def register_route_backend_models(bp):
             return jsonify({"error": exc.public_message, "error_code": exc.code}), 400
         try:
             validate_custom_model_endpoints(normalized, get_settings())
+            validate_model_endpoint_ca_choices(normalized, get_settings())
+        except CABundleError as exc:
+            log_models_exception("Personal CA bundle validation failed", exc, extra={"code": exc.code}, level=logging.WARNING)
+            return jsonify(exc.payload), exc.status
         except ModelEndpointValidationError as exc:
             log_models_exception(
                 "Personal model endpoint validation failed",
@@ -1124,7 +1151,8 @@ def register_route_backend_models(bp):
             if endpoint_id and endpoint_id not in saved_endpoint_ids:
                 keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="user")
 
-        update_user_settings(user_id, {"personal_model_endpoints": saved_endpoints})
+        if not update_user_settings(user_id, {"personal_model_endpoints": saved_endpoints}):
+            return build_safe_error_response("Unable to confirm the endpoint save. Reload and verify before retrying.", 503)
         return jsonify({
             "success": True,
             "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
@@ -1201,6 +1229,10 @@ def register_route_backend_models(bp):
             return jsonify({"error": exc.public_message, "error_code": exc.code}), 400
         try:
             validate_custom_model_endpoints(normalized, get_settings())
+            validate_model_endpoint_ca_choices(normalized, get_settings())
+        except CABundleError as exc:
+            log_models_exception("Group CA bundle validation failed", exc, extra={"code": exc.code}, level=logging.WARNING)
+            return jsonify(exc.payload), exc.status
         except ModelEndpointValidationError as exc:
             log_models_exception(
                 "Group model endpoint validation failed",

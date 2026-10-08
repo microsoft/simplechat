@@ -71,6 +71,7 @@ from route_backend_groups import *
 from route_backend_users import *
 from route_backend_group_documents import *
 from route_backend_models import *
+from route_backend_model_ca_bundles import register_route_backend_model_ca_bundles
 from route_backend_workflows import *
 from route_backend_safety import *
 from route_backend_feedback import *
@@ -125,6 +126,7 @@ from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_capabilities import get_model_endpoint_library_options
+from model_endpoint_profiles import get_custom_endpoint_profile_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -612,6 +614,7 @@ def inject_settings():
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
         model_endpoint_routing_api_types=get_model_endpoint_provider_ui_options(routing_schema_version=2),
         model_endpoint_library=get_model_endpoint_library_options(),
+        model_endpoint_profiles=get_custom_endpoint_profile_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
@@ -1370,6 +1373,7 @@ register_route_blueprint('backend_group_documents', register_route_backend_group
 
 # ------------------- API Model Routes -------------------
 register_route_blueprint('backend_models', register_route_backend_models, user_required_blueprint)
+register_route_blueprint('backend_model_ca_bundles', register_route_backend_model_ca_bundles, user_required_blueprint)
 
 # ------------------- API Workflow Routes ----------------
 register_route_blueprint('backend_workflows', register_route_backend_workflows, user_required_blueprint)

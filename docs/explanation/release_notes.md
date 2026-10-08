@@ -2,6 +2,43 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.053)**
+
+#### Bug Fixes
+
+*   **Chat Page Supports Enabled Per-Model Routing Endpoints**
+    *   Fixed the chat page returning HTTP 500 when an enabled global endpoint uses explicit per-model routing.
+    *   Initial model selectors and global, personal, and group catalogs now resolve the protocol-specific model or deployment identifier instead of rejecting the newer routing schema.
+    *   Preserves legacy endpoint identifiers, disabled-endpoint filtering, and existing route access controls.
+    *   Added regression coverage for Anthropic, OpenAI-compatible, and Azure OpenAI deployment protocols, scoped catalogs, and legacy endpoints.
+    *   (Ref: [AI Models settings](../admin/ai-models.md), [Chat routing regression tests](../../functional_tests/test_chat_explicit_model_routing.py), [#1717](https://github.com/microsoft/simplechat/issues/1717))
+
+### **(v0.261.052)**
+
+#### New Features
+
+*   **Shared CA Bundles for Custom Endpoints**
+    *   Administrators can upload named PEM CA certificates, inspect fingerprints, expiry, recent history, and endpoint references, replace certificates under a stable ID, and delete unused bundles with server-side reference checks.
+    *   Uses a dedicated private container in the existing application Blob account and metadata in Cosmos DB, independently of Enhanced Citations. Authorized global, personal, and group endpoint editors can select bundles or public roots.
+    *   Preserves existing filesystem-path trust, hostname verification, mTLS paths, and outbound protections. Unavailable or corrupt bundles fail explicitly rather than falling back to public roots.
+    *   (Ref: [Shared CA Bundles](features/CUSTOM_ENDPOINT_CA_BUNDLES.md), `model_endpoint_ca_bundles.py`, `route_backend_model_ca_bundles.py`, [#1518](https://github.com/microsoft/simplechat/issues/1518))
+
+*   **GenAI.mil Custom Profile**
+    *   Adds scoped backend model discovery and streamed/non-streamed OpenAI-compatible text Chat Completions using the documented GenAI.mil contract.
+    *   Requires fresh credentials and explicit approval when changing API origins. Tools, vision, structured output, Messages, and Responses remain unsupported; other SDK generation defaults are not sent.
+    *   Handles key-action, permission, model-unavailable, rate-limit, and upstream failures without exposing provider bodies or echoed keys. Automatic retries are disabled, and unavailable usage is not recorded as measured zero.
+    *   Local mocked validation is complete; authorized live GenAI.mil acceptance remains outstanding. No saved endpoint migration or agent opt-in is performed.
+    *   (Ref: [GenAI.mil Profile](features/GENAI_MIL_MODEL_PROFILE.md), `model_endpoint_profiles.py`, `functions_genai_mil.py`, [#1518](https://github.com/microsoft/simplechat/issues/1518))
+
+#### User Interface Enhancements
+
+*   **Clearer Endpoint Routing and Model Limits**
+    *   Clarifies optional gateway prefixes, Automatic versus Exact API bases, required request identifiers, and optional catalog metadata across all endpoint scopes.
+    *   Removes duplicate schema-v2 catalog identity controls and stops filling Azure deployment aliases with publisher model IDs.
+    *   Makes model limits primary, labels endpoint defaults as **Default model limits**, and displays effective values and sources from the runtime resolver alongside route previews.
+    *   Moves advanced network and certificate trust controls below the endpoint configuration without changing existing defaults or routing contracts.
+    *   (Ref: [AI Models settings](../admin/ai-models.md), `model_routing_editor.js`, `model_budget_editor.js`, [#1518](https://github.com/microsoft/simplechat/issues/1518))
+
 ### **(v0.261.051)**
 
 #### Bug Fixes

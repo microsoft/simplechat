@@ -1,6 +1,7 @@
 # functions_settings.py
 
 from functools import wraps
+from contextlib import contextmanager
 import logging
 import hashlib
 import threading
@@ -26,6 +27,9 @@ from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_model_capabilities import normalize_model_budget_overrides
+from model_endpoint_ca_bundles import (
+    CABundleRegistry, ManagedCABundle, endpoint_ca_bundle_ids, normalize_ca_bundle_reference,
+)
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -47,6 +51,9 @@ from functions_model_endpoint_urls import (
     routing_schema_version,
 )
 from functions_model_endpoint_providers import get_model_endpoint_provider
+from model_endpoint_profiles import (
+    get_custom_endpoint_profile, merge_profile_credential_approval, validate_genai_profile,
+)
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
     build_rate_limit_error_payload,
@@ -2075,6 +2082,66 @@ def get_rate_limit_message(settings=None):
     return build_rate_limit_message(resolved_settings)
 
 
+def get_model_endpoint_ca_bundle_registry(settings):
+    """Build lazy CA storage from this operation's settings and initialized handles."""
+    def log_ca(action, **properties):
+        log_event(
+            f"[MODEL_CA_BUNDLES] Certificate bundle {action}.",
+            extra=properties, level=logging.INFO,
+        )
+
+    def fence_global(expected_etag):
+        try:
+            _get_app_settings_store().write(lambda document: document, expected_etag=expected_etag)
+        except SettingsConflictError:
+            # A newer conditional write already fenced the abandoned writer.
+            return
+
+    return CABundleRegistry(
+        cosmos_settings_container,
+        lambda: build_enhanced_citations_blob_service_client(settings),
+        {
+            "settings": cosmos_settings_container,
+            "user_settings": cosmos_user_settings_container,
+            "groups": cosmos_groups_container,
+        },
+        global_source_fence=fence_global, log=log_ca,
+    )
+
+
+@contextmanager
+def reserve_model_endpoint_ca_references(kind, source_id, old_endpoints, new_endpoints, expected_etag, *, settings=None):
+    """Existing configurations without managed bundles incur no registry I/O."""
+    if not (endpoint_ca_bundle_ids(old_endpoints) | endpoint_ca_bundle_ids(new_endpoints)):
+        yield False
+        return
+    settings = get_settings() if settings is None else settings
+    registry = get_model_endpoint_ca_bundle_registry(settings)
+    with registry.reserve_references(kind, source_id, old_endpoints, new_endpoints, expected_etag):
+        yield True
+
+
+def validate_model_endpoint_ca_choices(endpoints, settings):
+    bundle_ids = endpoint_ca_bundle_ids(endpoints)
+    if bundle_ids:
+        registry = get_model_endpoint_ca_bundle_registry(settings)
+        for bundle_id in bundle_ids:
+            registry.validate_selection(bundle_id)
+
+
+def resolve_model_endpoint_ca_trust(endpoint, settings, legacy_path):
+    connection = (endpoint or {}).get("connection") or {}
+    mode, bundle_id = normalize_ca_bundle_reference(connection)
+    if mode == "public":
+        return ""
+    if not bundle_id:
+        return legacy_path
+    if settings is None:
+        raise ValueError("Current application settings are required to resolve a managed CA bundle.")
+    pem, revision, digest = get_model_endpoint_ca_bundle_registry(settings).resolve(bundle_id)
+    return ManagedCABundle(bundle_id, revision, digest, pem)
+
+
 def update_settings(new_settings, *, expected_etag=None):
     """Merge intended changes into Cosmos with OCC and shared-cache publication."""
     expected_etag = expected_etag or new_settings.get("_etag")
@@ -2104,7 +2171,21 @@ def update_settings(new_settings, *, expected_etag=None):
         return settings_item
 
     try:
-        _get_app_settings_store().write(apply_updates, expected_etag=expected_etag)
+        store = _get_app_settings_store()
+        if "model_endpoints" in updates:
+            previous = store.read(use_cosmos=True)
+            previous_endpoints = previous.get("model_endpoints") or []
+            new_endpoints = updates["model_endpoints"] or []
+            with reserve_model_endpoint_ca_references(
+                "settings", "app_settings", previous_endpoints, new_endpoints,
+                previous.get("_etag"), settings={**previous, **updates},
+            ) as fenced:
+                store.write(
+                    apply_updates,
+                    expected_etag=expected_etag or (previous.get("_etag") if fenced else None),
+                )
+        else:
+            store.write(apply_updates, expected_etag=expected_etag)
         log_event(
             "[ASC] App settings updated and published successfully.",
             level=logging.INFO
@@ -2665,6 +2746,7 @@ def normalize_model_endpoints(endpoints):
         if endpoint_copy.get("provider") != provider:
             endpoint_copy["provider"] = provider
             changed = True
+        get_custom_endpoint_profile(endpoint_copy)
         if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM and not explicit_routing:
             api_type = normalize_model_endpoint_api_type(
                 provider,
@@ -2853,6 +2935,9 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
         if value in (None, ""):
             continue
         merged[key] = value
+    if "profile" in incoming_endpoint:
+        merged["profile"] = incoming_endpoint["profile"] or ""
+    merge_profile_credential_approval(existing_endpoint, incoming_endpoint, merged)
     # Null capacity/identity overrides deliberately restore inheritance, unlike
     # blank authentication fields which must retain their stored secrets.
     merged.update(normalize_model_budget_overrides(incoming_endpoint))
@@ -3244,6 +3329,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
                 # Add any other default top-level fields if needed
             }
 
+        old_model_endpoints = copy.deepcopy(doc["settings"].get("personal_model_endpoints") or [])
 
         try:
             validate_legacy_plugin_settings_update(doc['settings'], settings_to_update)
@@ -3358,19 +3444,26 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         # Use timezone-aware UTC time
         doc['lastUpdated'] = datetime.now(timezone.utc).isoformat()
 
-        if (
-            {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
-            or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
-        ):
-            if doc.get('_etag'):
-                cosmos_user_settings_container.replace_item(
-                    user_id, body=doc,
-                    etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
-                )
+        new_model_endpoints = (
+            doc["settings"].get("personal_model_endpoints") or []
+            if "personal_model_endpoints" in settings_to_update else old_model_endpoints
+        )
+        with reserve_model_endpoint_ca_references(
+            "user_settings", user_id, old_model_endpoints, new_model_endpoints, doc.get("_etag"),
+        ) as fenced:
+            if (
+                fenced or {'plugins', 'semantic_kernel_plugins'}.intersection(settings_to_update)
+                or doc['settings'].get('plugins') or doc['settings'].get('semantic_kernel_plugins')
+            ):
+                if doc.get('_etag'):
+                    cosmos_user_settings_container.replace_item(
+                        user_id, body=doc,
+                        etag=doc['_etag'], match_condition=MatchConditions.IfNotModified,
+                    )
+                else:
+                    cosmos_user_settings_container.create_item(body=doc)
             else:
-                cosmos_user_settings_container.create_item(body=doc)
-        else:
-            cosmos_user_settings_container.upsert_item(body=doc)
+                cosmos_user_settings_container.upsert_item(body=doc)
         _set_request_cached_user_settings(user_id, doc)
         _delete_user_ui_settings_cache(user_id)
 
@@ -3381,7 +3474,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
             "User settings update failed with Cosmos DB HTTP error.",
             extra={
                 "user_id": user_id,
-                "error": str(e)
+                "error_type": type(e).__name__
             },
             level=logging.ERROR,
             exceptionTraceback=True
@@ -3394,7 +3487,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
             "User settings update failed with unexpected error.",
             extra={
                 "user_id": user_id,
-                "error": str(e)
+                "error_type": type(e).__name__
             },
             level=logging.ERROR,
             exceptionTraceback=True

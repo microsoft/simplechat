@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for user and group model endpoint scope enforcement.
-Version: 0.261.046
+Version: 0.261.052
 Implemented in: 0.239.187
 
 Schema-v2 preview authorization and no-I/O coverage added in: 0.261.042
@@ -29,6 +29,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
+from functions_model_capabilities import ModelTokenBudgetError, preview_model_token_limits, project_model_budget_metadata
 
 
 def test_routing_preview_authorization_and_no_dispatch():
@@ -50,6 +51,9 @@ def test_routing_preview_authorization_and_no_dispatch():
         "normalize_model_endpoint_routing": normalize_model_endpoint_routing,
         "resolve_model_endpoint_route": resolve_model_endpoint_route,
         "routing_schema_version": routing_schema_version,
+        "ModelTokenBudgetError": ModelTokenBudgetError,
+        "preview_model_token_limits": preview_model_token_limits,
+        "project_model_budget_metadata": project_model_budget_metadata,
         "resolve_request_endpoint_payload": forbidden,
         "build_inference_client": forbidden,
         "log_models_exception": Mock(), "log_event": Mock(),

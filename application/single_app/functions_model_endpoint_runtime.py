@@ -33,7 +33,12 @@ from functions_model_endpoint_urls import (
     model_endpoint_route_cache_key,
     routing_schema_version,
 )
-from functions_settings import resolve_model_endpoint_foundry_scope
+from functions_settings import (
+    get_model_endpoint_ca_bundle_registry, resolve_model_endpoint_foundry_scope,
+    resolve_model_endpoint_ca_trust,
+)
+from model_endpoint_ca_bundles import normalize_ca_bundle_reference
+from model_endpoint_profiles import GENAI_MIL_PROFILE, get_custom_endpoint_profile
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -226,6 +231,9 @@ def build_model_endpoint_sync_chat_client(
     normalized_provider = str(provider or 'aoai').strip().lower()
     direct_custom = normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM
     if direct_custom:
+        custom_endpoint_ca_bundle_path = resolve_model_endpoint_ca_trust(
+            endpoint_config, settings, custom_endpoint_ca_bundle_path,
+        )
         endpoint = validate_custom_model_endpoint_url(
             endpoint,
             allow_private=allow_private_custom_endpoints,
@@ -314,6 +322,7 @@ def build_model_endpoint_sync_chat_client(
                 resolved_base_url=resolved_base_url,
                 request_url=operation_url,
                 client_cert=client_certificate,
+                **({"custom_profile": GENAI_MIL_PROFILE} if get_custom_endpoint_profile(endpoint_config or {}) == GENAI_MIL_PROFILE else {}),
             ))
         client_kwargs = {
             'api_version': api_version,
@@ -416,6 +425,9 @@ Neither callback should resolve secret values; credentials remain a later step.
         raise ValueError("The selected model is unavailable.")
     routes = validate_model_endpoint_routing(endpoint, policy, require_resolvable=True)
     route = next(route for route in routes if route["model_id"] == context["model_id"])
+    _, bundle_id = normalize_ca_bundle_reference(endpoint.get("connection") or {})
+    if bundle_id:
+        route["ca_bundle"] = get_model_endpoint_ca_bundle_registry(policy).revision_token(bundle_id)
     cache_key = model_endpoint_route_cache_key(
         route, scope_type=scope_type, scope_id=context["scope_id"], configuration_revision=revision,
     )
@@ -760,6 +772,9 @@ def build_semantic_kernel_chat_service_for_model(
             settings.get('custom_model_endpoint_ca_bundle_path') or ''
         ).strip()
         if direct_custom:
+            custom_endpoint_ca_bundle_path = resolve_model_endpoint_ca_trust(
+                resolved_model_endpoint, settings, custom_endpoint_ca_bundle_path,
+            )
             endpoint = validate_custom_model_endpoint_url(
                 endpoint,
                 allow_private=allow_private_custom_endpoints,
@@ -860,12 +875,16 @@ def build_semantic_kernel_chat_service_for_model(
                     client_kwargs['default_headers'] = extra_headers
                 if request_api_version:
                     client_kwargs['default_query'] = {'api-version': request_api_version}
+                custom_profile = get_custom_endpoint_profile(resolved_model_endpoint or {})
+                if custom_profile == GENAI_MIL_PROFILE:
+                    client_kwargs["max_retries"] = 0
                 async_client = AsyncOpenAI(**client_kwargs)
                 if direct_custom:
                     async_client = sanitize_custom_async_openai_client(
                         async_client,
                         api_type=api_type,
                         request_url=operation_url or client_kwargs['base_url'],
+                        custom_profile=custom_profile,
                     )
                 return resolved_service(OpenAIChatCompletion(
                     service_id=service_id,

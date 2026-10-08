@@ -13,6 +13,11 @@ an appliance that requires a client certificate.
 
 **Implemented in version: 0.261.020**
 
+Shared CA trust selection added in **0.261.052**. Admin-managed CA certificates
+are public trust material, not an mTLS authentication scheme. Certificate/key
+paths remain separate; private keys are never uploaded to the CA manager.
+See [shared CA bundles](./CUSTOM_ENDPOINT_CA_BUNDLES.md).
+
 ## Schemes
 
 | Scheme | `auth.type` | Use it for |
@@ -137,4 +142,4 @@ continuing without one.
 - The token cache is per process. A multi-worker deployment fetches one token per
   worker, which is correct but not maximally efficient.
 - Client certificate paths are not yet editable in the endpoint editor UI; they
-  are set on the endpoint's connection record.
+  are set on the endpoint's connection record and are preserved by editor saves.

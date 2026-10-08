@@ -61,6 +61,59 @@ const selectFields = Object.freeze([
     }
 ]);
 
+export function projectModelBudgetMetadata(record = {}) {
+    const fields = [...capacityFields, ...identityFields, ...selectFields];
+    return Object.fromEntries(
+        fields.filter((field) => Object.prototype.hasOwnProperty.call(record, field.key))
+            .map((field) => [field.key, record[field.key]])
+    );
+}
+
+export function clearModelBudgetPreviews(container) {
+    for (const preview of container?.querySelectorAll('[data-testid="model-effective-limits"]') || []) {
+        preview.textContent = "Preview Route to resolve effective limits and their sources. Unknown limits are not assumed.";
+    }
+}
+
+export function renderModelBudgetPreview(row, budget) {
+    const preview = row?.querySelector('[data-testid="model-effective-limits"]');
+    if (!preview) {
+        return;
+    }
+    preview.replaceChildren();
+    if (!budget || typeof budget !== "object") {
+        preview.textContent = "Effective limits are unavailable. Retry Preview Route.";
+        return;
+    }
+    const sources = {
+        model: "Model override",
+        endpoint: "Endpoint default",
+        catalog: "Verified catalog",
+        unresolved: "Not configured or verified"
+    };
+    const heading = document.createElement("div");
+    heading.className = "fw-semibold mb-1";
+    heading.textContent = "Effective model limits";
+    const list = document.createElement("dl");
+    list.className = "row small mb-0";
+    for (const field of capacityFields) {
+        const limit = budget[field.key];
+        const label = document.createElement("dt");
+        label.className = "col-12 col-md-5";
+        label.textContent = field.label;
+        const value = document.createElement("dd");
+        value.className = "col-12 col-md-7 text-break";
+        value.dataset.limitPreview = field.key;
+        const verifiedValue = Number.isSafeInteger(limit?.value) && limit.value > 0;
+        value.dataset.effectiveValue = verifiedValue ? String(limit.value) : "";
+        value.textContent = verifiedValue
+            ? `${limit.value.toLocaleString()} tokens - ${sources[limit.source] || "Unrecognized source"}`
+            : "Not configured or verified";
+        list.append(label, value);
+    }
+    preview.append(heading, list);
+}
+
 export class ModelBudgetValidationError extends Error {
     constructor(message) {
         super(message);
@@ -169,19 +222,22 @@ function createBudgetField(field, record, idPrefix, isCapacity) {
     return column;
 }
 
-export function createModelBudgetEditor(record = {}, { scope = "model", idPrefix = "model-budget" } = {}) {
+export function createModelBudgetEditor(record = {}, {
+    scope = "model", idPrefix = "model-budget", includeCatalogIdentity = true
+} = {}) {
     const editor = document.createElement("details");
     editor.className = "border rounded p-3 mt-3";
     editor.dataset.modelBudgetEditor = scope;
     editor.dataset.testid = `${scope}-budget-editor`;
+    editor.open = scope === "model";
 
     const summary = document.createElement("summary");
     summary.className = "fw-semibold";
-    summary.textContent = scope === "endpoint" ? "Advanced endpoint capacity" : "Advanced model capacity";
+    summary.textContent = scope === "endpoint" ? "Default model limits" : "Model limits";
     const description = document.createElement("p");
     description.className = "small text-muted mt-2 mb-2";
     description.textContent = scope === "endpoint"
-        ? "Defaults for models on this endpoint. Blank values inherit the exact catalog model's limits; a model override takes precedence. Only enter verified specifications for the deployed provider and version."
+        ? "Optional defaults for models on this endpoint, not endpoint-wide quotas or hard overrides. A model override takes precedence; blank values inherit verified catalog limits. Only enter verified deployment specifications."
         : "Each blank value inherits independently: model override -> endpoint override -> exact catalog model. Use verified deployment specifications, not a guessed capacity based on a deployment name.";
     const allowanceHelp = document.createElement("p");
     allowanceHelp.className = "small text-muted mb-3";
@@ -189,11 +245,20 @@ export function createModelBudgetEditor(record = {}, { scope = "model", idPrefix
     const row = document.createElement("div");
     row.className = "row g-3";
     if (scope === "model") {
-        identityFields.forEach((field) => row.appendChild(createBudgetField(field, record, idPrefix, false)));
+        identityFields.filter((field) => includeCatalogIdentity || field.key !== "catalogModelId")
+            .forEach((field) => row.appendChild(createBudgetField(field, record, idPrefix, false)));
     }
     capacityFields.forEach((field) => row.appendChild(createBudgetField(field, record, idPrefix, true)));
     selectFields.forEach((field) => row.appendChild(createBudgetField(field, record, idPrefix, false)));
     editor.append(summary, description, allowanceHelp, row);
+    if (scope === "model") {
+        const preview = document.createElement("div");
+        preview.className = "border rounded p-2 mt-3";
+        preview.dataset.testid = "model-effective-limits";
+        preview.setAttribute("aria-live", "polite");
+        preview.textContent = "Preview Route to resolve effective limits and their sources. Unknown limits are not assumed.";
+        editor.append(preview);
+    }
     return editor;
 }
 

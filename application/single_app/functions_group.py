@@ -4,6 +4,7 @@ from config import *
 import functions_authentication
 import functions_settings
 from typing import Iterable
+from azure.core import MatchConditions
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
@@ -337,13 +338,27 @@ def get_group_model_endpoints(group_id: str):
 
 def update_group_model_endpoints(group_id: str, endpoints):
     """Persist the model endpoints list onto the group document."""
+    assert_group_role(
+        functions_authentication.get_current_user_id(), group_id,
+        allowed_roles=("Owner", "Admin"),
+    )
     group_doc = find_group_by_id(group_id)
     if not group_doc:
         raise ValueError("Group not found")
     if not isinstance(endpoints, list):
         raise ValueError("model_endpoints must be a list")
-    group_doc["model_endpoints"] = endpoints
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_groups_container.upsert_item(group_doc)
+    old_endpoints = group_doc.get("model_endpoints") or []
+    with functions_settings.reserve_model_endpoint_ca_references(
+        "groups", group_id, old_endpoints, endpoints, group_doc.get("_etag"),
+    ) as fenced:
+        group_doc["model_endpoints"] = endpoints
+        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        if fenced:
+            cosmos_groups_container.replace_item(
+                item=group_id, body=group_doc, etag=group_doc["_etag"],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            cosmos_groups_container.upsert_item(group_doc)
     bump_chat_bootstrap_global_cache_version(reason="group_model_endpoints_updated")
     return group_doc

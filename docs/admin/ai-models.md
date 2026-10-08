@@ -5,7 +5,7 @@ description: "AI Models configures chat, embedding, image generation, APIM, mult
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.046"
+version: "0.261.053"
 ---
 
 
@@ -53,6 +53,13 @@ nonproduction endpoint, use **Enable** to make its enabled models available;
 must also be persisted with the main settings save. Existing legacy endpoints
 are not migrated. Live beta acceptance remains separate from local validation.
 
+In **0.261.053**, the chat page's initial model list and global, personal, and
+group model catalogs explicitly support per-model routing. This fixes a chat-page
+HTTP 500 when an enabled schema-v2 endpoint is present. Legacy endpoints retain
+their existing identifiers, and disabled endpoints remain excluded. On older
+builds, temporarily disable the affected endpoint and save settings to restore
+chat access while retaining other enabled endpoints.
+
 | Control | Purpose |
 | --- | --- |
 | Model Library | Associates the row with a published catalogue ID. A new Custom row can take a visible protocol suggestion; an existing explicit choice is preserved. This does not grant gateway capabilities. |
@@ -61,6 +68,8 @@ are not migrated. Live beta acceptance remains separate from local validation.
 | API Path | Inserts a relative path immediately after the origin and before the endpoint's existing path. Available on non-Custom rows too. |
 | API Version / Anthropic Version | Supplies the selected Custom API's applicable protocol version, separately from the published model version. |
 | Preview Route | Displays the server-computed POST URL without resolving credentials or contacting the provider. |
+| Certificate trust | Keeps existing application trust, selects public roots, or uses an admin-managed shared CA bundle without disabling hostname verification. |
+| Custom profile | Selects Generic Custom or the documented text-only GenAI.mil contract; a profile is separate from its wire API type. |
 
 For example, an endpoint `https://gateway.example/shared/v1`, an API Path of
 `team-a`, and Messages in Auto mode preview as
@@ -84,8 +93,8 @@ their compatibility behavior. See the [identity and scope requirements]({{ '/gui
 Capacity overrides implemented in version: **0.261.035** (application version in
 `application/single_app/config.py`).
 
-Use **Advanced endpoint capacity** for verified defaults shared by the models on
-an endpoint. Use **Advanced model capacity** in an individual model row when a
+Use the collapsed **Default model limits** for verified defaults shared by models
+on an endpoint. Use the initially expanded **Model limits** in an individual row when a
 deployment has different limits or an arbitrary deployment name needs an exact
 catalog identity. These controls are also available in authorized personal and
 group workspace endpoint editors.
@@ -106,6 +115,30 @@ exact catalog model**. Leave a field blank to inherit; clearing an existing
 override saves `null`. A missing or unknown maximum does not mean unlimited
 capacity. Only enter positive whole numbers up to `9007199254740991`; fractions,
 scientific notation, negative values, and zero are rejected.
+
+In **0.261.052**, schema-v2 rows have one optional Model Library selector rather
+than two editable catalog identities. Library suggestions never fill an Azure
+deployment alias or replace an entered request identifier. **Preview Route**
+also displays effective capacities and their model/endpoint/catalog sources,
+using the runtime resolver. Unknown limits remain explicitly unverified.
+
+### Shared certificates and GenAI.mil
+
+Under **Advanced network and certificate trust**, administrators can expand
+**Manage shared CA bundles** to upload certificate-only PEM bundles, inspect
+fingerprints/expiry/history/references, replace certificates under a stable ID,
+and delete unused bundles with server-side reference checks. The private Blob
+container and Cosmos metadata are shared across workers; Enhanced Citations
+need not be enabled. Legacy filesystem paths continue to work. See
+[shared CA bundle operations]({{ '/explanation/features/CUSTOM_ENDPOINT_CA_BUNDLES/' | relative_url }}).
+
+For GenAI.mil, choose **Custom profile -> GenAI.mil**, enter the scoped key, and
+use **Fetch Models** or manual model entry. Only documented text Chat
+Completions fields are sent. Tools, vision, structured output, Messages, and
+Responses remain unsupported. Stored keys are not silently reused after an API
+origin change. Local implementation does not establish live acceptance or data
+authorization. See the
+[GenAI.mil profile contract]({{ '/explanation/features/GENAI_MIL_MODEL_PROFILE/' | relative_url }}).
 
 Server-side validation also rejects invalid overrides before saving the submitted
 endpoint configuration or credentials. Personal/group saves return HTTP 400 with

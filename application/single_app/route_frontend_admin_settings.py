@@ -15,6 +15,7 @@ from functions_model_endpoint_validation import (
     validate_custom_model_endpoints,
 )
 from functions_settings import *
+from model_endpoint_ca_bundles import CABundleError
 from functions_content_safety import normalize_content_safety_violation_message
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
@@ -1761,6 +1762,14 @@ def register_route_frontend_admin_settings(bp):
                     parsed_model_endpoints,
                     custom_endpoint_validation_settings,
                 )
+                validate_model_endpoint_ca_choices(parsed_model_endpoints, custom_endpoint_validation_settings)
+            except CABundleError as exc:
+                log_event(
+                    "[MODEL_CA_BUNDLES] Global endpoint trust validation failed.",
+                    extra={"code": exc.code}, level=logging.WARNING,
+                )
+                flash(exc.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
             except ModelEndpointValidationError as exc:
                 log_event(
                     "[MODEL_ENDPOINT] Custom model endpoint validation failed",

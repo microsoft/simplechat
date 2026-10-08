@@ -21,6 +21,7 @@ from functions_model_endpoint_providers import (
     normalize_api_type_value,
 )
 from functions_model_capabilities import resolve_model_capabilities
+from model_endpoint_profiles import GENAI_MIL_CAPABILITIES, GENAI_MIL_PROFILE, get_custom_endpoint_profile
 
 
 VERSION_SEGMENT = re.compile(r"v\d+(?:[a-z][a-z0-9]*)?", re.IGNORECASE)
@@ -291,6 +292,9 @@ against outbound policy. This function is not permission to execute a request.
         raise ValueError("Unsupported endpoint provider.")
     model = dict(model)
     api_type = normalize_api_type_value(model.get("api_type"))
+    custom_profile = get_custom_endpoint_profile(endpoint)
+    if custom_profile == GENAI_MIL_PROFILE and api_type != "openai":
+        raise ValueError("GenAI.mil supports OpenAI-compatible Chat Completions only.")
     if profile != "custom":
         legacy_identifier = model.get("deploymentName") or model.get("deployment") or model.get("modelName") or model.get("name") or ""
         protocol = infer_model_endpoint_protocol(profile, (endpoint.get("connection") or {}).get("endpoint"), legacy_identifier)
@@ -360,12 +364,13 @@ against outbound policy. This function is not permission to execute a request.
         "endpoint_id": _text(endpoint.get("id"), "endpoint ID", required=True, limit=256),
         "model_id": _text(model.get("id"), "model ID", required=True, limit=256),
         "profile": profile, "api_type": api_type, "protocol": descriptor.protocol,
+        **({"custom_profile": custom_profile} if custom_profile else {}),
         "request_model": request_model, "api_path": api_path, "url_mode": mode,
         "api_base": base, "operation_url": operation_url,
         "api_version": version if api_type == "azure_openai" else "",
         "anthropic_version": version if api_type == "anthropic" else "",
         "credential_policy": _credential_policy(endpoint, descriptor),
-        "capabilities": resolve_model_capabilities(model, endpoint, use_model_routing=True),
+        "capabilities": dict(GENAI_MIL_CAPABILITIES) if custom_profile == GENAI_MIL_PROFILE else resolve_model_capabilities(model, endpoint, use_model_routing=True),
     }
 
 

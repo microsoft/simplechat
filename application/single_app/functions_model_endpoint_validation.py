@@ -6,6 +6,8 @@ import re
 import socket
 from typing import Any, Dict, Iterable
 from urllib.parse import urlparse, urlunparse
+from model_endpoint_ca_bundles import CABundleError, normalize_ca_bundle_reference
+from model_endpoint_profiles import ModelEndpointProfileError, validate_genai_profile
 
 from functions_model_endpoint_providers import (
     AUTH_TYPE_API_KEY,
@@ -315,6 +317,10 @@ def validate_custom_model_endpoint(
     routes = validate_model_endpoint_routing(endpoint, settings) if explicit_routing else []
     if str(endpoint.get("provider") or "").strip().lower() != MODEL_ENDPOINT_PROVIDER_CUSTOM:
         return
+    try:
+        validate_genai_profile(endpoint)
+    except ModelEndpointProfileError as error:
+        raise ModelEndpointValidationError(str(error)) from error
 
     endpoint_name = str(endpoint.get("name") or "").strip()
     if not endpoint_name:
@@ -368,6 +374,10 @@ def validate_custom_model_endpoint(
         if isinstance(endpoint.get("connection"), dict)
         else {}
     )
+    try:
+        normalize_ca_bundle_reference(connection)
+    except CABundleError as error:
+        raise ModelEndpointValidationError(error.public_message) from error
     endpoint_settings = settings or {}
     allow_private = bool(endpoint_settings.get("allow_private_custom_model_endpoints", False))
     allow_insecure = bool(endpoint_settings.get("allow_insecure_custom_model_endpoints", False))

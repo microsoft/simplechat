@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Custom model endpoint provider.
-Version: 0.261.044
+Version: 0.261.052
 Implemented in: 0.250.172; explicit scoped routing in 0.261.041; runtime dispatch in 0.261.044
 
 This test validates canonical model identifiers, API-type precedence, Custom
@@ -110,6 +110,8 @@ def load_model_endpoint_runtime_module():
     settings_stub.resolve_model_endpoint_foundry_scope = (
         lambda auth_settings, endpoint=None: "https://ai.azure.com/.default"
     )
+    settings_stub.resolve_model_endpoint_ca_trust = lambda endpoint, settings, legacy_path: legacy_path
+    settings_stub.get_model_endpoint_ca_bundle_registry = lambda settings: None
 
     original_modules = {}
     for module_name, module_stub in {

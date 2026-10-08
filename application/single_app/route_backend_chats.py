@@ -246,6 +246,8 @@ from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_agent_run, log_chat_activity, log_conversation_creation, log_token_usage
+from model_endpoint_profiles import GenAIMilRequestError
+from model_endpoint_usage import project_completion_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -20712,31 +20714,32 @@ def register_route_backend_chats(bp):
                         "Please contact your administrator to resolve Semantic Kernel integration."
                     )
                 # Capture token usage for storage in message metadata
-                token_usage_data = {
-                    'prompt_tokens': response.usage.prompt_tokens,
-                    'completion_tokens': response.usage.completion_tokens,
-                    'total_tokens': response.usage.total_tokens,
-                    'captured_at': datetime.utcnow().isoformat()
-                }
-
-                log_event(
-                    f"[TOKENS] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
-                    extra={
-                        "model": gpt_model,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "total_tokens": response.usage.total_tokens,
-                        "user_id": get_current_user_id(),
-                        "active_group_id": active_group_id,
-                        "doc_scope": document_scope
-                    },
-                    level=logging.INFO
-                )
+                token_usage_data = project_completion_token_usage(response.usage, datetime.utcnow().isoformat())
+                if token_usage_data is not None:
+                    log_event(
+                        "[TOKENS] GPT completion usage received.",
+                        extra={
+                            "model": gpt_model, "user_id": get_current_user_id(),
+                            "completion_tokens": response.usage.completion_tokens,
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "total_tokens": response.usage.total_tokens,
+                            "active_group_id": active_group_id, "doc_scope": document_scope,
+                        },
+                        level=logging.INFO,
+                    )
+                else:
+                    log_event(
+                        "[TOKENS] Provider did not supply completion usage.",
+                        extra={"model": gpt_model, "usage_available": False},
+                        level=logging.INFO,
+                    )
                 return (msg, gpt_model, None, notice, token_usage_data)
             def gpt_success(result):
                 return result
             def gpt_error(e):
                 debug_print(f"Error during final GPT completion: {str(e)}")
+                if isinstance(e, GenAIMilRequestError):
+                    return (e.public_message, gpt_model, None, None, None)
                 if "context length" in str(e).lower():
                     return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:

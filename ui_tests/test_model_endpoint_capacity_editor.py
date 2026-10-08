@@ -2,12 +2,13 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.046
+Version: 0.261.052
 Implemented in: 0.261.035
 
 Per-model routing round trips added in: 0.261.042
 Live schema-v2 model test coverage added in: 0.261.044
 Explicit activation/deactivation coverage added in: 0.261.046
+Editor usability and effective model-limit coverage added in: 0.261.052
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
 editors with same-origin API fixtures. Uses the existing AZURE_PLAYWRIGHT_*
@@ -37,7 +38,7 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 
 from functions_model_endpoint_urls import resolve_model_endpoint_route
-from functions_model_capabilities import get_model_endpoint_library_options
+from functions_model_capabilities import get_model_endpoint_library_options, preview_model_token_limits
 
 
 ORIGIN = "http://simplechat.test"
@@ -123,11 +124,14 @@ class EndpointApiFixture:
         self.expected_preview_error = False
         self.defer_preview = False
         self.deferred_previews = []
+        self.ca_bundles = []
 
     def handle_api(self, route, path):
         prefix = "/api" if self.scope == "admin" else f"/api/{self.scope}"
         body = route.request.post_data_json or {}
-        if path == f"{prefix}/model-endpoints":
+        if path == f"{prefix}/models/ca-bundle-options":
+            payload = {"bundles": self.ca_bundles}
+        elif path == f"{prefix}/model-endpoints":
             if route.request.method == "POST":
                 self.saved_payloads.append(copy.deepcopy(body))
                 if self.fail_save:
@@ -157,7 +161,11 @@ class EndpointApiFixture:
                     self.expected_preview_error = True
                     route.fulfill(status=400, content_type="application/json", body=json.dumps({"error": "Invalid model routing."}))
                     return
-                payload = {"preview_only": True, "resolved": {"method": "POST", **resolved}}
+                payload = {
+                    "preview_only": True,
+                    "resolved": {"method": "POST", **resolved},
+                    "budget": preview_model_token_limits(body["model"], body, resolved["protocol"]),
+                }
                 if self.defer_preview:
                     self.deferred_previews.append((route, payload))
                     return
@@ -505,6 +513,124 @@ def test_model_library_preserves_explicit_routing_and_capabilities(capacity_ui):
     expect(new_row.get_by_label("Anthropic Version", exact=True)).to_have_value("2023-06-01")
 
 
+def test_genai_profile_discovery_and_case_sensitive_model_ids(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint.update({"routing_schema_version": 2, "profile": "genai_mil", "approved_origin": "https://api.genai.mil"})
+    endpoint["connection"]["endpoint"] = "https://api.genai.mil/v1"
+    endpoint["models"][0].update({"api_type": "openai", "url_mode": "auto"})
+    api.discovered_models = [
+        {"modelName": "Authorized-ID", "api_type": "openai", "url_mode": "auto"},
+        {"modelName": "authorized-id", "api_type": "openai", "url_mode": "auto"},
+    ]
+    _open_editor(page, api)
+    expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")
+    expect(page.locator("#model-endpoint-fetch-btn")).to_be_visible()
+    page.locator("#model-endpoint-fetch-btn").click()
+    rows = page.locator("[data-model-row-id]")
+    expect(rows).to_have_count(3)
+    expect(rows.nth(1).get_by_label("Model Name", exact=True)).to_have_value("Authorized-ID")
+    expect(rows.nth(2).get_by_label("Model Name", exact=True)).to_have_value("authorized-id")
+    assert api.fetch_payloads[-1]["profile"] == "genai_mil"
+    assert api.fetch_payloads[-1]["auth"]["api_key_header"] == "Authorization"
+    saved = _save(page, api)
+    assert saved["profile"] == "genai_mil"
+    assert {model["modelName"] for model in saved["models"]} >= {"Authorized-ID", "authorized-id"}
+    _edit_saved_endpoint(page)
+    expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")
+    expect(rows.nth(0).get_by_label("API Type", exact=True).locator("option")).to_have_count(1)
+
+
+def test_ca_bundle_selection_preserves_legacy_and_explicit_trust(capacity_ui):
+    page, api = capacity_ui
+    bundle_id = "ca-0123456789abcdef0123456789abcdef"
+    api.ca_bundles = [{"id": bundle_id, "name": "<img src=x onerror=alert(1)>", "revision": 1}]
+    _open_editor(page, api)
+    choice = page.get_by_label("Certificate trust", exact=True)
+    expect(choice).to_have_value("inherit")
+    choice.select_option(bundle_id)
+    saved = _save(page, api)
+    assert saved["connection"]["ca_bundle_mode"] == "bundle"
+    assert saved["connection"]["ca_bundle_id"] == bundle_id
+    _edit_saved_endpoint(page)
+    expect(choice).to_have_value(bundle_id)
+    choice.select_option("public")
+    saved = _save(page, api)
+    assert saved["connection"]["ca_bundle_mode"] == "public"
+    assert "ca_bundle_id" not in saved["connection"]
+    assert page.locator('img[src="x"]').count() == 0
+
+
+def test_missing_ca_bundle_is_not_silently_replaced(capacity_ui):
+    page, api = capacity_ui
+    bundle_id = "ca-0123456789abcdef0123456789abcdef"
+    api.endpoints[0]["connection"].update({"ca_bundle_mode": "bundle", "ca_bundle_id": bundle_id})
+    _open_editor(page, api)
+    expect(page.get_by_label("Certificate trust", exact=True)).to_have_value(bundle_id)
+    expect(page.locator("#model-endpoint-ca-bundle-error")).to_contain_text("not be silently replaced")
+
+
+def test_effective_limits_preview_uses_model_then_endpoint_then_catalog(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint.update({"routing_schema_version": 2, "inputTokenLimit": 60000})
+    endpoint["models"][0].update({
+        "api_type": "openai", "url_mode": "auto", "catalogModelId": "claude-sonnet-4-5-20250929",
+        "contextWindow": 16384, "outputTokenLimit": 2048,
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    limits = row.get_by_test_id("model-effective-limits")
+    expect(limits.locator('[data-limit-preview="contextWindow"]')).to_have_attribute("data-effective-value", "16384")
+    expect(limits.locator('[data-limit-preview="inputTokenLimit"]')).to_contain_text("Endpoint default")
+    expect(limits.locator('[data-limit-preview="outputTokenLimit"]')).to_contain_text("Model override")
+    row.get_by_label("Context Window (tokens)", exact=True).fill("")
+    expect(limits).to_contain_text("Preview Route to resolve")
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(limits.locator('[data-limit-preview="contextWindow"]')).to_contain_text("Verified catalog")
+    body = api.preview_payloads[-1]
+    assert body["inputTokenLimit"] == 60000
+    assert body["model"]["catalogModelId"] == "claude-sonnet-4-5-20250929"
+    assert body["model"]["contextWindow"] is None
+
+
+def test_library_does_not_fill_azure_deployment_alias(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({
+        "api_type": "azure_openai", "url_mode": "auto",
+        "deploymentName": "", "modelName": "", "api_version": "2024-05-01-preview",
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_label("Model Library", exact=True).select_option("claude-sonnet-4-5-20250929")
+    expect(row.get_by_label("Deployment Name", exact=True)).to_have_value("")
+    expect(row.get_by_label("API Type", exact=True)).to_have_value("azure_openai")
+    expect(row.get_by_text("Optional catalog metadata", exact=False)).to_be_visible()
+
+
+def test_schema_v2_has_single_catalog_identity_and_model_first_limits(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({
+        "api_type": "openai", "url_mode": "auto", "catalogModelId": "claude-sonnet-4-5-20250929",
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    expect(row.get_by_label("Model Library", exact=True)).to_have_value("claude-sonnet-4-5-20250929")
+    expect(row.locator('[data-budget-field="catalogModelId"]')).to_have_count(0)
+    expect(row.get_by_test_id("model-budget-editor")).to_have_attribute("open", "")
+    endpoint_limits = page.get_by_test_id("endpoint-budget-editor")
+    expect(endpoint_limits.locator("summary")).to_have_text("Default model limits")
+    assert endpoint_limits.get_attribute("open") is None
+    saved = _save(page, api)
+    assert saved["models"][0]["catalogModelId"] == "claude-sonnet-4-5-20250929"
+    assert saved["models"][0]["modelName"] == "private-deployment"
+
+
 @pytest.mark.parametrize("edit_kind", ["path", "add", "remove"])
 def test_changed_form_cannot_commit_an_earlier_preview(capacity_ui, edit_kind):
     page, api = capacity_ui
@@ -737,6 +863,10 @@ def test_capacity_editor_mobile_keyboard_and_labels(capacity_ui):
         editor = page.get_by_test_id(f"{scope}-budget-editor").first
         summary = editor.locator("summary")
         summary.focus()
+        if scope == "model":
+            expect(editor).to_have_attribute("open", "")
+            summary.press("Enter")
+            expect(editor.get_by_label("Context Window (tokens)", exact=True)).to_be_hidden()
         summary.press("Enter")
         control = editor.get_by_label("Context Window (tokens)", exact=True)
         expect(control).to_be_visible()

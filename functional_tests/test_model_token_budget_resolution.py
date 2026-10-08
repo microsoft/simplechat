@@ -1,8 +1,9 @@
 # test_model_token_budget_resolution.py
 """
 Functional tests for separate, scoped model capacities and actual request ceilings.
-Version: 0.261.035
+Version: 0.261.052
 Implemented in: 0.261.035
+Effective limit previews added in: 0.261.052
 
 Uses the real dependency-light resolver and Semantic Kernel settings serializer.
 No network, settings-store, or configuration bootstrap is required.
@@ -34,6 +35,7 @@ from functions_model_capabilities import (
     normalize_model_budget_overrides,
     normalize_token_limit,
     project_model_budget_metadata,
+    preview_model_token_limits,
     resolve_model_token_budget,
 )
 from functions_model_budget_runtime import prepare_model_execution_settings
@@ -89,6 +91,28 @@ def test_partial_overrides_resolve_each_field_independently():
     assert dict(budget.provenance) == {
         "contextWindow": "endpoint", "inputTokenLimit": "catalog", "outputTokenLimit": "model",
     }
+
+
+def test_preview_projects_runtime_limits_and_sources_without_secrets():
+    model = {"modelName": "exact-model", "outputTokenLimit": 1500, "responseLength": 25}
+    endpoint = {"contextWindow": 8000, "auth": {"api_key": "synthetic-preview-secret"}}
+    preview = preview_model_token_limits(
+        model, endpoint, "openai_style", catalog_records=[catalog_record()],
+    )
+    assert preview == {
+        "contextWindow": {"value": 8000, "source": "endpoint"},
+        "inputTokenLimit": {"value": 9000, "source": "catalog"},
+        "outputTokenLimit": {"value": 1500, "source": "model"},
+    }
+    assert "synthetic-preview-secret" not in json.dumps(preview)
+    assert model["responseLength"] == 25
+
+
+def test_preview_does_not_guess_unknown_capacity_or_hide_invalid_values():
+    preview = preview_model_token_limits({"modelName": "unknown-model"}, {}, "anthropic", catalog_records=[])
+    assert all(field == {"value": None, "source": "unresolved"} for field in preview.values())
+    with pytest.raises(ModelTokenBudgetError):
+        preview_model_token_limits({"contextWindow": "1e3"}, {}, "openai_style")
 
 
 def test_requested_response_length_is_not_model_capacity():

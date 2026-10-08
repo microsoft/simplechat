@@ -30,6 +30,7 @@ from functions_model_endpoint_providers import (
     normalize_custom_endpoint_auth_type,
 )
 from functions_model_endpoint_validation import validate_custom_model_endpoint_url
+from model_endpoint_ca_bundles import ManagedCABundle
 
 
 CUSTOM_ENDPOINT_AUTH_TYPES = DEFAULT_CUSTOM_AUTH_TYPES
@@ -147,7 +148,7 @@ def fetch_oauth2_client_credentials_token(
         allow_insecure=allow_insecure,
     )
 
-    cache_key = _token_cache_key(auth)
+    cache_key = (*_token_cache_key(auth), ca_bundle_path.sha256) if isinstance(ca_bundle_path, ManagedCABundle) else _token_cache_key(auth)
     now = time.monotonic()
     with _TOKEN_CACHE_LOCK:
         cached = _TOKEN_CACHE.get(cache_key)

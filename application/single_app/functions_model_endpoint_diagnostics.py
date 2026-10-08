@@ -22,9 +22,30 @@ import uuid
 from typing import Any, Dict
 
 from functions_appinsights import log_event
+from model_endpoint_profiles import GenAIMilRequestError
 
 
 CORRELATION_ID_LENGTH = 8
+
+
+def build_genai_mil_error(exception=None, *, status_code=None, headers=None):
+    """GenAI diagnostics contain status/type only, never echoed key/error bodies."""
+    status_code = status_code or getattr(exception, "status_code", None) or 502
+    headers = headers or getattr(getattr(exception, "response", None), "headers", {}) or {}
+    retry_after = None
+    raw_delay = headers.get("Retry-After")
+    if status_code == 429 and isinstance(raw_delay, str) and re.fullmatch(r"[0-9]{1,6}", raw_delay):
+        retry_after = int(raw_delay)
+    correlation_id = new_model_endpoint_correlation_id()
+    log_event(
+        "[GENAI_MIL] Provider request failed.",
+        extra={
+            "status_code": status_code, "error_type": type(exception).__name__ if exception else "HTTPResponse",
+            "correlation_id": correlation_id,
+        },
+        level=logging.ERROR,
+    )
+    return GenAIMilRequestError(status_code, retry_after=retry_after, reference=correlation_id)
 
 # Credentials can appear in an upstream error body, in a repeated request URL, or
 # in a header dump. Redact them before anything is written to the log.

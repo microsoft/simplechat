@@ -585,6 +585,25 @@ def resolve_model_token_budget(
     )
 
 
+def preview_model_token_limits(model, endpoint, protocol, *, catalog_records=None):
+    """Project effective capacities using the same resolver as runtime requests."""
+    budget = resolve_model_token_budget(
+        model, endpoint,
+        protocol="messages" if protocol == "anthropic" else "chat_completions",
+        catalog_records=catalog_records,
+    )
+    sources = dict(budget.provenance)
+    values = {
+        "contextWindow": budget.context_window,
+        "inputTokenLimit": budget.input_limit,
+        "outputTokenLimit": budget.output_limit,
+    }
+    return {
+        field: {"value": value, "source": sources.get(field, "unresolved")}
+        for field, value in values.items()
+    }
+
+
 def project_model_budget_metadata(record):
     """Copy identifiers/capacities only; callers retain ownership of all credentials."""
     if not isinstance(record, Mapping):

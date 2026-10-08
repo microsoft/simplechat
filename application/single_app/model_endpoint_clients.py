@@ -37,7 +37,9 @@ from semantic_kernel.contents.utils.finish_reason import FinishReason
 from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutionSettingsError
 
 from functions_debug import debug_print
-from functions_model_endpoint_diagnostics import build_sanitized_model_endpoint_error
+from model_endpoint_ca_bundles import ManagedCABundle
+from functions_model_endpoint_diagnostics import build_genai_mil_error, build_sanitized_model_endpoint_error
+from model_endpoint_profiles import GENAI_MIL_PROFILE, prepare_genai_request
 from functions_model_endpoint_providers import (
     CUSTOM_ENDPOINT_URL_MODE_EXACT,
     URL_POLICY_APPEND_V1_IF_MISSING,
@@ -389,10 +391,14 @@ def build_custom_endpoint_ssl_context(ca_bundle_path: Any = "", client_cert: Any
     ``client_cert`` supplies an mTLS client certificate, as either a combined PEM
     path or a (certificate, key) pair of paths.
     """
-    bundle_path = str(ca_bundle_path or "").strip()
-    if bundle_path:
+    if isinstance(ca_bundle_path, ManagedCABundle):
         try:
-            context = ssl.create_default_context(cafile=bundle_path)
+            context = ssl.create_default_context(cadata=ca_bundle_path.pem)
+        except ssl.SSLError:
+            raise ModelEndpointValidationError("The selected managed CA bundle could not be loaded.") from None
+    elif str(ca_bundle_path or "").strip():
+        try:
+            context = ssl.create_default_context(cafile=str(ca_bundle_path).strip())
         except (OSError, ssl.SSLError):
             # A missing or unreadable bundle must not silently fall back to a
             # weaker context, so the failure is surfaced to the caller.
@@ -486,6 +492,7 @@ def build_openai_style_chat_client(
     resolved_base_url: Any = "",
     request_url: Any = "",
     client_cert: Any = None,
+    custom_profile: str = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
@@ -502,6 +509,8 @@ def build_openai_style_chat_client(
         "api_key": token_or_key,
         "base_url": client_base_url,
     }
+    if custom_profile == GENAI_MIL_PROFILE:
+        client_kwargs["max_retries"] = 0
     if direct_custom:
         client_kwargs["http_client"] = build_custom_openai_sync_http_client(
             allow_private=allow_private_custom_endpoints,
@@ -516,6 +525,7 @@ def build_openai_style_chat_client(
         OpenAI(**client_kwargs),
         sanitize_errors=direct_custom,
         api_type=api_type,
+        custom_profile=custom_profile,
         request_url=request_url or client_kwargs["base_url"],
     )
 
@@ -530,17 +540,21 @@ class OpenAIStyleChatCompletionClient:
         sanitize_errors: bool = False,
         api_type: Any = "",
         request_url: Any = "",
+        custom_profile: str = "",
     ):
         self._client = client
         self._sanitize_errors = sanitize_errors
         self._api_type = api_type
         self._request_url = request_url
+        self._custom_profile = custom_profile
         provider = get_model_endpoint_provider(api_type) if sanitize_errors else None
         self._supports_stream_options = bool(provider and provider.supports_stream_options)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
         request_kwargs = dict(kwargs)
+        if self._custom_profile == GENAI_MIL_PROFILE:
+            request_kwargs = prepare_genai_request(request_kwargs)
         # stream_options is how a streaming response reports token usage. It is
         # dropped only for surfaces that reject it, rather than for everyone.
         if not self._supports_stream_options:
@@ -548,6 +562,8 @@ class OpenAIStyleChatCompletionClient:
         try:
             response = self._client.chat.completions.create(**request_kwargs)
         except Exception as exc:
+            if self._custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
             if self._sanitize_errors:
                 raise build_sanitized_model_endpoint_error(
                     "Custom model request failed.",
@@ -564,6 +580,7 @@ class OpenAIStyleChatCompletionClient:
                 response,
                 api_type=self._api_type,
                 request_url=self._request_url,
+                custom_profile=self._custom_profile,
             )
         return response
 
@@ -571,11 +588,12 @@ class OpenAIStyleChatCompletionClient:
 class _SanitizedSyncIterator:
     """Proxy a streaming response without exposing provider exception details."""
 
-    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = ""):
+    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
         self._iterator = iterator
         self._items = iter(iterator)
         self._api_type = api_type
         self._request_url = request_url
+        self._custom_profile = custom_profile
 
     def __iter__(self):
         return self
@@ -586,6 +604,8 @@ class _SanitizedSyncIterator:
         except StopIteration:
             raise
         except Exception as exc:
+            if self._custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
             raise build_sanitized_model_endpoint_error(
                 "Custom model stream failed.",
                 exc,
@@ -619,11 +639,12 @@ class _SanitizedSyncIterator:
 class _SanitizedAsyncIterator:
     """Proxy an async streaming response without exposing provider exception details."""
 
-    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = ""):
+    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
         self._iterator = iterator
         self._items = iterator.__aiter__()
         self._api_type = api_type
         self._request_url = request_url
+        self._custom_profile = custom_profile
 
     def __aiter__(self):
         return self
@@ -634,6 +655,8 @@ class _SanitizedAsyncIterator:
         except StopAsyncIteration:
             raise
         except Exception as exc:
+            if self._custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
             raise build_sanitized_model_endpoint_error(
                 "Custom model stream failed.",
                 exc,
@@ -700,7 +723,7 @@ class SanitizedCustomChatCompletionClient:
         return getattr(self._client, name)
 
 
-def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", request_url: Any = ""):
+def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
     """Replace async SDK chat errors with safe direct-Custom messages."""
     if getattr(client, "_simplechat_custom_errors_sanitized", False):
         return client
@@ -708,9 +731,15 @@ def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", requ
     original_create = client.chat.completions.create
 
     async def sanitized_create(*args, **kwargs):
+        if custom_profile == GENAI_MIL_PROFILE:
+            if args:
+                raise ModelEndpointValidationError("GenAI.mil requests require named chat arguments.")
+            kwargs = prepare_genai_request(kwargs)
         try:
             response = await original_create(*args, **kwargs)
         except Exception as exc:
+            if custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
             raise build_sanitized_model_endpoint_error(
                 "Custom model request failed.",
                 exc,
@@ -724,6 +753,7 @@ def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", requ
                 response,
                 api_type=api_type,
                 request_url=request_url,
+                custom_profile=custom_profile,
             )
         return response
 
@@ -1279,7 +1309,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION
     direct_custom: bool = False
     allow_private_custom_endpoints: bool = False
-    custom_endpoint_ca_bundle_path: str = ""
+    custom_endpoint_ca_bundle_path: str | ManagedCABundle = Field(default="", exclude=True, repr=False)
     client_cert: Any = None
     resolved_route: Dict[str, Any] | None = Field(default=None, exclude=True)
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)

@@ -2,6 +2,11 @@
 
 import { showToast } from "../chat/chat-toast.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
+import { collectEndpointCaTrust, populateEndpointCaBundleSelection } from "../model_ca_bundles.js";
+import {
+    applyCustomProfileDefaults, collectCustomProfile, populateCustomProfile,
+    GENAI_MIL_PROFILE, selectedCustomProfile, updateCustomProfileVisibility
+} from "../model_endpoint_profile_editor.js";
 import {
     createModelRoutingEditor, collectModelRouting, previewModelRoute,
     validateModelRoutes, invalidateModelRoutingPreviews, ModelRoutingValidationError, showModelRoutingError
@@ -457,10 +462,12 @@ function updateAuthVisibility() {
     setElementVisibility(endpointFoundryScopeGroup, authType === "service_principal" && isFoundry && endpointManagementCloudSelect?.value === "custom");
     setElementVisibility(apiKeyNote, customProvider || authType === "api_key");
     setElementVisibility(addModelBtn, customProvider || authType === "api_key");
-    setElementVisibility(fetchBtn, !customProvider && authType !== "api_key");
+    setElementVisibility(fetchBtn, (!customProvider && authType !== "api_key") || selectedCustomProfile() === GENAI_MIL_PROFILE);
     if (apiKeyNoteText) {
         apiKeyNoteText.textContent = customProvider
-            ? "Custom endpoints use API key authentication and manual model entry. Model discovery is unavailable."
+            ? (selectedCustomProfile() === GENAI_MIL_PROFILE
+                ? "GenAI.mil discovers models through the backend using your scoped key. Manual model entry is also available."
+                : "Custom endpoints use API key authentication and manual model entry. Model discovery is unavailable.")
             : "API key authentication is for inference only. Use a managed identity or service principal for model discovery, or use Add Model and enter the deployment name manually exactly as it appears in Foundry.";
     }
     if (modelsPlaceholder) {
@@ -475,6 +482,7 @@ function updateAuthVisibility() {
 function resetModal() {
     invalidateModelRoutingPreviews(modelsListEl);
     modalEndpoint = { routing_schema_version: 2 };
+    populateCustomProfile(modalEndpoint, false);
     renderEndpointBudgetEditor();
     if (endpointIdInput) endpointIdInput.value = "";
     if (endpointNameInput) endpointNameInput.value = "";
@@ -534,6 +542,7 @@ function openModalForEndpoint(endpoint) {
 
     if (endpoint) {
         modalEndpoint = JSON.parse(JSON.stringify(endpoint));
+        populateCustomProfile(modalEndpoint, isCustomProvider(endpoint.provider));
         renderEndpointBudgetEditor();
         if (endpointIdInput) endpointIdInput.value = endpoint.id || "";
         if (endpointNameInput) endpointNameInput.value = endpoint.name || "";
@@ -584,6 +593,8 @@ function openModalForEndpoint(endpoint) {
     }
 
     updateAuthVisibility();
+    populateCustomProfile(modalEndpoint, isCustomProvider());
+    populateEndpointCaBundleSelection(modalEndpoint, scope, isCustomProvider());
     endpointModal.show();
 }
 
@@ -879,6 +890,7 @@ function renderModalModels(models) {
         if (modalEndpoint.routing_schema_version === 2) {
             wrapper.appendChild(createModelRoutingEditor(model, {
                 endpoint: { ...modalEndpoint, provider: endpointProviderSelect.value },
+                profile: selectedCustomProfile(),
                 registry: getCustomApiTypeRegistry(),
                 requestInput: deploymentCol.querySelector("input"),
                 requestLabel: deploymentCol.querySelector("label")
@@ -887,7 +899,8 @@ function renderModalModels(models) {
         wrapper.appendChild(descriptionWrapper);
         wrapper.appendChild(iconWrapper);
         wrapper.appendChild(createModelBudgetEditor(model, {
-            idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`)
+            idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`),
+            includeCatalogIdentity: modalEndpoint.routing_schema_version !== 2
         }));
         wrapper.appendChild(actions);
 
@@ -978,7 +991,7 @@ async function testModelConnection(model) {
 }
 
 async function fetchModels() {
-    if (isCustomProvider()) {
+    if (isCustomProvider() && selectedCustomProfile() !== GENAI_MIL_PROFILE) {
         showToast("Model discovery is unavailable for Custom endpoints. Add models manually.", "warning");
         return;
     }
@@ -1000,9 +1013,11 @@ async function fetchModels() {
         }
 
         const models = Array.isArray(data.models) ? data.models : [];
+        const genai = selectedCustomProfile() === GENAI_MIL_PROFILE;
         const existingMap = new Map();
         modalModels.forEach((model) => {
-            const key = (model.deploymentName || "").trim().toLowerCase();
+            const identifier = (genai ? getModelRequestName(model) : model.deploymentName || "").trim();
+            const key = genai ? identifier : identifier.toLowerCase();
             if (key) {
                 existingMap.set(key, model);
             }
@@ -1010,18 +1025,18 @@ async function fetchModels() {
 
         let addedCount = 0;
         models.forEach((model) => {
-            const deploymentName = (model.deploymentName || model.deployment || "").trim();
+            const deploymentName = (genai ? model.modelName : model.deploymentName || model.deployment || "").trim();
             if (!deploymentName) {
                 return;
             }
-            const key = deploymentName.toLowerCase();
+            const key = genai ? deploymentName : deploymentName.toLowerCase();
             if (existingMap.has(key)) {
                 return;
             }
             modalModels.push({
                 ...model,
                 id: generateId(),
-                deploymentName,
+                ...(genai ? { modelName: deploymentName } : { deploymentName }),
                 modelName: model.modelName || model.name || "",
                 displayName: deploymentName,
                 description: "",
@@ -1151,7 +1166,7 @@ function buildEndpointPayload() {
         resource_group: resourceGroup
     } : {};
 
-    const connection = { endpoint };
+    const connection = { ...modalEndpoint.connection, endpoint };
     const explicitRouting = modalEndpoint.routing_schema_version === 2;
     const versionField = customProvider && !explicitRouting ? customApiTypeVersionField(apiType) : "";
     if (customProvider && !explicitRouting && endpointUrlModeExactInput?.checked) {
@@ -1172,10 +1187,12 @@ function buildEndpointPayload() {
         }
     }
 
+    collectEndpointCaTrust(connection, modalEndpoint.connection, customProvider);
     return {
         id: endpointId,
         ...(explicitRouting ? { routing_schema_version: 2 } : {}),
         provider,
+        ...collectCustomProfile(auth, customProvider),
         ...(customProvider && !explicitRouting ? { api_type: apiType } : {}),
         name,
         connection,
@@ -1436,6 +1453,17 @@ function initialize() {
         endpointsTbody.addEventListener("click", handleTableClick);
     }
 
+    document.getElementById("model-endpoint-profile")?.addEventListener("change", () => {
+        try {
+            modalModels = collectModalModels();
+            applyCustomProfileDefaults();
+            renderModalModels(modalModels);
+            updateAuthVisibility();
+            updateCustomProfileVisibility(isCustomProvider());
+        } catch (error) {
+            showToast(error?.message || "Unable to update the endpoint profile.", "danger");
+        }
+    });
     if (endpointProviderSelect) {
         endpointProviderSelect.addEventListener("change", () => {
             try {
@@ -1447,6 +1475,8 @@ function initialize() {
             syncOpenAiApiVersionForProvider();
             renderModalModels(modalModels);
             updateAuthVisibility();
+            updateCustomProfileVisibility(isCustomProvider());
+            populateEndpointCaBundleSelection(modalEndpoint, scope, isCustomProvider());
         });
     }
 
