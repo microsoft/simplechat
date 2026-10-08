@@ -3217,6 +3217,19 @@ def register_route_backend_orchestration(bp):
         except (replay.PlanReplayRefused, replay.PlanReplaySaveError) as exc:
             body, code = replay.plan_replay_error_response(exc.code, exc.public_message, exc.refusals)
             return jsonify(body), code
+        except replay.WorkflowPublicValidationError as exc:
+            # A reviewed, data-free settings error, such as a schedule faster than the chat minimum.
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 422
+        except ValueError as exc:
+            log_event(
+                '[ORCHESTRATION] A saved-plan workflow request was not valid.', level=logging.WARNING,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_plan_replay', 'error_type': type(exc).__name__,
+                },
+            )
+            body, code = replay.plan_replay_error_response('invalid_request')
+            return jsonify(body), code
         except Exception as exc:
             log_event(
                 '[ORCHESTRATION] A saved-plan workflow request could not be completed.', level=logging.ERROR,
