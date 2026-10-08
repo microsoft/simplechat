@@ -42,6 +42,7 @@ export function useReviewWorkbench<T extends { id: string }>({
     runBulk,
     noun,
     describe,
+    ownerOf,
 }: {
     /** The filters as their query string: a change reloads the list and drops "every matching". */
     filterKey: string;
@@ -56,6 +57,8 @@ export function useReviewWorkbench<T extends { id: string }>({
     noun: ReviewNoun;
     /** How a record is named in a bulk report. */
     describe: (id: string, items: readonly T[]) => string;
+    /** The user a record is about, so an AI triage can send each user's records together. */
+    ownerOf?: (item: T) => string | null | undefined;
 }) {
     const [searchParams, setSearchParams] = useSearchParams();
     const paging = readReviewPaging(searchParams);
@@ -70,6 +73,11 @@ export function useReviewWorkbench<T extends { id: string }>({
     const [report, setReport] = useState<BulkRunReport | null>(null);
     const loadRef = useRef(loadPage);
     loadRef.current = loadPage;
+    const ownerOfRef = useRef(ownerOf);
+    ownerOfRef.current = ownerOf;
+    // Whose each record is, from every page and "select all matching" this workbench has read. A
+    // record's user never changes, so the map only grows.
+    const ownersRef = useRef(new Map<string, string>());
 
     useEffect(() => {
         const controller = new AbortController();
@@ -78,6 +86,13 @@ export function useReviewWorkbench<T extends { id: string }>({
         loadRef.current(paging.page, paging.pageSize, controller.signal)
             .then((result) => {
                 if (controller.signal.aborted) return;
+                const owner = ownerOfRef.current;
+                if (owner) {
+                    for (const item of result.items) {
+                        const value = owner(item);
+                        if (typeof value === 'string' && value) ownersRef.current.set(item.id, value);
+                    }
+                }
                 setItems(result.items);
                 setTotal(result.total);
                 setSelection((current) => pruneReviewSelection(
@@ -125,6 +140,9 @@ export function useReviewWorkbench<T extends { id: string }>({
         setReport(null);
         try {
             const result = await loadMatchingIds();
+            for (const [id, owner] of Object.entries(result.owners ?? {})) {
+                if (typeof owner === 'string' && owner) ownersRef.current.set(id, owner);
+            }
             setSelection(selectMatching(result, filterKey));
         } catch (cause) {
             setReport({ summary: errorText(cause, `Every matching ${noun.singular} could not be selected.`), failures: [] });
@@ -180,6 +198,8 @@ export function useReviewWorkbench<T extends { id: string }>({
         clearSelection,
         /** Check exactly `ids`, such as the records an AI triage made no suggestion for. */
         keepChecked: (ids: readonly string[]) => setSelection(keepFailures(ids)),
+        /** The user a record is about, when a page or "select all matching" said so. */
+        recordOwner: (id: string) => ownersRef.current.get(id) ?? null,
         chooseMatching,
         matchingBusy,
         runBulkOperation,

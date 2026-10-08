@@ -323,6 +323,8 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
             action: current.action,
             notes: current.notes,
             etag: record.etag,
+            // Lets the save go ahead when only an AI suggestion changed the violation since it was opened.
+            fingerprint: record.fingerprint,
         };
         if (sends) {
             payload.notification_title = current.title.trim();

@@ -171,6 +171,7 @@ export function FeedbackWorkbench({
             const item = items.find((candidate) => candidate.id === id);
             return item ? feedbackRowTitle(item) : `Feedback ${id}`;
         },
+        ownerOf: (item) => item.userId,
     });
     const { items, total, loading, error, paging, updateParams, checked, matching } = workbench;
     const triage = useReviewTriage({
@@ -242,7 +243,7 @@ export function FeedbackWorkbench({
         void triage.start(ids, (id) => {
             const item = snapshot.find((candidate) => candidate.id === id);
             return item ? feedbackRowTitle(item) : `Feedback ${id}`;
-        });
+        }, workbench.recordOwner);
     };
 
     const header = (

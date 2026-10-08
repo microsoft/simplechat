@@ -8,10 +8,12 @@
 // suggestions and locked violations, while an individual tick still approves a suspension or block;
 // that an approval's confirmation counts the warnings it sends and the requests it creates, and that
 // a suspension or block the violation already records is never requested again from the queue; that
-// a refused approval reads in the reviewer's terms; that
-// the save applying a suggestion carries the reviewer's notification edits and a suspension's
-// restore time; and that a triage runs ten records at a time, waits out the rate limit, fails only
-// an unusable chunk, and stops or cancels with the rest reported unprocessed.
+// a refused approval reads in the reviewer's terms; that text a record's user can read is shown
+// whole; that the save applying a suggestion carries the reviewer's notification edits, a
+// suspension's restore time and the version and fingerprint the queue read; and that a triage runs
+// ten records at a time with each user's records together, sends again the records the server
+// didn't reach, waits out the rate limit, fails only an unusable chunk, and stops or cancels with
+// the rest reported unprocessed.
 
 import assert from 'node:assert/strict';
 import './test_support/tsResolve.mjs';
@@ -80,6 +82,10 @@ assert.ok(ai.parseReviewAssistResponse('safety', 'analyze', { section: 'safety',
     { id: 'log-1', outcome: 'suggested', suggestion: unsaved }] }, ['log-1']));
 assert.equal(ai.parseReviewAssistResponse('safety', 'triage', { section: 'safety', mode: 'triage', results: [
     { id: 'log-1', outcome: 'suggested', suggestion: unsaved }] }, ['log-1']), null, 'a triage suggestion is stored');
+const deferredAnswer = ai.parseReviewAssistResponse('safety', 'triage', { section: 'safety', mode: 'triage', results: [
+    { id: 'log-1', outcome: 'deferred', message: 'The assistant ran out of time before it reached this record, so it is sent again.' }] },
+    ['log-1']);
+assert.equal(deferredAnswer[0].outcome, 'deferred');
 
 /* Failures read as plain sentences; a rate limit waits as the server says. */
 const limited = ai.describeReviewAssistFailure(429, { error: '**Admin markdown**', code: 'assistant_rate_limited', retry_after_seconds: 30 }, '12');
@@ -130,6 +136,8 @@ const confirm = ai.approvalConfirmation(all, { singular: 'violation', plural: 'v
 assert.equal(confirm.title, 'Apply 2 suggestions?');
 assert.match(confirm.description, /1 user is sent a warning straight away\./);
 assert.match(confirm.description, /3 suggestions are left in the queue\./);
+assert.equal(all.userVisible, 2);
+assert.match(confirm.description, /2 reviews save text their users can read; check it under "Visible to the user"\./);
 assert.match(ai.approvalConfirmation(ticked, { singular: 'violation', plural: 'violations' }).description,
     /1 suspension or block is requested; each applies only after another eligible reviewer approves it\./);
 
@@ -163,6 +171,20 @@ assert.match(ai.suggestionFailureText('suggestion_not_pending', 'Fallback.'), /a
 assert.equal(ai.suggestionFailureText('not_found', 'Fallback.'), 'Fallback.');
 assert.equal(ai.suggestionFailureText(undefined, 'Fallback.'), 'Fallback.');
 
+/* What the record's user can read is shown whole, and a cleared field says so. */
+const visibleFeedback = ai.userVisibleText(entry('fb-1', 'feedback',
+    { ...record, adminReview: { acknowledged: false, actionTaken: 'Old action' } }, feedback));
+assert.deepEqual(visibleFeedback, [
+    { field: 'analysisNotes', label: 'Analysis notes', text: 'Missed the per diem rules.', cleared: false },
+    { field: 'actionTaken', label: 'Action taken', text: '', cleared: true },
+    { field: 'responseToUser', label: 'Response to the user', text: 'Thanks.', cleared: false },
+]);
+const longNotes = `${'Long notes. '.repeat(60)}End.`;
+const longNoteSuggestion = { ...warn, payload: { ...warn.payload, notes: longNotes } };
+assert.equal(ai.userVisibleText(entry('log-8', 'safety', violation, longNoteSuggestion))[0].text, longNotes, 'never an excerpt');
+assert.deepEqual(ai.userVisibleText(entry('fb-2', 'feedback', record,
+    { ...feedback, payload: { ...feedback.payload, analysisNotes: '', actionTaken: '', responseToUser: '' } })), []);
+
 /* The save that applies a suggestion. */
 const now = new Date('2026-10-01T00:00:00Z');
 const warnOp = ai.buildSuggestionOperation(entries[0], { message: '  Edited message.  ' }, now);
@@ -178,6 +200,10 @@ const feedbackOp = ai.buildSuggestionOperation(entry('fb-1', 'feedback', record,
 assert.deepEqual(feedbackOp.changes, { acknowledged: true, analysisNotes: 'Missed the per diem rules.', actionTaken: '',
     responseToUser: 'Thanks.', theme: 'retrieval' });
 assert.equal(feedbackOp.changes.notify_user, undefined, 'applying a suggestion never notifies the user');
+const fingerprinted = ai.buildSuggestionOperation(
+    entry('log-7', 'safety', { ...violation, id: 'log-7', fingerprint: 'f'.repeat(32) }, warn), undefined, now);
+assert.deepEqual([fingerprinted.etag, fingerprinted.changes.fingerprint], ['e1', 'f'.repeat(32)],
+    'an approval names the version the queue read, and its fingerprint');
 assert.equal(ai.buildSuggestionOperation(entry('x', 'feedback', record, { ...feedback, id: null, status: 'unsaved' })), null);
 assert.deepEqual(ai.archiveFollowUps(entries, ['log-1', 'log-2', 'log-5']), [
     { id: 'log-2', op: 'archive', archived: true },
@@ -249,6 +275,34 @@ assert.equal(run.stopped.code, 'assistant_rate_limited', 'a wait longer than the
 const waits = [];
 await ai.waitSeconds(3, new AbortController().signal, (left) => waits.push(left), instant);
 assert.deepEqual(waits, [3, 2, 1]);
+
+/* Each user's records travel together; records the server didn't reach are sent again. */
+const owners = { a1: 'A', b1: 'B', a2: 'A', c1: 'C', a3: 'A', b2: 'B' };
+assert.deepEqual(ai.planTriageChunks(Object.keys(owners), (id) => owners[id], 4), [['a1', 'a2', 'a3', 'c1'], ['b1', 'b2']]);
+const many = Array.from({ length: 12 }, (_, index) => `a${index}`);
+assert.deepEqual(ai.planTriageChunks([...many, 'x', 'y'], (id) => (id.startsWith('a') ? 'A' : null)),
+    [many.slice(0, 10), ['a10', 'a11', 'x', 'y']], 'a record whose user is unknown is a group of its own');
+assert.deepEqual(ai.planTriageChunks(ids, undefined), ai.chunkTriageIds(ids));
+calls = [];
+run = await ai.runTriage({
+    ids: ['a1', 'b1', 'a2', 'c1'], ownerOf: (id) => owners[id], signal: new AbortController().signal, sleep: instant,
+    post: async (chunk) => {
+        calls.push([...chunk]);
+        return { ok: true, results: chunk.map((id, index) => (calls.length === 1 && index >= 2
+            ? { id, outcome: 'deferred', suggestion: null, message: 'Not reached.', code: null }
+            : { id, outcome: 'suggested', suggestion: warn, message: '', code: null })) };
+    },
+});
+assert.deepEqual(calls, [['a1', 'a2', 'b1', 'c1'], ['b1', 'c1']], "a user's records go together, and deferred ones go again");
+assert.deepEqual(run.results.map((result) => [result.id, result.outcome]),
+    [['a1', 'suggested'], ['a2', 'suggested'], ['b1', 'suggested'], ['c1', 'suggested']]);
+assert.match(ai.buildTriageReport(run, { singular: 'violation', plural: 'violations' }, String).summary, /for 4 of 4 violations/);
+run = await ai.runTriage({
+    ids: ['e1'], signal: new AbortController().signal, sleep: instant,
+    post: async (chunk) => ({ ok: true, results: chunk.map((id) => ({ id, outcome: 'deferred', suggestion: null, message: '', code: null })) }),
+});
+assert.deepEqual(run.results.map((result) => result.outcome), ['failed'], 'a chunk is never sent again forever');
+assert.match(run.results[0].message, /didn't reach this record/);
 
 /* Applying a suggestion to a draft is undone group by group, keeping later edits. */
 const groups = [

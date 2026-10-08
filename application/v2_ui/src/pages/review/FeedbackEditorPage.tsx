@@ -231,6 +231,8 @@ export function FeedbackEditorPage({ recordId }: { recordId: string }) {
             responseToUser: current.responseToUser,
             notify_user: current.notifyUser,
             etag: record.etag,
+            // Lets the save go ahead when only an AI suggestion changed the record since it was opened.
+            fingerprint: record.fingerprint,
         };
         // The theme is sent when it changed, and always with a suggestion, which is compared field by field.
         if (current.theme !== initial.theme || appliedSuggestionId) changes.theme = current.theme;

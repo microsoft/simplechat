@@ -9,9 +9,12 @@ Check that the AI suggestions queue lists what each suggestion would change and 
 and locked rows, lets the reviewer edit a warning before approving it, leaves suspensions and
 blocks out of "Approve all" and out of "select all", says how many users an approval warns and how
 many requests it creates before it runs, never asks again for a suspension the violation already
-records, applies each suggestion through the bulk save with its suggestion id, and reports a
-refused record on its own row in the reviewer's terms; that Triage with AI sends the checked
-records ten at a time and reports every record's outcome with a link to the queue; that the
+records, shows in full and marks the text each record's user will read, applies each suggestion
+through the bulk save with its suggestion id and the version and fingerprint it read, dismisses by
+suggestion id alone, and reports a refused record on its own row in the reviewer's terms; that
+Triage with AI sends the checked records ten at a time with each user's records together, sends
+again the records the server didn't reach, and reports every record's outcome with a link to the
+queue; that the editors save with the version and fingerprint they read; that the
 editors' Ask AI panel fills the unsaved draft, marks what it changed, undoes it, and saves a
 stored triage suggestion through that suggestion; that the Feedback dashboard's themes open the
 filtered list; and that nothing about AI assist shows while it is turned off. Unexpected requests
@@ -71,7 +74,7 @@ def _violation(log_id, **fields):
         "message": f"Flagged message {log_id}", "status": "New", "action": "None", "notes": "",
         "created_at": "2026-10-07T09:00:00", "triggered_categories": [{"category": "Hate", "severity": 4}],
         "content_origin": "user", "isArchived": False, "action_request_status": None, "etag": f"etag-{log_id}",
-        "ai_suggestion": None,
+        "fingerprint": hashlib.md5(f"fp-{log_id}".encode("utf-8")).hexdigest(), "ai_suggestion": None,
     }
     record.update(fields)
     return record
@@ -82,7 +85,8 @@ def _feedback(index, **fields):
         "id": f"fb-{index}", "userId": "user-1", "userDisplayName": "Uma User", "userEmail": "uma@contoso.test",
         "prompt": f"Question number {index} about the travel policy", "aiResponse": f"Answer {index}.",
         "feedbackType": "Negative", "reason": "Not helpful", "timestamp": f"2026-10-0{1 + index % 7}T10:00:00",
-        "isArchived": False, "adminReview": {"acknowledged": False}, "etag": f"etag-fb-{index}", "ai_suggestion": None,
+        "isArchived": False, "adminReview": {"acknowledged": False}, "etag": f"etag-fb-{index}",
+        "fingerprint": hashlib.md5(f"fp-fb-{index}".encode("utf-8")).hexdigest(), "ai_suggestion": None,
     }
     record.update(fields)
     return record
@@ -112,6 +116,8 @@ class ReviewAssistFixture:
         self.patches = []
         self.assist_calls = []
         self.fail_bulk = {}
+        # Ids the assistant answers "deferred" the first time it is asked about them.
+        self.defer_once = set()
         self.errors = []
         self.unexpected_requests = []
         self.preferences = {}
@@ -188,6 +194,11 @@ class ReviewAssistFixture:
             record = next((item for item in records if item["id"] == record_id), None)
             if record is None:
                 results.append({"id": record_id, "outcome": "not_found", "message": "This record no longer exists."})
+                continue
+            if record_id in self.defer_once:
+                self.defer_once.discard(record_id)
+                results.append({"id": record_id, "outcome": "deferred",
+                                "message": "The assistant ran out of time before it reached this record, so it is sent again."})
                 continue
             if record_id in ("fb-3",):
                 results.append({"id": record_id, "outcome": "content_filtered",
@@ -369,6 +380,7 @@ def test_the_queue_flags_rows_and_approves_with_counted_confirmation(assist_ui):
     warn = operations[0]
     assert warn["op"] == "update" and warn["suggestion_id"] == "a" * 32 and warn["etag"] == "etag-log-1", warn
     assert warn["changes"]["notification_message"] == "Edited: please keep messages respectful.", warn
+    assert warn["changes"]["fingerprint"] == assist_ui.safety[0]["fingerprint"], warn
     assert assist_ui.bulk_calls[1] == ("safety", [{"id": "log-5", "op": "archive", "archived": True}]), assist_ui.bulk_calls
     expect(page.get_by_test_id("v2-safety-suggestion-log-1")).to_have_count(0)
 
@@ -389,8 +401,9 @@ def test_the_queue_flags_rows_and_approves_with_counted_confirmation(assist_ui):
         "The record changed since this suggestion was shown, so nothing was saved.",
     )
     expect(page.get_by_test_id("v2-safety-suggestions-bulk-report")).to_contain_text("triage the record again")
+    # A dismissal names only the suggestion: a stale one may always be dismissed.
     assert assist_ui.bulk_calls[-1][1] == [
-        {"id": "log-3", "op": "dismiss_suggestion", "suggestion_id": "c" * 32, "etag": "etag-log-3"},
+        {"id": "log-3", "op": "dismiss_suggestion", "suggestion_id": "c" * 32},
     ], assist_ui.bulk_calls[-1]
 
 
@@ -509,6 +522,74 @@ def test_a_stored_triage_suggestion_saves_through_the_suggestion(assist_ui):
     section, operations = assist_ui.bulk_calls[0]
     assert section == "feedback" and operations[0]["suggestion_id"] == "f" * 32, operations
     assert operations[0]["etag"] == "etag-fb-1" and operations[0]["changes"]["theme"] == "retrieval", operations
+    assert operations[0]["changes"]["fingerprint"] == assist_ui.feedback[0]["fingerprint"], operations
+
+
+def test_an_editor_save_names_the_version_and_fingerprint_it_read(assist_ui):
+    assist_ui.open("/v2/admin/review/safety/violations/log-6")
+    page = assist_ui.page
+    page.get_by_test_id("v2-safety-editor-notes").fill("Reviewed by hand.")
+    page.get_by_role("button", name="Save review").click()
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/review/safety/violations?selected=log-6")
+    [(section, record_id, body)] = assist_ui.patches
+    assert (section, record_id) == ("safety", "log-6"), assist_ui.patches
+    # An AI suggestion stored on the violation meanwhile changes its version but not this
+    # fingerprint, so the server can still take the save.
+    assert body["etag"] == "etag-log-6" and body["fingerprint"] == assist_ui.safety[5]["fingerprint"], body
+    assert body["notes"] == "Reviewed by hand.", body
+
+
+def test_the_queue_shows_what_the_user_will_read_in_full(assist_ui):
+    long_notes = "The answer cited an outdated policy page. " * 6
+    long_response = "Thanks for telling us. We are updating the travel policy sources so answers cite the current rules."
+    assist_ui.feedback[0]["ai_suggestion"] = _suggestion("f", {
+        **FEEDBACK_SUGGESTION, "analysisNotes": long_notes.strip(), "responseToUser": long_response,
+    })
+    assist_ui.feedback[0]["adminReview"] = {"acknowledged": False, "actionTaken": "Checked the index."}
+    assist_ui.open("/v2/admin/review/feedback/suggestions")
+    page = assist_ui.page
+    visible = page.get_by_test_id("v2-feedback-suggestion-fb-1-visible")
+    expect(visible).to_contain_text("Visible to the user")
+    expect(page.get_by_test_id("v2-feedback-suggestion-fb-1-visible-analysisNotes")).to_have_text(long_notes.strip())
+    expect(page.get_by_test_id("v2-feedback-suggestion-fb-1-visible-responseToUser")).to_have_text(long_response)
+    expect(page.get_by_test_id("v2-feedback-suggestion-fb-1-visible-actionTaken")).to_have_text("Cleared")
+
+    page.get_by_test_id("v2-feedback-suggestions-approve-all").click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text('1 review saves text its user can read; check it under "Visible to the user".')
+    dialog.get_by_role("button", name="Apply 1 suggestion").click()
+    expect(page.get_by_test_id("v2-feedback-suggestions-bulk-report")).to_contain_text("Applied 1 suggestion.")
+    _section, operations = assist_ui.bulk_calls[0]
+    assert operations[0]["changes"]["analysisNotes"] == long_notes.strip(), operations
+
+    # A violation's notes and its warning are marked the same way.
+    assist_ui.open("/v2/admin/review/safety/suggestions")
+    expect(page.get_by_test_id("v2-safety-suggestion-log-1-visible-notes")).to_have_text("A hateful remark, first time.")
+    expect(page.get_by_test_id("v2-safety-suggestion-log-1")).to_contain_text(
+        "Visible to the user: the warning they receive when you approve",
+    )
+
+
+def test_triage_keeps_each_users_records_together_and_resends_deferred_ones(assist_ui):
+    for index, record in enumerate(assist_ui.feedback, start=1):
+        record["userId"] = f"user-{(index - 1) % 3 + 1}"
+    assist_ui.defer_once = {"fb-11"}
+    assist_ui.open("/v2/admin/review/feedback/queue")
+    page = assist_ui.page
+    page.get_by_test_id("v2-feedback-select-page").check()
+    page.get_by_test_id("v2-feedback-bulk-triage").click()
+    page.get_by_role("dialog").get_by_role("button", name="Triage 12 feedback records").click()
+    report = page.get_by_test_id("v2-feedback-bulk-report")
+    expect(report).to_contain_text("AI suggested reviews for 11 of 12 feedback records.")
+    calls = [body["ids"] for _section, body in assist_ui.assist_calls]
+    assert calls == [
+        ["fb-1", "fb-4", "fb-7", "fb-10", "fb-2", "fb-5", "fb-8", "fb-11"],
+        ["fb-11"],
+        ["fb-3", "fb-6", "fb-9", "fb-12"],
+    ], calls
+    # Only the record the content filter declined stays checked.
+    expect(page.get_by_test_id("v2-feedback-check-fb-3")).to_be_checked()
+    expect(page.get_by_test_id("v2-feedback-check-fb-11")).not_to_be_checked()
 
 
 def test_the_feedback_dashboard_themes_open_the_filtered_list(assist_ui):

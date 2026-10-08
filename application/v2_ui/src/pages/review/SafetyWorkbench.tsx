@@ -289,6 +289,7 @@ export function SafetyWorkbench({
             const item = items.find((candidate) => candidate.id === id);
             return item ? safetyRowTitle(item) : `Violation ${id}`;
         },
+        ownerOf: (item) => item.user_id,
     });
     const { items, total, loading, error, paging, updateParams, checked, matching } = workbench;
     const triage = useReviewTriage({
@@ -353,7 +354,7 @@ export function SafetyWorkbench({
         void triage.start(ids, (id) => {
             const item = snapshot.find((candidate) => candidate.id === id);
             return item ? safetyRowTitle(item) : `Violation ${id}`;
-        });
+        }, workbench.recordOwner);
     };
     const actionOptions: [string, string][] = [
         ['', 'Any action'],

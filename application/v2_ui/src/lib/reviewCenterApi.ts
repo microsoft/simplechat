@@ -72,6 +72,8 @@ export interface MatchingIds {
     total: number;
     capped: boolean;
     cap: number;
+    /** The user each returned record is about, so an AI triage can send a user's records together. */
+    owners?: Record<string, string>;
 }
 
 export interface DailySeries {
@@ -202,6 +204,8 @@ export interface FeedbackReviewChanges {
     theme?: string;
     notify_user?: boolean;
     etag?: string;
+    /** The record's reviewable fields as the editor read them; see SafetyReviewChanges.fingerprint. */
+    fingerprint?: string;
 }
 
 export function saveFeedbackReview(id: string, changes: FeedbackReviewChanges) {
@@ -292,6 +296,11 @@ export interface SafetyReviewChanges {
     datetime_to_allow?: string;
     reissue?: boolean;
     etag?: string;
+    /**
+     * The fingerprint the record was read with. When only an AI suggestion or other bookkeeping
+     * changed the version since, the server saves on the current one instead of refusing.
+     */
+    fingerprint?: string;
 }
 
 export interface SafetyReviewResult {

@@ -110,6 +110,8 @@ export interface FeedbackRecord {
     isArchived?: boolean;
     adminReview?: FeedbackAdminReview;
     etag?: string;
+    /** A digest of the reviewable fields; a save sends it back with the etag. */
+    fingerprint?: string;
     /** The record's AI suggestion as the server presents it; read with parseFeedbackSuggestion. */
     ai_suggestion?: unknown;
 }
@@ -283,6 +285,8 @@ export interface SafetyRecord {
     warning_issued_at?: string | null;
     isArchived?: boolean;
     etag?: string;
+    /** A digest of the reviewable fields and the request and warning state; a save sends it back with the etag. */
+    fingerprint?: string;
     user_access?: UserAccessState | null;
     user_violation_count?: number | null;
     /** The violation's AI suggestion as the server presents it; read with parseSafetySuggestion. */

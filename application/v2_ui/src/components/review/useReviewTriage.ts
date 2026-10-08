@@ -3,9 +3,11 @@
 // it leaves under the bulk bar.
 //
 // A triage asks the assistant for a suggested review of each checked record, ten records per
-// request, one request after another, and stores the suggestions on the records. Nothing about a
-// review changes: the report links to the AI suggestions queue, where a reviewer approves or
-// dismisses them. Leaving the page cancels a run still going.
+// request, one request after another, and stores the suggestions on the records. Each user's
+// records travel together, because the server never asks the model about two users' records at
+// once; records the server didn't reach in time are sent again. Nothing about a review changes:
+// the report links to the AI suggestions queue, where a reviewer approves or dismisses them.
+// Leaving the page cancels a run still going.
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReviewSectionId } from '../../lib/reviewAccess';
@@ -29,8 +31,15 @@ export function useReviewTriage({
 
     useEffect(() => () => controllerRef.current?.abort(), []);
 
-    /** Triage `ids`, naming each record in the report with `describe`, as the list named it when the run began. */
-    const start = async (ids: readonly string[], describe: (id: string) => string) => {
+    /**
+     * Triage `ids`, naming each record in the report with `describe`, as the list named it when the
+     * run began. `ownerOf` says whose each record is, so each user's records are sent together.
+     */
+    const start = async (
+        ids: readonly string[],
+        describe: (id: string) => string,
+        ownerOf?: (id: string) => string | null,
+    ) => {
         if (!ids.length || controllerRef.current) return;
         const controller = new AbortController();
         controllerRef.current = controller;
@@ -40,6 +49,7 @@ export function useReviewTriage({
             const run = await runTriage({
                 ids,
                 signal: controller.signal,
+                ownerOf,
                 post: (chunk, signal) => postReviewAssist(section, 'triage', chunk, signal),
                 onProgress: (step) => setProgress({
                     label: step.waitingSeconds ? 'Waiting for the assistant' : 'Triaging with AI',

@@ -9,10 +9,12 @@
 // whole page never ticks one. A suggestion whose record changed since is stale and can only be
 // dismissed; a violation held by a request in progress waits. Every approval says first how many
 // users it warns and how many requests it creates, and afterwards what happened to each record.
+// Text a suggestion saves that the record's user can read is shown whole, marked "Visible to the
+// user", never as an excerpt.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Ban, CheckCheck, Sparkles, X } from 'lucide-react';
+import { Ban, CheckCheck, Eye, Sparkles, X } from 'lucide-react';
 import { ReviewBulkBar, type BulkRunProgress, type BulkRunReport } from '../../components/review/ReviewBulkBar';
 import { ReviewNotice, ReviewPager, ToneBadge } from '../../components/review/ReviewParts';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -50,6 +52,7 @@ import {
     suggestionFailureText,
     suggestionRowState,
     suggestionSummary,
+    userVisibleText,
     type ApprovalPlan,
     type FeedbackSuggestion,
     type NotificationOverride,
@@ -141,6 +144,7 @@ function SuggestionRow({
     const safety = section === 'safety' ? (suggestion as SafetySuggestion).payload : null;
     const warns = safety ? sendsWarning(entry.record as SafetyRecord, safety) : false;
     const repeats = safety ? repeatsRestriction(entry.record as SafetyRecord, safety) : false;
+    const visible = userVisibleText(entry);
     const testId = `v2-${section}-suggestion-${id}`;
     return (
         <li data-testid={testId} data-state={state}
@@ -195,13 +199,32 @@ function SuggestionRow({
                             {repeatedRestrictionText(entry.record as SafetyRecord, safety.action)}
                         </p>
                     ) : null}
+                    {visible.length ? (
+                        <div role="group" className="space-y-1.5 rounded-xl border border-edge p-2.5" aria-label="Visible to the user"
+                            data-testid={`${testId}-visible`}>
+                            <p className="flex items-center gap-1.5 text-xs font-medium text-text-1" aria-hidden="true">
+                                <Eye size={13} className="text-text-3" /> Visible to the user
+                            </p>
+                            <dl className="space-y-1.5">
+                                {visible.map((item) => (
+                                    <div key={item.field}>
+                                        <dt className="text-[11px] font-medium text-text-2">{item.label}</dt>
+                                        <dd className="whitespace-pre-wrap break-words text-sm text-text-1" data-testid={`${testId}-visible-${item.field}`}>
+                                            {item.cleared ? <span className="italic text-text-2">Cleared</span> : item.text}
+                                        </dd>
+                                    </div>
+                                ))}
+                            </dl>
+                        </div>
+                    ) : null}
                     {safety && notifies(entry) && state === 'ready' ? (
                         <fieldset className="space-y-1.5 rounded-xl bg-surface-2 p-2.5" disabled={busy}>
                             <legend className="sr-only">The notification the user receives</legend>
-                            <p className="text-xs font-medium text-text-1">
+                            <p className="flex items-center gap-1.5 text-xs font-medium text-text-1">
+                                <Eye size={13} aria-hidden="true" className="text-text-3" />
                                 {restrictive
-                                    ? 'What the user is told once another reviewer approves'
-                                    : 'The warning the user receives when you approve'}
+                                    ? 'Visible to the user once another reviewer approves'
+                                    : 'Visible to the user: the warning they receive when you approve'}
                             </p>
                             <label className="block text-xs text-text-2">
                                 Title
@@ -402,8 +425,9 @@ export function SuggestionsQueue({
         const operations: BulkOperation[] = ids.flatMap((id) => {
             const entry = entries.find((candidate) => candidate.id === id);
             if (!entry?.suggestion.id) return [];
-            const etag = (entry.record as { etag?: string }).etag;
-            return [{ id, op: 'dismiss_suggestion' as const, suggestion_id: entry.suggestion.id, ...(etag ? { etag } : {}) }];
+            // The suggestion id says exactly what is dismissed, and a stale suggestion may always be
+            // dismissed, so no record version is named.
+            return [{ id, op: 'dismiss_suggestion' as const, suggestion_id: entry.suggestion.id }];
         });
         if (!operations.length) return;
         setProgress({ label: 'Dismissing', done: 0, total: operations.length });

@@ -218,9 +218,13 @@ export function suggestionBadge(section: ReviewSectionId, value: unknown): { lab
 
 export const REVIEW_ASSIST_OUTCOMES = [
     'suggested', 'content_filtered', 'not_found', 'locked', 'no_suggestion', 'not_analyzed', 'record_changed',
-    'save_failed', 'too_large',
+    'save_failed', 'too_large', 'deferred',
 ] as const;
-/** What happened to one record: the server's outcomes, and `failed` for a request that failed as a whole. */
+/**
+ * What happened to one record: the server's outcomes, and `failed` for a request that failed as a
+ * whole. `deferred` means the server ran out of time before it reached the record; a triage sends
+ * it again, so it never ends a run.
+ */
 export type ReviewAssistOutcome = (typeof REVIEW_ASSIST_OUTCOMES)[number] | 'failed';
 
 export interface ReviewAssistResult {
@@ -468,6 +472,47 @@ export function suggestionSummary(changes: readonly SuggestionChange[]): string 
 /* The suggestions queue                                                       */
 /* -------------------------------------------------------------------------- */
 
+/** One field of a suggestion that its record's user can read once it is applied. */
+export interface UserVisibleText {
+    field: string;
+    label: string;
+    /** The whole text the user would read; empty when the suggestion clears the field. */
+    text: string;
+    /** The suggestion empties a field the user can read something in now. */
+    cleared: boolean;
+}
+
+function visibleField(
+    items: UserVisibleText[],
+    field: string,
+    label: string,
+    next: string | null | undefined,
+    current: string | null | undefined,
+) {
+    if (next && next.trim()) items.push({ field, label, text: next, cleared: false });
+    else if (current && current.trim()) items.push({ field, label, text: '', cleared: true });
+}
+
+/**
+ * The text a suggestion saves that its record's user can read, in full: a feedback review's analysis
+ * notes, action taken and response to the user, which the user reads with their feedback, and a
+ * violation's notes, which the user can read in their violations and the export of them. A warning,
+ * suspension or block's notification is shown on its own, where it can be edited.
+ */
+export function userVisibleText(entry: QueueEntry): UserVisibleText[] {
+    const items: UserVisibleText[] = [];
+    if (entry.section === 'feedback') {
+        const payload = (entry.suggestion as FeedbackSuggestion).payload;
+        const review = (entry.record as FeedbackRecord).adminReview ?? {};
+        visibleField(items, 'analysisNotes', 'Analysis notes', payload.analysisNotes, review.analysisNotes);
+        visibleField(items, 'actionTaken', 'Action taken', payload.actionTaken, review.actionTaken);
+        visibleField(items, 'responseToUser', 'Response to the user', payload.responseToUser, review.responseToUser);
+    } else {
+        visibleField(items, 'notes', 'Notes', (entry.suggestion as SafetySuggestion).payload.notes, (entry.record as SafetyRecord).notes);
+    }
+    return items;
+}
+
 /** A queue row: ready to apply, stale because its record changed, or locked by a request in progress. */
 export type SuggestionRowState = 'ready' | 'stale' | 'locked';
 
@@ -508,6 +553,8 @@ export interface ApprovalPlan {
     /** Suspensions and blocks the violation already records: applying updates the review only. */
     repeats: number;
     archives: number;
+    /** Reviews that save text their record's user can read. */
+    userVisible: number;
 }
 
 /**
@@ -517,7 +564,7 @@ export interface ApprovalPlan {
  */
 export function planApproval(entries: readonly QueueEntry[], ids: readonly string[], mode: 'all' | 'selected'): ApprovalPlan {
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    const plan: ApprovalPlan = { ids: [], skipped: [], warnings: 0, restrictions: 0, repeats: 0, archives: 0 };
+    const plan: ApprovalPlan = { ids: [], skipped: [], warnings: 0, restrictions: 0, repeats: 0, archives: 0, userVisible: 0 };
     for (const id of ids) {
         const entry = byId.get(id);
         if (!entry) {
@@ -537,6 +584,7 @@ export function planApproval(entries: readonly QueueEntry[], ids: readonly strin
             continue;
         }
         plan.ids.push(id);
+        if (userVisibleText(entry).some((item) => !item.cleared)) plan.userVisible += 1;
         if (entry.section === 'safety') {
             const record = entry.record as SafetyRecord;
             const payload = (entry.suggestion as SafetySuggestion).payload;
@@ -571,6 +619,11 @@ export function approvalConfirmation(
         parts.push(`${plural(plan.repeats, 'suspension or block is', 'suspensions or blocks are')} already on ${plan.repeats === 1 ? 'its violation' : 'their violations'}, so nothing new is requested for ${plan.repeats === 1 ? 'it' : 'them'}.`);
     }
     if (plan.archives) parts.push(`${plural(plan.archives, noun.singular, noun.plural)} will be archived.`);
+    if (plan.userVisible) {
+        parts.push(plan.userVisible === 1
+            ? '1 review saves text its user can read; check it under "Visible to the user".'
+            : `${plan.userVisible.toLocaleString()} reviews save text their users can read; check it under "Visible to the user".`);
+    }
     if (plan.skipped.length) parts.push(`${plural(plan.skipped.length, 'suggestion is', 'suggestions are')} left in the queue.`);
     return { title: `Apply ${count}?`, description: parts.join(' '), confirmLabel: `Apply ${count}` };
 }
@@ -617,8 +670,11 @@ export function buildSuggestionOperation(
             theme: payload.theme,
         };
     }
-    const etag = (entry.record as { etag?: string }).etag;
-    return { id: entry.id, op: 'update', suggestion_id: suggestion.id, ...(etag ? { etag } : {}), changes };
+    const record = entry.record as { etag?: string; fingerprint?: string };
+    // The fingerprint lets the save go ahead when only bookkeeping, such as another AI suggestion
+    // operation, changed the record's version since the queue read it.
+    if (typeof record.fingerprint === 'string' && record.fingerprint) changes.fingerprint = record.fingerprint;
+    return { id: entry.id, op: 'update', suggestion_id: suggestion.id, ...(record.etag ? { etag: record.etag } : {}), changes };
 }
 
 /** The archives that follow applied suggestions which also suggested archiving. */
@@ -715,6 +771,39 @@ export function chunkTriageIds(ids: readonly string[], size = REVIEW_TRIAGE_CHUN
     return chunks;
 }
 
+const TRIAGE_NOT_REACHED = "The assistant didn't reach this record. Triage it again.";
+
+/**
+ * Triage chunks of at most `size` records that keep each user's records together. The server asks
+ * the model about one user's records at a time, so a chunk spread over fewer users needs fewer
+ * model calls. A record whose user isn't known is a group of its own. A user with more than `size`
+ * records fills whole chunks; every other group goes in the first chunk with room for all of it.
+ */
+export function planTriageChunks(
+    ids: readonly string[],
+    ownerOf: ((id: string) => string | null | undefined) | undefined,
+    size = REVIEW_TRIAGE_CHUNK,
+): string[][] {
+    const groups = new Map<string, string[]>();
+    for (const id of new Set(ids)) {
+        const owner = ownerOf?.(id);
+        const key = typeof owner === 'string' && owner ? `owner:${owner}` : `record:${id}`;
+        const group = groups.get(key);
+        if (group) group.push(id);
+        else groups.set(key, [id]);
+    }
+    const chunks: string[][] = [];
+    for (const group of groups.values()) {
+        for (let start = 0; start < group.length; start += size) {
+            const piece = group.slice(start, start + size);
+            const roomy = chunks.find((chunk) => chunk.length + piece.length <= size);
+            if (roomy) roomy.push(...piece);
+            else chunks.push(piece);
+        }
+    }
+    return chunks;
+}
+
 /** Wait `seconds`, a second at a time, unless the signal aborts first. Resolves false when aborted. */
 export function waitSeconds(
     seconds: number,
@@ -737,10 +826,12 @@ function failed(ids: readonly string[], failure: ReviewAssistFailure): ReviewAss
 }
 
 /**
- * Triage `ids` ten at a time, one request after another. A rate-limited or briefly unavailable
- * assistant is waited for, up to `maxWaitSeconds` at a time; an answer that can't be used fails
- * only its own chunk. Anything else stops the run, and so does the signal: the records not yet
- * sent are returned as unprocessed.
+ * Triage `ids` ten at a time, one request after another, each user's records kept together (see
+ * `planTriageChunks`). A rate-limited or briefly unavailable assistant is waited for, up to
+ * `maxWaitSeconds` at a time; an answer that can't be used fails only its own chunk. Records the
+ * server answers `deferred`, because it ran out of time before it reached them, are sent again
+ * next. Anything else stops the run, and so does the signal: the records not yet sent are
+ * returned as unprocessed.
  */
 export async function runTriage({
     ids,
@@ -748,6 +839,7 @@ export async function runTriage({
     signal,
     onProgress,
     sleep,
+    ownerOf,
     maxWaitSeconds = REVIEW_TRIAGE_MAX_WAIT_SECONDS,
     chunkSize = REVIEW_TRIAGE_CHUNK,
 }: {
@@ -756,15 +848,17 @@ export async function runTriage({
     signal: AbortSignal;
     onProgress?: (progress: TriageProgress) => void;
     sleep?: (ms: number) => Promise<void>;
+    /** The user a record is about, when the page knows it. */
+    ownerOf?: (id: string) => string | null | undefined;
     maxWaitSeconds?: number;
     chunkSize?: number;
 }): Promise<TriageRun> {
-    const chunks = chunkTriageIds(ids, chunkSize);
+    const queue = planTriageChunks(ids, ownerOf, chunkSize);
     const run: TriageRun = { results: [], cancelled: false, stopped: null, unprocessed: [] };
-    let done = 0;
-    onProgress?.({ done, total: ids.length, waitingSeconds: null });
-    for (let index = 0; index < chunks.length; index += 1) {
-        const chunk = chunks[index];
+    const total = queue.reduce((count, chunk) => count + chunk.length, 0);
+    onProgress?.({ done: 0, total, waitingSeconds: null });
+    while (queue.length) {
+        const chunk = queue[0];
         let waits = 0;
         let settled = false;
         while (!settled) {
@@ -774,7 +868,15 @@ export async function runTriage({
             }
             const answer = await post(chunk, signal);
             if (answer.ok) {
-                run.results.push(...answer.results);
+                const deferred = answer.results.filter((result) => result.outcome === 'deferred');
+                const answered = answer.results.filter((result) => result.outcome !== 'deferred');
+                if (deferred.length && !answered.length) {
+                    // The server always answers at least one record; never send the same chunk forever.
+                    run.results.push(...deferred.map((result) => ({ ...result, outcome: 'failed' as const, message: TRIAGE_NOT_REACHED })));
+                } else {
+                    run.results.push(...answered);
+                    if (deferred.length) queue.splice(1, 0, deferred.map((result) => result.id));
+                }
                 settled = true;
                 break;
             }
@@ -787,8 +889,13 @@ export async function runTriage({
             const transient = failure.status === 429 || (failure.status === 503 && failure.code !== 'assistant_limit_unavailable');
             if (transient && wait !== null && wait <= maxWaitSeconds && waits < 3) {
                 waits += 1;
-                const waited = await waitSeconds(wait, signal, (left) => onProgress?.({ done, total: ids.length, waitingSeconds: left }), sleep);
-                onProgress?.({ done, total: ids.length, waitingSeconds: null });
+                const waited = await waitSeconds(
+                    wait,
+                    signal,
+                    (left) => onProgress?.({ done: run.results.length, total, waitingSeconds: left }),
+                    sleep,
+                );
+                onProgress?.({ done: run.results.length, total, waitingSeconds: null });
                 if (!waited) {
                     run.cancelled = true;
                     break;
@@ -804,11 +911,11 @@ export async function runTriage({
             break;
         }
         if (!settled) {
-            run.unprocessed = chunks.slice(index).flat();
+            run.unprocessed = queue.flat();
             break;
         }
-        done += chunk.length;
-        onProgress?.({ done, total: ids.length, waitingSeconds: null });
+        queue.shift();
+        onProgress?.({ done: run.results.length, total, waitingSeconds: null });
     }
     return run;
 }
