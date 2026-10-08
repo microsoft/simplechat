@@ -15,8 +15,17 @@ hand or by the schedule.
 
 import hashlib
 import json
+import logging
+import re
+import threading
+import time
+import uuid
 from copy import deepcopy
+from datetime import datetime, timezone
 
+from azure.cosmos import exceptions
+from functions_appinsights import log_event
+from functions_orchestration_context import ConversationContextError
 from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     VISUAL_IMAGE_PROPOSAL,
@@ -88,7 +97,13 @@ REFUSAL_MESSAGES = {
     'plan_replay_read_only': 'A saved plan can\'t be edited. Create it again from chat.',
     'workflow_replay_managed': 'This workflow repeats a saved chat plan; only its name, schedule and alerts can change.',
     'model_unavailable': 'The model this plan used is no longer available. Create it again from chat.',
+    'quota_exceeded': 'You already have the most saved chat-plan workflows allowed. Delete one before adding another.',
+    'workflow_conflict': 'This workflow is being changed or deleted. Reload and try again.',
 }
+
+PLAN_REPLAY_MAX_SECONDS = 900
+PLAN_REPLAY_POLL_SECONDS = 5
+PLAN_REPLAY_STOP_GRACE_SECONDS = 30
 
 
 class PlanReplayRefused(WorkflowInputError):
@@ -397,3 +412,668 @@ def authorize_replay_sources(user_id, frozen_plan, frozen_seeds, settings):
     }
     if set(document_ids) - authorized:
         _refuse('source_unavailable')
+
+
+def _utc_now():
+    return datetime.now(timezone.utc)
+
+
+def _iso(value):
+    source = value or _utc_now()
+    if isinstance(source, str):
+        return source
+    if source.tzinfo is None:
+        source = source.replace(tzinfo=timezone.utc)
+    return source.isoformat()
+
+
+def _enabled_plan_steps(plan):
+    return [
+        step for step in (plan or {}).get('steps') or []
+        if isinstance(step, dict) and step.get('enabled', True)
+    ]
+
+
+def _contains_key(value, names):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in names:
+                return True
+            if _contains_key(item, names):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_key(item, names) for item in value)
+    return False
+
+
+def _contains_elicitation_marker(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).startswith('elicitation'):
+                return True
+            if _contains_elicitation_marker(item):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_elicitation_marker(item) for item in value)
+    return False
+
+
+def _strip_run_time_line(message, fallback=''):
+    text = str(message or '').strip()
+    if not text:
+        return str(fallback or '').strip()
+    lines = text.splitlines()
+    while lines and re.fullmatch(r'Current date and time: .+ \([^)]+\)', lines[-1].strip()):
+        lines.pop()
+        while lines and not lines[-1].strip():
+            lines.pop()
+    return '\n'.join(lines).strip() or str(fallback or '').strip()
+
+
+def freeze_source_run(record, conversation, user_id, settings):
+    """Return the frozen replay payload and any per-step refusal details."""
+    record = record if isinstance(record, dict) else {}
+    conversation = conversation if isinstance(conversation, dict) else {}
+    if record.get('user_id') != user_id:
+        raise PlanReplaySaveError('creator_mismatch')
+    # Imported here to keep storage-free save preflight importable without memory bootstrap.
+    from functions_orchestration_memory import conversation_is_private
+
+    if conversation.get('user_id') != user_id or not conversation_is_private(conversation, user_id):
+        raise PlanReplaySaveError('shared_conversation_not_allowed')
+    approval = record.get('approval') if isinstance(record.get('approval'), dict) else {}
+    failures = record.get('failures')
+    if (
+        record.get('status') != 'completed'
+        or record.get('outcome') not in (None, 'completed')
+        or approval.get('state') != 'approved'
+        or record.get('failure')
+        or (isinstance(failures, list) and failures)
+        or record.get('workflow_replay')
+        or not isinstance(record.get('plan'), dict)
+    ):
+        raise PlanReplaySaveError('source_run_not_eligible')
+    seeds = record.get('seeds') if isinstance(record.get('seeds'), dict) else {}
+    if (
+        record.get('answered_questions')
+        or seeds.get('elicitation_references')
+        or _contains_elicitation_marker(record.get('plan'))
+    ):
+        raise PlanReplaySaveError('elicitation_not_replayable')
+    context = record.get('conversation_context') if isinstance(record.get('conversation_context'), dict) else {}
+    if record.get('result_aliases') or record.get('plan', {}).get('result_aliases') or _contains_key(
+        context, {'analysis_result_contexts'},
+    ):
+        raise PlanReplaySaveError('conversation_context_not_replayable')
+    request = _strip_run_time_line(record.get('resolved_message'), record.get('user_message'))
+    if not request:
+        raise PlanReplaySaveError('source_run_not_eligible')
+    frozen_seeds = build_frozen_seeds(seeds)
+    frozen_plan = normalize_plan_contract(record['plan'])
+    refusals = classify_plan_steps(frozen_plan)
+    if not refusals:
+        try:
+            authorize_replay_capabilities(user_id, frozen_plan, settings)
+        except PlanReplayRefused as exc:
+            refusals.extend(exc.refusals or [{
+                'code': exc.code, 'step_number': 0, 'step_id': exc.step_id or '',
+                'capability_id': '', 'message': exc.public_message,
+            }])
+    return {
+        'request': request,
+        'frozen_plan': frozen_plan,
+        'frozen_seeds': frozen_seeds,
+        'plan_sha256': plan_replay_sha256(request, frozen_plan, frozen_seeds),
+        'refusals': refusals,
+        'source_run_id': record['id'],
+        'source_conversation_id': record['conversation_id'],
+        'time_zone': record.get('time_zone') or '',
+    }
+
+
+def build_plan_replay_preview(freeze, settings):
+    freeze = freeze if isinstance(freeze, dict) else {}
+    steps = []
+    for number, step in enumerate(_enabled_plan_steps(freeze.get('frozen_plan')), start=1):
+        capability_id = step.get('capability_id') or ''
+        steps.append({
+            'number': number,
+            'step_id': str(step.get('step_id') or ''),
+            'title': str(step.get('title') or '').strip(),
+            'capability_id': capability_id,
+            'capability_label': capability_label(capability_id),
+            'enabled': True,
+        })
+    from functions_workflow_limits import get_orchestration_workflow_min_interval_seconds
+
+    return {
+        'eligible': not bool(freeze.get('refusals')),
+        'request': freeze.get('request') or '',
+        'steps': steps,
+        'refusals': list(freeze.get('refusals') or []),
+        'plan_sha256': freeze.get('plan_sha256') or '',
+        'time_handling': PLAN_REPLAY_TIME_HANDLING,
+        'time_zone': freeze.get('time_zone') or '',
+        'min_interval_seconds': get_orchestration_workflow_min_interval_seconds(settings),
+        'allowlist_version': PLAN_REPLAY_ALLOWLIST_VERSION,
+        'max_steps': PLAN_REPLAY_MAX_STEPS,
+    }
+
+
+def attach_plan_replay(task, plan_replay):
+    return {
+        **(task if isinstance(task, dict) else {}),
+        'type': PLAN_REPLAY_TASK_TYPE,
+        'name': PLAN_REPLAY_TASK_NAME,
+        'plan_replay': deepcopy(plan_replay),
+    }
+
+
+def stored_plan_replay_task(workflow):
+    for task in (workflow or {}).get('tasks') or []:
+        if isinstance(task, dict) and task.get('type') == PLAN_REPLAY_TASK_TYPE and isinstance(task.get('plan_replay'), dict):
+            return task
+    return None
+
+
+def build_plan_replay_payload(freeze, user_id, now):
+    freeze = freeze if isinstance(freeze, dict) else {}
+    timestamp = _iso(now)
+    return {
+        'version': PLAN_REPLAY_TASK_VERSION,
+        'allowlist_version': PLAN_REPLAY_ALLOWLIST_VERSION,
+        'request': freeze.get('request') or '',
+        'frozen_plan': deepcopy(freeze.get('frozen_plan')),
+        'frozen_seeds': deepcopy(freeze.get('frozen_seeds') or {}),
+        'plan_sha256': freeze.get('plan_sha256') or '',
+        'approval': {'approved_by': user_id, 'approved_at': timestamp, 'plan_sha256': freeze.get('plan_sha256') or ''},
+        'provenance': {
+            'source_run_id': freeze.get('source_run_id') or '',
+            'source_conversation_id': freeze.get('source_conversation_id') or '',
+            'created_by': user_id,
+            'frozen_at': timestamp,
+            'time_handling': PLAN_REPLAY_TIME_HANDLING,
+            'time_zone': freeze.get('time_zone') or '',
+        },
+    }
+
+
+def _read_source_run(run_id, user_id, conversation_id):
+    from functions_orchestration_plan_revisions import read_revision_run
+
+    return read_revision_run(run_id, user_id, conversation_id)
+
+
+def _read_conversation(conversation_id):
+    from config import cosmos_conversations_container
+
+    return cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
+
+
+def _workflow_name_from_request(request):
+    text = re.sub(r'\s+', ' ', str(request or '')).strip()
+    return f'Repeat: {text[:80]}' if text else 'Repeat saved plan'
+
+
+def _workflow_payload_from_body(body, request):
+    body = body if isinstance(body, dict) else {}
+    trigger = body.get('trigger') if isinstance(body.get('trigger'), dict) else {}
+    schedule = body.get('schedule') if isinstance(body.get('schedule'), dict) else trigger.get('schedule')
+    trigger_type = str(body.get('trigger_type') or trigger.get('type') or ('interval' if schedule else 'manual')).strip().lower()
+    if trigger_type == 'scheduled':
+        trigger_type = 'interval'
+    name = str(body.get('name') or '').strip() or _workflow_name_from_request(request)
+    return {
+        'name': name[:120],
+        'description': str(body.get('description') or '').strip(),
+        'task_prompt': request,
+        'definition_version': 2,
+        'runner_type': 'model',
+        'durable_execution': False,
+        'trigger_type': trigger_type,
+        'is_enabled': body.get('enabled') is True or body.get('is_enabled') is True,
+        'schedule': schedule or {},
+        'tasks': [{
+            'type': 'instructions',
+            'name': PLAN_REPLAY_TASK_NAME,
+            'instructions': request,
+            'runner': {'type': 'inherit'},
+        }],
+    }
+
+
+def create_plan_replay_workflow(user_id, run_id, body, settings, *, read_run=None, read_conversation=None, now=None):
+    body = body if isinstance(body, dict) else {}
+    authorize_plan_replay_settings(settings)
+    conversation_id = str(body.get('conversation_id') or '').strip()
+    if not conversation_id:
+        raise PlanReplaySaveError('source_run_not_eligible')
+    run_reader = read_run or _read_source_run
+    conversation_reader = read_conversation or _read_conversation
+    try:
+        record = run_reader(run_id, user_id, conversation_id)
+        conversation = conversation_reader(conversation_id)
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise PlanReplaySaveError('source_run_not_eligible') from exc
+    freeze = freeze_source_run(record, conversation, user_id, settings)
+    if freeze.get('refusals'):
+        raise PlanReplaySaveError(freeze['refusals'][0]['code'], refusals=freeze['refusals'])
+    if str(body.get('plan_sha256') or '').strip() != freeze['plan_sha256']:
+        raise PlanReplaySaveError('plan_hash_mismatch')
+    from functions_workflow_drafts import check_orchestration_workflow_quota, orchestration_workflow_id
+    from functions_workflow_definitions import WorkflowDefinitionConflict, normalize_workflow_origin, workflow_definition_for_editor
+    from functions_personal_workflows import create_personal_workflow_if_absent
+
+    quota_error = check_orchestration_workflow_quota(user_id, settings)
+    if quota_error:
+        raise PlanReplaySaveError('quota_exceeded')
+    timestamp = _iso(now)
+    proposal_id = f"replay-{run_id}-{freeze['plan_sha256'][:12]}"
+    workflow_id = orchestration_workflow_id(user_id, proposal_id)
+    origin = normalize_workflow_origin({
+        'source': 'orchestration',
+        'conversation_id': freeze['source_conversation_id'],
+        'orchestration_run_id': run_id,
+        'proposal_id': proposal_id,
+        'created_at': timestamp,
+        'edited': False,
+    })
+    try:
+        workflow, created = create_personal_workflow_if_absent(
+            user_id,
+            _workflow_payload_from_body(body, freeze['request']),
+            workflow_id=workflow_id,
+            origin=origin,
+            actor_user_id=user_id,
+            settings=settings,
+            plan_replay_task=build_plan_replay_payload(freeze, user_id, timestamp),
+        )
+    except WorkflowDefinitionConflict as exc:
+        raise PlanReplaySaveError('workflow_conflict') from exc
+    return {'ok': True, 'workflow': workflow_definition_for_editor(workflow), 'created': bool(created)}
+
+
+_PLAN_REPLAY_EDITABLE_KEYS = frozenset({
+    'id', 'definition_revision', 'name', 'description', 'trigger_type', 'schedule', 'is_enabled',
+    'alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation',
+})
+
+
+def _canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
+
+
+def _same_json(left, right):
+    return _canonical(left) == _canonical(right)
+
+
+def normalize_plan_replay_update(existing_workflow, payload):
+    """Keep only editable replay-workflow fields and preserve the frozen plan."""
+    existing = existing_workflow if isinstance(existing_workflow, dict) else {}
+    payload = payload if isinstance(payload, dict) else {}
+    stored = stored_plan_replay_task(existing)
+    if not stored:
+        return payload
+    if 'plan_replay' in payload and not _same_json(payload.get('plan_replay'), stored.get('plan_replay')):
+        raise PlanReplaySaveError('plan_replay_read_only')
+    incoming_tasks = payload.get('tasks')
+    if incoming_tasks is not None:
+        if not isinstance(incoming_tasks, list) or len(incoming_tasks) != 1:
+            raise PlanReplaySaveError('plan_replay_read_only')
+        incoming = incoming_tasks[0] if isinstance(incoming_tasks[0], dict) else {}
+        incoming_replay = incoming.get('plan_replay', stored.get('plan_replay'))
+        if (
+            incoming.get('type', PLAN_REPLAY_TASK_TYPE) != PLAN_REPLAY_TASK_TYPE
+            or not _same_json(incoming_replay, stored.get('plan_replay'))
+        ):
+            raise PlanReplaySaveError('plan_replay_read_only')
+    sanitized = {key: deepcopy(existing.get(key)) for key in (
+        'task_prompt', 'runner_type', 'definition_version', 'durable_execution',
+        'document_action', 'analyze', 'file_sync', 'chat_capabilities_enabled',
+        'url_access_enabled', 'model_endpoint_id', 'model_id', 'model_provider',
+        'reference_inputs', 'error_handling',
+    ) if key in existing}
+    for key in _PLAN_REPLAY_EDITABLE_KEYS:
+        if key in payload:
+            sanitized[key] = deepcopy(payload[key])
+        elif key in existing:
+            sanitized[key] = deepcopy(existing[key])
+    sanitized['tasks'] = [{
+        'id': stored.get('id'),
+        'type': 'instructions',
+        'name': stored.get('name') or PLAN_REPLAY_TASK_NAME,
+        'instructions': stored.get('instructions') or (stored.get('plan_replay') or {}).get('request') or '',
+        'runner': deepcopy(stored.get('runner') or {'type': 'inherit'}),
+    }]
+    return sanitized
+
+
+def build_executable_replay_plan(frozen_plan, *, run_id, plan_id, turn_id, conversation_id, user_id, approved_at):
+    plan = deepcopy(frozen_plan if isinstance(frozen_plan, dict) else {})
+    plan.update({
+        'run_id': run_id,
+        'plan_id': plan_id,
+        'turn_id': turn_id,
+        'conversation_id': conversation_id,
+        'user_id': user_id,
+        'status': 'approved',
+        'approval': {
+            'mode': 'manual', 'state': 'approved', 'approved_at': approved_at,
+            'approved_by': user_id, 'edited': False,
+        },
+    })
+    for step in plan.get('steps') or []:
+        if isinstance(step, dict):
+            step['status'] = 'pending'
+    return plan
+
+
+def _deterministic_id(prefix, workflow_run_id, task_id, attempt, kind):
+    return f'{prefix}_{uuid.uuid5(uuid.NAMESPACE_URL, f"workflow-replay:{kind}:{workflow_run_id}:{task_id}:{attempt}").hex}'
+
+
+def _authorize_private_conversation(conversation_id, user_id, *, read_conversation=None):
+    reader = read_conversation or _read_conversation
+    try:
+        conversation = reader(conversation_id)
+    except exceptions.CosmosResourceNotFoundError:
+        raise ConversationContextError('That conversation could not be opened.') from None
+    # Imported at the authorization boundary to avoid importing memory services during module import.
+    from functions_orchestration_memory import conversation_is_private
+
+    if (
+        conversation.get('user_id') != user_id
+        or conversation.get('orchestration_deleted')
+        or not conversation_is_private(conversation, user_id)
+    ):
+        raise ConversationContextError('That conversation could not be opened.')
+    return conversation
+
+
+def _verify_workflow_conversation(workflow, conversation_id, user_id, source_conversation_id, *, read_conversation=None):
+    if conversation_id == source_conversation_id:
+        raise PlanReplayRefused('conversation_context_not_replayable')
+    conversation = _authorize_private_conversation(conversation_id, user_id, read_conversation=read_conversation)
+    if (
+        str(conversation.get('chat_type') or '').strip().lower() != 'workflow'
+        or str(conversation.get('workflow_id') or '').strip() != str(workflow.get('id') or '').strip()
+        or str(conversation.get('group_id') or '').strip()
+    ):
+        raise ConversationContextError('That conversation could not be opened.')
+    return conversation
+
+
+def _read_message(message_id, conversation_id):
+    from config import cosmos_messages_container
+
+    return cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+
+
+def _message_container():
+    from config import cosmos_messages_container
+
+    return cosmos_messages_container
+
+
+def _default_workflow_run(user_id, run_id):
+    from functions_personal_workflows import get_personal_workflow_run
+
+    return get_personal_workflow_run(user_id, run_id)
+
+
+def _safe_error_code(error):
+    code = getattr(error, 'code', '') or ''
+    if code == 'model_routing_changed':
+        return 'model_unavailable'
+    if code in {'context_unavailable', 'analysis_result_unavailable', 'result_unavailable', 'workflow_result_changed'}:
+        return 'source_unavailable'
+    return 'replay_execution_failed'
+
+
+def execute_plan_replay_task(
+    workflow, task, settings, *, conversation_id, run_id, actor_user_id, attempt=0,
+    user_message_id=None, now=None, clock=None, max_seconds=PLAN_REPLAY_MAX_SECONDS,
+    poll_seconds=PLAN_REPLAY_POLL_SECONDS, read_conversation=None, read_message=None,
+    read_workflow_run=None, create_run=None, claim_run=None, prepare_execution=None,
+    get_run=None, request_cancel=None, fence=None, message_container=None,
+):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    task = task if isinstance(task, dict) else {}
+    ctx = authorize_plan_replay_run(workflow, task, settings)
+    if str(actor_user_id or '') != str(workflow.get('user_id') or ''):
+        raise PlanReplayRefused('creator_mismatch')
+    user_id = ctx['user_id']
+    replay = task['plan_replay']
+    provenance = replay.get('provenance') if isinstance(replay.get('provenance'), dict) else {}
+    authorize_replay_capabilities(user_id, ctx['frozen_plan'], settings)
+    authorize_replay_sources(user_id, ctx['frozen_plan'], ctx['frozen_seeds'], settings)
+    _verify_workflow_conversation(
+        workflow, conversation_id, user_id, provenance.get('source_conversation_id') or '',
+        read_conversation=read_conversation,
+    )
+    if not user_message_id:
+        workflow_run = (read_workflow_run or _default_workflow_run)(user_id, run_id) or {}
+        user_message_id = workflow_run.get('user_message_id')
+    if not user_message_id:
+        raise PlanReplayRefused('replay_execution_failed')
+    user_message = (read_message or _read_message)(user_message_id, conversation_id)
+    if user_message.get('conversation_id') != conversation_id or user_message.get('role') != 'user':
+        raise PlanReplayRefused('replay_execution_failed')
+    from functions_orchestration_context import build_conversation_snapshot, normalize_history_message
+    from functions_orchestration_workflow_context import request_local_time_line
+
+    normalized_message = normalize_history_message(user_message)
+    if not normalized_message or not normalized_message.get('fingerprint'):
+        raise PlanReplayRefused('replay_execution_failed')
+    schedule = workflow.get('schedule') if isinstance(workflow.get('schedule'), dict) else {}
+    tz = schedule.get('timezone') or provenance.get('time_zone') or 'UTC'
+    started_at = now or _utc_now()
+    time_line = request_local_time_line(tz, started_at)
+    request = replay['request']
+    resolved_message = f'{request}\n\n{time_line}' if time_line else request
+    task_id = task.get('id') or PLAN_REPLAY_TASK_NAME
+    orch_run_id = _deterministic_id('run', run_id, task_id, attempt, 'run')
+    plan_id = _deterministic_id('plan', run_id, task_id, attempt, 'plan')
+    turn_id = _deterministic_id('turn', run_id, task_id, attempt, 'turn')
+    approved_at = (replay.get('approval') or {}).get('approved_at') or _iso(started_at)
+    executable_plan = build_executable_replay_plan(
+        ctx['frozen_plan'], run_id=orch_run_id, plan_id=plan_id, turn_id=turn_id,
+        conversation_id=conversation_id, user_id=user_id, approved_at=approved_at,
+    )
+    snapshot = build_conversation_snapshot([], None, turn_id=turn_id)
+    from functions_orchestration_runs import create_orchestration_run, get_orchestration_run
+    from functions_orchestration_plan_revisions import claim_plan_run
+    from functions_orchestration_recovery import ExecutionLease, fence_publication, request_cancellation
+    from functions_orchestration_services import composition_profiles
+
+    creator = create_run or create_orchestration_run
+    claimer = claim_run or claim_plan_run
+    get_record = get_run or get_orchestration_run
+    msg_container = message_container or _message_container()
+    record = creator(
+        executable_plan,
+        user_id,
+        conversation_id,
+        idempotent=True,
+        turn_context={
+            'user_message': request,
+            'user_message_id': user_message_id,
+            'user_message_fingerprint': normalized_message['fingerprint'],
+            'turn_id': turn_id,
+            'seeds': ctx['frozen_seeds'],
+            'resolved_message': resolved_message,
+            'conversation_context': snapshot,
+            'time_zone': tz,
+        },
+        initial_updates={'workflow_replay': {
+            'workflow_id': workflow.get('id'),
+            'workflow_run_id': run_id,
+            'task_id': task_id,
+            'plan_sha256': ctx['plan_sha256'],
+            'attempt': attempt,
+        }},
+    )
+
+    def authorize():
+        _verify_workflow_conversation(
+            workflow, conversation_id, user_id, provenance.get('source_conversation_id') or '',
+            read_conversation=read_conversation,
+        )
+
+    claimed = claimer(
+        orch_run_id, user_id, conversation_id, plan_id=plan_id, conversation_context=snapshot,
+        composition_profiles=composition_profiles(), settings=settings,
+    )
+    lease = ExecutionLease(claimed, authorize, message_container=msg_container)
+    from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
+    from functions_workflow_execution import assert_workflow_execution_owned
+
+    execution_error = {}
+
+    def worker():
+        try:
+            execution = (prepare_execution or prepare_harness_execution)(
+                claimed,
+                settings=settings,
+                identity_context={'user_roles': [], 'user_enable_agents': False},
+                execution_identity=None,
+                lease=lease,
+            )
+            execution.execute(emit=None)
+        except BaseException as exc:
+            execution_error['error'] = exc
+
+    thread = threading.Thread(target=worker, name=f'plan-replay-{orch_run_id}', daemon=True)
+    thread.start()
+    time_source = clock or time.monotonic
+    deadline = time_source() + max_seconds
+
+    def cancel_and_fence():
+        latest = None
+        try:
+            latest = (request_cancel or request_cancellation)(
+                orch_run_id, user_id, conversation_id, authorize,
+            )
+        finally:
+            try:
+                (fence or fence_publication)(latest or record, msg_container)
+            except Exception as exc:
+                log_event(
+                    '[WORKFLOW_PLAN_REPLAY] Publication fence failed during cancellation.',
+                    extra={'run_id': orch_run_id, 'error_type': type(exc).__name__},
+                    level=logging.ERROR,
+                )
+
+    while thread.is_alive():
+        thread.join(timeout=max(0.1, float(poll_seconds)))
+        if not thread.is_alive():
+            break
+        try:
+            assert_workflow_execution_owned()
+        except BaseException:
+            cancel_and_fence()
+            thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)
+            raise
+        if time_source() >= deadline:
+            cancel_and_fence()
+            thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)
+            raise PlanReplayRefused('replay_budget_exceeded')
+    if execution_error:
+        error = execution_error['error']
+        code = _safe_error_code(error) if isinstance(error, HarnessExecutionError) else 'replay_execution_failed'
+        log_event(
+            '[WORKFLOW_PLAN_REPLAY] Replay execution failed.',
+            extra={
+                'workflow_id': workflow.get('id'), 'workflow_run_id': run_id,
+                'orchestration_run_id': orch_run_id, 'error_code': getattr(error, 'code', ''),
+                'error_type': type(error).__name__,
+            },
+            level=logging.ERROR,
+        )
+        raise PlanReplayRefused(code) from error
+    final_record = get_record(orch_run_id, user_id, conversation_id, strict=True)
+    if not final_record or final_record.get('status') != 'completed':
+        log_event(
+            '[WORKFLOW_PLAN_REPLAY] Replay finished without completed status.',
+            extra={
+                'workflow_id': workflow.get('id'), 'workflow_run_id': run_id,
+                'orchestration_run_id': orch_run_id,
+                'status': (final_record or {}).get('status'),
+                'outcome': (final_record or {}).get('outcome'),
+            },
+            level=logging.ERROR,
+        )
+        raise PlanReplayRefused('replay_execution_failed')
+    from functions_orchestration_checkpoints import orchestration_answer_message_id
+
+    answer_message = None
+    try:
+        answer_message = (read_message or _read_message)(orchestration_answer_message_id(orch_run_id), conversation_id)
+    except exceptions.CosmosResourceNotFoundError:
+        answer_message = None
+    value = build_plan_replay_result(final_record, answer_message)
+    return {
+        'reply': value['final_response']['text'],
+        'authoritative_result': {'kind': 'json', 'value': value},
+        'plan_replay': value,
+    }
+
+
+def build_plan_replay_result(record, answer_message=None):
+    record = record if isinstance(record, dict) else {}
+    plan = record.get('plan') if isinstance(record.get('plan'), dict) else {}
+    replay = record.get('workflow_replay') if isinstance(record.get('workflow_replay'), dict) else {}
+    execution_steps = {
+        item.get('step_id'): item.get('status')
+        for item in record.get('execution_steps') or []
+        if isinstance(item, dict) and item.get('step_id')
+    }
+    task_step_status = {}
+    for result in record.get('task_results') or []:
+        if not isinstance(result, dict):
+            continue
+        producer = result.get('producer') if isinstance(result.get('producer'), dict) else {}
+        step_id = result.get('step_id') or producer.get('step_id')
+        if step_id and step_id not in task_step_status:
+            task_step_status[step_id] = result.get('status') or 'completed'
+    steps = []
+    for step in _enabled_plan_steps(plan):
+        step_id = step.get('step_id') or ''
+        capability_id = step.get('capability_id') or ''
+        steps.append({
+            'step_id': step_id,
+            'capability_id': capability_id,
+            'label': capability_label(capability_id),
+            'status': execution_steps.get(step_id) or task_step_status.get(step_id) or 'not_run',
+        })
+    artifacts = []
+    metadata = (answer_message or {}).get('metadata') if isinstance(answer_message, dict) else {}
+    orchestration = metadata.get('orchestration') if isinstance(metadata, dict) else {}
+    for image in orchestration.get('generated_images') or []:
+        if isinstance(image, dict) and image.get('visual_id'):
+            artifacts.append({
+                'id': image.get('visual_id'),
+                'kind': 'image',
+                'message_id': image.get('message_id') or '',
+            })
+    for artifact in record.get('artifacts') or []:
+        if not isinstance(artifact, dict):
+            continue
+        artifact_id = (
+            artifact.get('id') or artifact.get('artifact_id') or artifact.get('result_id')
+            or artifact.get('file_id') or artifact.get('blob_name')
+        )
+        if artifact_id:
+            artifacts.append({'id': artifact_id, 'kind': artifact.get('kind') or artifact.get('type') or 'file'})
+    message_id = (answer_message or {}).get('id') if isinstance(answer_message, dict) else ''
+    return {
+        'contract': PLAN_REPLAY_RESULT_CONTRACT,
+        'orchestration_run_id': record.get('id') or '',
+        'conversation_id': record.get('conversation_id') or '',
+        'plan_sha256': replay.get('plan_sha256') or '',
+        'status': record.get('status') or '',
+        'outcome': record.get('outcome') or '',
+        'steps': steps,
+        'final_response': {'message_id': message_id or '', 'text': record.get('message') or ''},
+        'artifacts': artifacts,
+    }

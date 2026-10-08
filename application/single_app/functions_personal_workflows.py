@@ -900,7 +900,7 @@ def get_due_personal_workflows(limit=20):
 
 def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None, *, settings=None, workflow_id=None,
                                      origin=None, user_settings_reader=None, resolve_document=None,
-                                     sanitize_source=None, one_time=False):
+                                     sanitize_source=None, one_time=False, plan_replay_task=None):
     """Normalize and authorize a personal workflow exactly as saving it would, without writing.
 
     Returns ``(workflow, existing_workflow)``: the document a save persists and the stored workflow
@@ -937,6 +937,37 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
         existing_workflow = get_personal_workflow(user_id, workflow_id) if workflow_id else None
         refuse_save_of_deleted_workflow(cosmos_personal_workflows_container, user_id, workflow_data, existing_workflow)
 
+    incoming_tasks = workflow_data.get('tasks') if isinstance(workflow_data.get('tasks'), list) else []
+    existing_plan_replay_task = next((
+        task for task in (existing_workflow or {}).get('tasks') or []
+        if isinstance(task, dict) and task.get('type') == 'plan_replay' and isinstance(task.get('plan_replay'), dict)
+    ), None)
+    incoming_replay_task = any(
+        isinstance(task, dict) and task.get('type') == 'plan_replay'
+        for task in incoming_tasks
+    )
+    has_replay_payload = (
+        plan_replay_task is not None
+        or existing_plan_replay_task is not None
+        or workflow_data.get('plan_replay') is not None
+        or incoming_replay_task
+    )
+    attach_plan_replay = None
+    if has_replay_payload:
+        # Plan replay is a server-owned task envelope; importing here avoids a workflow-store import cycle.
+        from functions_workflow_plan_replay import (
+            PlanReplaySaveError,
+            attach_plan_replay,
+            normalize_plan_replay_update,
+        )
+
+        if plan_replay_task is not None and existing_workflow is not None:
+            raise PlanReplaySaveError('plan_replay_read_only')
+        if existing_plan_replay_task:
+            workflow_data = normalize_plan_replay_update(existing_workflow, workflow_data)
+        elif plan_replay_task is None:
+            raise PlanReplaySaveError('plan_replay_read_only')
+
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
     file_sync = _normalize_file_sync_config(
@@ -970,6 +1001,10 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
         ),
         default_document_action=document_action,
     )
+    if plan_replay_task is not None:
+        tasks = [attach_plan_replay(tasks[0], plan_replay_task)]
+    elif existing_plan_replay_task:
+        tasks = [attach_plan_replay(tasks[0], existing_plan_replay_task['plan_replay'])]
     definition_fields = normalize_workflow_definition(
         workflow_data, existing_workflow, tasks, user_id=user_id,
     )
@@ -1166,7 +1201,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
 def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, origin, actor_user_id=None,
                                        settings=None, user_settings_reader=None, resolve_document=None,
-                                       sanitize_source=None, one_time=False):
+                                       sanitize_source=None, one_time=False, plan_replay_task=None):
     """Create a personal workflow under a server-chosen id and origin, at most once.
 
     Chat orchestration derives ``workflow_id`` from the proposal the user accepted, so accepting the
@@ -1190,7 +1225,7 @@ def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, o
         user_id, {} if workflow_data is None else workflow_data, actor_user_id,
         settings=settings, workflow_id=workflow_id, origin=origin,
         user_settings_reader=user_settings_reader, resolve_document=resolve_document,
-        sanitize_source=sanitize_source, one_time=one_time,
+        sanitize_source=sanitize_source, one_time=one_time, plan_replay_task=plan_replay_task,
     )
     record, created = create_workflow_definition_record_if_absent(
         cosmos_personal_workflows_container, user_id, workflow,
