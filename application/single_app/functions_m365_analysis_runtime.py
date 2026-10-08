@@ -8,10 +8,9 @@ import json
 import re
 
 from semantic_kernel.contents import ChatHistory
-from semantic_kernel.functions import KernelArguments
 
 from conversation_memory_runtime import resolve_m365_memory
-from functions_m365_agent_continuation import get_m365_analysis_agent
+from functions_m365_agent_continuation import get_m365_analysis_model
 from functions_m365_analysis_jobs import AnalysisBatchResult, ConversationAnalysisJobRunner
 from functions_m365_approvals import M365PolicyError, get_m365_approval_service
 from functions_m365_execution import authorize_m365_publication
@@ -63,9 +62,9 @@ async def analyze_m365_memory(context, source, action_id, memory_id, question, a
             "message": "Use the available excerpts; deeper file analysis was not approved.",
             "coverage": {"complete": False},
         }
-    agent = get_m365_analysis_agent(context)
-    model = getattr(agent, "deployment_name", None)
-    model_budget = resolve_model_token_budget(getattr(agent, "model_token_budget", None) or model)
+    analysis_model = get_m365_analysis_model(context)
+    model = analysis_model.deployment_name
+    model_budget = resolve_model_token_budget(analysis_model.model_token_budget or model)
     processor_version = "m365-v1-" + hashlib.sha256(
         json.dumps({"model": model, "budget": asdict(model_budget), "question": question}, sort_keys=True).encode("utf-8")
     ).hexdigest()[:24]
@@ -86,9 +85,7 @@ async def analyze_m365_memory(context, source, action_id, memory_id, question, a
             "evidence": batch.evidence,
         }, ensure_ascii=False)
         history.add_user_message(content)
-        service, settings = await agent._get_chat_completion_service_and_settings(
-            kernel=agent.kernel, arguments=agent.arguments or KernelArguments(),
-        )
+        service, settings = await analysis_model.service_and_settings()
         try:
             settings, batch_budget = prepare_model_execution_settings(
                 settings, model_budget, output_limit=1536,

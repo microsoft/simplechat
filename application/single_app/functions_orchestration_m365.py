@@ -10,9 +10,14 @@ completed. ``action_step_scope`` installs a context for one approved action step
 actions. The helpers here turn Microsoft 365 sign-in, approval and policy refusals into
 application-owned step failures, instead of findings the model reports as data.
 
-Version: 0.261.270
+SharePoint and OneDrive file functions also need the model's token budget, and deeper file
+analysis needs a model. Chat supplies both through the selected agent. An action step has no
+agent, so ``file_step_filter`` binds the step's own model around each of its function calls.
+
+Version: 0.261.300
 Implemented in: 0.261.238
 Agent steps get their own Microsoft 365 scope in: 0.261.270
+File action steps get their model's token budget and analysis model in: 0.261.300
 """
 
 import hashlib
@@ -23,15 +28,31 @@ from contextlib import contextmanager
 
 from functions_appinsights import log_event
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
-from functions_m365_operations import M365_PLUGIN_TYPES, M365_SOURCES
+from functions_m365_operations import M365_ACTION_DEFINITIONS, M365_FILE_SOURCES, M365_PLUGIN_TYPES, M365_SOURCES
 from functions_msgraph_operations import MSGRAPH_PLUGIN_TYPE
 from m365_interaction import M365_AUTH_INTERACTION_CODES
 
 
 M365_STEP_ACTION_TYPES = frozenset({*M365_PLUGIN_TYPES, MSGRAPH_PLUGIN_TYPE})
+_FILE_ACTION_SOURCES = {
+    action_type: definition['source'] for action_type, definition in M365_ACTION_DEFINITIONS.items()
+    if definition['source'] in M365_FILE_SOURCES
+}
 _APPROVAL_CODES = frozenset({'m365_approval_required', 'm365_approval_pending'})
 # Function-result codes that stop a step: no later call can succeed until the user acts.
 _RESULT_STOP_CODES = frozenset({'execution_context_required', 'source_not_authorized', 'token_acquisition_failed'})
+# The step's model can't bound file content: its token limits are missing or unusable.
+_MODEL_LIMIT_CODES = frozenset({
+    'model_context_unavailable', 'model_generation_unbounded', 'model_input_estimate_unavailable',
+    'model_context_invalid', 'model_tool_configuration_invalid',
+})
+# Retained file evidence couldn't be stored or read safely for this conversation and request.
+_EVIDENCE_CODES = frozenset({
+    'memory_unavailable', 'memory_access_denied', 'memory_context_mismatch', 'memory_busy',
+    'memory_recovery_required', 'request_memory_binding_required', 'request_memory_mismatch',
+    'request_memory_busy', 'invalid_request_memory', 'invalid_model_budget',
+    'm365_continuation_unavailable',
+})
 
 
 class OrchestrationM365Error(RuntimeError):
@@ -61,6 +82,10 @@ def failure_code(m365_code):
         return 'm365_sign_in_required'
     if m365_code in _APPROVAL_CODES:
         return 'm365_approval_required'
+    if m365_code in _MODEL_LIMIT_CODES:
+        return 'm365_model_limits_required'
+    if m365_code in _EVIDENCE_CODES:
+        return 'm365_evidence_unavailable'
     return 'm365_unavailable'
 
 
@@ -84,6 +109,7 @@ def step_error(error, *, sources=()):
 def _stops_step(code):
     return (
         code in M365_AUTH_INTERACTION_CODES or code in _APPROVAL_CODES or code in _RESULT_STOP_CODES
+        or code in _MODEL_LIMIT_CODES or code in _EVIDENCE_CODES
         or code.startswith('m365_')
     )
 
@@ -92,7 +118,9 @@ def result_refusal(value):
     """The step stop for a Microsoft 365 function result that refused its call, or None.
 
     Ordinary Microsoft Graph outcomes, such as nothing found or throttling, stay data that
-    the model reports. Sign-in, approval and authorization refusals stop the step.
+    the model reports, as do bounded-coverage limits. Sign-in, approval and authorization
+    refusals stop the step, and so do model-budget and conversation-evidence failures: they
+    describe the application, not the user's data.
     """
     if isinstance(value, str):
         try:
@@ -112,6 +140,61 @@ def result_refusal(value):
 
 def is_m365_action_manifest(manifest):
     return isinstance(manifest, dict) and manifest.get('type') in M365_STEP_ACTION_TYPES
+
+
+def m365_file_source(manifest):
+    """The file source, ``onedrive`` or ``spo``, of a Microsoft 365 file action, or None."""
+    return _FILE_ACTION_SOURCES.get(manifest.get('type')) if isinstance(manifest, dict) else None
+
+
+@contextmanager
+def file_step_model_limits(source):
+    """Stop a file step whose model's token limits can't bound file content.
+
+    The stop keeps the model-budget code for diagnostics and names the step's file source.
+    The step's Microsoft 365 scope logs it as it leaves.
+    """
+    from functions_model_capabilities import ModelTokenBudgetError
+
+    try:
+        yield
+    except ModelTokenBudgetError as error:
+        raise OrchestrationM365Error(
+            failure_code(error.code), m365_code=error.code, sources=(source,),
+        ) from error
+
+
+def file_step_filter(context, *, service, model_token_budget, tool_schemas, source):
+    """The auto function-invocation filter one SharePoint or OneDrive action step needs.
+
+    File functions bound the content they return by the model's token budget, and deeper
+    file analysis needs a model. Chat supplies both through the selected agent. An action
+    step has none, so before 0.261.300 every file read was refused with
+    ``model_context_unavailable`` and the step still completed. The step's own model must
+    have verified token limits: without them the step stops here, before its model or
+    Microsoft Graph is called.
+    """
+    # Continuation loads Semantic Kernel and conversation memory; only a file step needs it.
+    from functions_m365_agent_continuation import m365_step_model_binder
+    from functions_model_capabilities import ModelTokenBudget, ModelTokenBudgetError
+
+    with file_step_model_limits(source):
+        if not isinstance(model_token_budget, ModelTokenBudget):
+            raise ModelTokenBudgetError('model_context_unavailable', "The step's model has no token budget.")
+        model_token_budget.remaining_input(0)
+    try:
+        binder = m365_step_model_binder(
+            context, service=service, model_token_budget=model_token_budget, tool_schemas=tool_schemas,
+        )
+    except M365PolicyError as error:
+        raise step_error(error, sources=(source,)) from error
+
+    async def bind_step_model(invocation, next):
+        history = getattr(invocation, 'chat_history', None)
+        with binder(history.messages if history is not None else ()):
+            await next(invocation)
+
+    return bind_step_model
 
 
 def step_request_id(request_key):

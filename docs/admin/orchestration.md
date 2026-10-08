@@ -445,10 +445,21 @@ limits:
   analysis, stops and links to Approvals. The user decides there and then selects **Retry
   from failed step**. A retried step reuses its request, so the decision applies while
   the action is unchanged.
+- **SharePoint and OneDrive use the step's own model.** File searches and reads limit
+  the excerpts and content they return to what the model can take. Chat measures that
+  against the selected agent's model. Since **0.261.300**, a plan step measures it
+  against the model the step runs on, and deeper file analysis runs on that same model
+  once the user approves it. The model needs published token limits, from the model
+  catalog or Model Endpoints. Without them, the step stops with "This step's model has
+  no verified token limits" before it reads anything. Earlier versions refused every
+  file search and read in a plan with `model_context_unavailable`. The step still
+  completed, so the answer said the documents couldn't be searched.
 
 A refused Microsoft 365 call stops the step instead of becoming findings that the model
 reports as data. Ordinary Microsoft Graph outcomes, such as nothing found or throttling,
-are still findings. An answer that used Microsoft 365 keeps the tool calls in its sources,
+are still findings. Since **0.261.300**, file evidence that can't be saved or read for the
+conversation also stops the step, with "SharePoint or OneDrive file evidence couldn't be
+saved or read". An answer that used Microsoft 365 keeps the tool calls in its sources,
 so sharing the conversation later asks the user to approve Microsoft 365 history, as it
 does for a chat answer. Since **0.261.270**, an **Ask an agent** step whose agent uses
 Microsoft 365 actions gets a step request for that agent's own Microsoft 365 actions, with
