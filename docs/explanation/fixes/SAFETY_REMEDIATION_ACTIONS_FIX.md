@@ -84,6 +84,7 @@ Reviewers see the state on the record: the admin list and detail JSON add `warni
 - `functional_tests/test_safety_violation_remediation_approvals.py` (updated to run offline, and to cover the second-reviewer rule and the restriction notice)
 - `functional_tests/test_v2_access_restriction_and_safety_warning_logic.mjs`
 - `ui_tests/test_v2_access_restricted_and_safety_warning.py`
+- `ui_tests/test_classic_safety_review_and_access_restricted.py` (the classic review page offers no Escalate, labels a legacy record, explains which actions need a second reviewer, shows whether a sent warning was acknowledged, and shows Blocked statistics)
 - `functional_tests/route_tests/` policy inventories for the two warning routes
 
 ## Validation

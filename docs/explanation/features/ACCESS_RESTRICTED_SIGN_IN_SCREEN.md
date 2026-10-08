@@ -110,6 +110,7 @@ Nothing needs to be enabled. To see the screen:
 - `functional_tests/test_safety_violation_remediation_approvals.py`: suspend and block write the notice with the text the user was sent.
 - `functional_tests/test_v2_access_restriction_and_safety_warning_logic.mjs`: the real V2 API client redirects once on the gate's 403 and never loops on the page; the restriction payload is parsed defensively.
 - `ui_tests/test_v2_access_restricted_and_safety_warning.py`: a restricted user lands on the page instead of an error, the notice renders as text, the restore time is localized, and blocked and restored accounts read differently.
+- `ui_tests/test_classic_safety_review_and_access_restricted.py`: the classic page renders the notice as text, shows the restore time in the reader's locale, and reads differently for a block and a restored account.
 - `functional_tests/route_tests/`: the three routes are classified as login-only, and the Blueprint is registered with `login_required_blueprint`.
 
 Known limitations:
