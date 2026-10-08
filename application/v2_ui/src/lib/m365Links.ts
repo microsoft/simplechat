@@ -9,3 +9,5 @@
 export const M365_CHAT_CONNECTION_HREF = '/settings?tab=preferences&section=m365-chat-connection';
 export const M365_CONNECT_HREF = '/settings?tab=preferences&section=m365-workflow-connection';
 export const M365_APPROVALS_HREF = '/approvals/m365';
+/** The sharing card, which also holds each file source's Extended analysis preference. */
+export const M365_SHARING_PREFERENCES_HREF = '/settings?tab=preferences&section=m365-sharing';

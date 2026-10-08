@@ -9,8 +9,8 @@
 // reply that plainly made one.
 //
 // The thread's own readers are reused, so the drawer lists exactly what the thread shows: the
-// same artifact normaliser, the same committed-output check, the same masking, saved-analysis and
-// workflow-reply rules, and the live orchestration state the file cards poll.
+// same artifact normaliser, the same committed-output check, the same masking, saved-analysis,
+// workflow-reply and replaced-attempt rules, and the live orchestration state the file cards poll.
 //
 // Documents an agent created with the SimpleChat upload actions are listed by the server instead
 // (generatedDocuments.ts), because the server reads their ids from the tool results it stored.
@@ -28,7 +28,11 @@ import {
     type GeneratedArtifact,
 } from './generatedArtifacts';
 import { readMaskState } from './masking';
-import { normalizeOrchestrationAttempt } from './orchestration';
+import {
+    isSupersededOrchestrationAttempt,
+    normalizeOrchestrationAttempt,
+    supersededOrchestrationRunIds,
+} from './orchestration';
 import {
     committedOrchestrationArtifact,
     isOrchestrationOutputArtifact,
@@ -340,9 +344,14 @@ export function collectConversationGeneratedFiles(
     messages: readonly ChatMessage[],
     sources: GeneratedFileSources = {},
 ): ConversationGeneratedFile[] {
+    // The thread hides a plan attempt that a later retry replaced, so its files are not listed.
+    const superseded = supersededOrchestrationRunIds(messages);
     const seen = new Set<string>();
     const files: ConversationGeneratedFile[] = [];
     for (const message of messages) {
+        if (isSupersededOrchestrationAttempt(message, superseded)) {
+            continue;
+        }
         for (const file of messageGeneratedFiles(message, sources)) {
             if (!seen.has(file.key)) {
                 seen.add(file.key);
@@ -416,9 +425,11 @@ export function visibleGeneratedDocuments(
     documents: readonly GeneratedDocument[],
     messages: readonly ChatMessage[],
 ): GeneratedDocument[] {
+    const superseded = supersededOrchestrationRunIds(messages);
     const shown = new Set(
         messages
             .filter((message) => message?.id && !isSupersededByWorkflowReply(message)
+                && !isSupersededOrchestrationAttempt(message, superseded)
                 && !readMaskState(message).fullyMasked)
             .map((message) => message.id),
     );

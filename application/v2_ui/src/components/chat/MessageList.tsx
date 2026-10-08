@@ -91,7 +91,9 @@ import {
 } from '../../lib/aiActivity';
 import { MessageMentionPills } from './MentionPills';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
-import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
+import {
+    isSupersededOrchestrationAttempt, normalizeOrchestrationAttempt, supersededOrchestrationRunIds,
+} from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
 import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRuns';
@@ -1603,8 +1605,11 @@ export function MessageList() {
     const { threadMessages, proposalImagesByMessage } = useMemo(() => {
         // A workflow run's own post is replaced by its mirrored reply, which says the same
         // with the maps and sources attached. It stays loaded, so a reply quoting it still
-        // resolves.
-        const shown = messages.filter((message) => !isSupersededByWorkflowReply(message));
+        // resolves. An orchestration attempt a later retry replaced is hidden the same way:
+        // the thread shows the latest attempt, and the earlier one stays saved for the record.
+        const supersededRuns = supersededOrchestrationRunIds(messages);
+        const shown = messages.filter((message) => !isSupersededByWorkflowReply(message)
+            && !isSupersededOrchestrationAttempt(message, supersededRuns));
         const grouped = groupProposalImages(shown);
         if (grouped.size === 0) {
             return { threadMessages: shown, proposalImagesByMessage: grouped };

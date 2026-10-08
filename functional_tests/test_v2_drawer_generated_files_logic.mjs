@@ -1,6 +1,7 @@
 // test_v2_drawer_generated_files_logic.mjs
-// Version: 0.261.302
+// Version: 0.261.304
 // Implemented in: 0.261.302
+// Plan attempts a later retry replaced left out, as the thread leaves them out, in: 0.261.304
 // Executes the real V2 helpers behind the Generated section of the conversation drawer: every
 // file a reply produced is listed for any conversation, not only shared ones. That covers each
 // format an orchestration plan can render, the screenshot case of a finished CSV, legacy
@@ -283,6 +284,18 @@ try {
             reply('a-partly-masked', { masked_ranges: [{ start: 0, end: 2 }] }),
         ]).map((document) => document.document_id),
         ['doc-partial'], 'masking part of a reply keeps its documents, as the server does',
+    );
+
+    // A plan attempt that a later retry replaced is hidden from the thread, so the drawer leaves
+    // out its files and agent documents too; until a retry exists, they are listed.
+    const stoppedAttempt = planReply('a-stopped', 'run-stopped', [output('stopped_report', 'docx', 'completed')]);
+    const retriedAttempt = reply('a-retried', { orchestration: { run_id: 'run-retried', retry_of_run_id: 'run-stopped' } });
+    assert.deepEqual(collectConversationGeneratedFiles([stoppedAttempt]).map((file) => file.messageId), ['a-stopped']);
+    assert.deepEqual(collectConversationGeneratedFiles([stoppedAttempt, retriedAttempt]), [],
+        'a replaced attempt lists no files');
+    assert.deepEqual(
+        visibleGeneratedDocuments([agentDocument('doc-stopped', 'a-stopped')], [stoppedAttempt, retriedAttempt]), [],
+        "a replaced attempt's agent documents are not listed",
     );
 
     // Files and agent documents share one list in conversation order; a shared document id is listed once.

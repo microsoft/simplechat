@@ -43,6 +43,9 @@ from functions_assist_references import sanitize_reference_label
 from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_message_deletion import is_soft_deleted_message
 from functions_message_masking import remove_masked_content
+from functions_orchestration_attempts import (
+    is_superseded_orchestration_attempt, superseded_orchestration_run_ids,
+)
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_AGENT_INVOKE,
@@ -1838,14 +1841,21 @@ def conversation_snapshot_size(snapshot):
 
 
 def build_conversation_snapshot(messages, settings=None, *, turn_id=None, truncated=False):
-    """Keep the recent eligible conversation, bounded independently of the current request."""
+    """Keep the recent eligible conversation, bounded independently of the current request.
+
+    An attempt a later retry replaced is left out: its failure text no longer describes the
+    request, and the retry's own answer is what the conversation now says.
+    """
     eligible = []
+    superseded = superseded_orchestration_run_ids(messages)
     for message in messages or ():
         if not isinstance(message, dict):
             continue
         metadata = message.get('metadata') or {}
         orchestration = (metadata.get('orchestration') or {}) if isinstance(metadata, dict) else {}
         if turn_id and isinstance(orchestration, dict) and orchestration.get('turn_id') == turn_id:
+            continue
+        if is_superseded_orchestration_attempt(message, superseded):
             continue
         normalized = normalize_history_message(message)
         if normalized is not None:
