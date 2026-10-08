@@ -42,6 +42,7 @@ import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
 import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
 import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
 import { OrchestrationPlannerModelPicker } from '../../../application/v2_ui/src/components/admin/OrchestrationPlannerModelPicker';
+import { M365Cards } from '../../../application/v2_ui/src/components/settings/M365Cards';
 import { PLANNER_MODEL_KEYS } from '../../../application/v2_ui/src/lib/orchestrationPlannerModel';
 import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields';
 
@@ -171,6 +172,7 @@ type ComponentName =
     | 'OrchestrationPlanEditorHost'
     | 'ContextWorkflow'
     | 'ParticipantsPanel'
+    | 'M365Cards'
     | 'Toaster';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -193,6 +195,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationPlanEditorHost,
     ContextWorkflow,
     ParticipantsPanel,
+    M365Cards,
     Toaster,
 };
 

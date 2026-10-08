@@ -1,9 +1,10 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.251
+Version: 0.261.302
 Implemented in: 0.261.207; merge task wording added in 0.261.241; merge kinds in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 Next and last run on a created card: 0.261.251 (microsoft/simplechat#1546)
+Microsoft 365 links stay in V2 Settings and V2 Approvals: 0.261.302
 Refs: microsoft/simplechat#1547, microsoft/simplechat#1619
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in
@@ -65,7 +66,9 @@ HOSTILE_INSTRUCTIONS = (
 )
 HOSTILE_DESCRIPTION = "<script>window.__hostile = 2</script>Reviews the week's email."
 HOSTILE_TITLE = "Review <b>email</b>"
-CONNECT_HREF = "/profile?tab=settings#m365-connection-status"
+# V2 router paths (the harness router has no /v2 basename), never the classic Profile or Approvals.
+CONNECT_HREF = "/settings?tab=preferences&section=m365-workflow-connection"
+APPROVALS_HREF = "/approvals/m365"
 CLOCK_START = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 URL_ACCESS_NOTE = "Create the workflow first, then turn on URL Access in the workflow editor."
 RUN_AS_SELF = "You. Microsoft 365 steps use your account."
@@ -607,6 +610,8 @@ def test_run_as_line_follows_the_servers_approval_state(card_ui, state, approval
     article = card(page)
     run_as = article.locator("div:has(> dt:text-is('Run as')) > dd")
     expect(run_as).to_have_text(expected)
+    if approval_state == "waiting":
+        expect(article.get_by_role("link", name="Review Run as approval")).to_have_attribute("href", APPROVALS_HREF)
     # A revision the requester saved never claims its first run waits for approval.
     if approval_state == "self_authored":
         expect(run_as).not_to_contain_text("The first run will wait")

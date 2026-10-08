@@ -19,7 +19,7 @@ import {
     fetchM365Approval,
     type M365Approval,
 } from '../../lib/approvalsApi';
-import { M365_APPROVALS_HREF } from '../../lib/m365Connect';
+import { M365_APPROVALS_HREF, M365_SHARING_PREFERENCES_HREF } from '../../lib/m365Links';
 
 const SOURCE_NAMES: Record<string, string> = {
     calendar: 'Calendar',
@@ -27,9 +27,6 @@ const SOURCE_NAMES: Record<string, string> = {
     onedrive: 'OneDrive',
     spo: 'SharePoint',
 };
-
-/** Where the personal "Extended analysis" preference for each file source is saved. */
-const PREFERENCES_PATH = '/settings?tab=preferences';
 
 type Phase = 'loading' | 'ready' | 'saving' | 'continuing' | 'unavailable';
 
@@ -136,9 +133,9 @@ export function M365ApprovalInlineCard({
     };
 
     const approvalsLink = (
-        <a href={M365_APPROVALS_HREF} className="font-medium text-accent underline underline-offset-2">
+        <Link to={M365_APPROVALS_HREF} className="font-medium text-accent underline underline-offset-2">
             Review the Microsoft 365 approval
-        </a>
+        </Link>
     );
 
     if (phase === 'loading') {
@@ -216,7 +213,7 @@ export function M365ApprovalInlineCard({
                     <p className="text-xs text-text-3">
                         A quick read answers from what fits and says what it left out. You can change this
                         any time in{' '}
-                        <Link to={PREFERENCES_PATH} className="text-accent underline underline-offset-2">
+                        <Link to={M365_SHARING_PREFERENCES_HREF} className="text-accent underline underline-offset-2">
                             Settings
                         </Link>
                         .

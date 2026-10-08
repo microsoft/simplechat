@@ -85,10 +85,12 @@
         function showChatConnectionReturn() {
             const currentUrl = new URL(window.location.href);
             const result = currentUrl.searchParams.get('m365_chat_connection');
-            if (result === null) {
+            const workflowResult = currentUrl.searchParams.get('m365_connection');
+            if (result === null && workflowResult === null) {
                 return;
             }
             currentUrl.searchParams.delete('m365_chat_connection');
+            currentUrl.searchParams.delete('m365_connection');
             window.history.replaceState(window.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
             if (result === 'connected') {
                 window.opener?.postMessage({ type: 'm365-profile-reconnected' }, window.location.origin);
@@ -96,6 +98,23 @@
                     'Microsoft 365 sign-in completed. Return to your conversation and retry your original question. No past requests were retried.',
                     'success');
             }
+            if (workflowResult === 'connected') {
+                showStatus('m365-connection-notice',
+                    'Microsoft 365 is connected for workflows. Each Run as workflow revision still needs your authorization.',
+                    'success');
+            }
+        }
+
+        function describeChatConnection(status, labels) {
+            if (status === 'available') {
+                return labels
+                    ? `Signed in to Microsoft 365 for this session. Chat can use: ${labels}.`
+                    : 'Signed in to Microsoft 365 for this session, but no source\'s permissions are granted yet. Connect the sources chat should use.';
+            }
+            if (status === 'reconnect_required') {
+                return `Microsoft 365 needs you to sign in again before chat can use ${labels || 'your sources'}.`;
+            }
+            return 'Not signed in to Microsoft 365 in this session. Chat asks you to connect the first time it needs a source, or connect here.';
         }
 
         async function loadChatConnection() {
@@ -107,26 +126,25 @@
             try {
                 const response = await api.requestJson('/api/m365/chat/connection');
                 const chatConnection = response.connection;
-                const descriptions = {
-                    available: 'Sign-in saved for this session',
-                    not_connected: 'No Microsoft 365 sign-in is saved for this session',
-                    reconnect_required: 'Reconnect Microsoft 365 before using these sources in chat'
-                };
-                if (!Object.prototype.hasOwnProperty.call(descriptions, chatConnection?.status)
+                const statuses = ['available', 'not_connected', 'reconnect_required'];
+                if (!statuses.includes(chatConnection?.status)
                     || !Array.isArray(chatConnection.sources)
                     || !chatConnection.sources.every(source => typeof source === 'string'
                         && Object.prototype.hasOwnProperty.call(api.sourceLabels, source))) {
                     throw new Error('The chat sign-in status could not be verified. Refresh before trying again.');
                 }
+                const selected = chatConnection.sources;
                 root.querySelectorAll('[data-m365-chat-connect-source]').forEach(checkbox => {
-                    checkbox.checked = chatConnection.sources.includes(checkbox.dataset.m365ChatConnectSource);
+                    checkbox.checked = selected.includes(checkbox.dataset.m365ChatConnectSource);
                 });
-                document.getElementById('m365-chat-connection-details').textContent =
-                    `Sources saved for this session: ${chatConnection.sources.map(source => api.sourceLabels[source]).join(', ') || 'None'}.`;
+                const labels = chatConnection.sources.map(source => api.sourceLabels[source]).join(', ');
+                document.getElementById('m365-chat-connection-details').textContent = chatConnection.status === 'available'
+                    ? 'Reconnect to renew this sign-in or to add sources.'
+                    : '';
                 fields.disabled = false;
-                showStatus('m365-chat-connection-status',
-                    `${descriptions[chatConnection.status]}. Access is checked when a source runs.`,
-                    chatConnection.status === 'reconnect_required' ? 'warning' : 'info');
+                showStatus('m365-chat-connection-status', describeChatConnection(chatConnection.status, labels),
+                    chatConnection.status === 'reconnect_required' ? 'warning'
+                        : chatConnection.status === 'available' ? 'success' : 'info');
             } catch (error) {
                 showStatus('m365-chat-connection-status', error.message, 'danger');
             }
@@ -202,8 +220,22 @@
                 root.querySelectorAll('[data-m365-connect-source]').forEach(checkbox => {
                     checkbox.checked = (connection?.sources || []).includes(checkbox.dataset.m365ConnectSource);
                 });
+                const readiness = response.workflow_connections;
+                const blocked = readiness?.available === false;
+                const readinessElement = document.getElementById('m365-connection-readiness');
+                if (blocked) {
+                    showStatus('m365-connection-readiness',
+                        typeof readiness.message === 'string' && readiness.message
+                            ? readiness.message
+                            : 'Workflow connections are not set up on this deployment yet. Ask an administrator.',
+                        'warning');
+                } else {
+                    readinessElement.classList.add('d-none');
+                }
                 fields.disabled = false;
-                document.getElementById('m365-connect-btn').textContent = connection?.id ? 'Reconnect Microsoft 365 for workflows' : 'Connect Microsoft 365 for workflows';
+                const connectButton = document.getElementById('m365-connect-btn');
+                connectButton.disabled = blocked;
+                connectButton.textContent = connection?.id && status !== 'disconnected' ? 'Reconnect Microsoft 365 for workflows' : 'Connect Microsoft 365 for workflows';
                 document.getElementById('m365-disconnect-btn').disabled = !connection?.id || status === 'disconnected';
                 showStatus('m365-connection-status', `Workflow connection: ${status.replaceAll('_', ' ')}. Connecting is separate from approving a workflow.`, status === 'connected' ? 'success' : 'info');
             } catch (error) {

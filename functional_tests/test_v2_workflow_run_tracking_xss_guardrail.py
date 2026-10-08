@@ -2,7 +2,7 @@
 # test_v2_workflow_run_tracking_xss_guardrail.py
 """
 Functional test for the V2 chat workflow run tracking passing the XSS sink guardrail.
-Version: 0.261.251
+Version: 0.261.302
 Implemented in: 0.261.251
 
 This test ensures that the files behind a chat-started workflow run in V2 pass
@@ -190,21 +190,31 @@ def test_run_tracking_links_use_reviewed_builders() -> None:
     assert found[RUN_LINKS.name] == ['workflowRunHref(item.run.workflowId, item.run.runId)']
 
     builder_import = "import { workflowRunHref } from '../../lib/workflowRunLink';"
-    constant_import = "import { M365_CONNECT_HREF } from '../../lib/m365Links';"
+    constant_import = re.compile(
+        r"^import \{[^}]*\bM365_CONNECT_HREF\b[^}]*\} from '\.\./\.\./lib/m365Links';$", re.MULTILINE,
+    )
     for path in (RUN_CARD, DELIVERY_FOOTER, PROPOSAL_RUN_SUMMARY, RUN_LINKS):
         assert builder_import in read_text(path), f'{path.name} does not import workflowRunHref'
     # The proposal card shares the run card's reconnect path instead of keeping its own copy.
     for path in (RUN_CARD, PROPOSAL_CARD):
         source = read_text(path)
-        assert constant_import in source, f'{path.name} does not import M365_CONNECT_HREF'
+        assert constant_import.search(source), f'{path.name} does not import M365_CONNECT_HREF'
         assert 'const M365_CONNECT_HREF' not in source, f'{path.name} defines its own M365_CONNECT_HREF'
+        assert 'const M365_APPROVALS_HREF' not in source, f'{path.name} defines its own M365_APPROVALS_HREF'
 
 
 def test_fixed_link_values_stay_same_origin() -> None:
-    """The constant the checker trusts by name is a fixed same-origin path, and notices reuse the builder."""
+    """The constants the checker trusts by name are fixed V2 router paths, and notices reuse the builder."""
     m365_source = read_text(M365_LINKS)
-    assert "export const M365_CONNECT_HREF = '/profile?tab=settings#m365-connection-status';" in m365_source
-    assert m365_source.count('export ') == 1
+    exported = dict(re.findall(r"^export const (M365_[A-Z_]+_HREF) = '([^']*)';$", m365_source, re.MULTILINE))
+    # V2 routes under the /v2 basename, so a Microsoft 365 link never leaves V2 for a classic page.
+    assert exported == {
+        'M365_CHAT_CONNECTION_HREF': '/settings?tab=preferences&section=m365-chat-connection',
+        'M365_CONNECT_HREF': '/settings?tab=preferences&section=m365-workflow-connection',
+        'M365_APPROVALS_HREF': '/approvals/m365',
+        'M365_SHARING_PREFERENCES_HREF': '/settings?tab=preferences&section=m365-sharing',
+    }
+    assert m365_source.count('export ') == len(exported)
 
     notification_source = read_text(NOTIFICATION_LINKS)
     assert "import { workflowRunHref } from './workflowRunLink';" in notification_source

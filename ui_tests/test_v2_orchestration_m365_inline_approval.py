@@ -200,7 +200,9 @@ def test_extended_analysis_stop_is_decided_inline_and_continues_without_a_dialog
     expect(card.get_by_text("SharePoint needs your OK to read more", exact=True)).to_be_visible()
     expect(card).to_contain_text("Ask the selected agent")
     expect(card).to_contain_text("about 18,400 tokens of file content, 1 file, 2.4 MB")
-    expect(card.get_by_role("link", name="Settings")).to_have_attribute("href", "/settings?tab=preferences")
+    expect(card.get_by_role("link", name="Settings")).to_have_attribute(
+        "href", "/settings?tab=preferences&section=m365-sharing",
+    )
     # The card owns the next step: no separate retry button competes with it.
     expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
 
@@ -252,7 +254,7 @@ def test_an_approval_that_cannot_be_opened_falls_back_to_approvals(inline_ui):
     page.get_by_role("button", name="Approve and run the plan").click()
     section = page.get_by_label("Microsoft 365 approval").first
     expect(section.get_by_role("link", name="Review the Microsoft 365 approval")).to_have_attribute(
-        "href", "/approvals",
+        "href", "/approvals/m365",
     )
     section.get_by_role("button", name="Retry from failed step").click()
     expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
