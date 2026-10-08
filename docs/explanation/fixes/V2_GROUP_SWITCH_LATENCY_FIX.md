@@ -1,6 +1,7 @@
 # V2 Group Switch Latency Fix
 
 Fixed in version: **0.261.305**
+Response contract hardened in version: **0.261.306**
 
 Related backend follow-up: [#1725](https://github.com/microsoft/simplechat/issues/1725).
 The application version is recorded in `application/single_app/config.py`.
@@ -35,6 +36,8 @@ selected public workspace. It shares `_resolve_active_scope` with bootstrap,
 filters unavailable selections, and returns `Cache-Control: no-store`.
 Storage failures return an explicit 503 rather than an empty successful
 selection. It sends no application settings or catalog content to the browser.
+Success, missing-identity, and storage-failure paths consistently return
+`(response, status, headers)`, with unchanged status codes and no-store behavior.
 
 The group-switch sequence is now:
 

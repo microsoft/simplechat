@@ -1263,8 +1263,7 @@ def register_route_backend_v2(bp):
                 user_settings_dict, authorized_group_ids, is_visible_workspace
             )
             response = jsonify({"user": {"id": user_id}, "scope": active_scope})
-            response.headers["Cache-Control"] = "no-store"
-            return response, 200
+            return response, 200, {"Cache-Control": "no-store"}
         except Exception as exc:
             log_event(
                 "[V2_SCOPE] Failed to resolve active scope.",

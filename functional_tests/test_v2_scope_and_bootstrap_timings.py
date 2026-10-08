@@ -2,7 +2,7 @@
 """
 Functional contracts for the lightweight V2 active-scope read and phase timings.
 
-Version: 0.261.305
+Version: 0.261.306
 Implemented in: 0.261.305
 
 The real route bodies, scope helper, timer, and authentication decorators execute
@@ -14,6 +14,7 @@ import ast
 import logging
 import time
 from functools import wraps
+from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -39,7 +40,7 @@ def environment():
     namespace = {
         "__name__": __name__, "bp": bp, "jsonify": jsonify, "request": request,
         "session": session, "wraps": wraps, "logging": logging, "time": time,
-        "VERSION": "0.261.305", "log_event": logs, "debug_print": Mock(),
+        "VERSION": "0.261.306", "log_event": logs, "debug_print": Mock(),
         "logger": logging.getLogger(__name__),
         "get_auth_security": lambda: [{"sessionAuth": []}],
         "swagger_route": lambda **kwargs: lambda function: function,
@@ -158,6 +159,26 @@ def test_scope_requires_a_signed_in_user(environment):
     response = environment.client.get("/api/v2/scope")
     assert response.status_code == 401
     environment.namespace["get_user_settings"].assert_not_called()
+
+
+@pytest.mark.parametrize("outcome,expected_status", [
+    ("success", 200), ("missing_identity", 401), ("storage_failure", 503),
+])
+def test_scope_body_returns_consistent_response_tuples(environment, outcome, expected_status):
+    """All scope body return paths preserve response, status, and no-store headers."""
+    route = unwrap(environment.namespace["v2_scope"])
+    with environment.client.application.test_request_context("/api/v2/scope"):
+        if outcome != "missing_identity":
+            session["user"] = {"oid": "viewer", "roles": ["User"]}
+        if outcome == "storage_failure":
+            environment.namespace["get_user_groups"].side_effect = RuntimeError("fixture failure")
+        result = route()
+    assert isinstance(result, tuple)
+    assert len(result) == 3
+    response, status, headers = result
+    assert response.is_json
+    assert status == expected_status
+    assert headers == {"Cache-Control": "no-store"}
 
 
 @pytest.mark.parametrize("fails", [False, True])

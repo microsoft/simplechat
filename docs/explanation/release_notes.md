@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.306)**
+
+#### Bug Fixes
+
+*   **Consistent V2 Scope Response Contract**
+    *   Scope confirmation now uses the same response tuple format for successful reads and error paths, resolving the CodeQL mixed-tuple-returns finding without changing status codes, response bodies, or no-store behavior.
+    *   (Ref: `route_backend_v2.py` `v2_scope`, `test_v2_scope_and_bootstrap_timings.py`)
+
 ### **(v0.261.305)**
 
 #### Bug Fixes
