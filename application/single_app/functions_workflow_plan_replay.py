@@ -239,10 +239,19 @@ def classify_plan_steps(plan):
                 'capability_not_replayable', number, step,
                 f'{prefix} offers an image for you to accept, which a repeated run can\'t do.',
             ))
-    if plan.get('deliverables'):
+    # Every compiled plan declares at least the implicit answer. Only a file waits on render_file;
+    # any other kind outside the answer, image and visuals is refused too.
+    deliverables = plan.get('deliverables') if isinstance(plan.get('deliverables'), list) else []
+    kinds = {deliverable.get('kind') if isinstance(deliverable, dict) else None for deliverable in deliverables}
+    if 'file' in kinds:
         refusals.append(_refusal(
             'replay_wait_unsupported', 0, {},
             f'This plan creates a file ({capability_label("render_file")}), which a repeated run can\'t do yet.',
+        ))
+    if kinds - {'file', 'answer', 'image', 'chart', 'diagram'}:
+        refusals.append(_refusal(
+            'capability_not_replayable', 0, {},
+            'This plan delivers something a saved workflow can\'t create.',
         ))
     return refusals
 
