@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.295)**
+
+#### New Features
+
+*   **Workflow Hand-Off Card In V2 Chat**
+    *   An answer whose plan handed large work off to a one-time workflow now shows a **Workflow hand-off** card, so users can accept a hand-off in the browser. The card says what the workflow covers, such as "200 documents" or "up to 500 best-matching documents", the workspaces a search reads, each task and the model or agent it runs on, and when the offer expires. Workflow, task, agent and workspace names render as plain text, and instructions and document ids are never shown.
+    *   **Accept** asks you to confirm, then creates the workflow and starts its one run. **Edit** opens the prepared workflow in the workflow editor, and **Save** asks you to confirm, then creates the edited workflow and starts its run. If the server refuses the edit, the editor stays open with your draft and lists what to change, and a draft with URL Access on is refused before anything is sent. Saving an untouched draft creates the same workflow and isn't recorded as an edit. **Decline** asks you to confirm and creates nothing. A hand-off whose workflow exists but whose run didn't start offers **Start its run**.
+    *   Once its run is queued, the card follows it through the tab's workflow run tracker, with **Cancel run**, **Retry**, **Review and approve**, **Reconnect Microsoft 365** and **Open run** as they apply, and the outcome is posted back into the chat as for any run started from chat. A run that paused because more documents matched than the hand-off may review says so and offers **Cancel run**.
+    *   Each refusal reads as a sentence, never a bare code or "Forbidden". A refused accept offers **Try again** only when the same accept can still succeed: while another accept is in progress, or when the workflow was created but its run couldn't be queued or started, which retries that same run. Hand-offs that couldn't be loaded offer **Try again** to read them again.
+    *   The card appears in private personal chats, under an answer whose plan completed a hand-off step, in place of the proposal and started-workflows cards. Hand-off itself stays off by default, behind **Hand Off Large Work From Chat**.
+    *   (Ref: #1549, #1543, `WorkflowHandoffCard.tsx`, `workflowHandoffs.ts`, `MessageList.tsx`, `WorkflowRunCard.tsx`, [Chat Orchestration Workflow Hand-off](features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md#the-v2-hand-off-card), [Chat controls](../reference/chat-controls.md#workflow-hand-offs-v2-interface))
+
+#### User Interface Enhancements
+
+*   **Hand-Off Plans Always Wait For Approval In V2**
+    *   The plan card says when a plan hands work off to a one-time workflow, so it always waits for your approval, and that approving it only prepares the workflow. V2 makes any plan with an enabled hand-off step wait for approval, so a countdown or Auto never runs it by itself, even if the server's approval-floor marker is missing.
+    *   The Run view labels the step **Hand off large work** and puts what it prepares in words: the workflow's name, what it reviews, such as "3 named documents" or "a search of 2 workspaces, the 50 best matches", and its task titles. The tasks' instructions, the document and workspace references, the content filter and the tags aren't shown.
+    *   (Ref: `OrchestrationWorkflowHandoffNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`)
+
 ### **(v0.261.293)**
 
 #### Bug Fixes
