@@ -102,7 +102,6 @@
         <option value="None">None</option>
         <option value="WarnUser">WarnUser</option>
         <option value="SuspendUser">SuspendUser</option>
-        <option value="Escalate">Escalate</option>
         <option value="BlockUser">BlockUser</option>
       </select>
     </div>
@@ -243,6 +242,14 @@
   const viewModal = new bootstrap.Modal(document.getElementById('viewViolationModal')); // Bootstrap 5 modal instance
 
   // --- DATA FETCHING & RENDERING ---
+  // Escalate is no longer recorded; older records keep it and are labelled as legacy.
+  function formatViolationAction(action) {
+    if (action === "Escalate") {
+      return "Escalated (legacy)";
+    }
+    return action || "None";
+  }
+
   function fetchMySafetyLogs() {
     // Show loading state
     tableBody.html(`
@@ -296,7 +303,7 @@
     row.append($("<td></td>").text(log.message || ""));
     row.append($("<td></td>").text(triggered));
     row.append($("<td></td>").text(log.status || "New"));
-    row.append($("<td></td>").text(log.action || "None"));
+    row.append($("<td></td>").text(formatViolationAction(log.action)));
     row.append($("<td class='text-truncate'></td>").attr('title', userNotes).text(userNotes)); // Truncate notes
     // View/Edit button
     const viewBtn = $("<button class='btn btn-sm btn-primary view-edit-btn'></button>")
@@ -381,7 +388,7 @@
       .join(", ");
     $("#detailCategories").text(triggered || "None");
     $("#detailStatus").text(log.status || "New");
-    $("#detailAction").text(log.action || "None");
+    $("#detailAction").text(formatViolationAction(log.action));
 
     // Editable user notes
     $("#detailUserNotes").val(log.user_notes || "");

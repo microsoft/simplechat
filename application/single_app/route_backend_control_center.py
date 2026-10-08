@@ -75,6 +75,7 @@ from functions_control_center_public_workspaces import (
     select_workspace_ids, workspace_members, workspace_row,
 )
 from functions_safety_remediation import (
+    build_safety_action_execution_updates,
     execute_safety_violation_action,
     get_safety_log_item,
     update_safety_log_action_state,
@@ -8762,15 +8763,16 @@ def register_route_backend_control_center(bp):
             },
         )
 
-        update_safety_log_action_state(safety_log_id, {
-            'action_request_status': 'executed',
+        # Warnings are sent without approval now; this path still finishes warn_user
+        # requests created before that, and marks them for acknowledgment the same way.
+        execution_updates = build_safety_action_execution_updates(action, result)
+        execution_updates.update({
             'action_request_id': approval.get('id'),
             'action_request_type': approval.get('request_type'),
             'action_requested_at': approval.get('created_at'),
             'action_approved_at': approval.get('approved_at'),
-            'action_executed_at': datetime.utcnow().isoformat(),
-            'action_execution_error': None,
         })
+        update_safety_log_action_state(safety_log_id, execution_updates)
 
         return result
 

@@ -194,6 +194,8 @@ Test the connection before saving. By default, a check that cannot finish allows
 
 **Trigger information** appends safe category and severity information to blocked-input notices. The expanded chat checks do not echo matched sensitive values, and removed-output notices do not repeat the rejected answer. AI-generated findings are not user misconduct and cannot be used to warn, suspend, or block the user through the remediation actions.
 
+Reviewers act on a user's findings from the Safety Violations review. A warning is sent as soon as the reviewer saves it, and the user must acknowledge it. A suspension or block waits for a second eligible reviewer, and the restricted user then sees an **Access restricted** screen at sign-in that explains why, instead of an error. See [Review safety violations]({{ '/guides/admin-review-safety-violations/' | relative_url }}).
+
 #### Settings
 
 | Setting | What it does | Default | Notes |

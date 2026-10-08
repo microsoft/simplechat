@@ -2,6 +2,45 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.297)**
+
+#### New Features
+
+*   **Access Restricted Screen For Suspended And Blocked Users**
+    *   A user whose access an administrator suspended or blocked can still sign in, but every page now opens an **Access restricted** screen instead of a bare "Access Denied" error. It shows the notice the user was sent, whether access returns on its own and when (in the user's own time zone), the safety violation reference, and **Sign out**. Once the suspension ends or access is restored, the screen offers **Continue**.
+    *   V2 pages go to `/v2/access-restricted` and classic pages to `/access-restricted`. API calls get `403 {"error": "access_restricted", "message", "restriction", "restricted_url"}` with the caller's own restriction, and the V2 interface follows it to the screen from any page, including when a restriction is applied while a tab is open.
+    *   An approved safety suspension or block now stores the notice with the restriction, using the same title and message as the notification. Control Center restrictions carry no notice and show generic text; restoring access from Control Center clears it.
+    *   The screen's routes require sign-in but not an unrestricted account, describe only the signed-in user's own restriction, and are exempt from the Terms of Use gate so a restricted user is never bounced between the two. Idle-session timeout still applies. Accounts with the Admin role are still never restricted.
+    *   (Ref: `functions_access_restriction.py`, `functions_authentication.py` `user_required`, `get_user_access_restriction`, `route_access_restriction.py`, `access_restricted.html`, `AccessRestrictedPage.tsx`, `apiClient.ts`, [Access Restricted Sign-In Screen](features/ACCESS_RESTRICTED_SIGN_IN_SCREEN.md))
+
+*   **Safety Warnings Must Be Acknowledged**
+    *   A warning from a safety reviewer now opens a dialog, **A warning from your administrators**, the next time the user opens the V2 interface, and appears again in every tab and on every device until they select **I understand**. Escape and clicks outside the dialog don't dismiss it.
+    *   Reviewers see **Warning acknowledged** with the date, or **Not yet acknowledged**, on the violation, and users see the same state in **Settings > Violations**. Warnings sent before this version are never shown again.
+    *   A reviewer can warn about the same violation again. The user then has to acknowledge the newer warning, even in a tab where they acknowledged the earlier one, and an acknowledgment is only recorded against the warning the user read: one replaced while on screen is answered with the newer warning instead.
+    *   New routes `GET /api/safety/warnings/pending` and `POST /api/safety/warnings/<id>/acknowledge` return and change only the caller's own warnings. Bootstrap carries the pending count, so a user with no warnings makes no extra request.
+    *   (Ref: `functions_safety_remediation.py`, `route_backend_safety.py`, `route_backend_v2.py` bootstrap `safety_warnings`, `SafetyWarningDialog.tsx`, `useSafetyWarningRuntime.ts`, `ViolationsTab.tsx`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+
+#### Bug Fixes
+
+*   **Safety Warnings Are Sent Without A Second Reviewer**
+    *   In a deployment with one administrator, **Warn user** created an approval request that nobody could approve, because a requester can never approve their own request, so the warning was never sent. A warning restricts nothing, so it is now sent as soon as the reviewer saves the review, and recorded in the activity log. Saving the record again, for example to resolve it, doesn't send it twice.
+    *   Two saves that overlap, such as a double-click or two reviewers at once, send it once. A save claims the violation with a write conditional on the version it read before anything is sent, and the other save is refused with `409 safety_warning_in_progress`. While a warning is being sent the violation reads **Sending**, can't be changed or deleted, and never counts as a warning to acknowledge. A claim left by a save that stopped is released after five minutes. The classic page also disables **Save Review** while its request is in flight.
+    *   **Suspend user** and **Block user** still create an approval request that another eligible reviewer must approve. A **Warn User** request created before this version still completes when approved.
+    *   The review's guidance text in both interfaces now describes which actions wait for a second reviewer.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `functions_safety_remediation.py` `claim_safety_warning_send`, `record_safety_warning_send`, `route_backend_control_center.py` `_execute_safety_violation_request`, `AdminSafetyViolationsPage.tsx`, `admin-safety-violations.js`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+
+#### Breaking Changes
+
+*   **Escalate Removed As A Safety Action**
+    *   **Escalate** was a label with no workflow behind it. It can no longer be chosen in either interface, and the API rejects a change to `Escalate` with 400. Records that already carry it keep it, are labelled **Escalated (legacy)**, and can still be saved. `escalate_count` remains in the statistics; the V2 "Escalated or blocked" tile is now **Blocked**.
+    *   **Migration**: None required. Resolve or re-action legacy escalated records as needed.
+    *   (Ref: `route_backend_safety.py`, `AdminSafetyViolationsPage.tsx`, `ViolationsTab.tsx`, `admin_safety_violations.html`, `my_safety_violations.html`, `profile.html`)
+
+*   **Access-Restriction Responses Changed**
+    *   API calls from a restricted user now return `403` with `"error": "access_restricted"` and a structured `restriction`, instead of `"error": "Access Denied"` with the reason as `message`. Browser page requests are redirected to the Access restricted screen instead of returning a plain-text 403.
+    *   **Migration**: Integrations that matched the old `Access Denied` error string should check for `access_restricted` instead.
+    *   (Ref: `functions_authentication.py` `access_restricted_response`)
+
 ### **(v0.261.296)**
 
 #### User Interface Enhancements

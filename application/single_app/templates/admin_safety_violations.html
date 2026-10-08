@@ -289,8 +289,8 @@
         </div>
         <div class="col-md-6 col-xl-2">
           <div class="surface-card">
-            <div class="stat-value text-info" id="safetyEscalatedCount">-</div>
-            <div class="stat-label">Escalated</div>
+            <div class="stat-value text-info" id="safetyBlockedCount">-</div>
+            <div class="stat-label">Blocked</div>
           </div>
         </div>
       </div>
@@ -333,8 +333,12 @@
               <strong id="safetyStatsSuspendSummary">-</strong>
             </div>
             <div class="summary-row">
-              <span>Escalate or block</span>
-              <strong id="safetyStatsEscalateSummary">-</strong>
+              <span>Block user</span>
+              <strong id="safetyStatsBlockSummary">-</strong>
+            </div>
+            <div class="summary-row d-none" id="safetyStatsLegacyEscalateRow">
+              <span>Escalated (legacy)</span>
+              <strong id="safetyStatsLegacyEscalateSummary">-</strong>
             </div>
           </div>
         </div>
@@ -362,7 +366,6 @@
                 <option value="None">None</option>
                 <option value="WarnUser">Warn user</option>
                 <option value="SuspendUser">Suspend user</option>
-                <option value="Escalate">Escalate</option>
                 <option value="BlockUser">Block user</option>
               </select>
             </div>
@@ -471,16 +474,16 @@
             <option value="None">None</option>
             <option value="WarnUser">Warn user</option>
             <option value="SuspendUser">Suspend user</option>
-            <option value="Escalate">Escalate</option>
             <option value="BlockUser">Block user</option>
           </select>
         </div>
+        <div class="alert alert-secondary py-2 d-none" id="safetyWarningAcknowledgment" role="status"></div>
         <div class="mb-3 d-none" id="safetyRemediationFields">
           <div class="alert alert-info py-2" id="safetyRemediationHelp"></div>
-          <div class="mb-3">
+          <div class="mb-3" id="safetyNotificationGroup">
             <label class="form-label fw-bold" for="editNotificationMessage">Notification</label>
             <textarea class="form-control" id="editNotificationMessage" rows="5"></textarea>
-            <div class="form-text">This message is sent to the affected user. If approval is required, it is sent after the request is approved.</div>
+            <div class="form-text">This message is sent to the affected user. A warning is sent when you save; a suspension or block is sent once another reviewer approves it.</div>
           </div>
           <div class="d-none" id="safetySuspendUntilGroup">
             <label class="form-label fw-bold" for="editSuspendUntil">Restore access on</label>

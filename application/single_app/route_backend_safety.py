@@ -39,18 +39,63 @@ from functions_safety_remediation import (
     SAFETY_REMEDIATION_BLOCK,
     SAFETY_REMEDIATION_SUSPEND,
     SAFETY_REMEDIATION_WARNING,
+    SAFETY_WARNING_REPLACED_CODE,
+    SAFETY_WARNING_REPLACED_MESSAGE,
+    acknowledge_safety_warning,
+    build_safety_action_execution_updates,
+    claim_safety_warning_send,
     execute_safety_violation_action,
+    is_interrupted_safety_warning_send,
+    list_pending_safety_warnings,
+    mark_interrupted_safety_warning_send,
+    present_safety_warning_send_state,
+    record_safety_warning_send,
     resolve_safety_target_user,
+    safety_warning_send_in_progress,
+    serialize_safety_warning_state,
 )
+from functions_activity_logging import log_general_admin_action
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 
 ALLOWED_SAFETY_PAGE_SIZES = {10, 20, 50, 100}
 ALLOWED_SAFETY_STATUSES = {'New', 'In-Review', 'Resolved', 'Dismissed'}
-ALLOWED_SAFETY_ACTIONS = {'None', 'WarnUser', 'SuspendUser', 'Escalate', 'BlockUser'}
+# Escalate was a label with no workflow behind it. It can no longer be chosen, but a record
+# that already carries it stays editable, so it is still accepted when it is unchanged.
+SAFETY_ACTION_ESCALATE_LEGACY = 'Escalate'
+SELECTABLE_SAFETY_ACTIONS = {'None', 'WarnUser', 'SuspendUser', 'BlockUser'}
+ALLOWED_SAFETY_ACTIONS = SELECTABLE_SAFETY_ACTIONS | {SAFETY_ACTION_ESCALATE_LEGACY}
+SAFETY_ESCALATE_RETIRED_MESSAGE = (
+    'Escalate is no longer available as a safety action. '
+    'Choose None, Warn user, Suspend user or Block user.'
+)
+SAFETY_WARNING_SEND_FAILED_MESSAGE = 'The warning notification could not be sent.'
+# The signed-in user's own pending warnings are never cached, whatever the answer.
+SAFETY_WARNINGS_NO_STORE_HEADERS = {'Cache-Control': 'no-store'}
+# Of two overlapping saves that would send a warning -- a double-click, or two reviewers --
+# only the one that claims the violation first sends it; the other is refused with this code.
+SAFETY_WARNING_IN_PROGRESS_CODE = 'safety_warning_in_progress'
+SAFETY_WARNING_SENDING_MESSAGE = (
+    'A warning for this violation is being sent right now, so nothing was saved. '
+    'Reload the violation in a moment to see the result.'
+)
+SAFETY_WARNING_CLAIM_CONFLICT_MESSAGE = (
+    'Another save of this violation got there first, so this one saved nothing and sent no '
+    'warning. Reload the violation in a moment to see the result.'
+)
+SAFETY_WARNING_NOT_RECORDED_CODE = 'safety_warning_not_recorded'
+SAFETY_WARNING_NOT_RECORDED_MESSAGE = (
+    'The warning was sent to the user, but it could not be recorded on this violation. '
+    'Reload the violation before saving it again, so the warning is not sent twice.'
+)
 SAFETY_REMEDIATION_ACTIONS = {
     SAFETY_REMEDIATION_WARNING,
+    SAFETY_REMEDIATION_SUSPEND,
+    SAFETY_REMEDIATION_BLOCK,
+}
+# Suspend and block restrict access, so another eligible reviewer must approve them.
+SAFETY_APPROVAL_REQUIRED_ACTIONS = {
     SAFETY_REMEDIATION_SUSPEND,
     SAFETY_REMEDIATION_BLOCK,
 }
@@ -194,6 +239,8 @@ def _query_safety_logs(
     ))
     for log_item in logs:
         log_item.update(serialize_archive_metadata(log_item))
+        present_safety_warning_send_state(log_item)
+        log_item.update(serialize_safety_warning_state(log_item))
     return strip_private_chat_checks(logs) if user_id else logs
 
 
@@ -334,6 +381,145 @@ def _log_safety_audit_failure(log_id, lifecycle_action):
         },
         level=logging.ERROR,
     )
+
+
+def _log_safety_warning_sent(item, actor, notification_id):
+    """Record the reviewer's warning in the activity log, the audit an approval used to be."""
+    return log_general_admin_action(
+        admin_user_id=actor.get('id'),
+        admin_email=actor.get('email') or '',
+        action='safety_violation_warning_sent',
+        description='Sent a safety violation warning to a user.',
+        additional_context={
+            'record_type': 'safety_violation',
+            'record_id': item.get('id'),
+            'target_user_id': item.get('user_id'),
+            'notification_id': notification_id,
+        },
+    )
+
+
+def _send_safety_warning_now(item, actor, notification_title, notification_message):
+    """Send a warning as the reviewer saves it, and record it on the violation.
+
+    A suspension or block restricts access, so it waits for a second reviewer. A warning
+    restricts nothing, so it is sent at once: the reviewer's decision is audited, and the
+    user has to acknowledge the warning before carrying on.
+
+    Nothing is sent until this save has claimed the violation, with a write conditional on
+    the version it read, so of two overlapping saves -- a double-click, or two reviewers --
+    only one sends the warning. The outcome is then written on the claimed version.
+    Returns ``(response, status)``.
+    """
+    item['action_request_id'] = None
+    item['action_request_type'] = None
+    item['action_requested_at'] = None
+    item['action_approved_at'] = None
+    item['action_notification_title'] = notification_title or None
+    item['action_notification_message'] = notification_message or None
+    item['action_datetime_to_allow'] = None
+    item['action_executed_at'] = None
+    item['action_execution_error'] = None
+    item['last_updated'] = datetime.utcnow().isoformat()
+
+    try:
+        claimed, claim_id = claim_safety_warning_send(item)
+    except CosmosAccessConditionFailedError:
+        log_event(
+            '[SAFETY_REMEDIATION] An overlapping save claimed the safety warning first; this save sent nothing.',
+            {'safety_log_id': item.get('id'), 'actor_id': actor.get('id')},
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'error': SAFETY_WARNING_CLAIM_CONFLICT_MESSAGE,
+            'code': SAFETY_WARNING_IN_PROGRESS_CODE,
+        }), 409
+
+    try:
+        execution_result = execute_safety_violation_action(
+            action=SAFETY_REMEDIATION_WARNING,
+            safety_log=claimed,
+            notification_title=notification_title,
+            notification_message=notification_message,
+            datetime_to_allow=None,
+            actor=actor,
+        )
+    except Exception as exc:
+        log_event(
+            '[SAFETY_REMEDIATION] A safety warning could not be sent.',
+            {
+                'safety_log_id': item.get('id'),
+                'actor_id': actor.get('id'),
+                'error_type': type(exc).__name__,
+            },
+            level=logging.ERROR,
+        )
+        try:
+            recorded = record_safety_warning_send(claimed, claim_id, {
+                'action_request_status': 'failed',
+                'action_executed_at': None,
+                'action_execution_error': SAFETY_WARNING_SEND_FAILED_MESSAGE,
+            })
+        except Exception:
+            recorded = None
+        if recorded is None:
+            log_event(
+                '[SAFETY_REMEDIATION] A failed safety warning could not be recorded on its violation.',
+                {'safety_log_id': item.get('id'), 'actor_id': actor.get('id')},
+                level=logging.ERROR,
+            )
+        return jsonify({
+            'error': 'The warning could not be sent. The rest of the review was saved; save it again to retry.',
+        }), 500
+
+    notification_id = execution_result.get('notification_id')
+    updates = build_safety_action_execution_updates(SAFETY_REMEDIATION_WARNING, execution_result)
+    record_error_type = None
+    try:
+        stored = record_safety_warning_send(claimed, claim_id, updates)
+    except Exception as exc:
+        stored = None
+        record_error_type = type(exc).__name__
+    # The warning reached the user either way, so the reviewer's decision is audited.
+    audit_logged = _log_safety_warning_sent(stored or claimed, actor, notification_id)
+
+    if stored is None:
+        log_event(
+            '[SAFETY_REMEDIATION] A safety warning was sent, but it could not be recorded on its violation.',
+            {
+                'safety_log_id': item.get('id'),
+                'target_user_id': item.get('user_id'),
+                'actor_id': actor.get('id'),
+                'notification_id': notification_id,
+                'error_type': record_error_type or 'claim_lost',
+            },
+            level=logging.ERROR,
+        )
+        return jsonify({
+            'error': SAFETY_WARNING_NOT_RECORDED_MESSAGE,
+            'code': SAFETY_WARNING_NOT_RECORDED_CODE,
+            'audit_logged': audit_logged,
+        }), 500 if record_error_type else 409
+
+    log_event(
+        '[SAFETY_REMEDIATION] Safety warning sent without a second reviewer.',
+        {
+            'safety_log_id': item.get('id'),
+            'target_user_id': item.get('user_id'),
+            'actor_id': actor.get('id'),
+            'actor_email': actor.get('email'),
+            'notification_id': notification_id,
+        },
+    )
+    response = {
+        'message': 'Warning sent to the user.',
+        'approval_required': False,
+        'approval_id': None,
+        'audit_logged': audit_logged,
+    }
+    if not response['audit_logged']:
+        response['audit_warning'] = 'The warning was sent, but the audit activity could not be recorded.'
+    return jsonify(response), 200
 
 def register_route_backend_safety(bp):
     def chat_check_error(error):
@@ -491,6 +677,12 @@ def register_route_backend_safety(bp):
         """
         Updates status, action, and notes on a safety log.
         Also sets timestamps (created_at if missing, and last_updated).
+
+        Warn user sends the warning as soon as the review is saved; saving the record again
+        does not send it twice, and of two overlapping saves only the one that claims the
+        violation first sends it. Suspend user and Block user restrict access, so they create an
+        approval request that another eligible reviewer must approve. Escalate can no longer
+        be chosen; it is only accepted unchanged on a record that already carries it.
         """
         data = request.get_json() or {}
         status = data.get("status")
@@ -508,6 +700,11 @@ def register_route_backend_safety(bp):
                 return jsonify({'error': 'Invalid safety action'}), 400
 
             item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+            previous_action = str(item.get('action') or 'None')
+            existing_request_status = str(item.get('action_request_status') or '').strip().lower()
+
+            if action == SAFETY_ACTION_ESCALATE_LEGACY and previous_action != SAFETY_ACTION_ESCALATE_LEGACY:
+                return jsonify({'error': SAFETY_ESCALATE_RETIRED_MESSAGE}), 400
 
             if action in SAFETY_REMEDIATION_ACTIONS and item.get("content_origin", "user") != "user":
                 return jsonify({"error": "AI-generated findings cannot be used to warn or restrict a user."}), 400
@@ -515,11 +712,20 @@ def register_route_backend_safety(bp):
             if not item.get("created_at"):
                 item["created_at"] = datetime.utcnow().isoformat()
 
-            existing_request_status = str(item.get('action_request_status') or '').strip().lower()
             if existing_request_status == 'pending':
                 return jsonify({
                     'error': 'This violation already has a pending remediation approval request.'
                 }), 409
+
+            # While another save is sending a warning, the violation waits for it to finish.
+            if safety_warning_send_in_progress(item):
+                return jsonify({
+                    'error': SAFETY_WARNING_SENDING_MESSAGE,
+                    'code': SAFETY_WARNING_IN_PROGRESS_CODE,
+                }), 409
+            if is_interrupted_safety_warning_send(item):
+                mark_interrupted_safety_warning_send(item)
+                existing_request_status = 'failed'
 
             normalized_datetime_to_allow = None
             if action in SAFETY_REMEDIATION_ACTIONS:
@@ -537,7 +743,16 @@ def register_route_backend_safety(bp):
             if not actor.get('id'):
                 return jsonify({'error': 'No user ID found in session'}), 403
 
-            if action in SAFETY_REMEDIATION_ACTIONS:
+            # Saving a warned record again, for example to resolve it, must not warn twice.
+            warning_already_sent = (
+                action == SAFETY_REMEDIATION_WARNING
+                and previous_action == SAFETY_REMEDIATION_WARNING
+                and existing_request_status == 'executed'
+            )
+            if action == SAFETY_REMEDIATION_WARNING and not warning_already_sent:
+                return _send_safety_warning_now(item, actor, notification_title, notification_message)
+
+            if action in SAFETY_APPROVAL_REQUIRED_ACTIONS:
                 target_user = resolve_safety_target_user(item.get('user_id'))
                 request_type = SAFETY_ACTION_REQUEST_TYPE_MAP[action]
                 approval_reason = notes or notification_message or f"Requested {action} for safety violation {log_id}."
@@ -607,7 +822,7 @@ def register_route_backend_safety(bp):
 
             cosmos_safety_container.upsert_item(item)
 
-            if action in SAFETY_REMEDIATION_ACTIONS:
+            if action in SAFETY_APPROVAL_REQUIRED_ACTIONS:
                 if item.get('action_request_status') == 'pending':
                     return jsonify({
                         'message': 'Safety log updated and remediation approval request created.',
@@ -621,17 +836,30 @@ def register_route_backend_safety(bp):
                     'approval_id': item.get('action_request_id'),
                 }), 200
 
+            if warning_already_sent:
+                return jsonify({
+                    'message': 'Safety log updated. The warning was already sent, so it was not sent again.',
+                    'approval_required': False,
+                    'warning_already_sent': True,
+                }), 200
+
             return jsonify({"message": "Safety log updated successfully."}), 200
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Safety violation not found'}), 404
         except exceptions.CosmosHttpResponseError as e:
-            return jsonify({"error": str(e)}), 404
+            log_event('[SAFETY_VIOLATIONS] Failed to update safety log', {
+                'safety_log_id': log_id,
+                'error_type': type(e).__name__,
+            }, level=logging.ERROR)
+            return jsonify({'error': 'Failed to update safety log.'}), 500
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
         except Exception as e:
             log_event('[SAFETY_VIOLATIONS] Failed to update safety log', {
                 'safety_log_id': log_id,
-                'error': str(e),
+                'error_type': type(e).__name__,
             }, level=logging.ERROR)
-            return jsonify({'error': f'Failed to update safety log: {str(e)}'}), 500
+            return jsonify({'error': 'Failed to update safety log.'}), 500
 
     @bp.route('/api/safety/logs/<string:log_id>/archive', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
@@ -702,6 +930,14 @@ def register_route_backend_safety(bp):
                         'This safety violation cannot be deleted while a remediation '
                         'approval request is pending.'
                     )
+                }), 409
+            if safety_warning_send_in_progress(item):
+                return jsonify({
+                    'error': (
+                        'This safety violation cannot be deleted while a warning for it is '
+                        'being sent. Try again in a moment.'
+                    ),
+                    'code': SAFETY_WARNING_IN_PROGRESS_CODE,
                 }), 409
             cosmos_safety_container.delete_item(item=log_id, partition_key=log_id)
         except exceptions.CosmosResourceNotFoundError:
@@ -854,3 +1090,76 @@ def register_route_backend_safety(bp):
         except exceptions.CosmosHttpResponseError as e:
             log_event("[CONTENT_SAFETY] User content-check note could not be saved.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
             return jsonify({"error": "The content-check note could not be saved."}), 404
+
+    # A warning that was sent must stay acknowledgeable even if an administrator later turns
+    # content checks reporting off, so these two routes are not gated on that setting.
+    @bp.route('/api/safety/warnings/pending', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_pending_safety_warnings():
+        """Return the signed-in user's own safety warnings that still need acknowledgment.
+
+        Only what the user was sent is returned: the title, message, when it was issued,
+        the violation id and its triggered categories.
+        """
+        user_id = _get_safety_session_user_id()
+        if not user_id:
+            return jsonify({"error": "No user ID found in session"}), 403, SAFETY_WARNINGS_NO_STORE_HEADERS
+
+        try:
+            warnings = list_pending_safety_warnings(user_id)
+        except Exception as e:
+            log_event(
+                "[SAFETY_WARNINGS] Pending safety warnings could not be read.",
+                extra={"user_id": user_id, "error_type": type(e).__name__},
+                level=logging.WARNING,
+            )
+            return jsonify({"error": "Your warnings could not be loaded."}), 500, SAFETY_WARNINGS_NO_STORE_HEADERS
+
+        return jsonify({"warnings": warnings, "count": len(warnings)}), 200, SAFETY_WARNINGS_NO_STORE_HEADERS
+
+    @bp.route('/api/safety/warnings/<string:log_id>/acknowledge', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def acknowledge_pending_safety_warning(log_id):
+        """Record that the signed-in user acknowledged one of their own safety warnings.
+
+        Repeating it changes nothing. Any record that isn't the caller's own warning is
+        answered 404, so the response never confirms that another user's record exists.
+        The body may carry ``issued_at``, as listed by the pending route: when the
+        violation has since been warned about again, the warning the user read was
+        replaced, and 409 ``safety_warning_replaced`` records nothing.
+        """
+        user_id = _get_safety_session_user_id()
+        if not user_id:
+            return jsonify({"error": "No user ID found in session"}), 403
+
+        payload = request.get_json(silent=True)
+        issued_at = payload.get('issued_at') if isinstance(payload, dict) else None
+        if issued_at is not None and not isinstance(issued_at, str):
+            return jsonify({"error": "issued_at must be a string."}), 400
+
+        try:
+            status, warning = acknowledge_safety_warning(log_id, user_id, issued_at=issued_at)
+        except Exception as e:
+            log_event(
+                "[SAFETY_WARNINGS] A safety warning acknowledgment could not be saved.",
+                extra={"user_id": user_id, "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Your acknowledgment could not be saved. Try again."}), 500
+
+        if status == 'not_found':
+            return jsonify({"error": "Warning not found."}), 404
+        if status == 'replaced':
+            return jsonify({
+                "error": SAFETY_WARNING_REPLACED_MESSAGE,
+                "code": SAFETY_WARNING_REPLACED_CODE,
+            }), 409
+        return jsonify({
+            "success": True,
+            "already_acknowledged": status == 'already_acknowledged',
+            "warning": warning,
+        }), 200

@@ -13,11 +13,14 @@
     const SAFETY_VIEW_STORAGE_KEY = 'simplechat.admin.safetyViolations.viewMode';
 
     const SAFETY_REMEDIATION_ACTIONS = new Set(['WarnUser', 'SuspendUser', 'BlockUser']);
+    // Escalate is no longer an action. A record that already carries it keeps it, labelled
+    // as legacy, and only that record's editor offers it again.
+    const LEGACY_ESCALATE_ACTION = 'Escalate';
     const ACTION_LABELS = {
         None: 'None',
         WarnUser: 'Warn user',
         SuspendUser: 'Suspend user',
-        Escalate: 'Escalate',
+        Escalate: 'Escalated (legacy)',
         BlockUser: 'Block user',
     };
 
@@ -415,6 +418,8 @@
         const requestStatus = String(logItem.action_request_status || '').toLowerCase();
         if (requestStatus === 'pending') {
             actionLabel += ' (Pending approval)';
+        } else if (requestStatus === 'sending') {
+            actionLabel += ' (Sending)';
         } else if (requestStatus === 'failed') {
             actionLabel += ' (Execution failed)';
         }
@@ -470,10 +475,55 @@
         return messageLines.join('\n');
     }
 
+    function isExecutedWarning(logItem) {
+        return logItem.action === 'WarnUser'
+            && String(logItem.action_request_status || '').toLowerCase() === 'executed';
+    }
+
+    function syncLegacyEscalateOption(selectElement, logItem) {
+        if (!selectElement) {
+            return;
+        }
+
+        const existingOption = Array.from(selectElement.options).find(function (option) {
+            return option.value === LEGACY_ESCALATE_ACTION;
+        });
+        if (logItem.action === LEGACY_ESCALATE_ACTION) {
+            if (!existingOption) {
+                const legacyOption = document.createElement('option');
+                legacyOption.value = LEGACY_ESCALATE_ACTION;
+                legacyOption.textContent = ACTION_LABELS.Escalate;
+                selectElement.appendChild(legacyOption);
+            }
+        } else if (existingOption) {
+            existingOption.remove();
+        }
+    }
+
+    function updateWarningAcknowledgment(logItem) {
+        const acknowledgmentElement = document.getElementById('safetyWarningAcknowledgment');
+        if (!acknowledgmentElement) {
+            return;
+        }
+
+        const status = isExecutedWarning(logItem) ? logItem.warning_acknowledgment_status : null;
+        let text = '';
+        if (status === 'acknowledged') {
+            text = `Warning acknowledged ${formatDateTime(logItem.warning_acknowledged_at)}`;
+        } else if (status === 'pending') {
+            text = 'Warning sent. Not yet acknowledged by the user.';
+        } else if (status === 'not_tracked') {
+            text = 'Warning sent before acknowledgment was tracked.';
+        }
+        acknowledgmentElement.textContent = text;
+        setElementHidden(acknowledgmentElement, !text);
+    }
+
     function updateRemediationFields(logItem, forcePopulate) {
         const action = document.getElementById('editAction')?.value || 'None';
         const remediationFields = document.getElementById('safetyRemediationFields');
         const remediationHelp = document.getElementById('safetyRemediationHelp');
+        const notificationGroup = document.getElementById('safetyNotificationGroup');
         const notificationMessage = document.getElementById('editNotificationMessage');
         const suspendGroup = document.getElementById('safetySuspendUntilGroup');
         const suspendInput = document.getElementById('editSuspendUntil');
@@ -494,12 +544,18 @@
             return;
         }
 
+        // A warning already sent is not sent again, so saving this record again only updates it.
+        const warningAlreadySent = action === 'WarnUser' && isExecutedWarning(logItem);
+        setElementHidden(notificationGroup, warningAlreadySent);
+
         const helpTextMap = {
-            WarnUser: 'Warn user sends a notification to the affected user. If this reviewer also has the required Control Center approval role, the warning is approved and sent immediately.',
-            SuspendUser: 'Suspend user uses the Control Center access restriction workflow. Reviewers without approval authority create a pending request instead of applying the suspension immediately.',
-            BlockUser: 'Block user applies a permanent access restriction through the same Control Center access workflow, with no automatic restore date.',
+            WarnUser: 'Warn user sends the warning to the affected user as soon as you save, without a second reviewer. The user must acknowledge it the next time they use SimpleChat.',
+            SuspendUser: 'Suspend user restricts access until the restore date. Because it restricts access, saving creates an approval request, and the suspension applies only after another eligible reviewer approves it.',
+            BlockUser: 'Block user restricts access with no automatic restore date. Saving creates an approval request, and the block applies only after another eligible reviewer approves it.',
         };
-        remediationHelp.textContent = helpTextMap[action] || '';
+        remediationHelp.textContent = warningAlreadySent
+            ? 'This warning was already sent. Saving updates the review without sending the warning again.'
+            : (helpTextMap[action] || '');
 
         const generatedMessage = buildDefaultNotificationMessage(logItem, action);
         const savedMessage = logItem.action === action ? logItem.action_notification_message : '';
@@ -594,7 +650,7 @@
         setTextContent('safetyResolvedCount', data.resolved_count || 0);
         setTextContent('safetyDismissedCount', data.dismissed_count || 0);
         setTextContent('safetyRecentCount', data.recent_30_day_count || 0);
-        setTextContent('safetyEscalatedCount', (data.escalate_count || 0) + (data.block_user_count || 0));
+        setTextContent('safetyBlockedCount', data.block_user_count || 0);
 
         setTextContent('safetyStatsNewSummary', data.new_count || 0);
         setTextContent('safetyStatsInReviewSummary', data.in_review_count || 0);
@@ -603,7 +659,12 @@
         setTextContent('safetyStatsNoneActionSummary', data.none_action_count || 0);
         setTextContent('safetyStatsWarnSummary', data.warn_user_count || 0);
         setTextContent('safetyStatsSuspendSummary', data.suspend_user_count || 0);
-        setTextContent('safetyStatsEscalateSummary', (data.escalate_count || 0) + (data.block_user_count || 0));
+        setTextContent('safetyStatsBlockSummary', data.block_user_count || 0);
+        // Escalations recorded before the action was removed are still counted, and only
+        // shown when there are any.
+        const legacyEscalations = data.escalate_count || 0;
+        setTextContent('safetyStatsLegacyEscalateSummary', legacyEscalations);
+        setElementHidden(document.getElementById('safetyStatsLegacyEscalateRow'), legacyEscalations <= 0);
     }
 
     async function renderSafetyRows(items) {
@@ -752,6 +813,7 @@
         setTextContent('editMessage', item.message || '');
         appendCategoryBadges(document.getElementById('editCategories'), item, 'No triggered categories');
         document.getElementById('editStatus').value = item.status || 'New';
+        syncLegacyEscalateOption(document.getElementById('editAction'), item);
         document.getElementById('editAction').value = item.action || 'None';
         for (const option of document.getElementById('editAction').options) {
             option.disabled = item.content_origin === 'assistant' && SAFETY_REMEDIATION_ACTIONS.has(option.value);
@@ -759,6 +821,7 @@
         document.getElementById('editNotes').value = item.notes || '';
         document.getElementById('editLogId').value = item.id || '';
         setTextContent('safetyEditStatus', '');
+        updateWarningAcknowledgment(item);
         const archiveButton = document.getElementById('archiveSafetyBtn');
         if (archiveButton) {
             archiveButton.dataset.archived = item.isArchived ? 'true' : 'false';
@@ -986,12 +1049,21 @@
 
         if (saveButton) {
             saveButton.addEventListener('click', function () {
+                if (saveButton.disabled) {
+                    return;
+                }
+                // A second click while the save is in flight would send a second request.
+                saveButton.disabled = true;
+                saveButton.setAttribute('aria-busy', 'true');
                 saveSafetyChanges().catch(function (error) {
                     const statusElement = document.getElementById('safetyEditStatus');
                     if (statusElement) {
                         statusElement.textContent = error.message;
                         statusElement.className = 'small text-danger me-auto';
                     }
+                }).finally(function () {
+                    saveButton.disabled = false;
+                    saveButton.removeAttribute('aria-busy');
                 });
             });
         }
