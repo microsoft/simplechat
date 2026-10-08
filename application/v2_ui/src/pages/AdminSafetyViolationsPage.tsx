@@ -11,8 +11,21 @@ import { GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
 const PAGE_SIZES = [10, 20, 50, 100];
 const VIEW_STORAGE_KEY = 'simplechat.v2.admin.safety.viewMode';
 const STATUSES = ['New', 'In-Review', 'Resolved', 'Dismissed'];
-const ACTIONS = ['None', 'WarnUser', 'SuspendUser', 'Escalate', 'BlockUser'];
+const ACTIONS = ['None', 'WarnUser', 'SuspendUser', 'BlockUser'];
+// Escalate is no longer an action. A record that already carries it keeps it, labelled as
+// legacy, and only that record's review offers it again.
+const LEGACY_ESCALATE_ACTION = 'Escalate';
 const REMEDIATION_ACTIONS = new Set(['WarnUser', 'SuspendUser', 'BlockUser']);
+
+function actionLabel(value: string): string {
+    if (value === LEGACY_ESCALATE_ACTION) return 'Escalated (legacy)';
+    return value === 'None' ? 'None' : value.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+/** A warning that was sent. Saving the record again does not resend it. */
+function isExecutedWarning(log: SafetyLog): boolean {
+    return log.action === 'WarnUser' && (log.action_request_status || '').toLowerCase() === 'executed';
+}
 
 interface TriggeredCategory {
     category?: string;
@@ -34,6 +47,10 @@ interface SafetyLog {
     action_request_status?: string;
     action_notification_message?: string;
     action_datetime_to_allow?: string;
+    /** Set on an executed warning: `pending` until the user acknowledges it. */
+    warning_acknowledgment_status?: 'pending' | 'acknowledged' | 'not_tracked' | null;
+    warning_acknowledged_at?: string | null;
+    warning_issued_at?: string | null;
     isArchived?: boolean;
 }
 
@@ -161,10 +178,26 @@ function StatusBadge({ value }: { value?: string }) {
 }
 
 function ActionBadge({ log }: { log: SafetyLog }) {
-    const label = log.action || 'None';
+    const label = actionLabel(log.action || 'None');
     const requestStatus = (log.action_request_status || '').toLowerCase();
-    const suffix = requestStatus === 'pending' ? ' · Pending approval' : requestStatus === 'failed' ? ' · Failed' : '';
+    let suffix = requestStatus === 'pending' ? ' · Pending approval' : requestStatus === 'failed' ? ' · Failed' : '';
+    if (isExecutedWarning(log)) {
+        if (log.warning_acknowledgment_status === 'acknowledged') suffix = ' · Acknowledged';
+        else if (log.warning_acknowledgment_status === 'pending') suffix = ' · Not yet acknowledged';
+    }
     return <span className="rounded-full border border-edge px-2 py-0.5 text-xs text-text-2">{label}{suffix}</span>;
+}
+
+/** Whether the user has acknowledged a warning that was sent, for the review dialog. */
+function warningAcknowledgmentText(log: SafetyLog): string | null {
+    if (!isExecutedWarning(log)) return null;
+    if (log.warning_acknowledgment_status === 'acknowledged') {
+        return `Warning acknowledged ${formatDate(log.warning_acknowledged_at ?? undefined)}`;
+    }
+    if (log.warning_acknowledgment_status === 'pending') {
+        return 'Warning sent. Not yet acknowledged by the user.';
+    }
+    return 'Warning sent before acknowledgment was tracked.';
 }
 
 function Stat({ label, value }: { label: string; value?: number }) {
@@ -336,7 +369,7 @@ export function AdminSafetyViolationsPage() {
             action,
             notes: draft.notes,
         };
-        if (REMEDIATION_ACTIONS.has(action)) {
+        if (REMEDIATION_ACTIONS.has(action) && !(action === 'WarnUser' && isExecutedWarning(selected))) {
             payload.notification_message = draft.notificationMessage;
             if (action === 'SuspendUser') {
                 const restoreDate = toIsoDateTime(draft.datetimeToAllow);
@@ -350,15 +383,15 @@ export function AdminSafetyViolationsPage() {
         setSaving(true);
         setDetailError(null);
         try {
-            const result = await api.patch<{ message?: string; approval_required?: boolean }>(
+            const result = await api.patch<{ message?: string; approval_required?: boolean; audit_warning?: string }>(
                 `/api/safety/logs/${encodeURIComponent(selected.id)}`,
                 payload,
             );
             setSelected(null);
             setDraft(null);
             setNotice({
-                message: result.message || 'Safety review saved.',
-                warning: Boolean(result.approval_required),
+                message: result.audit_warning || result.message || 'Safety review saved.',
+                warning: Boolean(result.approval_required || result.audit_warning),
             });
             setRefresh((value) => value + 1);
         } catch (caught) {
@@ -596,7 +629,10 @@ export function AdminSafetyViolationsPage() {
                     <Stat label="Resolved" value={stats?.resolved_count} />
                     <Stat label="Dismissed" value={stats?.dismissed_count} />
                     <Stat label="Recent 30 days" value={stats?.recent_30_day_count} />
-                    <Stat label="Escalated or blocked" value={(stats?.escalate_count ?? 0) + (stats?.block_user_count ?? 0)} />
+                    <Stat
+                        label={(stats?.escalate_count ?? 0) > 0 ? `Blocked · ${stats?.escalate_count} escalated (legacy)` : 'Blocked'}
+                        value={stats?.block_user_count}
+                    />
                 </div>
                 <GlassPanel elevation="flat" className="grid gap-3 p-3 sm:grid-cols-2">
                     <div className="text-xs text-text-2">
@@ -610,7 +646,8 @@ export function AdminSafetyViolationsPage() {
                         <h2 className="mb-2 font-semibold text-text-1">Action distribution</h2>
                         <div className="flex flex-wrap gap-x-4 gap-y-1">
                             <span>None {stats?.none_action_count ?? 0}</span><span>Warn {stats?.warn_user_count ?? 0}</span>
-                            <span>Suspend {stats?.suspend_user_count ?? 0}</span><span>Escalate {stats?.escalate_count ?? 0}</span><span>Block {stats?.block_user_count ?? 0}</span>
+                            <span>Suspend {stats?.suspend_user_count ?? 0}</span><span>Block {stats?.block_user_count ?? 0}</span>
+                            {(stats?.escalate_count ?? 0) > 0 && <span>Escalated (legacy) {stats?.escalate_count}</span>}
                         </div>
                     </div>
                 </GlassPanel>
@@ -628,7 +665,7 @@ export function AdminSafetyViolationsPage() {
                             Action
                             <select value={draftFilters.action} onChange={(event) => setDraftFilters((current) => ({ ...current, action: event.target.value }))} className="mt-1 block w-full rounded-lg border border-edge bg-surface-solid px-2.5 py-2 text-sm text-text-1">
                                 <option value="">All actions</option>
-                                {ACTIONS.map((value) => <option key={value} value={value}>{value === 'None' ? 'None' : value.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
+                                {ACTIONS.map((value) => <option key={value} value={value}>{actionLabel(value)}</option>)}
                             </select>
                         </label>
                         <label className="block text-xs font-medium text-text-2">
@@ -738,6 +775,11 @@ export function AdminSafetyViolationsPage() {
                             <p role="status" className="rounded-lg bg-info-soft p-3 text-xs text-info">A remediation approval is pending. This record cannot be changed or deleted until the request is decided.</p>
                         )}
                         <div className="flex flex-wrap gap-2"><StatusBadge value={selected.status} /><ActionBadge log={selected} /></div>
+                        {warningAcknowledgmentText(selected) && (
+                            <p className="rounded-lg bg-surface-2 p-3 text-xs text-text-2" data-testid="v2-safety-warning-acknowledgment">
+                                {warningAcknowledgmentText(selected)}
+                            </p>
+                        )}
                         <div><h3 className="text-xs font-semibold text-text-3">Flagged message</h3><p className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-surface-2 p-3 text-sm text-text-1">{selected.message || 'No message captured.'}</p></div>
                         <div><h3 className="text-xs font-semibold text-text-3">Triggered categories</h3><p className="mt-1 text-sm text-text-2">{categoryText(selected) || 'No triggered categories.'}</p></div>
                         {selected.user_notes ? <div><h3 className="text-xs font-semibold text-text-3">User notes</h3><p className="mt-1 whitespace-pre-wrap text-sm text-text-2">{selected.user_notes}</p></div> : null}
@@ -760,9 +802,9 @@ export function AdminSafetyViolationsPage() {
                                         : '',
                                 } : current);
                             }} className="mt-1 w-full rounded-lg border border-edge bg-surface-solid px-3 py-2 text-sm text-text-1">
-                                {ACTIONS.map((value) => (
+                                {(selected.action === LEGACY_ESCALATE_ACTION ? [...ACTIONS, LEGACY_ESCALATE_ACTION] : ACTIONS).map((value) => (
                                     <option key={value} value={value} disabled={selected.content_origin === 'assistant' && REMEDIATION_ACTIONS.has(value)}>
-                                        {value === 'None' ? 'None' : value.replace(/([a-z])([A-Z])/g, '$1 $2')}
+                                        {actionLabel(value)}
                                     </option>
                                 ))}
                             </select>
@@ -771,16 +813,20 @@ export function AdminSafetyViolationsPage() {
                             <div className="space-y-3 rounded-xl border border-info/30 bg-info-soft p-3">
                                 <p className="text-xs text-info">
                                     {draft.action === 'WarnUser'
-                                        ? 'The warning is sent immediately only when this reviewer has the required approval role; otherwise it becomes a pending request.'
+                                        ? isExecutedWarning(selected)
+                                            ? 'This warning was already sent. Saving updates the review without sending the warning again.'
+                                            : 'The warning is sent to the user as soon as you save, without a second reviewer. The user must acknowledge it the next time they use SimpleChat.'
                                         : draft.action === 'SuspendUser'
-                                            ? 'Reviewers without approval authority create a pending request instead of applying a suspension.'
-                                            : 'This access restriction uses the same approval workflow as Control Center.'}
+                                            ? 'A suspension restricts access, so saving creates an approval request. It applies only after another eligible reviewer approves it.'
+                                            : 'A block restricts access, so saving creates an approval request. It applies only after another eligible reviewer approves it.'}
                                 </p>
                                 {selected.content_origin === 'assistant' && <p className="text-xs text-warn">AI-generated findings cannot be used to warn or restrict a user.</p>}
+                                {!(draft.action === 'WarnUser' && isExecutedWarning(selected)) && (
                                 <label className="block text-xs font-medium text-text-2">
                                     Notification message
                                     <textarea rows={4} value={draft.notificationMessage} onChange={(event) => setDraft((current) => current ? { ...current, notificationMessage: event.target.value } : current)} className="mt-1 w-full rounded-lg border border-edge bg-surface-solid px-3 py-2 text-sm text-text-1" />
                                 </label>
+                                )}
                                 {draft.action === 'SuspendUser' && (
                                     <label className="block text-xs font-medium text-text-2">
                                         Restore access on

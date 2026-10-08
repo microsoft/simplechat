@@ -91,6 +91,49 @@ export function safeTermsOfUseUrl(next: unknown): string {
     return `${V2_TERMS_OF_USE_PATH}?${new URLSearchParams({ next: safeSameOriginUrl(next, '/v2') }).toString()}`;
 }
 
+/** Where the server's access gate sends a suspended or blocked V2 user. */
+export const V2_ACCESS_RESTRICTED_PATH = '/v2/access-restricted';
+
+/**
+ * True when a failed response is the server's access gate: an administrator suspended or
+ * blocked this account, so every call is refused until that ends.
+ */
+export function isAccessRestricted(status: number, payload: unknown): boolean {
+    return (
+        status === 403 &&
+        typeof payload === 'object' &&
+        payload !== null &&
+        (payload as Record<string, unknown>).error === 'access_restricted'
+    );
+}
+
+/**
+ * Leave for the Access restricted page when the server says this account is restricted.
+ *
+ * A restriction can be applied while a tab is open, after which every call is refused. The
+ * page says why and how long it lasts, which beats a screen full of failures. Skipped on
+ * the page itself so a refused call there cannot loop.
+ */
+export function redirectToAccessRestricted(): boolean {
+    if (typeof window === 'undefined' || !window.location) {
+        return false;
+    }
+    if (window.location.pathname === V2_ACCESS_RESTRICTED_PATH) {
+        return false;
+    }
+    window.location.assign(V2_ACCESS_RESTRICTED_PATH);
+    return true;
+}
+
+/** Follow the server's gates when a failed response is one of them. */
+function followServerGate(status: number, payload: unknown): void {
+    if (isTermsOfUseRequired(status, payload)) {
+        redirectToTermsOfUse();
+    } else if (isAccessRestricted(status, payload)) {
+        redirectToAccessRestricted();
+    }
+}
+
 /**
  * Leave for the Terms of Use page when the server says acceptance is now required.
  *
@@ -165,9 +208,7 @@ export async function requestWithStatus<T>(path: string, options: RequestOptions
 
     if (!response.ok) {
         const { message, payload } = await readErrorMessage(response);
-        if (isTermsOfUseRequired(response.status, payload)) {
-            redirectToTermsOfUse();
-        }
+        followServerGate(response.status, payload);
         throw new ApiError(message, response.status, payload);
     }
 
@@ -219,9 +260,7 @@ export async function uploadFileWithStatus<T>(
 
     if (!response.ok) {
         const { message, payload } = await readErrorMessage(response);
-        if (isTermsOfUseRequired(response.status, payload)) {
-            redirectToTermsOfUse();
-        }
+        followServerGate(response.status, payload);
         throw new ApiError(message, response.status, payload);
     }
 

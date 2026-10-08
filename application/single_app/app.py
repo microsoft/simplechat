@@ -62,6 +62,7 @@ from route_frontend_support import *
 from route_frontend_notifications import *
 from route_frontend_terms_of_use import register_route_frontend_terms_of_use
 from route_frontend_v2 import register_route_frontend_v2
+from route_access_restriction import register_route_access_restriction
 from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
@@ -927,6 +928,11 @@ TERMS_OF_USE_EXEMPT_PATHS = {
     '/api/v2/terms-of-use',
     '/api/v2/terms-of-use/accept',
     '/api/v2/terms-of-use/decline',
+    # The Access restricted screen. The Terms of Use pages require an unrestricted account,
+    # so gating this screen on the terms would bounce a restricted user between the two.
+    '/access-restricted',
+    '/v2/access-restricted',
+    '/api/v2/access-restriction',
     '/robots933456.txt',
     '/favicon.ico',
     '/acceptable_use_policy.html',
@@ -1383,6 +1389,11 @@ register_route_blueprint('frontend_authentication', register_route_frontend_auth
 
 # ------------------- Terms of Use Routes --
 register_route_blueprint('frontend_terms_of_use', register_route_frontend_terms_of_use)
+
+# ------------------- Access Restricted Routes -----------
+# Login-only on purpose: user_required sends a suspended or blocked user here, so these
+# pages must not require an unrestricted account themselves.
+register_route_blueprint('access_restriction', register_route_access_restriction, login_required_blueprint)
 
 # ------------------- User Profile Routes ----------------
 register_route_blueprint('frontend_profile', register_route_frontend_profile, login_required_blueprint)
