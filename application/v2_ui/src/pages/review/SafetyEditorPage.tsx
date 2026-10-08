@@ -27,10 +27,12 @@ import {
     categorySummary,
     defaultNotificationMessage,
     defaultNotificationTitle,
+    existingRestrictionText,
     formatReviewDate,
     fromLocalDateTimeInput,
     isExecutedWarning,
     isSafetyRecordLocked,
+    offersRestrictionReissue,
     REMEDIATION_ACTIONS,
     remediationStatusText,
     safeApprovalRequestHref,
@@ -208,7 +210,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
     const fromAssistant = record.content_origin === 'assistant';
     const sends = sendsNotice(record, current);
     const restricting = APPROVAL_REQUIRED_ACTIONS.has(current.action);
-    const offerReissue = restricting && current.action === previousAction && !locked;
+    const offerReissue = offersRestrictionReissue(record, current.action);
     const actionWord = current.action === 'BlockUser' ? 'block' : 'suspension';
     const remediation = remediationStatusText(record);
     const acknowledgment = warningAcknowledgmentText(record);
@@ -288,7 +290,7 @@ export function SafetyEditorPage({ recordId }: { recordId: string }) {
             ? 'A suspension restricts access, so saving creates an approval request. It applies only after another eligible reviewer approves it.'
             : 'A block restricts access, so saving creates an approval request. It applies only after another eligible reviewer approves it.';
     } else if (restricting) {
-        actionCopy = `Saving keeps the ${actionWord} as it is and requests nothing new.`;
+        actionCopy = existingRestrictionText(record, current.action);
     }
 
     return (

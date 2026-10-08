@@ -513,6 +513,29 @@ def test_violation_editor_prefills_the_notice_and_suspension_length(review_ui):
     assert "Access restores automatically after:" in body["notification_message"]
 
 
+def test_violation_editor_requests_a_denied_block_again_only_on_purpose(review_ui):
+    review_ui.safety.append(_violation(
+        "log-4", status="In-Review", action="BlockUser", action_request_status="denied",
+        action_request_id="approval-3", action_notification_message="Blocked earlier.",
+    ))
+    review_ui.open("/v2/admin/review/safety/violations/log-4?selected=log-4")
+    page = review_ui.page
+    copy = page.get_by_test_id("v2-safety-editor-action-copy")
+    expect(copy).to_contain_text("This block request was denied. Saving updates the review only and requests nothing new.")
+    reissue = page.get_by_test_id("v2-safety-editor-reissue")
+    expect(reissue).not_to_be_checked()
+    expect(page.get_by_test_id("v2-safety-editor-message")).to_have_count(0)
+
+    reissue.check()
+    expect(copy).to_contain_text("saving creates an approval request")
+    expect(page.get_by_test_id("v2-safety-editor-message")).to_have_value("Blocked earlier.")
+    page.get_by_role("button", name="Save review").click()
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/review/safety/violations?selected=log-4")
+    kind, record_id, body = review_ui.patches[-1]
+    assert (kind, record_id, body["action"], body["reissue"]) == ("safety", "log-4", "BlockUser", True), body
+    assert body["notification_message"] == "Blocked earlier." and body["etag"] == "s1", body
+
+
 def test_unchecked_chat_content_is_rechecked_one_message_at_a_time(review_ui):
     review_ui.open("/v2/admin/review/safety/unchecked")
     page = review_ui.page

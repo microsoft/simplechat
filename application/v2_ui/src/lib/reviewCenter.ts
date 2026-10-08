@@ -420,6 +420,34 @@ export function remediationStatusText(record: SafetyRecord): string | null {
     }
 }
 
+/**
+ * Whether a violation's review offers to request its suspension or block again: only when
+ * the action stays the same, and never while a request waits or a warning is being sent.
+ */
+export function offersRestrictionReissue(record: SafetyRecord, action: string): boolean {
+    const state = safetyRequestState(record);
+    return APPROVAL_REQUIRED_ACTIONS.has(action)
+        && (record.action || 'None') === action
+        && state !== 'pending'
+        && state !== 'sending';
+}
+
+/**
+ * What saving the same suspension or block again does when it isn't asked for again, by
+ * where its last request stands. Mirrors the classic review page.
+ */
+export function existingRestrictionText(record: SafetyRecord, action: string): string {
+    const noun = action === 'BlockUser' ? 'block' : 'suspension';
+    const where: Readonly<Record<string, string>> = {
+        executed: `This ${noun} was approved and applied.`,
+        denied: `This ${noun} request was denied.`,
+        expired: `This ${noun} request expired without a decision.`,
+        failed: `This ${noun} was approved but could not be applied.`,
+    };
+    const state = where[safetyRequestState(record)] ?? `This violation already records a ${noun}.`;
+    return `${state} Saving updates the review only and requests nothing new. To ask another eligible reviewer to approve it again, select "Request this ${noun} again".`;
+}
+
 export interface SafetyFilters {
     status: '' | 'open' | SafetyStatus;
     action: string;
