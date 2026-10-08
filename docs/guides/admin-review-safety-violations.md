@@ -35,7 +35,7 @@ Each action sends the user the notification text in the review. Leave it as gene
 
 Suspensions and blocks need a second reviewer because they take away a person's access; requiring two people for that decision protects users from a single mistaken or malicious reviewer. A record with a pending approval can't be changed or deleted until the request is decided.
 
-Saving a warned record again, for example to resolve it, doesn't send the warning a second time. If you change the action away from **Warn user**, save, and later choose **Warn user** again, a new warning is sent. It replaces the earlier one on the record, and the user has to acknowledge the new warning even if they acknowledged the earlier one.
+Saving a warned record again, for example to resolve it, doesn't send the warning a second time. Neither do two saves that overlap, such as a double-click or two reviewers saving the same violation at once: only the first sends it, and the other is refused and asks you to reload. While a warning is being sent, the violation shows **Sending** and can't be changed or deleted. If you change the action away from **Warn user**, save, and later choose **Warn user** again, a new warning is sent. It replaces the earlier one on the record, and the user has to acknowledge the new warning even if they acknowledged the earlier one.
 
 ### Warning acknowledgment
 

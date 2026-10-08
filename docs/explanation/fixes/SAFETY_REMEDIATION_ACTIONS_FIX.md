@@ -46,6 +46,17 @@ The two-person rule is relaxed for warnings only, because a warning restricts no
 - If the notification cannot be created, the rest of the review is saved, the record is marked `action_request_status: "failed"`, and the response is a 500 asking the reviewer to save again. No exception text is returned.
 - The existing guards remain: a record with a pending approval returns 409, and AI-generated findings cannot be used to warn or restrict a user.
 
+#### Overlapping saves send one warning
+
+A double-click, or two reviewers saving the same violation at once, could otherwise send the warning twice: both saves would read the record before either had recorded the warning. So a save claims the violation before anything is sent:
+
+- The claim is a write conditional on the ETag the save read (`IfNotModified`). It stores the review with `action_request_status: "sending"`, `warning_send_claim_id` and `warning_send_claimed_at`. Of two saves that read the same version, only one claims it. The other sends nothing and returns 409 `{"error": ..., "code": "safety_warning_in_progress"}`.
+- While a claim is fresh, other saves and deletes of the violation return the same 409, as they do for a pending approval. `sending` never counts as a warning to acknowledge: it isn't listed or counted as pending, can't be acknowledged, and has no acknowledgment status.
+- The outcome, sent or failed, is then written on the claimed version, and the claim is released. If another writer changed the record meanwhile but kept the claim, as archiving does, the outcome is written on the latest version. If the claim was lost, because the record was deleted or replaced without it, nothing is overwritten. The warning has been sent, so the decision is still audited, and the response is `{"code": "safety_warning_not_recorded"}` (409, or 500 when the write itself failed) telling the reviewer to reload before saving again.
+- A claim older than five minutes, or one whose time can't be read, is from a save that stopped before it finished. It no longer blocks, lists as `failed` with an explanation, and is recorded as failed by the next save. Saving **Warn user** again retries it, and of two saves that retry it at once only one sends.
+- The classic page disables **Save Review** while its request is in flight. The V2 page already did.
+- Archiving, and saves that don't send a warning, still write without a condition. One that read the violation just before the claim and writes after it replaces the claim, or the recorded warning if the send has finished. A replaced claim is reported as not recorded, as above.
+
 **Suspend user** and **Block user** are unchanged: saving creates an approval request that another eligible reviewer must approve, and the requester can never approve their own request.
 
 A `warn_user` approval created before this version still completes when approved through the Control Center approval path, and is then treated like any other executed warning.
@@ -81,11 +92,12 @@ Reviewers see the state on the record: the admin list and detail JSON add `warni
 ### Testing Approach
 
 - `functional_tests/test_safety_warning_acknowledgment.py` (including a warning withdrawn or replaced by a newer one on the same violation)
+- `functional_tests/test_safety_warning_send_claim.py` (two overlapping saves send one warning; saves, deletes and acknowledgments wait while a warning is being sent; a stale claim is retried once; a lost claim is reported, not overwritten)
 - `functional_tests/test_safety_escalate_removal.py`
 - `functional_tests/test_safety_violation_remediation_approvals.py` (updated to run offline, and to cover the second-reviewer rule and the restriction notice)
 - `functional_tests/test_v2_access_restriction_and_safety_warning_logic.mjs`
 - `ui_tests/test_v2_access_restricted_and_safety_warning.py`
-- `ui_tests/test_classic_safety_review_and_access_restricted.py` (the classic review page offers no Escalate, labels a legacy record, explains which actions need a second reviewer, shows whether a sent warning was acknowledged, and shows Blocked statistics)
+- `ui_tests/test_classic_safety_review_and_access_restricted.py` (the classic review page offers no Escalate, labels a legacy record, explains which actions need a second reviewer, shows whether a sent warning was acknowledged, shows Blocked statistics, and disables Save while a save is in flight)
 - `functional_tests/route_tests/` policy inventories for the two warning routes
 
 ## Validation
@@ -98,7 +110,7 @@ Reviewers see the state on the record: the admin list and detail JSON add `warni
 
 ### After
 
-- A warning is sent as the review is saved, is not sent again when the record is saved later, and is audited.
+- A warning is sent as the review is saved, is not sent again when the record is saved later or when two saves overlap, and is audited.
 - The user has to acknowledge it before carrying on in the V2 interface, and reviewers can see whether they have.
 - Suspensions and blocks still need a second eligible reviewer.
 - **Escalate** can't be chosen; existing records keep it, labelled as legacy.

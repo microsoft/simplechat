@@ -24,9 +24,10 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **Safety Warnings Are Sent Without A Second Reviewer**
     *   In a deployment with one administrator, **Warn user** created an approval request that nobody could approve, because a requester can never approve their own request, so the warning was never sent. A warning restricts nothing, so it is now sent as soon as the reviewer saves the review, and recorded in the activity log. Saving the record again, for example to resolve it, doesn't send it twice.
+    *   Two saves that overlap, such as a double-click or two reviewers at once, send it once. A save claims the violation with a write conditional on the version it read before anything is sent, and the other save is refused with `409 safety_warning_in_progress`. While a warning is being sent the violation reads **Sending**, can't be changed or deleted, and never counts as a warning to acknowledge. A claim left by a save that stopped is released after five minutes. The classic page also disables **Save Review** while its request is in flight.
     *   **Suspend user** and **Block user** still create an approval request that another eligible reviewer must approve. A **Warn User** request created before this version still completes when approved.
     *   The review's guidance text in both interfaces now describes which actions wait for a second reviewer.
-    *   (Ref: `route_backend_safety.py` `update_safety_log`, `route_backend_control_center.py` `_execute_safety_violation_request`, `AdminSafetyViolationsPage.tsx`, `admin-safety-violations.js`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `functions_safety_remediation.py` `claim_safety_warning_send`, `record_safety_warning_send`, `route_backend_control_center.py` `_execute_safety_violation_request`, `AdminSafetyViolationsPage.tsx`, `admin-safety-violations.js`, [Safety Remediation Actions Fix](fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
 
 #### Breaking Changes
 

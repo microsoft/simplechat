@@ -180,7 +180,7 @@ function StatusBadge({ value }: { value?: string }) {
 function ActionBadge({ log }: { log: SafetyLog }) {
     const label = actionLabel(log.action || 'None');
     const requestStatus = (log.action_request_status || '').toLowerCase();
-    let suffix = requestStatus === 'pending' ? ' · Pending approval' : requestStatus === 'failed' ? ' · Failed' : '';
+    let suffix = requestStatus === 'pending' ? ' · Pending approval' : requestStatus === 'sending' ? ' · Sending' : requestStatus === 'failed' ? ' · Failed' : '';
     if (isExecutedWarning(log)) {
         if (log.warning_acknowledgment_status === 'acknowledged') suffix = ' · Acknowledged';
         else if (log.warning_acknowledgment_status === 'pending') suffix = ' · Not yet acknowledged';

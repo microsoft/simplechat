@@ -418,6 +418,8 @@
         const requestStatus = String(logItem.action_request_status || '').toLowerCase();
         if (requestStatus === 'pending') {
             actionLabel += ' (Pending approval)';
+        } else if (requestStatus === 'sending') {
+            actionLabel += ' (Sending)';
         } else if (requestStatus === 'failed') {
             actionLabel += ' (Execution failed)';
         }
@@ -1047,12 +1049,21 @@
 
         if (saveButton) {
             saveButton.addEventListener('click', function () {
+                if (saveButton.disabled) {
+                    return;
+                }
+                // A second click while the save is in flight would send a second request.
+                saveButton.disabled = true;
+                saveButton.setAttribute('aria-busy', 'true');
                 saveSafetyChanges().catch(function (error) {
                     const statusElement = document.getElementById('safetyEditStatus');
                     if (statusElement) {
                         statusElement.textContent = error.message;
                         statusElement.className = 'small text-danger me-auto';
                     }
+                }).finally(function () {
+                    saveButton.disabled = false;
+                    saveButton.removeAttribute('aria-busy');
                 });
             });
         }

@@ -78,6 +78,10 @@ class ClassicSafetyFixture:
         }
         self.restriction = None
         self.patches = []
+        # Saves are answered with patch_reply, or held open until a test fulfills them.
+        self.patch_reply = (200, {"message": "Warning sent to the user.", "approval_required": False})
+        self.hold_patches = False
+        self.held = []
         self.errors = []
         self.unexpected = []
         self.dialogs = []
@@ -138,7 +142,11 @@ class ClassicSafetyFixture:
             return
         elif path.startswith("/api/safety/logs/") and request.method == "PATCH":
             self.patches.append((path.rsplit("/", 1)[-1], request.post_data_json))
-            route.fulfill(json={"message": "Warning sent to the user.", "approval_required": False})
+            if self.hold_patches:
+                self.held.append(route)
+                return
+            status, body = self.patch_reply
+            route.fulfill(status=status, json=body)
             return
         elif path == "/api/safety/chat-checks":
             route.fulfill(json={"items": [], "continuation": None})
@@ -223,6 +231,44 @@ def test_legacy_escalations_are_only_mentioned_when_there_are_some(classic_ui):
     page.goto(f"{ORIGIN}/admin/safety_violations", wait_until="networkidle")
     expect(page.locator("#safetyBlockedCount")).to_have_text("4")
     expect(page.locator("#safetyStatsLegacyEscalateRow")).to_be_hidden()
+
+
+def test_save_waits_for_its_request_so_a_double_click_sends_one(classic_ui):
+    page = classic_ui.page
+    page.goto(f"{ORIGIN}/admin/safety_violations", wait_until="networkidle")
+    page.get_by_role("tab", name="All Data").click()
+    _open_review(page, "log-new")
+    page.locator("#editAction").select_option("WarnUser")
+    save = page.locator("#saveChangesBtn")
+
+    classic_ui.hold_patches = True
+    save.click()
+    expect(save).to_be_disabled()
+    expect(save).to_have_attribute("aria-busy", "true")
+    # A second click while the save is in flight does nothing.
+    save.dispatch_event("click")
+    page.evaluate("() => new Promise((resolve) => setTimeout(resolve, 150))")
+    assert len(classic_ui.patches) == 1, classic_ui.patches
+
+    classic_ui.hold_patches = False
+    classic_ui.held.pop().fulfill(json={"message": "Warning sent to the user.", "approval_required": False})
+    expect(page.locator("#safetyPageStatusAlert")).to_have_text("Warning sent to the user.")
+    expect(save).to_be_enabled()
+    expect(save).not_to_have_attribute("aria-busy", "true")
+    assert len(classic_ui.patches) == 1, classic_ui.patches
+
+    # A save the server refuses gives Save back, with the reason.
+    refused = (
+        "Another save of this violation got there first, so this one saved nothing and sent no "
+        "warning. Reload the violation in a moment to see the result."
+    )
+    classic_ui.patch_reply = (409, {"error": refused, "code": "safety_warning_in_progress"})
+    _open_review(page, "log-new")
+    page.locator("#editAction").select_option("WarnUser")
+    save.click()
+    expect(page.locator("#safetyEditStatus")).to_have_text(refused)
+    expect(save).to_be_enabled()
+    assert len(classic_ui.patches) == 2, classic_ui.patches
 
 
 def test_classic_access_restricted_page_shows_the_notice_and_local_restore_time(classic_ui):

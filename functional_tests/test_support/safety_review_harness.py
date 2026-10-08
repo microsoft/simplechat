@@ -174,6 +174,9 @@ def build_safety_app(stack):
         audits=[],
         settings=copy.deepcopy(APP_SETTINGS),
         fail_notifications=False,
+        # Called once, just before the next notification is created: stands in for a request
+        # that arrives while a warning is being sent.
+        before_notification=None,
     )
     _patch_app_settings(stack, state.settings)
     _patch_user_settings(stack, state.user_docs, state.access_writes)
@@ -181,6 +184,9 @@ def build_safety_app(stack):
     stack.enter_context(patch.object(safety_routes, "cosmos_safety_container", container))
 
     def create_notification(**kwargs):
+        if state.before_notification is not None:
+            hook, state.before_notification = state.before_notification, None
+            hook()
         if state.fail_notifications:
             return None
         notification = dict(kwargs)
@@ -223,6 +229,8 @@ def build_safety_app(stack):
     app.register_blueprint(blueprint)
     state.app = app
     state.client = _test_client(app)
+    # Another browser: a second reviewer, or the warned user, with a session of their own.
+    state.new_client = lambda: _test_client(app)
     return state
 
 

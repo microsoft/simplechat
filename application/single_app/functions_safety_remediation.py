@@ -3,7 +3,8 @@
 """Helpers for safety violation remediation actions and notifications."""
 
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from azure.core import MatchConditions
@@ -15,6 +16,7 @@ from functions_access_restriction import (
     ACCESS_RESTRICTION_KIND_SUSPENDED,
     ACCESS_RESTRICTION_SOURCE_SAFETY_VIOLATION,
     build_access_restriction_notice,
+    parse_access_restore_time,
 )
 from functions_appinsights import log_event
 from functions_debug import debug_print
@@ -44,6 +46,19 @@ WARNING_ACKNOWLEDGMENT_NOT_TRACKED = 'not_tracked'
 SAFETY_WARNING_REPLACED_CODE = 'safety_warning_replaced'
 SAFETY_WARNING_REPLACED_MESSAGE = (
     'A newer warning replaced this one. Read the newer warning, then acknowledge it.'
+)
+
+# A save claims the violation before it sends a warning, so of two overlapping saves -- a
+# double-click, or two reviewers -- only one sends. While the claim is held the violation is
+# 'sending', which never counts as a warning to acknowledge. A claim older than the time to
+# live is from a save that stopped before it finished: it no longer blocks, and it reads as
+# a failed send, which saving the warning again retries.
+SAFETY_WARNING_SENDING_STATUS = 'sending'
+SAFETY_WARNING_SEND_CLAIM_TTL = timedelta(minutes=5)
+SAFETY_WARNING_SEND_CLAIM_FIELDS = ('warning_send_claim_id', 'warning_send_claimed_at')
+SAFETY_WARNING_SEND_INTERRUPTED_MESSAGE = (
+    'The save that was sending this warning did not finish, so it is not known whether the '
+    'warning reached the user. Saving the warning again sends it again.'
 )
 
 
@@ -284,6 +299,124 @@ def build_safety_action_execution_updates(
             'warning_acknowledged_at': None,
         })
     return updates
+
+
+def _request_status(log_item: Dict[str, Any]) -> str:
+    return str(log_item.get('action_request_status') or '').strip().lower()
+
+
+def safety_warning_send_in_progress(log_item: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """True while a save is sending a warning on this violation, so other writes must wait.
+
+    A claim older than ``SAFETY_WARNING_SEND_CLAIM_TTL`` either way, or one whose time can't
+    be read, is from a save that stopped before it finished, and does not block.
+    """
+    if _request_status(log_item) != SAFETY_WARNING_SENDING_STATUS:
+        return False
+    # The claim time is stored as an ISO UTC time, read the same way as a restore time.
+    claimed_at = parse_access_restore_time(log_item.get('warning_send_claimed_at'))
+    if claimed_at is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return abs(now - claimed_at) < SAFETY_WARNING_SEND_CLAIM_TTL
+
+
+def is_interrupted_safety_warning_send(log_item: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """True for a violation left 'sending' by a save that stopped before it finished."""
+    return (
+        _request_status(log_item) == SAFETY_WARNING_SENDING_STATUS
+        and not safety_warning_send_in_progress(log_item, now)
+    )
+
+
+def mark_interrupted_safety_warning_send(log_item: Dict[str, Any]) -> None:
+    """Treat an unfinished send as a failed one, in place, so saving the warning retries it."""
+    log_item['action_request_status'] = 'failed'
+    log_item['action_execution_error'] = SAFETY_WARNING_SEND_INTERRUPTED_MESSAGE
+    for field in SAFETY_WARNING_SEND_CLAIM_FIELDS:
+        log_item.pop(field, None)
+
+
+def present_safety_warning_send_state(log_item: Dict[str, Any], now: Optional[datetime] = None) -> None:
+    """Prepare a listed violation's send state for display, in place.
+
+    The claim's id and time are internal. An unfinished send reads as failed, as the next
+    save records it, rather than as sending forever.
+    """
+    if is_interrupted_safety_warning_send(log_item, now):
+        mark_interrupted_safety_warning_send(log_item)
+    for field in SAFETY_WARNING_SEND_CLAIM_FIELDS:
+        log_item.pop(field, None)
+
+
+def _replace_safety_log_if_unchanged(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Write a safety log only if it is still the version that was read."""
+    etag = body.get('_etag')
+    if not etag:
+        # Cosmos DB always returns an ETag; only a store without them lands here.
+        stored = cosmos_safety_container.upsert_item(body)
+    else:
+        stored = cosmos_safety_container.replace_item(
+            item=body['id'],
+            body=body,
+            etag=etag,
+            match_condition=MatchConditions.IfNotModified,
+        )
+    return stored if isinstance(stored, dict) else body
+
+
+def claim_safety_warning_send(log_item: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    """Mark a violation as sending a warning, unless it changed since this save read it.
+
+    The write is conditional on the ETag the save read, so of two saves that read the same
+    version only one claims it. The other gets ``CosmosAccessConditionFailedError`` and must
+    send nothing. The claim also stores the rest of the save's changes. Returns the stored
+    record and the claim's id.
+    """
+    claim_id = str(uuid.uuid4())
+    body = dict(log_item)
+    body.update({
+        'action_request_status': SAFETY_WARNING_SENDING_STATUS,
+        'warning_send_claim_id': claim_id,
+        'warning_send_claimed_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return _replace_safety_log_if_unchanged(body), claim_id
+
+
+def record_safety_warning_send(
+    claimed: Dict[str, Any],
+    claim_id: str,
+    updates: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Store what a claimed send did on its violation, and release the claim.
+
+    The write is conditional on the claimed version. When another writer changed the record
+    meanwhile but kept the claim -- archiving it, for example -- the outcome is written on
+    the latest version instead. Returns the stored record, or None when the claim was lost:
+    the record was deleted, or replaced without the claim, so nothing could be recorded.
+    """
+    log_id = claimed.get('id')
+    current = claimed
+    for attempt in range(SAFETY_WARNING_WRITE_ATTEMPTS):
+        if attempt:
+            try:
+                current = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+            except cosmos_exceptions.CosmosResourceNotFoundError:
+                return None
+        if current.get('warning_send_claim_id') != claim_id:
+            return None
+        body = dict(current)
+        body.update(updates)
+        for field in SAFETY_WARNING_SEND_CLAIM_FIELDS:
+            body.pop(field, None)
+        body['last_updated'] = datetime.utcnow().isoformat()
+        try:
+            return _replace_safety_log_if_unchanged(body)
+        except cosmos_exceptions.CosmosAccessConditionFailedError:
+            continue
+        except cosmos_exceptions.CosmosResourceNotFoundError:
+            return None
+    return None
 
 
 def serialize_safety_warning_state(log_item: Dict[str, Any]) -> Dict[str, Any]:
