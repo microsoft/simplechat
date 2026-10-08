@@ -64,7 +64,13 @@ from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
-from functions_approvals import _can_user_approve, _can_user_deny
+from functions_approvals import (
+    APPROVAL_STATS_SCAN_LIMIT,
+    _can_user_approve,
+    _can_user_deny,
+    summarize_visible_approvals,
+)
+from functions_review_center import parse_review_window
 from functions_m365_approvals import is_m365_approval
 from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from route_backend_m365 import m365_approval_decision_response
@@ -94,8 +100,11 @@ from functions_control_center_public_workspaces import (
     select_workspace_ids, workspace_members, workspace_row,
 )
 from functions_safety_remediation import (
+    SAFETY_REQUEST_NOT_CURRENT_MESSAGE,
+    build_safety_action_execution_updates,
     execute_safety_violation_action,
     get_safety_log_item,
+    safety_log_awaits_request,
     update_safety_log_action_state,
 )
 from functions_public_workspaces import (
@@ -7743,6 +7752,46 @@ def register_route_backend_control_center(bp):
             log_event("[APPROVALS] Failed to fetch approvals", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
             return jsonify({'error': 'Failed to fetch approvals'}), 500
 
+    @bp.route('/api/approvals/stats', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_get_approval_stats():
+        """
+        Summarize the approval requests the current user can see, for the Approvals dashboard.
+
+        Query Parameters:
+            days (int): 7, 30 or 90 (default 30), the window decided requests are counted in.
+
+        Requests are read through the same visibility rules as GET /api/approvals, so a
+        request the caller cannot see is never counted.
+        """
+        try:
+            days = parse_review_window(request.args.get('days')) or 30
+        except ValueError:
+            return jsonify({'error': 'The window must be 7, 30 or 90 days.'}), 400
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_roles = user.get('roles', [])
+            result = get_pending_approvals(
+                user_id=user_id,
+                user_roles=user_roles,
+                page=1,
+                per_page=APPROVAL_STATS_SCAN_LIMIT,
+                include_completed=True,
+                status_filter='all',
+                tenant_id=user.get('tid'),
+            )
+            return jsonify(summarize_visible_approvals(
+                result.get('approvals', []),
+                user_id,
+                user_roles,
+                days,
+            )), 200
+        except Exception as e:
+            log_event("[APPROVALS] Failed to summarize approvals", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to summarize approvals'}), 500
+
     @bp.route('/api/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -7989,6 +8038,10 @@ def register_route_backend_control_center(bp):
             return {'success': False, 'message': 'Approval metadata is missing the safety log reference.'}
 
         safety_log = get_safety_log_item(safety_log_id)
+        # Only the request its violation is waiting on is carried out. One the violation has
+        # moved on from -- withdrawn, replaced by a newer request, or settled -- changes nothing.
+        if not safety_log_awaits_request(safety_log, approval.get('id')):
+            return {'success': False, 'message': SAFETY_REQUEST_NOT_CURRENT_MESSAGE}
         action = metadata.get('violation_action')
         if not action:
             return {'success': False, 'message': 'Approval metadata is missing the violation action.'}
@@ -8006,15 +8059,16 @@ def register_route_backend_control_center(bp):
             },
         )
 
-        update_safety_log_action_state(safety_log_id, {
-            'action_request_status': 'executed',
+        # Warnings are sent without approval now; this path still finishes warn_user
+        # requests created before that, and marks them for acknowledgment the same way.
+        execution_updates = build_safety_action_execution_updates(action, result)
+        execution_updates.update({
             'action_request_id': approval.get('id'),
             'action_request_type': approval.get('request_type'),
             'action_requested_at': approval.get('created_at'),
             'action_approved_at': approval.get('approved_at'),
-            'action_executed_at': datetime.utcnow().isoformat(),
-            'action_execution_error': None,
         })
+        update_safety_log_action_state(safety_log_id, execution_updates)
 
         return result
 

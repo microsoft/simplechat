@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Toaster } from '../ui/Toaster';
+import { SafetyWarningDialogHost } from '../notifications/SafetyWarningDialog';
 import { WorkflowAlertCardHost } from '../notifications/WorkflowAlertCard';
 import { WorkflowAlertLiveRegion } from '../notifications/WorkflowAlertLiveRegion';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
@@ -81,6 +82,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Toaster />
             <WorkflowAlertCardHost />
             <WorkflowAlertLiveRegion />
+            <SafetyWarningDialogHost />
         </div>
     );
 }

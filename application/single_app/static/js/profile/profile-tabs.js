@@ -1253,6 +1253,14 @@
         }
     }
 
+    // Escalate is no longer recorded; older records keep it and are labelled as legacy.
+    function formatViolationAction(action) {
+        if (action === 'Escalate') {
+            return 'Escalated (legacy)';
+        }
+        return action || 'None';
+    }
+
     function renderViolationTableRows(items) {
         const tbody = document.querySelector('#profile-violations-table tbody');
         if (!tbody) {
@@ -1272,7 +1280,7 @@
             row.appendChild(createTextCell(logItem.message || '', 'table-message-cell', logItem.message || ''));
             row.appendChild(createSafetyCategoryCell(logItem));
             row.appendChild(createTextCell(logItem.status || 'New'));
-            row.appendChild(createTextCell(logItem.action || 'None'));
+            row.appendChild(createTextCell(formatViolationAction(logItem.action)));
             row.appendChild(createTextCell(logItem.user_notes || '', 'table-note-cell', logItem.user_notes || ''));
 
             const detailsCell = document.createElement('td');
@@ -1346,7 +1354,7 @@
         setTextContent('profile-violation-detail-message', selectedItem.message || '');
         appendSafetyCategoryBadges(document.getElementById('profile-violation-detail-categories'), selectedItem, '-');
         setTextContent('profile-violation-detail-status', selectedItem.status || 'New');
-        setTextContent('profile-violation-detail-action', selectedItem.action || 'None');
+        setTextContent('profile-violation-detail-action', formatViolationAction(selectedItem.action));
         document.getElementById('profile-violation-detail-hidden-id').value = selectedItem.id || '';
         document.getElementById('profile-violation-detail-user-notes').value = selectedItem.user_notes || '';
         setTextContent('profile-violation-save-status', '');

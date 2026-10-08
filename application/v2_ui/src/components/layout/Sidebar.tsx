@@ -23,15 +23,14 @@ import {
     ChevronDown,
     ChevronLeft,
     ChevronRight,
+    ClipboardCheck,
     FolderOpen,
     Globe2,
     LogOut,
     MessageSquarePlus,
-    MessageSquareHeart,
     MessagesSquare,
     Moon,
     Settings,
-    ShieldAlert,
     ShieldCheck,
     SlidersHorizontal,
     Sparkles,
@@ -43,6 +42,7 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
+import { reviewAccessInput, reviewSections } from '../../lib/reviewAccess';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
 import { SupportMenu } from './SupportMenu';
@@ -165,21 +165,9 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
     const controlCenter = bootstrap?.control_center;
     const isAdmin = Boolean(user?.is_admin);
     const canOpenControlCenter = Object.values(controlCenter ?? {}).some(Boolean);
-    const roles = user?.roles ?? [];
-    const settings = bootstrap?.settings;
-    const features = bootstrap?.features;
-    const canReviewFeedback = Boolean(features?.enable_user_feedback) && (
-        settings?.require_member_of_feedback_admin === true
-            ? roles.includes('FeedbackAdmin')
-            : roles.includes('Admin')
-    );
-    const canReviewSafety = Boolean(
-        features?.enable_content_safety || features?.enable_content_screening,
-    ) && (
-        settings?.require_member_of_safety_violation_admin === true
-            ? roles.includes('SafetyViolationAdmin')
-            : roles.includes('Admin')
-    );
+    // One entry for the Review center whenever either of its sections is open to this user;
+    // the same rules as the server's feedback and safety review decorators.
+    const canReview = reviewSections(reviewAccessInput(bootstrap)).length > 0;
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -257,14 +245,9 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                             <Settings size={15} /> Admin Settings
                         </NavLink>
                     )}
-                    {canReviewFeedback && (
-                        <NavLink to="/admin/feedback-review" onClick={() => setOpen(false)} className={itemClass}>
-                            <MessageSquareHeart size={15} /> Feedback Review
-                        </NavLink>
-                    )}
-                    {canReviewSafety && (
-                        <NavLink to="/admin/safety-violations" onClick={() => setOpen(false)} className={itemClass}>
-                            <ShieldAlert size={15} /> Safety Violations
+                    {canReview && (
+                        <NavLink to="/admin/review" onClick={() => setOpen(false)} className={itemClass}>
+                            <ClipboardCheck size={15} /> Review center
                         </NavLink>
                     )}
                     {canOpenControlCenter && (

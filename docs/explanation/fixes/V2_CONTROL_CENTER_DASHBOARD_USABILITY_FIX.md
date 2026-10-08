@@ -1,6 +1,6 @@
 # V2 Control Center Dashboard Usability Fix
 
-**Fixed in version:** 0.261.297
+**Fixed in version:** 0.261.300
 
 ## Issue
 
@@ -51,7 +51,8 @@ The broken endpoint and the classic page's unreachable chat modal and script wer
 | `application/single_app/functions_control_center_dashboard.py` | New shared dashboard aggregation, names, daily series and action reports |
 | `application/single_app/functions_control_center_dashboard_chat.py` | New readiness rules for dashboard chat |
 | `application/single_app/route_backend_control_center.py` | Thin dashboard routes, new chat-readiness route, legacy trends chat route removed |
-| `application/v2_ui/src/components/controlCenter/DashboardSection.tsx` | Reorganized dashboard |
+| `application/v2_ui/src/components/controlCenter/DashboardSection.tsx` | Reorganized dashboard, drawn with the shared dashboard parts |
+| `application/v2_ui/src/components/dashboard/DashboardParts.tsx` | Optional `headingLevel` on the shared `ChartPanel`, so the dashboard's chart panels nest under their section headings |
 | `application/v2_ui/src/components/controlCenter/DashboardChat.tsx` | New button and requirements checklist |
 | `application/v2_ui/src/lib/composerDraftHandoff.ts`, `components/chat/Composer.tsx` | One-shot prompt hand-off into a new chat |
 | `application/v2_ui/src/App.tsx` | `/admin/settings/<section>` deep links |

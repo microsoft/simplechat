@@ -2,11 +2,14 @@
 # test_route_unauthenticated_policy_contract.py
 """
 Functional test for route unauthenticated access policy contract.
-Version: 0.261.227
+Version: 0.261.299
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
 Workflow run status coverage: 0.261.227
 Workflow hand-off coverage: 0.261.250
+Access restricted screen coverage: 0.261.297
+Review center ids, bulk and approvals summary coverage: 0.261.298
+Review center AI assist coverage: 0.261.299
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external
@@ -66,6 +69,12 @@ LOGIN_ONLY_PATH_PREFIXES = (
     "/api/approvals",
     "/swagger",
     "/api/swagger/",
+    # The Access restricted screen: a suspended or blocked user is refused by user_required
+    # and sent here, so it needs a signed-in session and nothing more. It only ever
+    # describes the signed-in user's own restriction.
+    "/access-restricted",
+    "/v2/access-restricted",
+    "/api/v2/access-restriction",
 )
 
 USER_SESSION_PATH_PREFIXES = (
@@ -325,6 +334,63 @@ def test_workflow_handoff_routes_require_a_signed_in_user_session() -> None:
             raise AssertionError(f"{route.function_name} must not accept bearer tokens.")
 
 
+def test_access_restricted_routes_require_a_session_but_not_an_unrestricted_account() -> None:
+    """The Access restricted screen answers a signed-in user, never an anonymous one.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    expected = {
+        "/v2/access-restricted": "v2_access_restricted",
+        "/api/v2/access-restriction": "v2_access_restriction",
+        "/access-restricted": "access_restricted",
+    }
+    matches = [route for route in iter_route_functions() if route.path in expected]
+    found = {route.path: route.function_name for route in matches}
+    if len(matches) != len(expected) or found != expected:
+        raise AssertionError(f"Unexpected Access restricted routes: {sorted(found.items())}.")
+    for route in matches:
+        if expected_policy(route.path) != "session_login_401_or_redirect":
+            raise AssertionError(f"{route.function_name} policy changed: {expected_policy(route.path)}.")
+        if "login_required" not in route.decorator_names:
+            raise AssertionError(f"{route.function_name} must require a signed-in session.")
+        if "user_required" in route.decorator_names or "accesstoken_required" in route.decorator_names:
+            raise AssertionError(f"{route.function_name} must stay reachable by a restricted user.")
+    # Every other V2 page still requires an unrestricted account.
+    if expected_policy("/v2/chat") != "session_user_401_or_redirect":
+        raise AssertionError("The V2 app lost its user-session policy.")
+
+
+def test_review_center_routes_are_never_public_or_bearer_only() -> None:
+    """The Review center's new routes answer only a signed-in session with the right role.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    expected = {
+        "/api/safety/logs/ids": ("get_safety_log_ids", "session_user_401_or_redirect", "safety_violation_admin_required"),
+        "/api/safety/logs/bulk": ("bulk_update_safety_logs", "session_user_401_or_redirect", "safety_violation_admin_required"),
+        "/feedback/review/ids": ("feedback_review_ids", "session_specialized_admin_401_or_redirect", "feedback_admin_required"),
+        "/feedback/review/bulk": ("feedback_review_bulk", "session_specialized_admin_401_or_redirect", "feedback_admin_required"),
+        "/api/admin/review/feedback/assist": (
+            "feedback_review_assist", "session_admin_401_or_redirect", "feedback_admin_required",
+        ),
+        "/api/admin/review/safety/assist": (
+            "safety_review_assist", "session_admin_401_or_redirect", "safety_violation_admin_required",
+        ),
+        "/api/approvals/stats": ("api_get_approval_stats", "session_login_401_or_redirect", "login_required"),
+    }
+    routes = {route.path: route for route in iter_route_functions() if route.path in expected}
+    for path, (function_name, policy, guard) in expected.items():
+        route = routes.get(path)
+        if route is None or route.function_name != function_name:
+            raise AssertionError(f"Review center route {path} moved or was renamed.")
+        if expected_policy(path) != policy:
+            raise AssertionError(f"{path} policy changed: {expected_policy(path)}.")
+        if "login_required" not in route.decorator_names or guard not in route.decorator_names:
+            raise AssertionError(f"{path} lost its guards: {route.decorator_names}.")
+        if "accesstoken_required" in route.decorator_names:
+            raise AssertionError(f"{path} must not accept bearer tokens.")
+
+
 if __name__ == "__main__":
     tests = [
         test_every_route_has_unauthenticated_access_policy,
@@ -334,6 +400,8 @@ if __name__ == "__main__":
         test_workflow_result_context_requires_a_signed_in_user_session,
         test_workflow_run_status_requires_a_signed_in_user_session,
         test_workflow_handoff_routes_require_a_signed_in_user_session,
+        test_access_restricted_routes_require_a_session_but_not_an_unrestricted_account,
+        test_review_center_routes_are_never_public_or_bearer_only,
     ]
     results = []
     for test in tests:

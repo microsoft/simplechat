@@ -2,7 +2,7 @@
 # test_v2_control_center_cosmos_query_compatibility.py
 """
 Functional test for V2 Control Center Cosmos query compatibility.
-Version: 0.261.297
+Version: 0.261.300
 Implemented in: 0.261.292
 
 The Dashboard, Users and Groups sections returned HTTP 500 because Cosmos DB rejected
@@ -16,7 +16,7 @@ c.group.group_id, in every Control Center query, classic routes included. Cosmos
 those with an HTTP 400 syntax error, which kept the Groups list, group details, the
 Activity Logs group filter and every Activity Logs search failing after 0.261.292.
 
-Since 0.261.297 the dashboard queries live in functions_control_center_dashboard.py, which
+Since 0.261.300 the dashboard queries live in functions_control_center_dashboard.py, which
 the Control Center action shares, so that module is scanned too.
 """
 
@@ -248,7 +248,7 @@ def test_scan_covers_the_previously_failing_sections():
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.297")
+    assert_app_version_at_least("0.261.300")
 
 
 TESTS = [

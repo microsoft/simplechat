@@ -24,7 +24,12 @@ const PAGE_SIZE = 10;
 const STATUSES = ['New', 'In-Review', 'Resolved', 'Dismissed'];
 
 /** Actions an administrator can record against a violation. */
-const ACTIONS = ['None', 'WarnUser', 'SuspendUser', 'Escalate', 'BlockUser'];
+const ACTIONS = ['None', 'WarnUser', 'SuspendUser', 'BlockUser'];
+
+/** Escalate is no longer recorded; older records keep it and are labelled as legacy. */
+function actionLabel(action: string): string {
+    return action === 'Escalate' ? 'Escalated (legacy)' : action;
+}
 
 interface TriggeredCategory {
     category?: string;
@@ -41,6 +46,32 @@ interface SafetyLog {
     admin_notes?: string;
     created_at?: string;
     last_updated?: string;
+    /** Set on a warning the administrators sent: `pending` until it is acknowledged. */
+    warning_acknowledgment_status?: 'pending' | 'acknowledged' | 'not_tracked' | null;
+    warning_acknowledged_at?: string | null;
+}
+
+/** Whether the user has acknowledged a warning they were sent, as one line. */
+function WarningAcknowledgment({ log }: { log: SafetyLog }) {
+    if (log.warning_acknowledgment_status === 'acknowledged') {
+        const acknowledged = log.warning_acknowledged_at ? new Date(log.warning_acknowledged_at) : null;
+        return (
+            <p className="mt-1.5 flex items-center gap-1 text-xs text-ok">
+                <Check size={12} aria-hidden="true" />
+                {acknowledged && !Number.isNaN(acknowledged.getTime())
+                    ? `You acknowledged this warning on ${acknowledged.toLocaleString()}.`
+                    : 'You acknowledged this warning.'}
+            </p>
+        );
+    }
+    if (log.warning_acknowledgment_status === 'pending') {
+        return (
+            <p className="mt-1.5 text-xs font-medium text-warn">
+                Not yet acknowledged. The warning is shown to you until you confirm you understand it.
+            </p>
+        );
+    }
+    return null;
 }
 
 interface LogsResponse {
@@ -315,7 +346,7 @@ export function ViolationsTab() {
                                         </span>
                                         {log.action && log.action !== 'None' && (
                                             <span className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-text-2">
-                                                {log.action}
+                                                {actionLabel(log.action)}
                                             </span>
                                         )}
                                         {log.created_at && (
@@ -330,6 +361,8 @@ export function ViolationsTab() {
                                             {log.message}
                                         </p>
                                     )}
+
+                                    <WarningAcknowledgment log={log} />
 
                                     {(log.triggered_categories ?? []).length > 0 && (
                                         <p className="mt-1 text-xs text-text-3">

@@ -12,6 +12,7 @@ import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { startImageApprovalTracking } from './lib/imageProposalResume';
 import { useNotificationRuntime } from './lib/useNotificationRuntime';
+import { useSafetyWarningRuntime } from './lib/useSafetyWarningRuntime';
 import { useWorkflowAlertRuntime } from './lib/useWorkflowAlertRuntime';
 import { useWorkflowRunTracker } from './lib/useWorkflowRunTracker';
 import { workflowRunTrackerShouldRun } from './lib/workflowRunTracker';
@@ -19,8 +20,6 @@ import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
-import { AdminFeedbackReviewPage } from './pages/AdminFeedbackReviewPage';
-import { AdminSafetyViolationsPage } from './pages/AdminSafetyViolationsPage';
 import { AdminActionEditorPage, AdminAgentEditorPage } from './pages/AdminGlobalEditorPages';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
@@ -33,8 +32,10 @@ import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
 import { TermsOfUsePage } from './pages/TermsOfUsePage';
+import { AccessRestrictedPage } from './pages/AccessRestrictedPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
+import { ReviewCenterPage } from './pages/review/ReviewCenterPage';
 import { SupportLatestFeaturesPage } from './pages/SupportLatestFeaturesPage';
 import { SupportSendFeedbackPage } from './pages/SupportSendFeedbackPage';
 
@@ -113,6 +114,10 @@ export function App() {
     // Every other call is refused until the terms are accepted, so this page loads nothing
     // the shell needs and renders on its own.
     const onTermsPage = location.pathname === '/terms-of-use';
+    // The same holds while an administrator has suspended or blocked the account: the server
+    // sends every V2 page here, and only this page's own call is answered.
+    const onAccessRestrictedPage = location.pathname === '/access-restricted';
+    const standalonePage = onTermsPage || onAccessRestrictedPage;
 
     useEffect(() => {
         clearWorkspaceEditorDrafts();
@@ -120,7 +125,7 @@ export function App() {
 
     useEffect(() => {
         initializeTheme();
-        if (onTermsPage) {
+        if (standalonePage) {
             return;
         }
         void load();
@@ -139,7 +144,7 @@ export function App() {
         // run that was still going. The restored record has no stream behind it; the run
         // history fetched when the panel opens is what settles it.
         restorePersistedRuns();
-    }, [load, loadUserSettings, onTermsPage]);
+    }, [load, loadUserSettings, standalonePage]);
 
     /**
      * Re-read the payload when the tab comes back to the front.
@@ -157,7 +162,7 @@ export function App() {
      * spurious wake-up is one wasted request.
      */
     useEffect(() => {
-        if (onTermsPage) {
+        if (standalonePage) {
             return undefined;
         }
         const onVisible = () => {
@@ -174,7 +179,7 @@ export function App() {
             document.removeEventListener('visibilitychange', onVisible);
             window.removeEventListener('focus', onVisible);
         };
-    }, [refreshBootstrap, onTermsPage]);
+    }, [refreshBootstrap, standalonePage]);
 
     useEffect(() => {
         const title = data?.branding?.app_title;
@@ -216,12 +221,22 @@ export function App() {
     useNotificationRuntime(Boolean(data) && !error);
     // Workflow alerts that ask to pop up. It listens to the bell's count rather than polling.
     useWorkflowAlertRuntime(Boolean(data) && !error);
+    // Safety warnings an administrator sent, which stay on screen until acknowledged.
+    // Bootstrap says how many are waiting; they are read only when there are some.
+    useSafetyWarningRuntime(
+        data && !error && !standalonePage ? data.safety_warnings?.pending ?? 0 : null,
+        data,
+    );
     // The saved workflows chats started: one tracker for the tab, for the run cards, the chat
     // list's running tag and the results each run posts back to its chat.
     useWorkflowRunTracker(Boolean(data) && !error && workflowRunTrackerShouldRun(data?.features));
 
     if (onTermsPage) {
         return <TermsOfUsePage />;
+    }
+
+    if (onAccessRestrictedPage) {
+        return <AccessRestrictedPage />;
     }
 
     if (loading) {
@@ -247,8 +262,15 @@ export function App() {
                 <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
-                <Route path="/admin/feedback-review" element={<AdminFeedbackReviewPage />} />
-                <Route path="/admin/safety-violations" element={<AdminSafetyViolationsPage />} />
+                {/* Feedback and safety review, one section each, with each section's pages
+                    and a record's editor as real paths. */}
+                <Route path="/admin/review" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section/:view" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section/:view/:recordId" element={<ReviewCenterPage />} />
+                {/* The pages the Review center replaced, kept as links that still arrive. */}
+                <Route path="/admin/feedback-review" element={<Navigate to={{ pathname: '/admin/review/feedback/queue', search: location.search }} replace />} />
+                <Route path="/admin/safety-violations" element={<Navigate to={{ pathname: '/admin/review/safety/violations', search: location.search }} replace />} />
                 {/* The global editors return here, with their section in view. */}
                 <Route path="/admin/agents" element={<AdminSettingsPage focusSection="organization-agents-section" />} />
                 <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />

@@ -565,6 +565,8 @@ def register_route_backend_users(bp):
                     'v2AdminRailCollapsed',
                     # Whether the V2 Approvals categories rail is collapsed to icons.
                     'v2ApprovalsRailCollapsed',
+                    # Whether the V2 admin Review center sections rail is collapsed to icons.
+                    'v2ReviewRailCollapsed',
                     # Whether the V2 User Settings sections rail is collapsed to icons.
                     'v2UserSettingsRailCollapsed',
                     # Whether the V2 Control Center section rail is collapsed to icons.

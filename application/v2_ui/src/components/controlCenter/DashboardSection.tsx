@@ -10,18 +10,21 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Download, RefreshCw } from 'lucide-react';
 import { api } from '../../lib/apiClient';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import {
+    CHART_COLOR_ORDER,
+    ChartDataTable,
+    ChartPanel,
+    makeDatasets,
+    stackedBarOptions,
+    type ChartColor,
+    type DashboardMetric,
+} from '../dashboard/DashboardParts';
 import { cartesianOptions, StatsChart, type StatsChartConfigBuilder } from '../settings/StatsChart';
 import { GlassPanel } from '../ui/primitives';
 import { APPROVALS_URL } from './ControlCenterPrimitives';
 import { DashboardChatButton } from './DashboardChat';
 
-type Metric = {
-    value: number | null;
-    delta: number | null;
-    percent_change?: number | null;
-    previous?: number;
-    available?: boolean;
-};
+type Metric = DashboardMetric;
 
 type DashboardSummary = {
     period: { start_date: string; end_date: string; days: number; timezone: string };
@@ -105,15 +108,6 @@ const EMPTY_FILTERS: TokenFilters = {
     token_type: '',
 };
 
-const CHART_COLORS = {
-    blue: { border: '#4f8cff', fill: 'rgba(79, 140, 255, 0.24)' },
-    cyan: { border: '#22b8cf', fill: 'rgba(34, 184, 207, 0.30)' },
-    green: { border: '#37b679', fill: 'rgba(55, 182, 121, 0.28)' },
-    amber: { border: '#e8a23a', fill: 'rgba(232, 162, 58, 0.28)' },
-    purple: { border: '#a78bfa', fill: 'rgba(167, 139, 250, 0.28)' },
-    rose: { border: '#f472b6', fill: 'rgba(244, 114, 182, 0.28)' },
-};
-type ChartColor = keyof typeof CHART_COLORS;
 type ChartElement = { index: number; datasetIndex: number };
 type ClickableChart = {
     getElementsAtEventForMode?: (event: unknown, mode: string, options: { intersect: boolean }, useFinalPosition: boolean) => ChartElement[];
@@ -183,31 +177,6 @@ function buildParams(startDate: string, endDate: string, filters: TokenFilters, 
         params.set('force_refresh', '1');
     }
     return params.toString();
-}
-
-function makeDatasets(series: { label: string; values: number[]; color: ChartColor }[]) {
-    return series.map(({ label, values, color }) => ({
-        label,
-        data: values,
-        borderColor: CHART_COLORS[color].border,
-        backgroundColor: CHART_COLORS[color].fill,
-        borderWidth: 2,
-        borderRadius: 3,
-        pointRadius: 1,
-        tension: 0.3,
-    }));
-}
-
-function stackedOptions(theme: Parameters<typeof cartesianOptions>[0]) {
-    const base = cartesianOptions(theme, true);
-    return {
-        ...base,
-        scales: {
-            ...base.scales,
-            x: { ...base.scales.x, stacked: true },
-            y: { ...base.scales.y, stacked: true },
-        },
-    };
 }
 
 function safeControlCenterHref(value: string): string {
@@ -292,54 +261,8 @@ function MetricTile({
     );
 }
 
-function ChartPanel({ title, children }: { title: string; children: ReactNode }) {
-    return (
-        <div className="min-w-0 rounded-2xl border border-edge bg-surface-1 p-4">
-            <h4 className="mb-3 text-sm font-semibold text-text-1">{title}</h4>
-            {children}
-        </div>
-    );
-}
-
 function EmptyChart({ children }: { children: ReactNode }) {
     return <p className="flex h-40 items-center justify-center text-center text-sm text-text-3">{children}</p>;
-}
-
-function ChartDataTable({
-    title,
-    dates,
-    series,
-}: {
-    title: string;
-    dates: string[];
-    series: { label: string; values: number[] }[];
-}) {
-    return (
-        <details className="mt-3 text-xs text-text-2">
-            <summary className="cursor-pointer font-medium">View {title.toLowerCase()} as a table</summary>
-            <div className="mt-2 max-h-56 overflow-auto rounded-lg border border-edge">
-                <table className="w-full text-left">
-                    <caption className="sr-only">{title} by UTC day</caption>
-                    <thead className="bg-surface-2">
-                        <tr>
-                            <th scope="col" className="px-2 py-1">Date</th>
-                            {series.map((item) => <th key={item.label} scope="col" className="px-2 py-1">{item.label}</th>)}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {dates.map((date, index) => (
-                            <tr key={date} className="border-t border-edge">
-                                <th scope="row" className="px-2 py-1 font-normal">{date}</th>
-                                {series.map((item) => (
-                                    <td key={item.label} className="px-2 py-1 tabular-nums">{formatNumber(item.values[index])}</td>
-                                ))}
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </details>
-    );
 }
 
 function RankedList({
@@ -687,7 +610,7 @@ export function DashboardSection() {
             }))),
         },
         options: {
-            ...stackedOptions(theme),
+            ...stackedBarOptions(theme),
             onClick: clickHandler((index, datasetIndex) => {
                 const series = datasetIndex === null ? undefined : UPLOAD_SERIES[datasetIndex];
                 openActivityLogs('document_creation', dailyDates[index],
@@ -707,7 +630,7 @@ export function DashboardSection() {
             }))),
         },
         options: {
-            ...stackedOptions(theme),
+            ...stackedBarOptions(theme),
             onClick: clickHandler((index, datasetIndex) => {
                 const series = datasetIndex === null ? undefined : TOKEN_SERIES[datasetIndex];
                 openActivityLogs('token_usage', tokenDates[index],
@@ -724,11 +647,11 @@ export function DashboardSection() {
             datasets: makeDatasets(modelNames.map((model, index) => ({
                 label: model,
                 values: modelValues(model),
-                color: (Object.keys(CHART_COLORS) as ChartColor[])[index % Object.keys(CHART_COLORS).length],
+                color: CHART_COLOR_ORDER[index % CHART_COLOR_ORDER.length],
             }))),
         },
         options: {
-            ...stackedOptions(theme),
+            ...stackedBarOptions(theme),
             onClick: clickHandler((index, datasetIndex) => {
                 const model = datasetIndex === null ? undefined : modelNames[datasetIndex];
                 openActivityLogs('token_usage', modelDates[index],
@@ -903,7 +826,7 @@ export function DashboardSection() {
                                 definition={`People who signed in during the 30 days ending ${formatDay(endDay)}.`} />
                         </div>
                         <div className="grid gap-4 xl:grid-cols-2">
-                            <ChartPanel title="Sign-ins per day">
+                            <ChartPanel title="Sign-ins per day" headingLevel={4}>
                                 {signInTotal ? (
                                     <>
                                         <StatsChart buildConfig={signInConfig} signature={`${chartVersion}|sign-ins`}
@@ -913,12 +836,10 @@ export function DashboardSection() {
                                     </>
                                 ) : <EmptyChart>No sign-ins were recorded in this range.</EmptyChart>}
                             </ChartPanel>
-                            <ChartPanel title="Sign-ins by weekday and hour (UTC)">
+                            <ChartPanel title="Sign-ins by weekday and hour (UTC)" headingLevel={4}
+                                description="Every sign-in in the range, added up by weekday and hour, so regular busy times stand out.">
                                 {insights.login_heatmap.cells.length ? (
-                                    <>
-                                        <p className="mb-2 text-xs text-text-3">Every sign-in in the range, added up by weekday and hour, so regular busy times stand out.</p>
-                                        <LoginHeatmap cells={insights.login_heatmap.cells} />
-                                    </>
+                                    <LoginHeatmap cells={insights.login_heatmap.cells} />
                                 ) : <EmptyChart>No sign-ins were recorded in this range.</EmptyChart>}
                             </ChartPanel>
                         </div>
@@ -942,7 +863,7 @@ export function DashboardSection() {
                                 to={canViewLogs ? activityLogsHref('document_creation', { status: 'failed', start_date: startDay, end_date: endDay }) : null} />
                         </div>
                         <div className="grid gap-4 xl:grid-cols-2">
-                            <ChartPanel title="Conversations created per day">
+                            <ChartPanel title="Conversations created per day" headingLevel={4}>
                                 {conversationTotal ? (
                                     <>
                                         <StatsChart buildConfig={conversationConfig} signature={`${chartVersion}|conversations`}
@@ -952,7 +873,7 @@ export function DashboardSection() {
                                     </>
                                 ) : <EmptyChart>No conversations were created in this range.</EmptyChart>}
                             </ChartPanel>
-                            <ChartPanel title="Document uploads by workspace">
+                            <ChartPanel title="Document uploads by workspace" headingLevel={4}>
                                 {uploadTotal ? (
                                     <>
                                         <StatsChart buildConfig={uploadConfig} signature={`${chartVersion}|uploads`}
@@ -1005,7 +926,7 @@ export function DashboardSection() {
                                 to={canViewLogs ? activityLogsHref('token_usage', { start_date: startDay, end_date: endDay, ...tokenLogExtras() }) : null} />
                         </div>
                         <div className="grid gap-4 xl:grid-cols-2">
-                            <ChartPanel title="Tokens by usage type">
+                            <ChartPanel title="Tokens by usage type" headingLevel={4}>
                                 {tokenTotal ? (
                                     <>
                                         <StatsChart buildConfig={tokenConfig} signature={`${chartVersion}|tokens`}
@@ -1017,7 +938,7 @@ export function DashboardSection() {
                                     </>
                                 ) : <EmptyChart>{filtersActive ? 'No token usage matches these filters.' : 'No token usage was recorded in this range.'}</EmptyChart>}
                             </ChartPanel>
-                            <ChartPanel title="Tokens by model">
+                            <ChartPanel title="Tokens by model" headingLevel={4}>
                                 {modelDates.length > 0 ? (
                                     <>
                                         <StatsChart buildConfig={modelConfig} signature={`${chartVersion}|models`}
@@ -1030,7 +951,7 @@ export function DashboardSection() {
                                 ) : <EmptyChart>{filtersActive ? 'No model usage matches these filters.' : 'No model usage was recorded in this range.'}</EmptyChart>}
                             </ChartPanel>
                         </div>
-                        <ChartPanel title="Top token consumers">
+                        <ChartPanel title="Top token consumers" headingLevel={4}>
                             <div className="grid gap-5 md:grid-cols-3">
                                 <RankedList title="Users" rows={insights.top_tokens.users} valueKey="tokens" unit="tokens" section={userSection} />
                                 <RankedList title="Groups" rows={insights.top_tokens.groups} valueKey="tokens" unit="tokens" section={groupSection} />

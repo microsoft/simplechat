@@ -1195,6 +1195,13 @@ export interface BootstrapPayload {
     workspace_uploads?: {
         categories: { name: string; extensions: string[] }[];
     };
+    /**
+     * Safety warnings an administrator sent that still need this user's acknowledgment.
+     * Only the count: the warnings themselves are read when it is above zero.
+     */
+    safety_warnings?: {
+        pending: number;
+    };
     /** Sanitized settings. Never contains keys, secrets or connection strings. */
     settings: Json;
 }
