@@ -1,8 +1,8 @@
 # test_workflow_plan_replay_freeze.py
 """
 Functional test for the plan replay freeze, allowlist and per-run re-authorization.
-Version: 0.261.306
-Implemented in: 0.261.306
+Version: 0.261.307
+Implemented in: 0.261.307
 
 This test ensures that a saved workflow freezes only a completed, approved plan its creator
 owns in a private chat, that the versioned allowlist refuses every class it must with a fixed
@@ -116,7 +116,7 @@ def _rehash(replay, task):
 
 
 def test_version_includes_plan_replay():
-    assert_app_version_at_least("0.261.306")
+    assert_app_version_at_least("0.261.307")
 
 
 def test_the_allowlist_is_versioned_and_names_a_reason_for_each_entry(replay):

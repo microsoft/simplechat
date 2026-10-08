@@ -1,8 +1,8 @@
 # test_workflow_plan_replay_execution.py
 """
 Functional test for the headless plan replay execution.
-Version: 0.261.306
-Implemented in: 0.261.306
+Version: 0.261.307
+Implemented in: 0.261.307
 
 This test ensures that a saved plan replays end to end under the real headless orchestration
 executor, with only the model stubbed: the creator is the only actor, the run lands in the
@@ -343,7 +343,7 @@ def _replay_runs(harness):
 
 
 def test_version_includes_plan_replay():
-    assert_app_version_at_least("0.261.306")
+    assert_app_version_at_least("0.261.307")
 
 
 def test_a_frozen_plan_replays_end_to_end_in_the_workflow_conversation(harness, replay):

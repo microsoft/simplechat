@@ -1,6 +1,6 @@
 # Workflow plan replay
 
-Implemented in version: **0.261.306**.
+Implemented in version: **0.261.307**.
 
 Application version tracking: `application\single_app\config.py`.
 
