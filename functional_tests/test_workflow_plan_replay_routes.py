@@ -139,12 +139,13 @@ def h(modules, monkeypatch):
     )
 
 
-def login(h, *, user_id=OWNER, roles=("User",)):
-    serializer = h.app.session_interface.get_signing_serializer(h.app)
+def login(h, *, user_id=OWNER, roles=("User",), app=None, client=None):
+    app, client = app or h.app, client or h.client
+    serializer = app.session_interface.get_signing_serializer(app)
     cookie = serializer.dumps({
         "user": {"oid": user_id, "roles": list(roles), "tid": TENANT, "preferred_username": EMAIL},
     })
-    h.client.set_cookie(h.app.config["SESSION_COOKIE_NAME"], cookie)
+    client.set_cookie(app.config["SESSION_COOKIE_NAME"], cookie)
 
 
 def _step(capability_id, number=1, title=None, **arguments):
@@ -287,6 +288,53 @@ def test_saving_can_turn_the_workflow_on_when_the_creator_chooses(h):
     login(h)
     status, body = save_previewed(h, enabled=True)
     require(status == 201 and stored(h)[0]["is_enabled"] is True, f"{status} {body}")
+
+
+def test_running_a_saved_replay_workflow_queues_one_durable_run_for_its_creator(h, monkeypatch):
+    routes = importlib.import_module("route_backend_workflows")
+    seed_run(h)
+    login(h)
+    status, body = save_previewed(h)
+    require(status == 201, f"{status} {body}")
+    workflow_id = body["workflow"]["id"]
+    queued = []
+
+    def queue(workflow, **kwargs):
+        queued.append({"workflow": deepcopy(workflow), **kwargs})
+        return {"success": True, "workflow": deepcopy(workflow), "run": {
+            "id": "workflow-run-1", "workflow_id": workflow["id"], "status": "queued", "success": None,
+            "durable_execution": True, "started_at": None, "completed_at": None, "actor_user_id": OWNER,
+        }}
+
+    def run_in_request(*args, **kwargs):
+        raise AssertionError("A durable replay workflow never runs inside the request.")
+
+    monkeypatch.setattr(routes, "queue_durable_workflow_run", queue)
+    monkeypatch.setattr(routes, "run_personal_workflow", run_in_request)
+    # The production registration: the workflow routes behind the user Blueprint guard.
+    app = Flask("workflow_plan_replay_run")
+    app.config.update(TESTING=True, SECRET_KEY=h.app.config["SECRET_KEY"])
+    blueprint = Blueprint("backend_workflows", __name__)
+    blueprint.before_request(h.modules.auth.user_required_blueprint())
+    routes.register_route_backend_workflows(blueprint)
+    app.register_blueprint(blueprint)
+    client = Client(app, Response)
+    login(h, app=app, client=client)
+
+    response = client.post(f"/api/user/workflows/{workflow_id}/run", json={})
+    payload = response.get_json()
+    require(response.status_code == 202, f"A replay run is queued, not run inline: {response.status_code} {payload}")
+    require(payload["run"] == {
+        "id": "workflow-run-1", "workflow_id": workflow_id, "status": "queued", "success": None,
+        "durable_execution": True, "started_at": None, "completed_at": None,
+    }, f"Only the public run fields come back: {payload['run']}")
+    require(len(queued) == 1, f"Exactly one durable run is queued: {queued}")
+    call = queued[0]
+    require(call["actor_user_id"] == OWNER and call.get("request_id") is None, f"The creator is the actor: {call}")
+    require(set(call) == {"workflow", "actor_user_id", "request_id"}, f"No other identity is passed: {call}")
+    require(call["workflow"]["id"] == workflow_id and call["workflow"]["durable_execution"] is True,
+            "The stored durable workflow is the one queued.")
+    require(call["workflow"]["tasks"][0]["type"] == h.replay.PLAN_REPLAY_TASK_TYPE, str(call["workflow"]["tasks"]))
 
 
 @pytest.mark.parametrize("plan_sha256", [None, "", "0" * 64, "not-a-hash"])
