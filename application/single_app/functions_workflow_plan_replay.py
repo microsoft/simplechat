@@ -18,6 +18,7 @@ import json
 from copy import deepcopy
 
 from functions_orchestration_registry import (
+    DEPENDENCY_PLAN_CONTRACT_VERSION,
     VISUAL_IMAGE_PROPOSAL,
     WORKFLOW_PLAN_REPLAY_SETTING,
     approval_floor_capability_ids,
@@ -234,7 +235,7 @@ def build_frozen_seeds(seeds):
 _CONTRACT_PLAN_KEYS = (
     'plan_id', 'planner_contract_version', 'intent', 'assumptions', 'steps', 'inputs', 'outputs',
     'final_response', 'deliverables', 'model_routing',
-)  # VERIFY: keys apply_plan_edits and the harness read
+)  # The plan-revision fields minus run identity, approval, status and edit/validation state.
 _CONTRACT_STEP_KEYS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on', 'inputs', 'outputs',
     'optional', 'enabled', 'estimated_cost', 'role', 'model_task', 'model_binding', 'delivers',
@@ -326,7 +327,8 @@ def authorize_replay_capabilities(user_id, frozen_plan, settings):
             'user_id': user_id, 'user_roles': [], 'user_enable_agents': False,
             'message_urls': [], 'allowed_user_urls': [],
         },
-        candidate_ids=required, unavailable=reasons, include_runtime_bindings=False,
+        candidate_ids=required, unavailable=reasons,
+        contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION, include_runtime_bindings=False,
     )
     available_ids = {item['id'] for item in available}
     for number, step in enumerate(enabled, start=1):
