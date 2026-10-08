@@ -247,7 +247,7 @@ from functions_workflow_execution import (
     workflow_checkpoint_scope_guard,
     workflow_unit,
 )
-from functions_workflow_plan_replay import PLAN_REPLAY_TASK_TYPE, PlanReplayRefused, execute_plan_replay_task
+from functions_workflow_plan_replay import PLAN_REPLAY_TASK_TYPE, execute_plan_replay_task
 from functions_workflow_readiness import (
     WorkflowOutputUnavailable,
     pending_workflow_output_references,
