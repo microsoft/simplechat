@@ -18,10 +18,12 @@ import json
 from copy import deepcopy
 
 from functions_orchestration_registry import (
+    VISUAL_IMAGE_PROPOSAL,
     WORKFLOW_PLAN_REPLAY_SETTING,
     approval_floor_capability_ids,
     external_effect_capability_ids,
     get_capability,
+    resolve_available_capabilities,
 )
 from functions_orchestration_schema import plan_document_ids
 from functions_workflow_bindings import WorkflowInputError
@@ -62,7 +64,6 @@ REFUSED_WAIT_KINDS = frozenset({
 WORKFLOW_CAPABILITIES = frozenset({
     'workflow_propose', 'workflow_run', 'workflow_results', 'workflow_handoff',
 })
-VISUAL_IMAGE_PROPOSAL = 'image_proposal'  # VERIFY: registry constant name (L184)
 
 REFUSAL_MESSAGES = {
     'replay_disabled': 'Repeating chat plans is turned off. Ask an admin to turn it on, then run the workflow again.',
@@ -94,7 +95,7 @@ class PlanReplayRefused(WorkflowInputError):
 
     def __init__(self, code, message=None, *, step_id=None, refusals=None):
         text = message or REFUSAL_MESSAGES.get(code) or REFUSAL_MESSAGES['replay_execution_failed']
-        super().__init__(text)  # VERIFY: WorkflowInputError signature
+        super().__init__(text)
         self.code = code
         self.public_message = text
         self.step_id = step_id
@@ -106,7 +107,7 @@ class PlanReplaySaveError(WorkflowPublicValidationError):
 
     def __init__(self, code, message=None, *, refusals=None):
         text = message or REFUSAL_MESSAGES.get(code) or REFUSAL_MESSAGES['source_run_not_eligible']
-        super().__init__(text)  # VERIFY: WorkflowPublicValidationError signature
+        super().__init__(text)
         self.code = code
         self.public_message = text
         self.refusals = list(refusals or [])
@@ -312,9 +313,10 @@ def authorize_plan_replay_run(workflow, task, settings):
 
 
 def authorize_replay_capabilities(user_id, frozen_plan, settings):
-    """Every enabled step must still be on and allowed by the admin list, with no roles."""
-    from functions_orchestration_registry import resolve_available_capabilities
+    """Every enabled step must still be on and allowed by the admin list, with no roles.
 
+    Runtime service bindings are left to the harness, which checks them again before step 1.
+    """
     enabled = [step for step in frozen_plan.get('steps') or [] if step.get('enabled', True)]
     required = {step.get('capability_id') for step in enabled}
     reasons = {}
@@ -325,8 +327,8 @@ def authorize_replay_capabilities(user_id, frozen_plan, settings):
             'message_urls': [], 'allowed_user_urls': [],
         },
         candidate_ids=required, unavailable=reasons, include_runtime_bindings=False,
-    )  # VERIFY: return shape and keyword names
-    available_ids = {item.get('id') if isinstance(item, dict) else item for item in available or []}
+    )
+    available_ids = {item['id'] for item in available}
     for number, step in enumerate(enabled, start=1):
         capability_id = step.get('capability_id')
         if capability_id in available_ids:
@@ -347,7 +349,7 @@ def authorize_replay_sources(user_id, frozen_plan, frozen_seeds, settings):
     if group_ids:
         if settings.get('enable_group_workspaces') is False:
             _refuse('source_unavailable')
-        from functions_group import (  # VERIFY: names
+        from functions_group import (
             check_group_status_allows_operation, find_group_by_id, get_user_role_in_group,
         )
 
@@ -361,7 +363,7 @@ def authorize_replay_sources(user_id, frozen_plan, frozen_seeds, settings):
     if workspace_ids:
         if settings.get('enable_public_workspaces') is not True:
             _refuse('source_unavailable')
-        from functions_public_workspaces import (  # VERIFY: names
+        from functions_public_workspaces import (
             check_public_workspace_status_allows_operation, find_public_workspace_by_id,
         )
 
@@ -384,12 +386,11 @@ def authorize_replay_sources(user_id, frozen_plan, frozen_seeds, settings):
             document_ids, user_id, conversation_id=None,
             doc_scope=frozen_seeds.get('doc_scope') or 'all',
             active_group_ids=group_ids or None, active_public_workspace_ids=workspace_ids or None,
-        )  # VERIFY: return shape
+        )
     except (ValueError, LookupError, PermissionError):
         _refuse('source_unavailable')
-    entries = manifest.get('documents') if isinstance(manifest, dict) else manifest
     authorized = {
-        entry.get('document_id') or entry.get('id') for entry in entries or []
+        entry.get('document_id') for entry in manifest
         if isinstance(entry, dict) and entry.get('authorization_status') == 'authorized'
     }
     if set(document_ids) - authorized:
