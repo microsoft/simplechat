@@ -456,6 +456,31 @@ def test_a_run_that_finishes_within_the_bound_is_used_once_and_never_posted(env)
     assert env.world.record().get('outcome_reason') == REASON_USED_IN_ANSWER
 
 
+def test_a_consumed_result_is_only_said_to_be_used_when_the_reply_carries_it(env):
+    """The note mirrors ``_finalize``'s own ``error is None and bool(prepared)`` flag (coordinator
+    note 3), so a plan that stopped after consuming the run never claims its result was shown."""
+    _waiting(env)
+    env.advance(seconds=120)
+    env.finish()
+
+    result = env.resume()
+
+    assert result['status'] == 'completed', result
+    record = {'step_id': STEP_ID, 'capability_id': 'workflow_run', 'status': 'completed',
+              'workflow_run': result['workflow_run']}
+    plan = {'steps': [{'step_id': STEP_ID, 'capability_id': 'workflow_run', 'enabled': True}]}
+
+    reply_wrote_the_answer = runs.workflow_run_note(plan, [record], composed=True)
+    reply_dropped_the_answer = runs.workflow_run_note(plan, [record], composed=False)
+
+    assert f'Ran `{WORKFLOW_NAME}`. Its results were used in this answer.' in reply_wrote_the_answer
+    assert 'used in this answer' not in reply_dropped_the_answer
+    assert (
+        f"Ran `{WORKFLOW_NAME}`. This answer couldn't use its results; they're in its run in Workflows."
+        in reply_dropped_the_answer
+    )
+
+
 def test_the_timeout_ends_the_wait_and_the_post_back_posts_once(env):
     _waiting(env)
     env.at(DEADLINE)
