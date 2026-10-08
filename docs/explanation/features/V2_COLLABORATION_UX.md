@@ -126,6 +126,14 @@ download rules for the reader, whichever group they currently have active:
 The Markdown preview fetches the same route and renders it with `PlainMarkdown`, which does not
 render raw HTML. Word and PowerPoint files download only.
 
+Since 0.261.302 personal conversations list these documents too, through
+`/api/conversations/<id>/generated-documents` and its `/download` route, which require the
+conversation's owner and apply the same reader and download rules. The **Generated** section also
+lists every file a reply produced, such as a CSV a plan rendered, an export or an Analyze summary,
+with its status, and the list is only requested for a thread whose replies ran an upload action or
+came from an agent. See the
+[Documents drawer generated files fix](../fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX.md).
+
 ### Media
 
 `collectConversationMedia` (`lib/conversationMedia.ts`) lists images from image messages and from

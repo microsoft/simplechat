@@ -1,8 +1,9 @@
 # test_v2_collaboration_ux.py
 """
 UI test for the V2 shared conversation experience.
-Version: 0.261.262
+Version: 0.261.302
 Implemented in: 0.261.255
+Generated documents read only for a thread whose replies ran an upload action: 0.261.302
 
 This test ensures that, in a shared conversation, a message names the people and the agent it
 was addressed to as pills above its text instead of repeating "@Name" in it; that the composer's
@@ -310,14 +311,23 @@ def test_drawer_lists_generated_documents_and_media(shared_ui):
         "The brief is ready.",
         f"![Plate capture at the bridge]({CAPTURE})",
         f"[Open video: Bridge camera clip]({CLIP})",
-    ]))
+    ]), agent_citations=[
+        # The upload actions' results are what the server lists the generated documents from.
+        {"function_name": "upload_markdown_document", "plugin_name": "SimpleChatPlugin",
+         "function_result": {"success": True, "workspace_scope": "group", "group_id": "group-1",
+                             "document": {"id": BRIEF_ID, "file_name": "Watch brief.md"}}},
+        {"function_name": "upload_word_document", "plugin_name": "SimpleChatPlugin",
+         "function_result": {"success": True, "workspace_scope": "personal",
+                             "document": {"id": WORD_ID, "file_name": "Quarterly brief.docx"}}},
+    ])
     mount(page, api, "ConversationDrawer", [reply], drawer="documents")
 
     generated = page.get_by_role("region", name="Generated documents")
     expect(generated.locator("[data-generated-document]")).to_have_count(2)
     word = generated.locator(f"[data-generated-document='{WORD_ID}']")
     expect(word).to_contain_text("Download not permitted")
-    expect(word.get_by_role("button")).to_have_count(0)
+    expect(word.get_by_role("button", name=re.compile(r"^(Download|Preview) "))).to_have_count(0)
+    expect(word.get_by_role("button", name="Show Quarterly brief.docx in the conversation")).to_be_visible()
 
     generated.get_by_role("button", name="Preview Watch brief.md").click()
     dialog = page.get_by_role("dialog", name="Watch brief.md")

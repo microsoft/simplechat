@@ -20,6 +20,7 @@ import { clsx } from 'clsx';
 import { Download, Eye, FileLock2, Loader2, X } from 'lucide-react';
 import { downloadGeneratedArtifact, generatedArtifactDownloadUrl } from '../../lib/endpoints';
 import { resolveGeneratedFileApproval } from '../../lib/collaboration';
+import { useGeneratedExportRunStore } from '../../stores/generatedExportRunStore';
 import { toast } from '../../stores/toastStore';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
@@ -189,9 +190,10 @@ function ArtifactPreview({ artifact }: { artifact: GeneratedArtifact }) {
  * The full-size preview for a compact card.
  *
  * Wider limits than the inline preview — fifty columns rather than four — because this is
- * opened specifically to inspect the contents before downloading.
+ * opened specifically to inspect the contents before downloading. Also opened from the
+ * Generated section of the Documents drawer.
  */
-function ArtifactPreviewDialog({
+export function ArtifactPreviewDialog({
     artifact,
     onClose,
 }: {
@@ -275,6 +277,9 @@ export function GeneratedArtifactCard({
     const [previewOpen, setPreviewOpen] = useState(false);
     const [deciding, setDeciding] = useState<'approve' | 'deny' | null>(null);
     const [downloading, setDownloading] = useState(false);
+    const recordExportRun = useGeneratedExportRunStore((state) => state.recordRun);
+    // The id the reply advertises the run under, which is what the Documents drawer looks it up by.
+    const exportRunId = initialArtifact.export_run_id;
 
     // A completed run replaces its own progress card with the files it produced.
     if (finished) {
@@ -530,10 +535,17 @@ export function GeneratedArtifactCard({
             {running && (
                 <TabularRunStatus
                     artifact={artifact}
-                    onRunUpdate={(run: GeneratedRunStatus) =>
-                        setArtifact((current) => ({ ...current, ...run }) as GeneratedArtifact)
-                    }
-                    onComplete={setFinished}
+                    onRunUpdate={(run: GeneratedRunStatus) => {
+                        setArtifact((current) => ({ ...current, ...run }) as GeneratedArtifact);
+                        recordExportRun(exportRunId, {
+                            ...(typeof run.status === 'string' ? { status: run.status } : {}),
+                            retryableFailure: Boolean(run.retryable_failure),
+                        });
+                    }}
+                    onComplete={(members: GeneratedArtifact[]) => {
+                        setFinished(members);
+                        recordExportRun(exportRunId, { status: 'completed', members });
+                    }}
                 >
                     {supporting}
                 </TabularRunStatus>
