@@ -50,7 +50,7 @@ from functions_orchestration_recovery import (
     lease_fields,
     reconcile_checkpoints,
 )
-from functions_orchestration_rendering import raise_output_read_infrastructure_failure
+from functions_orchestration_rendering import raise_output_read_infrastructure_failure, render_failure_code
 from functions_orchestration_result_contracts import TaskResult
 from functions_orchestration_result_runtime import decode_step_result, validate_task_outputs
 from functions_orchestration_schema import (
@@ -775,7 +775,9 @@ def reconcile_run_outputs(record, *, services, lease):
             pending[step_id] = deepcopy(row.get("wait") or wait)
         else:
             pending.pop(step_id, None)
-        failure = build_failure("step_failed", step_id=step_id, capability_id="render_file") if status == "failed" else None
+        failure = build_failure(
+            render_failure_code(fact.get("error_code")), step_id=step_id, capability_id="render_file",
+        ) if status == "failed" else None
         failures = [value for value in failures if value.get("step_id") != step_id]
         if failure is not None:
             failures.append(failure)

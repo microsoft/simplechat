@@ -4,7 +4,7 @@ title: "Microsoft 365 SharePoint Online"
 description: "Retrieve SharePoint document evidence through the user's delegated permissions."
 section: "Reference"
 audience: user
-version: "0.261.029"
+version: "0.261.303"
 ---
 
 <!-- action-slug: m365-sharepoint -->
@@ -39,6 +39,23 @@ Large or multi-file analysis can require an explicit deeper-analysis decision.
 Progress and captured evidence are retained with the conversation so analysis
 can proceed in stages. A faster answer identifies omitted coverage rather than
 claiming to have read everything.
+
+### Citations and Open online
+
+Implemented in version: **0.261.303** (`application/single_app/config.py`).
+
+Every file a search, capture or read returns carries a citation value, so the
+answer cites a SharePoint file the same way it cites a workspace document: a
+chip after the claim, showing the file name. The chip's card shows the location,
+modified date and size, and **Open in SharePoint** opens the file in SharePoint
+with the reader's own permissions. Nothing is downloaded from the card.
+
+Cited files, and every file whose content was captured or read for an answer,
+are listed under **SharePoint & OneDrive** in the conversation's **Documents**
+pane with **Open online**. A list of files uses one line per file:
+"**File name** — SharePoint, modified Sep 1, 2026", followed by its chip. This
+applies in chat with an agent and in orchestrated answers. See
+[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## Permission and disclosure boundaries
 

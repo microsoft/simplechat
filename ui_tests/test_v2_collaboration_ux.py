@@ -1,17 +1,19 @@
 # test_v2_collaboration_ux.py
 """
 UI test for the V2 shared conversation experience.
-Version: 0.261.262
+Version: 0.261.302
 Implemented in: 0.261.255
+Generated documents read only for a thread whose replies ran an upload action: 0.261.302
+Generated documents read once an invitation is joined, not refused while it is pending: 0.261.302
 
 This test ensures that, in a shared conversation, a message names the people and the agent it
 was addressed to as pills above its text instead of repeating "@Name" in it; that the composer's
 @ menu adds removable chips (any number of people, one agent, a second agent replacing the first)
 and sends them as the mentions the server stores; that running agent requests show as slim
 activity lines for everyone instead of a "Thinking" bubble; and that the conversation drawer
-lists generated documents (preview and download only where permitted) and every image and clip
-in the thread. Only HTTP boundaries are mocked; the real MessageList, Composer, ConversationDrawer
-and stores run in Chromium with production CSS.
+lists generated documents (preview and download only where permitted, and only once an invited
+reader has joined) and every image and clip in the thread. Only HTTP boundaries are mocked; the
+real MessageList, Composer, ConversationDrawer and stores run in Chromium with production CSS.
 
 Build: npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
 Run: python -m pytest .\\ui_tests\\test_v2_collaboration_ux.py -q
@@ -73,6 +75,7 @@ class CollaborationApi:
         self.assets = assets
         self.posts = []
         self.downloads = []
+        self.listed = []
         self.unexpected = []
         self.errors = []
 
@@ -108,6 +111,7 @@ class CollaborationApi:
             route.fulfill(json={"message": stored})
             return
         if request.method == "GET" and path == f"{base}/generated-documents":
+            self.listed.append(path)
             route.fulfill(json={"documents": [
                 {"document_id": BRIEF_ID, "file_name": "Watch brief.md", "workspace_scope": "group",
                  "preview": "markdown", "message_id": "a-1", "created_at": "2026-10-02T16:12:20Z", "can_download": True},
@@ -143,7 +147,7 @@ def shared_ui(editor_browser, editor_assets):
         assert not api.errors, api.errors
 
 
-def mount(page, api, component, messages, *, chat=None, drawer=None):
+def mount(page, api, component, messages, *, chat=None, drawer=None, collaboration=None):
     page.goto(ORIGIN + HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     for url in api.assets:
@@ -176,6 +180,7 @@ def mount(page, api, component, messages, *, chat=None, drawer=None):
                         { ...spec.me, status: 'accepted', membership_status: 'accepted' },
                         { ...spec.sam, status: 'accepted', membership_status: 'accepted' },
                     ],
+                    ...spec.collaboration,
                 },
                 replyTo: null, aiRuns: [], typingUsers: [],
             });
@@ -184,6 +189,7 @@ def mount(page, api, component, messages, *, chat=None, drawer=None):
         {
             "conversation": CONVERSATION, "me": ME, "sam": SAM, "agents": [WATCH, CELL],
             "messages": messages, "component": component, "chat": chat or {}, "drawer": drawer,
+            "collaboration": collaboration or {},
         },
     )
 
@@ -304,20 +310,33 @@ def test_composer_mentions_become_chips_and_are_sent_as_mentions(shared_ui):
     expect(page.get_by_role("list", name="Sending to")).to_have_count(0)
 
 
-def test_drawer_lists_generated_documents_and_media(shared_ui):
-    page, api = shared_ui
-    reply = message("a-1", "assistant", "\n".join([
+def brief_reply():
+    """An agent's reply that created two documents and shows a capture and a clip."""
+    return message("a-1", "assistant", "\n".join([
         "The brief is ready.",
         f"![Plate capture at the bridge]({CAPTURE})",
         f"[Open video: Bridge camera clip]({CLIP})",
-    ]))
-    mount(page, api, "ConversationDrawer", [reply], drawer="documents")
+    ]), agent_citations=[
+        # The upload actions' results are what the server lists the generated documents from.
+        {"function_name": "upload_markdown_document", "plugin_name": "SimpleChatPlugin",
+         "function_result": {"success": True, "workspace_scope": "group", "group_id": "group-1",
+                             "document": {"id": BRIEF_ID, "file_name": "Watch brief.md"}}},
+        {"function_name": "upload_word_document", "plugin_name": "SimpleChatPlugin",
+         "function_result": {"success": True, "workspace_scope": "personal",
+                             "document": {"id": WORD_ID, "file_name": "Quarterly brief.docx"}}},
+    ])
+
+
+def test_drawer_lists_generated_documents_and_media(shared_ui):
+    page, api = shared_ui
+    mount(page, api, "ConversationDrawer", [brief_reply()], drawer="documents")
 
     generated = page.get_by_role("region", name="Generated documents")
     expect(generated.locator("[data-generated-document]")).to_have_count(2)
     word = generated.locator(f"[data-generated-document='{WORD_ID}']")
     expect(word).to_contain_text("Download not permitted")
-    expect(word.get_by_role("button")).to_have_count(0)
+    expect(word.get_by_role("button", name=re.compile(r"^(Download|Preview) "))).to_have_count(0)
+    expect(word.get_by_role("button", name="Show Quarterly brief.docx in the conversation")).to_be_visible()
 
     generated.get_by_role("button", name="Preview Watch brief.md").click()
     dialog = page.get_by_role("dialog", name="Watch brief.md")
@@ -335,3 +354,29 @@ def test_drawer_lists_generated_documents_and_media(shared_ui):
     media.get_by_role("button", name="View image: Plate capture at the bridge").click()
     expect(page.get_by_role("dialog").filter(has_text="Plate capture at the bridge")).to_be_visible()
     assert api.downloads == [BRIEF_ID, BRIEF_ID], api.downloads
+
+
+def test_an_invitation_lists_generated_documents_once_it_is_joined(shared_ui):
+    page, api = shared_ui
+    # An invited reader can read the thread, but the server refuses its document list until they join.
+    mount(page, api, "ConversationDrawer", [brief_reply()], drawer="documents",
+          collaboration={"can_accept_invite": True, "membership_status": "pending"})
+    media = page.get_by_role("region", name="Media")
+    expect(media.get_by_role("button", name="View image: Plate capture at the bridge")).to_be_visible()
+    expect(page.get_by_role("region", name="Generated documents")).to_have_count(0)
+    assert api.listed == [], "no request the server would refuse"
+
+    # Joining reads the list straight away, without reopening the drawer.
+    with page.expect_request(lambda request: urlsplit(request.url).path.endswith("/generated-documents")):
+        page.evaluate(
+            """() => {
+                const store = window.OrchHarness.stores.collaboration.useCollaborationStore;
+                const conversation = store.getState().conversation;
+                store.setState({ conversation: {
+                    ...conversation, can_accept_invite: false, membership_status: 'accepted',
+                } });
+            }"""
+        )
+    generated = page.get_by_role("region", name="Generated documents")
+    expect(generated.locator("[data-generated-document]")).to_have_count(2)
+    assert len(api.listed) == 1, api.listed

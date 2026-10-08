@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.236"
+version: "0.261.303"
 ---
 
 ## How to use this reference
@@ -137,6 +137,30 @@ their existing tool-result receipts without a second Send button.
 For email, Send submits the reviewed content and leaves the original Outlook
 draft. **Do not send the retained draft again.** See
 [Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
+
+## Microsoft 365 citations and Open online
+
+Implemented in version: **0.261.303** (`application/single_app/config.py`).
+
+When an answer uses SharePoint or OneDrive files, emails or calendar events
+through a Microsoft 365 action, in chat with an agent or in an orchestrated
+answer, it cites each item like a workspace document. Email and event lists
+always use one numbered line per item, with times in your browser's time zone.
+
+| Control | What it does | Why you would use it | Availability |
+| --- | --- | --- | --- |
+| Microsoft 365 citation chip (V2 interface) | Shows the file name, or an email's or event's subject, with an icon for the kind of item, where the answer cites it. | See at a glance which file, message or meeting a statement came from. | Any Microsoft 365 Email, Calendar, SharePoint Online or OneDrive action |
+| Source card (V2 interface) | Opens from a chip. A file shows its location, modified date and size; an email its sender, received time, read state, importance and preview; an event its time, place and organizer. An item no longer on the message says the source is no longer available. | Check the item before opening it, without leaving the conversation. | Same as the chip |
+| Open in SharePoint, Open in OneDrive, Open in Outlook (V2 interface) | Opens the item where it lives, in a new tab, with your own sign-in. Shown only for an `https` link that Microsoft 365 supplied. | Read the whole file, message or meeting, which a citation only points to. | Same as the chip |
+| SharePoint & OneDrive, Email and Calendar (Documents drawer, V2 interface) | List every cited item, and every file whose content was read for an answer, with a secondary line (location and modified date, sender and received time, or time and place). Only the conversation owner sees them. | Get back to a file, message or meeting the conversation used without scrolling to the answer that cited it. | Same as the chip |
+| Open online (Documents drawer, V2 interface) | Opens the listed item in SharePoint, OneDrive or Outlook in a new tab. There is no download. | Same as the Open in links, from the conversation's source list. | Same as the chip |
+| Microsoft 365 in Sources (V2 interface) | Lists a reply's Microsoft 365 items in the message's **Sources** panel, with **Open online**, and marks items the reply read but did not cite. | Audit everything a reply drew on, not only what it cited. | Same as the chip |
+| Microsoft 365 citation link (classic interface) | Shows the cited item's title as a link that opens it in SharePoint, OneDrive or Outlook, or as text when no link was recorded. It never opens the workspace citation viewer. | Open a cited item from the classic chat. | Same as the chip |
+
+An **Open in Outlook** link works only for the mailbox owner. File links follow
+SharePoint and OneDrive permissions. See
+[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
+
 ## Generated image editor
 
 From version **0.261.107**, the image editor uses the selected global image model's
@@ -358,7 +382,7 @@ These controls exist only in the V2 interface, so they are not part of the gener
 
 ## Shared conversations (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for, which agents are working, and what the conversation has produced. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for and which agents are working. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
@@ -366,7 +390,15 @@ These controls exist only in the V2 interface, so they are not part of the gener
 | Mention chips | Show who the message is for: any number of people and at most one model or agent. Picking a second agent replaces the first, and each chip has a remove button. When you send, the names are placed in front of the message, which is how the server, the classic interface and the assistant read them. A message of chips alone is sent as a ping. | Use them to check who will be notified and which agent will answer before sending. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
 | Mention pills on a message | Show the agent that was asked and the people who were named as pills above the message text, with your own name highlighted. The `@Name` text is removed from what is displayed, including where a reply quotes the message; the stored message keeps it. | Use them to see at a glance who a message was for, the same way a reply shows what it answers. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
 | Agent activity line | Shows one slim line at the end of the thread for each running request: which agent, who asked, how long it has been running, and what it is doing in plain words, such as "Looking up order status", "Asking Data Analyst" or "Writing the answer". Everyone in the conversation sees it, several can run at once, and it replaces the large "Thinking" bubble in shared conversations. | Use it to know an agent is still working, and on what, without the thread filling with placeholders. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
-| Generated (Documents drawer) | Lists the documents agents created in this conversation with the SimpleChat upload actions. Markdown opens in a preview, and Download appears only when the workspace's download rules allow it for you. | Use it to open or save a briefing or report an agent produced without hunting for it in a workspace. | [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) for group documents<br>[`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) for personal documents |
+
+## Documents drawer (V2 interface)
+
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. The drawer's **Documents** tab gathers what a conversation used and what it produced, in personal and shared conversations alike, so a file or source is not lost in a long thread. See [Documents drawer generated files fix]({{ '/explanation/fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX/' | relative_url }}) for how generated files are found.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Documents button badge | Counts the documents answers used plus every file and document the conversation produced, each once. Media is not counted. | Use it to see at a glance that a reply produced a file, even with the drawer closed. | Always available |
+| Generated (Documents drawer) | Lists every file the conversation produced, in conversation order. That covers the files an orchestration plan rendered (CSV, Excel, Word, PDF, PowerPoint, Markdown, text, JSON, XML and YAML), exports and Analyze or comparison files a reply wrote, and documents agents created with the SimpleChat upload actions. A file that is still rendering, failed, or waits for a shared conversation owner's approval is listed with its status. **Download** appears once the file is ready, and only where the workspace's download rules allow it for an agent's document. Markdown and files that carry a preview open in place, and **Show in conversation** scrolls to the reply that produced the file. | Use it to download or reopen a file a reply made, such as a CSV export, without scrolling back through the thread to find its card. | Always available; agent documents follow [`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) and [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) |
 | Media (Documents drawer) | Gathers every image, video and audio clip shown in the conversation, including signed links an action fetched from a remote service, grouped as **Images**, **Videos** and **Audio** with a count for each. Images and clips open one viewer that steps through all of them, with **Show in conversation** to scroll to the message. Recordings play in place and can be downloaded. | Use it to find a photo, clip or recording again in a long thread. | Always available |
 
 ## Media in replies (V2 interface)
@@ -530,11 +562,13 @@ saved effective plan, not the current composer selections or a new planner call.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints; not a substitute for individual file recovery |
-| Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. Since **0.261.212** it also appears for a step that starts a saved workflow; its retry never starts the workflow twice, and links the run when the plan already started it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
+| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints. For an attempt with files, only when a failed file can't be retried on its own and no file is still being prepared (since **0.261.303**) |
+| Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. Since **0.261.212** it also appears for a step that starts a saved workflow; its retry never starts the workflow twice, and links the run when the plan already started it. Since **0.261.304** it closes as soon as the retry starts, and it doesn't appear for a **Use an action** step that stopped for Microsoft 365 sign-in, approval or policy, which only reads data. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
+| Allow this time / Always allow for SharePoint (or OneDrive) / Quick read only | Since **0.261.304**, shown in the stopped message when a step needs the user's approval to read more of a SharePoint or OneDrive file than a quick read covers, with the amount it needs to read. Each choice saves the decision through the approvals API and continues the plan immediately. **Always allow** also saves the per-source preference; **Quick read only** answers from what fits and says what it left out. | Approve or decline deeper file analysis without leaving the conversation or retrying by hand. | A **Use an action** step stopped with `m365_approval_required` for extended analysis that the user can still decide; other approvals link to **Approvals** |
+| Continue | Since **0.261.304**, continues a stopped plan whose Microsoft 365 approval was already decided, for example on the **Approvals** page. | Pick up the plan after deciding elsewhere, without a confirmation. | A recoverable attempt stopped for an approval that is no longer pending |
 | Run prepared retry | Starts a recovery attempt that was already prepared but has not executed. | Continue after preparation was saved but execution was interrupted by navigation or connection loss. | An unstarted saved recovery attempt |
 | Review saved attempt | Opens the selected attempt in the Plan/Run view. | Inspect the failure, completed steps, and remaining work without editing or rerunning history. | A saved orchestration attempt |
-| View current attempt / View previous attempt | Opens a linked execution attempt rather than starting another one. | Follow recovery history and avoid retrying an older attempt that already has a successor. | Linked recovery attempts |
+| View current attempt / View previous attempt | Opens a linked execution attempt rather than starting another one. Since **0.261.304**, a retried answer offers **View previous attempt** and **Review saved attempt** under **Message details** instead of an attempt notice below the answer. | Follow recovery history and avoid retrying an older attempt that already has a successor. | Linked recovery attempts |
 | Check saved status | Reconciles the displayed state with the existing server execution, without running or retrying work. | Check a waiting computation, or find out whether work finished after connection loss. | A waiting attempt, execution-status error, or recovery-detail error |
 | Stop execution | Requests server cancellation of the potentially active attempt. | Stop work even when it is waiting for retained computation or its stream was interrupted. | A waiting or interrupted connection with a tracked in-flight attempt |
 
@@ -542,10 +576,23 @@ Steps restored from checkpoints show **Reused saved result**. Retry is always
 manual, including when normal approval is Auto or timed. An older attempt cannot
 create a competing retry after a newer attempt has been prepared.
 
+Since **0.261.304**, a retry's answer replaces the attempt it retried in the thread.
+The earlier attempt stays saved for the record, but it is hidden, and it is left out
+of what the model reads on later turns, out of conversation exports and out of the
+**Documents** drawer. While a
+prepared or running retry has no saved answer yet, the earlier attempt shows only
+"A newer attempt of this plan exists." with **View current attempt**.
+
 Since **0.261.127**, **Waiting for required results** keeps the same producing
 attempt active. Reload and status checks do not execute it again, and waiting
 does not expose a run-retry button or a completed-file link. File-specific
 publication and retry controls require the server's separate output lifecycle.
+
+Since **0.261.303**, an attempt that fails or is stopped as a whole while a step
+is still pending, running or waiting shows that step as **Not finished** and the
+deliverable it produces as **Not delivered**, instead of **Waiting for results**
+or **In progress**. Nothing will finish that work in the ended attempt, so
+**Retry from failed step** runs it again.
 
 Stop requests cancellation on the server. A connection loss instead requires
 checking the existing execution; it must not automatically start another one.
@@ -574,6 +621,11 @@ Automatic-attempt exhaustion alone never enables manual retry. Retry identities
 survive reload in the same browser tab, but reloading never posts a retry or
 reruns the original plan. An expired sign-in or a conflict requires checking
 saved state before another request.
+
+Since **0.261.303**, a failed file says why it could not be created, for example
+that the results it uses can only be checked with your sign-in. File retries run
+in the background, where that sign-in isn't available, so such a file offers
+**Retry from failed step** instead of **Retry file**.
 
 Generated-file history entries are informational, not uploaded-file previews or
 download receipts. Unavailable history entries show a safe explanation and close

@@ -4,6 +4,8 @@
 No producer, composition model, executor, route, or configuration owner is
 imported. Runtime owners supply current capability/admission checks and private
 transport. Approved deadlines and retry admissions survive worker replacement.
+A file whose sources could only be checked with a signed-in session that wasn't
+available fails as ``output_sign_in_required`` and says so (0.261.303).
 """
 
 import hashlib
@@ -38,6 +40,7 @@ from functions_generated_export_contracts import (
 from functions_generated_export_registry import ASSEMBLED_DOCUMENT_PROFILE, resolve_generated_file_export_format
 from functions_generated_file_exports import build_generated_file_export
 from functions_orchestration_artifacts import (
+    OUTPUT_SIGN_IN_REQUIRED,
     OrchestrationArtifactTransport,
     assert_artifact_matches,
     binding_for_intent,
@@ -45,10 +48,13 @@ from functions_orchestration_artifacts import (
     external_authority_failure,
     orchestration_artifact_file_extensions,
     output_storage_failure,
+    render_attempt_scope,
+    signed_in_session_required,
     validate_orchestration_artifact_binding,
 )
 from functions_orchestration_export_sources import open_orchestration_export_source
 from functions_orchestration_output_store import (
+    OUTPUT_FAILURE_MESSAGES,
     OUTPUT_UNAVAILABLE_MESSAGES,
     OrchestrationOutputStore,
     OutputClaim,
@@ -164,6 +170,8 @@ def _source_visibility_code(error):
             return "output_source_changed"
         if error.code in {"result_producer_unavailable", "result_attempt_mismatch", "result_attempt_stopped"}:
             return "output_source_unavailable"
+        if signed_in_session_required(error):
+            return OUTPUT_SIGN_IN_REQUIRED
         return "output_access_denied"
     if isinstance(error, PermissionError):
         return "output_access_denied"
@@ -252,6 +260,9 @@ def output_failure(exc):
         return authority[1], authority[2]
     if output_storage_failure(exc) is not None:
         return "output_storage_unavailable", True
+    if signed_in_session_required(exc):
+        # Automatic and file-only retries render in the background, which has no sign-in.
+        return OUTPUT_SIGN_IN_REQUIRED, False
     if isinstance(exc, DocumentHeldError):
         return "output_screening_hold", False
     if isinstance(exc, SourceAuthorityUnavailableError):
@@ -1019,7 +1030,10 @@ class OrchestrationRenderingService:
         attempt = _RenderAttempt(self, stop=stop)
         outcome = failure = None
         try:
-            outcome = self._render_attempt(output_id, claim, worker_id, attempt)
+            # Publishing the file rechecks its sources with this service's identity, not a
+            # fresh service's, so a signed-in execution can publish what it rendered.
+            with render_attempt_scope(self):
+                outcome = self._render_attempt(output_id, claim, worker_id, attempt)
             return outcome
         except Exception as exc:
             failure = exc
@@ -1273,6 +1287,11 @@ class OrchestrationRenderingService:
             yield stream
 
 
+def render_failure_code(error_code):
+    """The step failure a failed file reports when it carries a reason of its own."""
+    return "file_sign_in_required" if error_code == OUTPUT_SIGN_IN_REQUIRED else "step_failed"
+
+
 def _render_step_result(output, record, *, build_step_result, build_failure):
     if output["state"] == "completed":
         result = build_step_result(
@@ -1288,7 +1307,10 @@ def _render_step_result(output, record, *, build_step_result, build_failure):
         result = build_step_result(status="cancelled", summary=output["message"])
     else:
         # A file its step's time budget stopped reports that budget, with its admin hint.
-        failure_code = "step_timeout" if output.get("error_code") == OutputStepTimeLimitError.code else "step_failed"
+        failure_code = (
+            "step_timeout" if output.get("error_code") == OutputStepTimeLimitError.code
+            else render_failure_code(output.get("error_code"))
+        )
         result = build_step_result(
             status="failed", summary=output["message"],
             failure=build_failure(failure_code), error=output["message"],
@@ -1496,9 +1518,13 @@ def execute_render_file(
             result["outputs"] = [] if uncertain_authority or output["state"] == "completed" else [output]
             result["output_error"] = {"code": code, "retryable": retryable}
             return result
+        message = (
+            OUTPUT_FAILURE_MESSAGES[code] if code == OUTPUT_SIGN_IN_REQUIRED
+            else "This file could not be created."
+        )
         result = build_step_result(
-            status="failed", summary="This file could not be created.",
-            failure=build_failure("step_failed"), error="This file could not be created.",
+            status="failed", summary=message,
+            failure=build_failure(render_failure_code(code)), error=message,
         )
         result["output_error"] = {"code": code, "retryable": retryable}
         return result

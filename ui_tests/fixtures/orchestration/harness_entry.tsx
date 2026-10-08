@@ -17,6 +17,8 @@ import * as orchestrationStore from '../../../application/v2_ui/src/stores/orche
 import * as chatStore from '../../../application/v2_ui/src/stores/chatStore';
 import * as bootstrapStore from '../../../application/v2_ui/src/stores/bootstrapStore';
 import * as collaborationStore from '../../../application/v2_ui/src/stores/collaborationStore';
+import * as generatedDocumentsStore from '../../../application/v2_ui/src/stores/generatedDocumentsStore';
+import * as generatedExportRunStore from '../../../application/v2_ui/src/stores/generatedExportRunStore';
 import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
 import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
@@ -42,6 +44,7 @@ import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
 import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
 import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
 import { OrchestrationPlannerModelPicker } from '../../../application/v2_ui/src/components/admin/OrchestrationPlannerModelPicker';
+import { M365Cards } from '../../../application/v2_ui/src/components/settings/M365Cards';
 import { PLANNER_MODEL_KEYS } from '../../../application/v2_ui/src/lib/orchestrationPlannerModel';
 import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields';
 
@@ -171,6 +174,7 @@ type ComponentName =
     | 'OrchestrationPlanEditorHost'
     | 'ContextWorkflow'
     | 'ParticipantsPanel'
+    | 'M365Cards'
     | 'Toaster';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -193,6 +197,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationPlanEditorHost,
     ContextWorkflow,
     ParticipantsPanel,
+    M365Cards,
     Toaster,
 };
 
@@ -278,6 +283,15 @@ function reset(): void {
         drawerMode: null,
         messages: [],
     });
+    // What a conversation produced is shared by the drawer and the header, so a test reusing a
+    // conversation id would otherwise start from the previous test's list.
+    generatedDocumentsStore.useGeneratedDocumentsStore.setState({
+        requestKey: null,
+        conversationId: null,
+        documents: [],
+        error: null,
+    });
+    generatedExportRunStore.useGeneratedExportRunStore.setState({ runs: {} });
     userSettingsStore.useUserSettingsStore.setState({
         settings: {},
         loading: false,
@@ -308,6 +322,8 @@ const harness = {
         chat: chatStore,
         bootstrap: bootstrapStore,
         collaboration: collaborationStore,
+        generatedDocuments: generatedDocumentsStore,
+        generatedExportRuns: generatedExportRunStore,
         userSettings: userSettingsStore,
         assistThread: assistThreadStore,
     },

@@ -29,6 +29,56 @@ function buildSafeExternalLinkHtml(url, label) {
   return serializeSafeElement(link);
 }
 
+// Microsoft 365 citation ids are minted by the server: "m365-" and 16 hex characters.
+const M365_CITATION_ID_PATTERN = /^m365-[0-9a-f]{16}$/;
+
+export function isM365CitationId(citationId) {
+  return M365_CITATION_ID_PATTERN.test(String(citationId || '').replace(/^#/, '').trim());
+}
+
+function buildM365CitationLookup(records) {
+  const lookup = new Map();
+  if (!Array.isArray(records)) {
+    return lookup;
+  }
+  records.forEach((record) => {
+    if (record && typeof record === 'object' && isM365CitationId(record.citation_id)) {
+      lookup.set(record.citation_id, record);
+    }
+  });
+  return lookup;
+}
+
+function getM365CitationLabel(record, fallbackLabel) {
+  if (!record) {
+    return fallbackLabel || 'Microsoft 365 source';
+  }
+  const label = record.kind === 'file' ? (record.file_name || record.title) : record.title;
+  return String(label || fallbackLabel || 'Microsoft 365 source');
+}
+
+// An item opens where it lives (SharePoint, OneDrive or Outlook) only through an https link
+// recorded from Microsoft Graph; without one the item is shown as text.
+function buildM365CitationHtml(citationId, record, fallbackLabel) {
+  const label = getM365CitationLabel(record, fallbackLabel);
+  const safeUrl = sanitizeHttpUrl(record?.web_url || '');
+  if (safeUrl && safeUrl.startsWith('https://')) {
+    const link = document.createElement('a');
+    link.href = safeUrl;
+    link.className = 'm365-citation-link';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.dataset.m365CitationId = citationId;
+    link.textContent = label;
+    return serializeSafeElement(link);
+  }
+  const text = document.createElement('span');
+  text.className = 'm365-citation-text';
+  text.dataset.m365CitationId = citationId;
+  text.textContent = label;
+  return serializeSafeElement(text);
+}
+
 export function parseDocIdAndPage(citationId) {
   // ... (keep existing implementation)
   const underscoreIndex = citationId.lastIndexOf("_");
@@ -40,9 +90,10 @@ export function parseDocIdAndPage(citationId) {
   return { docId, pageNumber };
 }
 
-export function parseCitations(message) {
+export function parseCitations(message, options = {}) {
   // ... (keep existing implementation)
   const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const m365CitationLookup = buildM365CitationLookup(options.m365Citations);
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     // The bracket group's trailing \s* consumes whatever whitespace followed the last
@@ -78,6 +129,15 @@ export function parseCitations(message) {
         pageToRefMap[pageNumber] = ref; // ref is the full citationId like 'docid_pagenum'
       });
     });
+
+    // A Microsoft 365 email, event or file has no workspace passage to fetch, so its
+    // citation links to the item itself, or is plain text when no link was recorded.
+    if (orderedRefs.length > 0 && orderedRefs.every((ref) => isM365CitationId(ref))) {
+      const itemsHtml = [...new Set(orderedRefs)].map((ref) => (
+        buildM365CitationHtml(ref, m365CitationLookup.get(ref), trimmedFilename)
+      ));
+      return `(Source: ${itemsHtml.join(', ')}, ${escapeHtml(locationLabel)}: ${escapeHtml(locations.trim())})${trailingWhitespace}`;
+    }
 
     function getDocPrefix(ref) {
       const underscoreIndex = ref.lastIndexOf('_');
@@ -154,6 +214,10 @@ export function parseCitations(message) {
   // Anything still left is inline, so only the spaces or tabs in front of it are consumed.
   // Consuming newlines here would collapse the paragraph break that precedes the bracket.
   result = result.replace(new RegExp(`(?:[ \\t]*${guidBracketPattern})+`, 'gi'), '');
+
+  // A Microsoft 365 id copied without its Source prefix names no label to show, so it is
+  // removed the same way rather than shown as a raw id.
+  result = result.replace(/(?:[ \t]*\[#\s*m365-[0-9a-f]{16}\s*\])+/g, '');
 
   return result;
 }
@@ -934,6 +998,10 @@ if (chatboxEl) {
       if (!citationId) {
           console.warn("Citation link/button clicked but data-citation-id is missing.");
           showToast("Cannot process citation: Missing ID.", "warning");
+          return;
+      }
+      // Microsoft 365 ids never name a workspace passage; their links open the item itself.
+      if (isM365CitationId(citationId)) {
           return;
       }
 

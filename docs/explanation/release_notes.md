@@ -2,6 +2,76 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.304)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Approvals In A Plan Are Decided In The Chat**
+    *   With Orchestrate on, a SharePoint or OneDrive step that had to read more of a file than a quick read covers stopped for the user's extended-analysis approval and only linked to **Approvals**. The user had to decide there, come back and retry. The stop wasn't about access: a quick read covers 3 downloads, a 25 MB file and 12,000 tokens of file content, and the per-source preference defaults to **Ask**.
+    *   The stopped message now shows the approval itself. It says why the step stopped, from the approval's recorded counts, and offers **Allow this time**, **Always allow for SharePoint** (or OneDrive) and **Quick read only**. A choice is saved through the approvals API, and the plan continues straight away. An approval already decided in Approvals offers **Continue**. Other approvals still link to Approvals.
+    *   The step's failure now carries its pending approval's id. Only an id in the shape the application mints is kept, and the approvals API still checks the signed-in user.
+    *   (Ref: `M365ApprovalInlineCard.tsx`, `OrchestrationRecoveryNotice.tsx`, `functions_orchestration_schema.py` `build_failure`, `lib/orchestration.ts`, [Orchestration M365 Approval and Retry Flow Fix](fixes/ORCHESTRATION_M365_APPROVAL_RETRY_FLOW_FIX.md))
+
+*   **Retrying A Microsoft 365 Stop Needs No Confirmation, And A Confirmation Closes When The Retry Starts**
+    *   A **Use an action** step that stopped for Microsoft 365 sign-in, approval or policy is retried without "Retry this failed step?". It ran only its one Microsoft 365 action, and a plan step can only read Microsoft 365 data. The server decides this when it prepares the retry. Agent steps, and action steps that failed for other reasons, still ask.
+    *   A confirmation that is still needed now closes as soon as the retry is admitted. Before, it stayed open and busy until the whole retry finished.
+    *   (Ref: `functions_orchestration_recovery.py` `_stopped_without_effects`, `orchestrationController.ts` `launchSavedPlan`)
+
+*   **A Retry's Answer Replaces The Stopped Attempt**
+    *   After a successful retry, the stopped attempt's "The request could not be completed." message stayed in the thread, the answer carried a "Saved execution attempt - Attempt 2" box, and the stopped attempt was sent to the model on every later turn.
+    *   The retry's answer now replaces the attempt it retried in the thread, including after a reload. The stopped attempt is left out of the model's history, conversation exports and the **Documents** drawer, but stays stored. A completed retry shows no attempt notice, and **Message details** offers **View previous attempt** and **Review saved attempt**.
+    *   (Ref: `functions_orchestration_attempts.py`, `functions_orchestration_context.py`, `route_backend_chats.py` `build_conversation_history_segments`, `route_backend_conversation_export.py`, `MessageList.tsx`, `MessageInspector.tsx`, `conversationGeneratedFiles.ts`)
+
+### **(v0.261.303)**
+
+#### New Features
+
+*   **Microsoft 365 Files, Emails and Events as Citations**
+    *   Answers that use SharePoint or OneDrive files, emails or calendar events through a Microsoft 365 action now cite them like workspace documents, in chat with an agent and in Orchestrate mode. An orchestrated SharePoint answer that used to end with plain "Source: … (SharePoint file 20170010188.pdf)" text now cites the file after each claim.
+    *   In V2 a chip shows the file name or the email's or event's subject. Clicking it opens a source card with the item's details and **Open in SharePoint**, **Open in OneDrive** or **Open in Outlook**, which opens the item with the reader's own sign-in. The classic chat links the cited title to the item.
+    *   The Documents pane gains **SharePoint & OneDrive**, **Email** and **Calendar** sections listing every cited item, and every file whose content was read, with **Open online** instead of a download. Only the conversation owner sees them.
+    *   Email and event lists always use the same layout: a header such as "10 most recent emails, all unread, newest first:" and one numbered line per item with the subject in bold, the sender or time span and the citation. Times are written in the reader's browser time zone.
+    *   Each item gets a deterministic `m365-` id and a bounded record; only an `https` link from Microsoft Graph becomes a link, and no message body or file content is stored. Records come only from the Microsoft 365 actions themselves and are captured before the tool result is truncated, so output from any other tool that merely looks like a Graph result never becomes a Microsoft 365 citation or link. They are carried by shared conversations and exports and count as Microsoft 365 data when a conversation is shared.
+    *   Workflow answers are cited the same way. When a turn returns more than a message keeps, the cited items are kept first, and an item Microsoft 365 returns with an unusual value is simply left uncited instead of failing the tool.
+    *   (Ref: `functions_m365_citations.py`, `msgraph_plugin.py`, `functions_m365_retrieval.py`, `plugin_invocation_logger.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `functions_orchestration_adapters.py`, `functions_orchestration_execution.py`, `M365CitationChip.tsx`, `ConversationDrawer.tsx`, `chat-citations.js`, [Microsoft 365 Source Citations](features/M365_SOURCE_CITATIONS.md))
+#### Bug Fixes
+
+*   **Orchestrated Runs Reported Failure While Their Work Was Still Running**
+    *   A plan waiting on a long tabular analysis could reply "The request could not be completed. Saved step inputs changed." while the analysis was still running. The plan panel kept showing the step as **Waiting for results** and the answer as **In progress**, and offered no retry. A saved run's checkpoints were bound to a fingerprint of the whole settings document, so any settings save, including the Cosmos DB throughput autoscale recording a scale action, made the waiting run, and later retries of failed runs, look like their inputs had changed.
+    *   The fingerprint now leaves out storage metadata and the runtime state background tasks save. A configuration change by an administrator still stops saved work from being reused.
+    *   A run that fails or is stopped while a step is waiting shows that step as **Not finished** and its deliverable as **Not delivered**, and offers **Retry from failed step**, which runs the waiting step again and reuses completed ones.
+    *   Runs saved before this version can't be retried after the upgrade; ask again.
+    *   (Ref: `functions_settings_runtime_state.py`, `functions_orchestration_checkpoints.py`, `functions_orchestration_recovery.py`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`, [Orchestration Runs Failing While Their Work Was Still Running Fix](fixes/ORCHESTRATION_SETTINGS_WRITE_RECOVERY_FIX.md))
+
+*   **Files Built From Web, Agent or Action Results Failed Without a Reason**
+    *   An orchestrated file whose content came from web search, linked pages, deep research, an agent or an action rendered, then failed with only "This file could not be created." and no retry. Publishing it rechecked its sources through a new service that didn't have the user's sign-in. Publication now uses the rendering service that ran the attempt, which has it.
+    *   A file that still can't be checked without a sign-in, such as one prepared in the background, says so. A failed file now explains why it could not be created. When a failed file can't be retried on its own, the chat offers **Retry from failed step**.
+    *   (Ref: `functions_orchestration_artifacts.py` `render_attempt_scope`, `functions_orchestration_rendering.py`, `functions_orchestration_output_store.py`, `OrchestrationRecoveryNotice.tsx`, [Orchestration Files From External Results Failing Without a Reason Fix](fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md))
+### **(v0.261.302)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Sign-In No Longer Fails With `m365_auth_state_invalid`**
+    *   Reconnecting Microsoft 365 for chat could fail seconds after the user signed in, leaving raw JSON in the popup. The session store wrote the whole session back at the end of every request, so the request that finished last won. In V2, the startup-data refresh that runs when the window regains focus took about five seconds, loaded the session before the connect call saved the pending sign-in, and wrote its stale copy back afterwards.
+    *   A request now saves only the session keys it changed, merged into the latest stored copy, and a request that changed nothing no longer writes its copy back. A session deleted during a request stays deleted. This also stops overlapping requests from dropping token-cache refreshes, the Microsoft 365 CSRF token and other session writes.
+    *   V2 skips the focus refresh while one is running or one started in the last 15 seconds.
+    *   Sign-in callbacks show a result page instead of JSON. In a popup it reports back to the page that opened it and closes; opened as a full page, it continues on success or explains the error with a way to try again.
+    *   (Ref: `functions_session_store.py`, `app.py`, `m365_connection_result.html`, `route_backend_m365.py`, `bootstrapStore.ts`, [#1714](https://github.com/microsoft/simplechat/issues/1714), [Microsoft 365 Connection Session Race Fix](fixes/M365_CONNECTION_SESSION_RACE_FIX.md))
+
+*   **Workflow Connections Create Their Own Encryption Key**
+    *   **Connect for workflows** failed with "Configure Key Vault and a dedicated workflow encryption-key secret" unless an operator had created a key and set `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME`. SimpleChat now creates one deployment-wide key in the configured Key Vault the first time someone connects, and checks for it whenever an administrator saves settings. The app setting still overrides the secret name, so existing keys keep working.
+    *   This needs Key Vault secret storage on and the application identity allowed to create secrets. **Connect for workflows** is disabled with an explanation until Key Vault secret storage and a Key Vault name are configured.
+    *   Workflow sign-in now returns through `/getAToken`, which the app registration already lists, so no extra redirect URI is needed.
+    *   (Ref: `functions_m365_connections.py` `ensure_m365_workflow_encryption_key`, `workflow_connection_readiness`, `route_frontend_authentication.py`, `route_frontend_admin_settings.py`, `route_backend_v2.py`, [#1604](https://github.com/microsoft/simplechat/issues/1604))
+
+*   **Chat Connection Status Matches What Chat Can Use**
+    *   The chat connection card said "Sources saved for this session: none" while chat was reading mail, OneDrive and SharePoint, because it listed only sources from an explicit reconnect. It now lists the sources the current sign-in can use, in both V2 Settings and classic Profile.
+    *   (Ref: `functions_m365_connections.py` `read_chat_connection`, `profile-m365.js`, `M365Cards.tsx`)
+
+*   **Microsoft 365 Links Stay in V2**
+    *   Connect, reconnect and approval links in V2 chat, workflow cards and Approvals opened the classic Profile and Approvals pages. They now open V2 Settings at the Microsoft 365 section and V2 Approvals, and connecting for workflows in V2 uses a popup, like chat, instead of leaving the page.
+    *   (Ref: `m365Links.ts`, `m365Connect.ts`, `M365Cards.tsx`, `SettingsPage.tsx`, `OrchestrationM365Notice.tsx`, `WorkflowProposalCard.tsx`, `WorkflowRunCard.tsx`, `PendingActionsPanel.tsx`, `PausedRequestsPanel.tsx`)
+
 ### **(v0.261.301)**
 
 #### New Features

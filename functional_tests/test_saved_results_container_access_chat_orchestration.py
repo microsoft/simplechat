@@ -411,6 +411,9 @@ class ContainerAccessAndInputReadTests(ScreeningAccessFixture):
             "sanitize_saved_analysis_messages": saved.sanitize_saved_analysis_messages,
             "hydrate_agent_citations_from_artifacts": lambda raw_messages, payloads: raw_messages,
             "public_history_messages": screening_access.public_history_messages,
+            "exclude_superseded_orchestration_attempts": import_app_module(
+                "functions_orchestration_attempts",
+            ).exclude_superseded_orchestration_attempts,
             "sort_messages_by_thread": list,
             "is_collaboration_conversation": lambda conversation: False,
             "get_thoughts_for_conversation": lambda *args: [],

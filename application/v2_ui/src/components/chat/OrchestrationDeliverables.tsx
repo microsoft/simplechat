@@ -5,7 +5,8 @@
 // server checks each one against what it can actually produce. This section shows that list
 // before the steps: which step produces each deliverable, and, for one that cannot be produced
 // here, the server's reason in a warning tone. During and after a run the same rows follow their
-// steps, so a file or image that did not arrive is never shown as delivered. After a run, the
+// steps, so a file or image that did not arrive is never shown as delivered, and a run that failed
+// or stopped never leaves a deliverable it did not finish reading as in progress. After a run, the
 // server's own check decides a chart or diagram, because its step can finish without the answer
 // showing it.
 //
@@ -13,7 +14,9 @@
 
 import { clsx } from 'clsx';
 import { Ban, CheckCircle2, CircleAlert, Loader2, TriangleAlert, XCircle } from 'lucide-react';
-import type { OrchestrationDeliverableCheck, OrchestrationPlan, PlanEdits, StepStatus } from '../../lib/orchestration';
+import type {
+    OrchestrationDeliverableCheck, OrchestrationPlan, PlanEdits, PlanStatus, StepStatus,
+} from '../../lib/orchestration';
 import { deliverableRows, type DeliverableRow, type DeliverableState } from '../../lib/orchestrationPlan';
 
 const STATE_TONE: Record<DeliverableState, string> = {
@@ -78,6 +81,7 @@ export function OrchestrationDeliverables({
     statusOf,
     edits,
     checks,
+    runStatus,
     compact = false,
 }: {
     plan: OrchestrationPlan;
@@ -86,10 +90,12 @@ export function OrchestrationDeliverables({
     edits?: PlanEdits;
     /** The server's checks, after a run, of the charts and diagrams the user asked for. */
     checks?: OrchestrationDeliverableCheck[];
+    /** The run's status, so a run that ended does not show its unfinished deliverables as in progress. */
+    runStatus?: PlanStatus;
     /** The approval card lists only what the user asked for, without step names. */
     compact?: boolean;
 }) {
-    const rows = deliverableRows(plan, statusOf ?? (() => undefined), edits, checks);
+    const rows = deliverableRows(plan, statusOf ?? (() => undefined), edits, checks, runStatus);
     const asked = rows.filter((row) => row.deliverable.requested === 'explicit');
     const added = compact ? [] : rows.filter((row) => row.deliverable.requested !== 'explicit');
     if (!asked.length && !added.length) return null;

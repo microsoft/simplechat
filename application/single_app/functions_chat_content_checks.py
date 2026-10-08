@@ -42,7 +42,7 @@ SAFE_METADATA_FIELDS = (
 )
 ANSWER_FIELDS = (
     "hybrid_citations", "web_search_citations", "agent_citations",
-    "cited_hybrid_citations", "cited_web_search_citations",
+    "cited_hybrid_citations", "cited_web_search_citations", "m365_citations",
     "generated_artifacts", "generated_analysis_artifacts", "generated_tabular_outputs",
 )
 
@@ -309,7 +309,7 @@ def blocked_chat_payload(result, *, conversation_id=None, message_id=None):
         "done": True, "blocked": True, "role": "safety", "replace_content": True,
         "reply": result.notice, "content": result.notice, "full_content": result.notice,
         "conversation_id": conversation_id, "message_id": message_id,
-        "hybrid_citations": [], "web_search_citations": [], "agent_citations": [],
+        "hybrid_citations": [], "web_search_citations": [], "agent_citations": [], "m365_citations": [],
     }
 
 

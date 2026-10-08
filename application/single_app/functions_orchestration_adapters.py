@@ -1874,6 +1874,10 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
             'user_id': getattr(inv, 'user_id', None),
             'delegation': getattr(inv, 'provenance', None),
         })
+        captured = getattr(inv, 'm365_items', None)
+        if isinstance(captured, list) and captured:
+            # Read from the raw result before truncation, so the answer can still cite each item.
+            citations[-1]['m365_items'] = [dict(item) for item in captured if isinstance(item, dict)]
     return citations
 
 
@@ -1918,12 +1922,15 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)
         from functions_orchestration_actions import invoke_action
         from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
+        from functions_m365_citations import m365_display_time_zone
 
-        result = asyncio.run(invoke_action(
-            action_ref, task, context, settings=settings, user_id=user_id,
-            cancel_requested=lambda: _is_cancelled(cancel_requested),
-            **invocation_kwargs,
-        ))
+        # Microsoft 365 email and event times are shown in the turn's browser time zone.
+        with m365_display_time_zone(_ctx(context, 'time_zone')):
+            result = asyncio.run(invoke_action(
+                action_ref, task, context, settings=settings, user_id=user_id,
+                cancel_requested=lambda: _is_cancelled(cancel_requested),
+                **invocation_kwargs,
+            ))
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Action execution was cancelled.')
     except (
@@ -1963,10 +1970,29 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
         summary=summary,
-        notes=[f'Action "{display_name}" findings:\n{result["findings"]}'],
+        notes=[f'Action "{display_name}" findings:\n{result["findings"]}', *_m365_sources_notes(citations)],
         citations=citations,
         artifacts=result['artifacts'],
     )
+
+
+def _m365_sources_notes(citations):
+    """A deterministic list of the step's Microsoft 365 citation values, so the answer can cite them.
+
+    Built from the records captured at each tool call, never from the model's findings, so
+    the answer step always has every email, event or file the step read with its exact citation.
+    """
+    try:
+        from functions_m365_citations import build_m365_sources_note, collect_m365_citation_records
+
+        note = build_m365_sources_note(collect_m365_citation_records(citations))
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Microsoft 365 sources could not be listed for a step.',
+            level=logging.WARNING, extra={'error_type': type(exc).__name__},
+        )
+        return []
+    return [note] if note else []
 
 
 def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested):
@@ -2070,10 +2096,13 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
                     agent_cfg, user_id=user_id, conversation_id=conversation_id,
                     request_key=m365_request_key, origin=m365_origin,
                 )
-        result = asyncio.run(invoke_scoped_agent(
-            agent_cfg, task, identity=execution_identity, budget=budget,
-            cancel_requested=cancel_requested, scope=scope,
-        ))
+        from functions_m365_citations import m365_display_time_zone
+
+        with m365_display_time_zone(_ctx(context, 'time_zone')):
+            result = asyncio.run(invoke_scoped_agent(
+                agent_cfg, task, identity=execution_identity, budget=budget,
+                cancel_requested=cancel_requested, scope=scope,
+            ))
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Agent execution was cancelled.')
     except (
@@ -2107,7 +2136,10 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
         summary=_first_line(result['response']),
-        notes=[f'Agent "{agent_cfg.get("display_name") or agent_name}" replied:\n{result["response"]}'],
+        notes=[
+            f'Agent "{agent_cfg.get("display_name") or agent_name}" replied:\n{result["response"]}',
+            *_m365_sources_notes(citations),
+        ],
         citations=citations,
     )
 

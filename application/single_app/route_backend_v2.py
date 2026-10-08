@@ -171,6 +171,7 @@ from functions_keyvault import (
     keyvault_model_endpoint_save_helper,
 )
 from functions_keyvault_errors import KeyVaultSecretStorageError
+from functions_m365_connections import ensure_m365_workflow_encryption_key
 from functions_safety_remediation import count_pending_safety_warnings
 from functions_source_review import (
     get_source_review_runtime_capabilities,
@@ -2114,6 +2115,21 @@ def register_route_backend_v2_admin(bp):
             # next request, but the favicon and logo static files are written from it, so
             # a branding change has to refresh them.
             _refresh_branding_static_files()
+
+            # Saved Microsoft 365 workflow connections need the deployment's encryption key.
+            # Create it now rather than when someone first connects; a failure is reported
+            # beside the Key Vault settings only when this save changed them.
+            m365_workflow_key = ensure_m365_workflow_encryption_key(get_settings())
+            if m365_workflow_key["status"] == "unavailable" and {
+                "enable_key_vault_secret_storage", "key_vault_name", "key_vault_identity",
+            } & normalized.keys():
+                warnings = {
+                    **warnings,
+                    "key_vault_name": (
+                        "Microsoft 365 workflow connections are not ready. "
+                        f"{m365_workflow_key['message']}"
+                    ),
+                }
 
             # The response reflects the draft back into the page's stored state, so a
             # resolved secret has to be re-redacted on the way out, which

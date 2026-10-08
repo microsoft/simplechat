@@ -447,10 +447,18 @@ limits:
   Each request and source is recorded as a `shared_by_request` audit event. Workflow Run
   as approvals, and approvals to share earlier answers' Microsoft 365 history, still ask.
   Earlier versions stopped the step before it read anything.
-- **Approvals don't resume plans.** A step that needs an approval, such as deeper file
-  analysis, stops and links to Approvals. The user decides there and then selects **Retry
-  from failed step**. A retried step reuses its request, so the decision applies while
-  the action is unchanged.
+- **Approvals are decided in the conversation.** A step that needs an approval, such as
+  deeper file analysis, stops. Since **0.261.304**, the stopped message in the V2 chat
+  shows the approval itself: why the step stopped (for example, about 18,000 tokens of
+  file content, more than a quick read covers) and **Allow this time**, **Always allow
+  for SharePoint** (or OneDrive) or **Quick read only**. Choosing one saves the decision
+  through the same approvals API as the Approvals page and continues the plan at once.
+  An approval already decided in Approvals offers **Continue**. Earlier versions only
+  linked to Approvals and asked the user to come back and select **Retry from failed
+  step**, which still works. A retried step reuses its request, so the decision applies
+  while the action is unchanged. Each user can preset deeper analysis per source under
+  **Settings > Preferences > Connected accounts > Microsoft 365 sharing > Extended
+  analysis**, which avoids the prompt entirely.
 - **SharePoint and OneDrive use the step's own model.** File searches and reads limit
   the excerpts and content they return to what the model can take. Chat measures that
   against the selected agent's model. Since **0.261.300**, a plan step measures it
@@ -688,6 +696,21 @@ identifier derived from the plan's first attempt and the step, so the retry find
 that attempt started and links it. Stopping a plan does not stop a workflow it already
 started; the user cancels that run in Workflows.
 
+From **0.261.304**, a **Use an action** step that stopped for Microsoft 365 sign-in,
+approval or policy retries without that confirmation. It ran only its one Microsoft 365
+action, and a plan step can only read Microsoft 365 data, so a retry repeats no change.
+The server decides this when it prepares the retry, so a browser can't skip a confirmation
+another step still needs. **Ask an agent** steps keep the confirmation: an agent can load
+actions that send or change data.
+
+Also from **0.261.304**, the confirmation closes as soon as the retry starts instead of
+staying open until the whole retry finishes. The retry's answer then replaces the stopped
+attempt in the V2 thread. The stopped attempt stays saved for the record, but it is hidden,
+it is left out of the history the model reads on later turns, out of conversation exports
+and out of the Documents drawer, and a successful retry shows no attempt notice.
+**Message details** on the retried answer offers **View previous attempt** and **Review
+saved attempt**.
+
 A live execution cannot be retried. Missing, incompatible, or unauthorized
 checkpoints block recovery rather than causing completed actions to run again.
 Older runs without full checkpoints remain readable but require a new plan.
@@ -739,6 +762,9 @@ names the check that failed in `sc_reason`. It shares `sc_run_id_hash` and
 | A question is asked that was already answered | The earlier answer may be outside retained message history and the activity ledger. | Check the history window and ledger limits; the ledger alone does not contain the full earlier answer. |
 | A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | A web or research step says it continued in the background, where the user's sign-in is not available | The run continued without the user's browser session, for example after a restart, so their app roles couldn't be confirmed. | Ask the user to send the request again from the chat. The new run uses their signed-in session. |
+| Before 0.261.303, a run waiting on a long tabular analysis replied "The request could not be completed. Saved step inputs changed." while the plan panel still showed the step **Waiting for results** and the answer **In progress**, with no **Retry from failed step** | A saved run's binding hashed the whole settings document, including storage metadata and runtime state that background tasks save. Any settings save, such as the Cosmos DB throughput autoscale recording a scale action, made the run's continuation see changed inputs. `[ORCHESTRATION_RUNS] Headless execution did not complete.` logs `sc_execution_code=recovery_changed` a few seconds after `[ASC] App settings updated and published successfully.` | Upgrade to 0.261.303 or later. Background saves no longer affect saved runs, and a run that ended while a step was waiting shows **Not finished** and offers **Retry from failed step**. Runs saved before the upgrade can't be retried; ask again. See the [runs failing while their work was still running fix]({{ '/explanation/fixes/ORCHESTRATION_SETTINGS_WRITE_RECOVERY_FIX/' | relative_url }}). |
+| Before 0.261.303, a file built from web search, deep research, agent or action results always said "This file could not be created." and offered no retry | Publishing the file rechecked its sources through a new service built without the user's sign-in. `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.` logs `sc_authority_reason=external_identity_session_unavailable`, then `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` logs `sc_output_code=output_access_denied`. | Upgrade to 0.261.303 or later. See the [files from external results fix]({{ '/explanation/fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX/' | relative_url }}). |
+| A file says its results can only be checked with the user's sign-in | The file was prepared in the background, for example after the run waited for a long computation, where the user's sign-in isn't available to check web, deep research, agent or action results. | Ask the user to select **Retry from failed step** in the chat. The retry runs with their sign-in and reuses the completed steps. |
 | Every web search, linked-page or deep research step says a required retained result is unavailable or changed | Before 0.261.209, orchestration checked each user's roles through Microsoft Graph, which needs `Directory.Read.All`, and refused research whenever query or linked-page planning was on. | Upgrade to 0.261.209 or later; no Graph permission or settings change is needed. If a step still fails, check `sc_authority_reason` on its failure event in [orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics). |
 | Every step completed, but the run is partially completed with "A required retained result is unavailable or changed" | Before 0.261.237, settings read from Cosmos DB instead of the shared Redis copy came back as an SDK type that the access recheck refused. That happens while any settings save is in progress, for example the Cosmos throughput autoscale saving its status, and on every read when Redis is off. The failure event logs `sc_authority_reason=result_external_context_unavailable`. | Upgrade to 0.261.237 or later. No setting change is needed. See the [settings document type fix]({{ '/explanation/fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX/' | relative_url }}). |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |

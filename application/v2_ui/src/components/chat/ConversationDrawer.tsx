@@ -2,33 +2,41 @@
 // Right-hand drawer with three modes, mirroring the legacy offcanvas that hosts both a
 // table of contents and the documents used in the conversation, plus the orchestration plan.
 //
-// Contents lists the user's turns so a long thread can be navigated; Documents lists the
-// document-level citation aggregates the server records on the conversation; Plan hosts the
-// orchestration plan surface when the feature is on.
+// Contents lists the user's turns so a long thread can be navigated; Documents lists generated
+// files and media, document-level citation aggregates, and the owner's Microsoft 365 items with
+// links that open them online; Plan hosts the orchestration plan surface when the feature is on.
 
 import { useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import {
+    CalendarDays,
     FileText,
     Files,
     ListOrdered,
     ListTree,
+    Mail,
     Quote,
     TriangleAlert,
     X,
 } from 'lucide-react';
 import { useChatStore, type DrawerMode } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import {
+    useConversationGeneratedDocuments,
+    useConversationGeneratedFiles,
+} from '../../stores/generatedDocumentsStore';
 import { collectConversationMedia } from '../../lib/conversationMedia';
+import { mergeGeneratedEntries } from '../../lib/conversationGeneratedFiles';
+import { m365SecondaryLine, readUsedM365Items } from '../../lib/m365Citations';
 import { EmptyState, Skeleton } from '../ui/primitives';
 import {
-    GeneratedDocumentsSection,
+    GeneratedSection,
     MediaSection,
     SectionHeading,
-    useGeneratedDocuments,
 } from './DrawerAssets';
+import { M365KindIcon, M365OpenLink } from './M365CitationChip';
 import { OrchestrationPlanPanel } from './OrchestrationPlanPanel';
-import type { UsedDocument } from '../../lib/types';
+import type { UsedDocument, UsedM365Item } from '../../lib/types';
 
 /** Scroll a message into view and flash it, so the jump target is obvious. */
 function scrollToMessage(messageId: string) {
@@ -154,13 +162,90 @@ function DocumentRow({ document }: { document: UsedDocument }) {
     );
 }
 
+/**
+ * One Microsoft 365 item the conversation used, with a link that opens it where it lives.
+ *
+ * There is no download here: the item stays in SharePoint, OneDrive or Outlook, and opening it
+ * there uses the reader's own sign-in, so they see exactly what their access allows.
+ */
+function M365ItemRow({ item }: { item: UsedM365Item }) {
+    const title = (item.kind === 'file' && item.file_name) || item.title;
+    const secondary = m365SecondaryLine(item);
+
+    return (
+        <li className="glass-flat rounded-xl p-3" data-m365-citation-id={item.citation_id}>
+            <div className="flex items-start gap-2.5">
+                <M365KindIcon kind={item.kind} size={16} className="mt-0.5 shrink-0 text-text-3" />
+                <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-text-1" title={title}>
+                        {title}
+                    </p>
+                    {secondary && (
+                        <p className="mt-0.5 truncate text-xs text-text-3" title={secondary}>
+                            {secondary}
+                        </p>
+                    )}
+                    {(item.cited || item.content_read) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-3">
+                            {item.cited ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-accent">
+                                    <Quote size={10} />
+                                    Cited
+                                </span>
+                            ) : (
+                                <span>Read while answering</span>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <M365OpenLink
+                    record={item}
+                    label="Open online"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-surface-2"
+                />
+            </div>
+        </li>
+    );
+}
+
+function M365Section({
+    label,
+    icon: Icon,
+    items,
+}: {
+    label: string;
+    icon: typeof Files;
+    items: UsedM365Item[];
+}) {
+    return (
+        <section aria-label={label}>
+            <SectionHeading>
+                <span className="inline-flex items-center gap-1.5">
+                    <Icon size={11} aria-hidden="true" />
+                    {label}
+                </span>
+            </SectionHeading>
+            <ul className="space-y-2">
+                {items.map((item) => (
+                    <M365ItemRow key={item.citation_id} item={item} />
+                ))}
+            </ul>
+        </section>
+    );
+}
+
 function DocumentsMode() {
     const { metadata, metadataLoading, metadataError, activeConversationId, loadMetadata } =
         useChatStore();
-    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const kind = useChatStore((state) => state.activeConversationKind);
     const messages = useChatStore((state) => state.messages);
     const media = useMemo(() => collectConversationMedia(messages), [messages]);
-    const generated = useGeneratedDocuments(activeConversationId, collaborative);
+    const files = useConversationGeneratedFiles();
+    const generated = useConversationGeneratedDocuments();
+    const entries = useMemo(
+        () => mergeGeneratedEntries(files, generated.documents, messages),
+        [files, generated.documents, messages],
+    );
 
     useEffect(() => {
         if (activeConversationId && !metadata && !metadataLoading && !metadataError) {
@@ -190,14 +275,18 @@ function DocumentsMode() {
         }
         return [...merged.values()];
     }, [metadata]);
+    // Microsoft 365 items are listed only to their owner; the server sends no others.
+    const m365 = useMemo(() => readUsedM365Items(metadata), [metadata]);
 
-    const hasAssets = generated.documents.length > 0 || Boolean(generated.error) || media.length > 0;
+    const hasAssets = entries.length > 0 || Boolean(generated.error) || media.length > 0;
     const assets = hasAssets && activeConversationId ? (
         <>
-            <GeneratedDocumentsSection
+            <GeneratedSection
                 conversationId={activeConversationId}
-                documents={generated.documents}
+                kind={kind ?? 'personal'}
+                entries={entries}
                 error={generated.error}
+                onLocate={scrollToMessage}
             />
             <MediaSection items={media} onLocate={scrollToMessage} />
         </>
@@ -228,12 +317,12 @@ function DocumentsMode() {
         );
     }
 
-    if (documents.length === 0 && !assets) {
+    if (documents.length === 0 && m365.total === 0 && !assets) {
         return (
             <EmptyState
                 icon={<Files size={24} />}
-                title="No documents used yet"
-                description="Documents referenced while answering will be listed here."
+                title="No documents yet"
+                description="Documents used or created while answering will be listed here."
             />
         );
     }
@@ -243,13 +332,20 @@ function DocumentsMode() {
             {assets}
             {documents.length > 0 && (
                 <section aria-label="Used in answers">
-                    {assets && <SectionHeading>Used in answers</SectionHeading>}
+                    {(assets || m365.total > 0) && <SectionHeading>Used in answers</SectionHeading>}
                     <ul className="space-y-2">
                         {documents.map((document) => (
                             <DocumentRow key={document.document_id} document={document} />
                         ))}
                     </ul>
                 </section>
+            )}
+            {m365.files.length > 0 && (
+                <M365Section label="SharePoint & OneDrive" icon={Files} items={m365.files} />
+            )}
+            {m365.emails.length > 0 && <M365Section label="Email" icon={Mail} items={m365.emails} />}
+            {m365.events.length > 0 && (
+                <M365Section label="Calendar" icon={CalendarDays} items={m365.events} />
             )}
         </div>
     );

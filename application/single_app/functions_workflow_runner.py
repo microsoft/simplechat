@@ -29,6 +29,7 @@ from azure.identity import (
 from flask import Flask, g, has_request_context, session
 from content_screening.access import isolate_request_source_fence
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_citations import attach_m365_message_citations, merge_m365_items_into_conversation
 from functions_workflow_alert_safety import sanitize_workflow_alert_decision
 from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
 from functions_m365_runtime import (
@@ -2270,6 +2271,12 @@ def _build_agent_citations_from_plugin_invocations(plugin_invocations):
             'user_id': invocation.user_id,
             'delegation': getattr(invocation, 'provenance', None),
         })
+        # Microsoft 365 citation records captured when the plugin ran, before any truncation.
+        captured_m365_items = getattr(invocation, 'm365_items', None)
+        if isinstance(captured_m365_items, list) and captured_m365_items:
+            detailed_citations[-1]['m365_items'] = [
+                dict(item) for item in captured_m365_items if isinstance(item, dict)
+            ]
 
     return detailed_citations
 
@@ -4907,6 +4914,34 @@ def _build_workflow_mirror_metadata(workflow, source_assistant_doc, previous_thr
     }
 
 
+def _attach_workflow_m365_citations(assistant_doc, raw_agent_citations, workflow):
+    """Record the Microsoft 365 items a workflow answer drew on; never fails the run."""
+    try:
+        attach_m365_message_citations(
+            assistant_doc, raw_agent_citations,
+            data_user_id=str(workflow.get('user_id') or '').strip() or None,
+        )
+    except Exception as exc:
+        log_event(
+            '[WORKFLOW_RUNNER] Microsoft 365 citations could not be recorded for a workflow answer.',
+            extra={'workflow_id': workflow.get('id'), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+    return assistant_doc
+
+
+def _merge_workflow_m365_items(conversation, assistant_doc):
+    """Add a workflow answer's cited or read Microsoft 365 items to the conversation's Documents list."""
+    try:
+        merge_m365_items_into_conversation(conversation, assistant_doc)
+    except Exception as exc:
+        log_event(
+            '[WORKFLOW_RUNNER] Microsoft 365 items could not be added to the conversation.',
+            extra={'conversation_id': (conversation or {}).get('id'), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+
+
 def _mirror_assistant_message_to_personal_conversation(
     workflow,
     source_assistant_doc,
@@ -4961,6 +4996,7 @@ def _mirror_assistant_message_to_personal_conversation(
         'citation_tracking_version',
         'cited_hybrid_citations',
         'cited_web_search_citations',
+        'm365_citations',
     ):
         if field_name in source_assistant_doc:
             if field_name == 'citation_tracking_version':
@@ -4977,6 +5013,7 @@ def _mirror_assistant_message_to_personal_conversation(
             conversation_doc,
             mirrored_assistant_doc.get('cited_hybrid_citations'),
         )
+    _merge_workflow_m365_items(conversation_doc, mirrored_assistant_doc)
     conversation_doc['last_updated'] = timestamp
     conversation_doc['has_unread_assistant_response'] = True
     conversation_doc['last_unread_assistant_message_id'] = mirrored_message_id
@@ -6739,6 +6776,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             'saved_analyses': saved_analyses,
             'analysis_result_contexts': [saved_analysis_context(item) for item in saved_analyses],
         })
+    _attach_workflow_m365_citations(assistant_doc, raw_agent_citations, workflow)
     cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
 
     token_usage = result.get('token_usage') if isinstance(result.get('token_usage'), dict) else None
@@ -6780,6 +6818,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         conversation,
         citation_tracking['cited_hybrid_citations'],
     )
+    _merge_workflow_m365_items(conversation, assistant_doc)
     cosmos_conversations_container.upsert_item(conversation)
 
     return assistant_doc
