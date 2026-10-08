@@ -65,7 +65,8 @@ Background runs have no signed-in session. `capture_execution_identity` outside
 a request returns empty roles and no email, so a role-gated step that worked
 when the user ran the plan by hand would fail on the schedule.
 
-Plan replay uses a role-free allowlist (option **a**). Every capability check,
+Plan replay uses its own design (option **c**): a fixed, empty-roles identity on
+every path, combined with option (a)'s role-free allowlist. Every capability check,
 at freeze and on every run, resolves capabilities with
 `user_roles: []` and `user_enable_agents: False`. The harness is prepared with
 the same empty identity context. A capability that needs the caller's roles is
