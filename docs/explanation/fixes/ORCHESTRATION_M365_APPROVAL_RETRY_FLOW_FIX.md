@@ -134,6 +134,10 @@ retry whose progress can't be followed is reconciled with the saved run.
   the same on the server. `build_conversation_snapshot()`,
   `build_conversation_history_segments()` and `_build_export_entry()` leave replaced
   attempts out of the model's history and out of exports. The messages stay stored.
+- `collectConversationGeneratedFiles()` and `visibleGeneratedDocuments()` in
+  `lib/conversationGeneratedFiles.ts` skip replaced attempts too. The V2 Documents
+  drawer lists the files and agent documents of the replies the thread shows, so a
+  hidden attempt's files aren't listed either.
 - A completed retry shows no recovery notice. While a newer attempt has no saved
   answer yet, the earlier attempt shows one line, "A newer attempt of this plan
   exists.", with **View current attempt**.
@@ -157,6 +161,7 @@ retry whose progress can't be followed is reconciled with the saved run.
 | `v2_ui/src/lib/orchestration.ts` | `approval_id` on failures, and the replaced-attempt helpers. |
 | `v2_ui/src/lib/orchestrationController.ts` | `launchSavedPlan()`; retries resolve when admitted. |
 | `v2_ui/src/lib/m365Links.ts` | `M365_SHARING_PREFERENCES_HREF`, the card's in-app link to the Microsoft 365 sharing card in Settings. |
+| `v2_ui/src/lib/conversationGeneratedFiles.ts` | The Documents drawer skips replaced attempts' files and agent documents. |
 | `config.py` | Version `0.261.304`. |
 
 ## Validation
@@ -188,6 +193,8 @@ retry whose progress can't be followed is reconciled with the saved run.
 - `functional_tests/test_v2_workflow_run_tracking_xss_guardrail.py` pins
   `M365_SHARING_PREFERENCES_HREF` with the other Microsoft 365 links, which the XSS
   checker trusts by name.
+- `functional_tests/test_v2_drawer_generated_files_logic.mjs` checks that a replaced
+  attempt's files and agent documents leave the Documents drawer once the retry exists.
 
 ### Before and after
 
@@ -196,7 +203,7 @@ retry whose progress can't be followed is reconciled with the saved run.
 | The stopped message linked to Approvals; the user decided there, came back and retried. | The stopped message explains why and offers the decision; choosing continues the plan. |
 | Retrying a Microsoft 365 stop asked "Retry this failed step?". | No confirmation for a Microsoft 365 action stop, enforced by the server. |
 | A confirmation stayed open, busy, until the whole retry finished. | It closes as soon as the retry starts. |
-| The stopped attempt's message stayed in the thread and in the model's history. | The retry's answer replaces it in the thread, history and exports; it stays stored. |
+| The stopped attempt's message stayed in the thread and in the model's history. | The retry's answer replaces it in the thread, history, exports and Documents drawer; it stays stored. |
 | A successful retry showed "Saved execution attempt - Attempt 2". | No notice; the attempt links are in **Message details**. |
 
 ## Limitations

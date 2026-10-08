@@ -19,8 +19,8 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **A Retry's Answer Replaces The Stopped Attempt**
     *   After a successful retry, the stopped attempt's "The request could not be completed." message stayed in the thread, the answer carried a "Saved execution attempt - Attempt 2" box, and the stopped attempt was sent to the model on every later turn.
-    *   The retry's answer now replaces the attempt it retried in the thread, including after a reload. The stopped attempt is left out of the model's history and of conversation exports, but stays stored. A completed retry shows no attempt notice, and **Message details** offers **View previous attempt** and **Review saved attempt**.
-    *   (Ref: `functions_orchestration_attempts.py`, `functions_orchestration_context.py`, `route_backend_chats.py` `build_conversation_history_segments`, `route_backend_conversation_export.py`, `MessageList.tsx`, `MessageInspector.tsx`)
+    *   The retry's answer now replaces the attempt it retried in the thread, including after a reload. The stopped attempt is left out of the model's history, conversation exports and the **Documents** drawer, but stays stored. A completed retry shows no attempt notice, and **Message details** offers **View previous attempt** and **Review saved attempt**.
+    *   (Ref: `functions_orchestration_attempts.py`, `functions_orchestration_context.py`, `route_backend_chats.py` `build_conversation_history_segments`, `route_backend_conversation_export.py`, `MessageList.tsx`, `MessageInspector.tsx`, `conversationGeneratedFiles.ts`)
 
 ### **(v0.261.302)**
 

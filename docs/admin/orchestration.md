@@ -706,9 +706,10 @@ actions that send or change data.
 Also from **0.261.304**, the confirmation closes as soon as the retry starts instead of
 staying open until the whole retry finishes. The retry's answer then replaces the stopped
 attempt in the V2 thread. The stopped attempt stays saved for the record, but it is hidden,
-it is left out of the history the model reads on later turns and out of conversation
-exports, and a successful retry shows no attempt notice. **Message details** on the
-retried answer offers **View previous attempt** and **Review saved attempt**.
+it is left out of the history the model reads on later turns, out of conversation exports
+and out of the Documents drawer, and a successful retry shows no attempt notice.
+**Message details** on the retried answer offers **View previous attempt** and **Review
+saved attempt**.
 
 A live execution cannot be retried. Missing, incompatible, or unauthorized
 checkpoints block recovery rather than causing completed actions to run again.

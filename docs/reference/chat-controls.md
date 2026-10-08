@@ -358,7 +358,7 @@ These controls exist only in the V2 interface, so they are not part of the gener
 
 ## Shared conversations (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for, which agents are working, and what the conversation has produced. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They make a conversation with several people and agents readable at a glance: who a message is for and which agents are working. See [V2 shared conversation experience]({{ '/explanation/features/V2_COLLABORATION_UX/' | relative_url }}) for the full description.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
@@ -366,7 +366,15 @@ These controls exist only in the V2 interface, so they are not part of the gener
 | Mention chips | Show who the message is for: any number of people and at most one model or agent. Picking a second agent replaces the first, and each chip has a remove button. When you send, the names are placed in front of the message, which is how the server, the classic interface and the assistant read them. A message of chips alone is sent as a ping. | Use them to check who will be notified and which agent will answer before sending. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
 | Mention pills on a message | Show the agent that was asked and the people who were named as pills above the message text, with your own name highlighted. The `@Name` text is removed from what is displayed, including where a reply quotes the message; the stored message keeps it. | Use them to see at a glance who a message was for, the same way a reply shows what it answers. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
 | Agent activity line | Shows one slim line at the end of the thread for each running request: which agent, who asked, how long it has been running, and what it is doing in plain words, such as "Looking up order status", "Asking Data Analyst" or "Writing the answer". Everyone in the conversation sees it, several can run at once, and it replaces the large "Thinking" bubble in shared conversations. | Use it to know an agent is still working, and on what, without the thread filling with placeholders. | [`enable_collaborative_conversations`]({{ '/admin/chat/' | relative_url }}) |
-| Generated (Documents drawer) | Lists the documents agents created in this conversation with the SimpleChat upload actions. Markdown opens in a preview, and Download appears only when the workspace's download rules allow it for you. | Use it to open or save a briefing or report an agent produced without hunting for it in a workspace. | [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) for group documents<br>[`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) for personal documents |
+
+## Documents drawer (V2 interface)
+
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. The drawer's **Documents** tab gathers what a conversation used and what it produced, in personal and shared conversations alike, so a file or source is not lost in a long thread. See [Documents drawer generated files fix]({{ '/explanation/fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX/' | relative_url }}) for how generated files are found.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Documents button badge | Counts the documents answers used plus every file and document the conversation produced, each once. Media is not counted. | Use it to see at a glance that a reply produced a file, even with the drawer closed. | Always available |
+| Generated (Documents drawer) | Lists every file the conversation produced, in conversation order. That covers the files an orchestration plan rendered (CSV, Excel, Word, PDF, PowerPoint, Markdown, text, JSON, XML and YAML), exports and Analyze or comparison files a reply wrote, and documents agents created with the SimpleChat upload actions. A file that is still rendering, failed, or waits for a shared conversation owner's approval is listed with its status. **Download** appears once the file is ready, and only where the workspace's download rules allow it for an agent's document. Markdown and files that carry a preview open in place, and **Show in conversation** scrolls to the reply that produced the file. | Use it to download or reopen a file a reply made, such as a CSV export, without scrolling back through the thread to find its card. | Always available; agent documents follow [`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) and [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) |
 | Media (Documents drawer) | Gathers every image, video and audio clip shown in the conversation, including signed links an action fetched from a remote service, grouped as **Images**, **Videos** and **Audio** with a count for each. Images and clips open one viewer that steps through all of them, with **Show in conversation** to scroll to the message. Recordings play in place and can be downloaded. | Use it to find a photo, clip or recording again in a long thread. | Always available |
 
 ## Media in replies (V2 interface)
@@ -546,7 +554,8 @@ create a competing retry after a newer attempt has been prepared.
 
 Since **0.261.304**, a retry's answer replaces the attempt it retried in the thread.
 The earlier attempt stays saved for the record, but it is hidden, and it is left out
-of what the model reads on later turns and out of conversation exports. While a
+of what the model reads on later turns, out of conversation exports and out of the
+**Documents** drawer. While a
 prepared or running retry has no saved answer yet, the earlier attempt shows only
 "A newer attempt of this plan exists." with **View current attempt**.
 
