@@ -1,8 +1,8 @@
 // test_v2_public_workspace_context_logic.mjs
-// Version: 0.261.294
+// Version: 0.261.296
 // Implemented in: 0.261.179
 // The settings, activity and statistics manage sections and the settings_management hint (M10C): 0.261.185
-// User Settings Open path for a public workspace row: 0.261.294
+// User Settings Open path for a public workspace row: 0.261.296
 // Executes the real public workspace context validator (isPublicWorkspaceContext in
 // lib/workspaceContext.ts) for the M10A additions: the optional top-level membership_management
 // hint, and the `members` manage section validated in the `manage` group exactly as the group

@@ -1,8 +1,8 @@
 # test_v2_settings_workspace_open.py
 """
 Production-SPA coverage for opening a workspace from V2 User Settings.
-Version: 0.261.294
-Implemented in: 0.261.294
+Version: 0.261.296
+Implemented in: 0.261.296
 
 The Groups and Public workspaces tabs in User Settings list the workspaces a user can use. Each row
 offers Open beside Set active (or the Active badge). Open goes to the workspace's V2 page by its

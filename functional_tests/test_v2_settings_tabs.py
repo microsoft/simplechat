@@ -2,9 +2,9 @@
 """
 Functional test for the V2 settings tabs and the routes behind them.
 
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.022
-Groups and Public workspaces rows open their workspace page: 0.261.294
+Groups and Public workspaces rows open their workspace page: 0.261.296
 
 Each tab reads a different set of endpoints, and every field name and query parameter here
 was taken from the route rather than inferred. The point of pinning them is that a rename on
@@ -175,7 +175,7 @@ def test_rows_open_their_workspace_without_activating():
         "Open and Set active must share the same busy gating"
     )
 
-    assert_app_version_at_least("0.261.294")
+    assert_app_version_at_least("0.261.296")
     print("Settings Open action test passed!")
     return True
 

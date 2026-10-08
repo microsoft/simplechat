@@ -104,7 +104,7 @@ you to confirm first. Chat reconnect opens Microsoft sign-in in a pop-up and kee
 page; connecting for workflows signs in through the classic Profile page and returns there.
 
 The **Groups** and **Public** tabs list the workspaces you can use, with your role in each.
-From version **0.261.294**, every row has **Open**, which takes you straight to that
+From version **0.261.296**, every row has **Open**, which takes you straight to that
 workspace, next to **Set active**, which only changes where new work in this interface is
 scoped and keeps you in settings. Opening a group also makes it your active group, because a
 group's pages work in the active group. Opening a public workspace leaves your active public

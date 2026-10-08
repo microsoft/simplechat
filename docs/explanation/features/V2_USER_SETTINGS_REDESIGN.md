@@ -2,7 +2,7 @@
 
 **Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention);
 **0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features);
-**0.261.294** (Open on Groups and Public rows)
+**0.261.296** (Open on Groups and Public rows)
 
 ## Overview
 
@@ -17,7 +17,7 @@ Profile page in stages:
 3. Fact memory workbench and Microsoft 365 sharing and workflows (0.261.279).
 4. Guided tours and the Latest Features shortcut (0.261.280).
 5. Opening a group or public workspace from its row, as the classic page's **Manage** link
-   does (0.261.294).
+   does (0.261.296).
 
 Dependencies: the V2 React interface (`application/v2_ui`) and the user settings API
 (`/api/user/settings`).
@@ -167,7 +167,7 @@ route and its body key, and where a row opens.
   **Active** badge or a **Set active** button, and **Open**.
 - **Set active** goes through the dedicated setActive route and then re-reads the list, because
   the server resolves which workspace is active.
-- **Open** (0.261.294) navigates to `WorkspaceKind.openPath(id)`, which is
+- **Open** (0.261.296) navigates to `WorkspaceKind.openPath(id)`, which is
   `groupWorkspacePath(id)` (`/groups/<id>`) or `publicWorkspacePath(id)` (`/public/<id>`). Both
   are reviewed same-origin builders in `scripts/check_xss_sinks.py`. Like the directories'
   **Open**, the tab never activates anything itself; the page it lands on decides. A group page

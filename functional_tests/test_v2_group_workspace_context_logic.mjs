@@ -1,10 +1,10 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.294
+// Version: 0.261.296
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
 // Members section validation (M7B): 0.261.155
 // Workspace navigation URL validation: 0.261.281
-// User Settings Open path for a group row: 0.261.294
+// User Settings Open path for a group row: 0.261.296
 // Executes the real context API and stores with controlled HTTP ordering.
 
 import assert from 'node:assert/strict';

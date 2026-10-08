@@ -47,6 +47,7 @@ import {
     WORKFLOW_RUN_STATUS_UNAVAILABLE,
     WORKFLOW_STATUS_HALTED_TEXT,
     type WorkflowRunStatusRow,
+    type WorkflowWaitingReason,
 } from '../../lib/workflowRunStatus';
 import type { TrackedWorkflowRun } from '../../lib/workflowRunTracker';
 import { useChatStore } from '../../stores/chatStore';
@@ -127,13 +128,15 @@ function FinishedText({ row, conversationId }: { row: WorkflowRunStatusRow; conv
     return <p className="break-words text-text-2">{text}</p>;
 }
 
-function LiveRunRow({
+export function LiveRunRow({
     conversationId,
     name,
     run,
     tracked,
     live,
     available,
+    heading = 'Started workflow',
+    waitingText = workflowWaitingText,
 }: {
     conversationId: string;
     /** The workflow's name, rendered as plain text. */
@@ -143,6 +146,10 @@ function LiveRunRow({
     /** The tracker is running and not halted, so the row's actions reflect a current read. */
     live: boolean;
     available: boolean;
+    /** The label above the workflow's name. */
+    heading?: string;
+    /** What the row says a waiting run is waiting for. */
+    waitingText?: (reason: WorkflowWaitingReason) => string;
 }) {
     const { pending, outcome, run: act } = useWorkflowRunAction(conversationId, run.workflowId, run.runId);
     const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -170,10 +177,10 @@ function LiveRunRow({
             details.push(<p key="progress" className="break-words text-text-2">{progress.join(' · ')}</p>);
         }
         if (row.waiting) {
-            details.push(<p key="waiting" className="break-words text-text-2">{workflowWaitingText(row.waiting.reason)}</p>);
+            details.push(<p key="waiting" className="break-words text-text-2">{waitingText(row.waiting.reason)}</p>);
         }
     } else if (row?.phase === 'needs_you' && row.waiting) {
-        details.push(<p key="waiting" className="break-words text-text-2">{workflowWaitingText(row.waiting.reason)}</p>);
+        details.push(<p key="waiting" className="break-words text-text-2">{waitingText(row.waiting.reason)}</p>);
         if (controls?.approve) {
             // The run's own page shows the gate's prompt and choices; nothing is approved from here.
             // Like Cancel and Retry, it waits while another action on this run is in flight.
@@ -248,7 +255,7 @@ function LiveRunRow({
             className="min-w-0 space-y-1 rounded-xl border border-edge bg-surface-2 p-3 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                    <p className="text-text-3">Started workflow</p>
+                    <p className="text-text-3">{heading}</p>
                     <p className="break-words text-sm font-medium text-text-1">{name}</p>
                 </div>
                 <p role="status" className={clsx('rounded px-2 py-0.5 font-medium', statusTone(row))}>
