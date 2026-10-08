@@ -1,7 +1,7 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.034
+Version: 0.261.302
 Implemented in: 0.261.029
 
 Imports the real route module with scoped authentication/logging I/O seams.
@@ -110,7 +110,10 @@ class M365RouteTests(unittest.TestCase):
         }
         with patch.dict(sys.modules, dependencies):
             spec.loader.exec_module(self.routes)
-        self.app = Flask(__name__)
+        # The real templates and static files, so callbacks render the actual result page.
+        self.app = Flask(
+            __name__, template_folder=str(APP_DIR / "templates"), static_folder=str(APP_DIR / "static"),
+        )
         self.app.secret_key = "unit-test-only"
         blueprint = Blueprint("backend_m365", __name__)
         self.routes.register_route_backend_m365(blueprint)
@@ -497,6 +500,144 @@ class M365RouteTests(unittest.TestCase):
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")
                 self.assertEqual(response.headers["Pragma"], "no-cache")
                 self.assertEqual(response.status_code, 302 if result == "connected" else 400)
+                if result == "invalid":
+                    # A readable page that can report to an opener, not raw JSON in the popup.
+                    page = response.get_data(as_text=True)
+                    self.assertEqual(response.mimetype, "text/html")
+                    self.assertIn("Microsoft 365 was not connected", page)
+                    self.assertIn("Connect again.", page)
+                    self.assertIn('"type": "m365-connect-failed"', page)
+                    self.assertIn('"code": "m365_auth_state_invalid"', page)
+                    self.assertIn("js/profile/profile-m365-connection-result.js", page)
+
+    def test_chat_callback_answers_the_popup_that_started_it(self):
+        dependencies = self.chat_request_dependencies(CosmosContainer("user_id"))
+        dependencies["functions_m365_runtime"] = module_stub(
+            "functions_m365_runtime", _conversation_access=Mock(side_effect=AssertionError("No request is resumed.")),
+        )
+        with patch.dict(sys.modules, dependencies), self.app.test_request_context(
+            "/getAToken?state=m365-chat-popupstate&code=opaque",
+        ):
+            session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+            session[connections.CHAT_AUTH_SESSION_KEY] = {
+                "flow": {"state": "m365-chat-popupstate"}, "completion": "popup", "purpose": "profile_reconnect",
+            }
+            with patch.object(
+                self.connection_service, "complete_chat_connection",
+                return_value={"return_to": "profile", "completion": "popup"},
+            ):
+                connected = self.routes.complete_m365_chat_connection_callback()
+            with patch.object(
+                self.connection_service, "complete_chat_connection",
+                side_effect=connections.M365ConnectionError("m365_consent_required", "Consent was not completed."),
+            ):
+                session[connections.CHAT_AUTH_SESSION_KEY] = {
+                    "flow": {"state": "m365-chat-popupstate"}, "completion": "popup", "purpose": "profile_reconnect",
+                }
+                failed = self.routes.complete_m365_chat_connection_callback()
+        self.assertEqual(connected.status_code, 200)
+        self.assertIn('"type": "m365-profile-reconnected"', connected.get_data(as_text=True))
+        self.assertIn('"completion": "popup"', connected.get_data(as_text=True))
+        self.assertEqual(failed.status_code, 400)
+        self.assertIn('"completion": "popup"', failed.get_data(as_text=True))
+        self.assertIn("Consent was not completed.", failed.get_data(as_text=True))
+
+    def test_workflow_connect_uses_registered_callback_and_reports_readiness(self):
+        dependencies = {
+            "config": module_stub("config", LOGIN_REDIRECT_URL=None),
+            "functions_settings": module_stub("functions_settings", get_settings=lambda: {
+                "enable_key_vault_secret_storage": False,
+            }),
+        }
+        begin = Mock(return_value={"authorization_url": "https://login.microsoftonline.com/tenant-a/authorize"})
+        with patch.dict(sys.modules, dependencies), patch.object(self.connection_service, "start_connection", begin):
+            status = self.client.get("/api/m365/connections")
+            page = self.client.post(
+                "/api/m365/connections/connect", json={"sources": ["email"]},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            popup = self.client.post(
+                "/api/m365/connections/connect", json={"sources": ["email"], "completion": "popup"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            invalid = self.client.post(
+                "/api/m365/connections/connect", json={"sources": ["email"], "completion": "window"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        readiness = status.get_json()["workflow_connections"]
+        self.assertEqual(readiness["available"], False)
+        self.assertEqual(readiness["reason"], "key_vault_disabled")
+        self.assertIn("Admin Settings", readiness["message"])
+        self.assertEqual((page.status_code, popup.status_code, invalid.status_code), (200, 200, 400))
+        self.assertEqual(begin.call_count, 2)
+        for call, completion in zip(begin.call_args_list, ("page", "popup")):
+            self.assertEqual(call.args[3], "http://localhost/getAToken")
+            self.assertEqual(call.kwargs["completion"], completion)
+
+    def workflow_callback(self, path, *, completion, binding=True, failure=None):
+        with self.app.test_request_context(path):
+            session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+            if binding:
+                session["m365_workflow_oauth_binding"] = "binding"
+            with patch.object(
+                self.connection_service, "connection_flow_completion", return_value=completion,
+            ), patch.object(
+                self.connection_service, "complete_connection",
+                side_effect=failure, return_value={"status": "connected"},
+            ) as complete:
+                response = self.routes.complete_m365_workflow_connection_callback()
+            binding_left = session.get("m365_workflow_oauth_binding")
+        return response, complete, binding_left
+
+    def test_workflow_callback_answers_popups_redirects_pages_and_explains_failures(self):
+        path = "/getAToken?state=m365-workflow-abcdefghijklmnopqrstuvwxyz&code=opaque"
+        popup, complete, binding_left = self.workflow_callback(path, completion="popup")
+        self.assertEqual(popup.status_code, 200)
+        self.assertIn('"type": "m365-workflow-connected"', popup.get_data(as_text=True))
+        self.assertEqual(complete.call_args.args[:4], (
+            "user-a", "tenant-a", {"state": "m365-workflow-abcdefghijklmnopqrstuvwxyz", "code": "opaque"}, "binding",
+        ))
+        self.assertIsNone(binding_left)
+
+        page, _complete, _binding = self.workflow_callback(path, completion="page")
+        self.assertEqual(page.status_code, 302)
+        self.assertEqual(page.headers["Location"], self.routes.CLASSIC_WORKFLOW_CONNECTED_URL)
+
+        expired, complete, _binding = self.workflow_callback(path, completion="popup", binding=False)
+        self.assertEqual(expired.status_code, 400)
+        self.assertIn('"code": "m365_auth_state_invalid"', expired.get_data(as_text=True))
+        self.assertIn("Start Connect for workflows again.", expired.get_data(as_text=True))
+        complete.assert_not_called()
+
+        key_error = connections.M365ConnectionError("m365_key_provision_forbidden", "Grant Key Vault Secrets Officer.")
+        forbidden, _complete, _binding = self.workflow_callback(path, completion="auto", failure=key_error)
+        self.assertEqual(forbidden.status_code, 503)
+        self.assertEqual(forbidden.headers["Cache-Control"], "private, no-store")
+        self.assertIn('"completion": "auto"', forbidden.get_data(as_text=True))
+        self.assertIn("Grant Key Vault Secrets Officer.", forbidden.get_data(as_text=True))
+
+    def test_legacy_workflow_callback_still_completes_existing_registrations(self):
+        with patch.object(self.routes, "complete_m365_workflow_connection_callback", return_value="workflow-done") as workflow, \
+             patch.object(self.routes, "complete_m365_chat_connection_callback", return_value="chat-done") as chat:
+            workflow_response = self.client.get("/api/m365/connections/callback?state=legacy-state-value&code=x")
+            chat_response = self.client.get("/api/m365/connections/callback?state=m365-chat-value&code=x")
+        self.assertEqual(workflow_response.get_data(as_text=True), "workflow-done")
+        self.assertEqual(chat_response.get_data(as_text=True), "chat-done")
+        workflow.assert_called_once()
+        chat.assert_called_once()
+
+    def test_sign_in_callback_routes_workflow_state_to_the_workflow_completion(self):
+        source = (APP_DIR / "route_frontend_authentication.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        authorized = next(
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "authorized"
+        )
+        body = ast.get_source_segment(source, authorized)
+        workflow_branch = body.index("startswith(WORKFLOW_AUTH_STATE_PREFIX)")
+        self.assertLess(body.index("startswith(CHAT_AUTH_STATE_PREFIX)"), workflow_branch)
+        self.assertLess(workflow_branch, body.index("complete_m365_workflow_connection_callback()"))
+        # Both M365 branches run before the login token exchange.
+        self.assertLess(body.index("complete_m365_workflow_connection_callback()"), body.index("request.args.get('code')"))
 
     def test_chat_callback_returns_to_original_visible_conversation_without_running_a_request(self):
         jobs = CosmosContainer("user_id")
@@ -550,9 +691,22 @@ class M365RouteTests(unittest.TestCase):
                 "/api/m365/chat/connection/connect", json={"sources": ["spo", "email"]},
                 headers={"X-M365-CSRF-Token": self.csrf},
             )
+            popup = self.client.post(
+                "/api/m365/chat/connection/connect", json={"sources": ["email"], "completion": "popup"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            invalid_completion = self.client.post(
+                "/api/m365/chat/connection/connect", json={"sources": ["email"], "completion": "tab"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
         self.assertEqual(missing.status_code, 403)
         self.assertEqual(valid.status_code, 200)
-        begin.assert_called_once_with("user-a", "tenant-a", ["spo", "email"], "http://localhost/getAToken")
+        self.assertEqual(popup.status_code, 200)
+        self.assertEqual(invalid_completion.status_code, 400)
+        self.assertEqual(begin.call_args_list[0].args, ("user-a", "tenant-a", ["spo", "email"], "http://localhost/getAToken"))
+        self.assertEqual(begin.call_args_list[0].kwargs, {"completion": "page"})
+        self.assertEqual(begin.call_args_list[1].kwargs, {"completion": "popup"})
+        self.assertEqual(begin.call_count, 2)
         self.assertEqual(self.connection_container.items, {})
 
     def test_profile_callback_does_not_read_or_replay_any_chat_request(self):

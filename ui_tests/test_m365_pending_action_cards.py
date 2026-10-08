@@ -977,7 +977,7 @@ def test_expired_sign_in_can_cancel_or_reconnect_without_resuming_agent(pending_
         expect(card(page)).to_contain_text("Current server status loaded")
         expect(card(page).get_by_role("button", name="Send", exact=True)).to_be_enabled()
         assert len(pending.writes) == 1
-        assert api.profile_chat_connect_requests == [{"sources": ["calendar"]}]
+        assert api.profile_chat_connect_requests == [{"sources": ["calendar"], "completion": "popup"}]
         card(page).get_by_role("button", name="Send", exact=True).click()
         expect(card(page)).to_contain_text("Sent — calendar invitation created")
     assert len(pending.writes) == 2
@@ -1041,7 +1041,7 @@ def test_reconnect_acknowledgement_survives_stored_error_echoes_but_not_new_revi
     expect(card(page).get_by_role("button", name="Reconnect Microsoft 365", exact=True)).to_be_visible()
     assert not pending.writes
     assert len(api.chat_requests) == 1
-    assert api.profile_chat_connect_requests == [{"sources": ["calendar"]}]
+    assert api.profile_chat_connect_requests == [{"sources": ["calendar"], "completion": "popup"}]
     assert not api.resume_requests
     assert not api.errors
 

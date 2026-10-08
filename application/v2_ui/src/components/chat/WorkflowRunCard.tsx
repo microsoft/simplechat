@@ -198,9 +198,9 @@ export function LiveRunRow({
             );
         } else if (controls?.reconnect) {
             actions.push(
-                <a key="reconnect" href={M365_CONNECT_HREF} className={LINK_CLASS}>
+                <Link key="reconnect" to={M365_CONNECT_HREF} className={LINK_CLASS}>
                     Reconnect Microsoft 365
-                </a>,
+                </Link>,
             );
         }
     } else if (row?.phase === 'finished') {

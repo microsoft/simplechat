@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 import msal
 import requests
 from azure.core import MatchConditions
-from azure.core.exceptions import AzureError
+from azure.core.exceptions import AzureError, HttpResponseError, ResourceNotFoundError
 from azure.cosmos import exceptions as cosmos_exceptions
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -43,6 +43,9 @@ from functions_m365_approvals import (
 
 
 KEY_SECRET_ENV = "M365_WORKFLOW_TOKEN_KEY_SECRET_NAME"
+DEFAULT_KEY_SECRET_NAME = "simplechat-m365-workflow-token-key"
+KEY_SECRET_CONTENT_TYPE = "application/vnd.simplechat.m365-workflow-key+base64"
+KEY_SECRET_TAGS = {"simplechat-purpose": "m365-workflow-token-key"}
 ENCRYPTION_VERSION = 1
 MAX_CACHE_BYTES = 512 * 1024
 AUTH_FLOW_SECONDS = 600
@@ -51,6 +54,11 @@ CONNECTION_CALLBACK_PATH = "/api/m365/connections/callback"
 CHAT_CALLBACK_PATH = "/getAToken"
 CHAT_AUTH_SESSION_KEY = "m365_chat_auth_flow"
 CHAT_AUTH_STATE_PREFIX = "m365-chat-"
+# Workflow sign-in returns to the registered /getAToken callback too; the prefix routes it.
+WORKFLOW_AUTH_STATE_PREFIX = "m365-workflow-"
+# How the browser that started a sign-in hears the result: a full-page redirect, or a popup
+# that reports to the window that opened it.
+COMPLETION_MODES = frozenset({"page", "popup"})
 CHAT_CONNECTION_SESSION_KEY = "m365_chat_connection"
 CHAT_RECONNECT_SESSION_KEY = "m365_chat_reconnect_required"
 _SOURCE_SCOPE_NAMES = {
@@ -284,6 +292,33 @@ def _source_connection_scopes(sources):
     return sorted(set().union(*(_SOURCE_CONNECT_SCOPE_NAMES[source] for source in sources)))
 
 
+def _granted_session_sources(cache, account, config):
+    """Sources whose permissions this cached sign-in already holds. Reads the cache only.
+
+    Chat preflight silently requests each source's connect scopes with the session's refresh
+    token, so a source is usable when a refresh token exists and Microsoft granted those
+    scopes. Microsoft returns every scope consented for the resource on each token, which is
+    what MSAL records as the cached access token's target.
+    """
+    home_account_id = account.get("home_account_id")
+
+    def own(token):
+        return token.get("home_account_id") == home_account_id and token.get("client_id") == config.client_id
+
+    if not any(own(token) for token in cache.search(msal.TokenCache.CredentialType.REFRESH_TOKEN)):
+        return []
+    prefix = f"{config.graph_resource}/".lower()
+    granted = {
+        scope.lower().removeprefix(prefix)
+        for token in cache.search(msal.TokenCache.CredentialType.ACCESS_TOKEN) if own(token)
+        for scope in str(token.get("target") or "").split()
+    }
+    return [
+        source for source in M365_SOURCES
+        if {name.lower() for name in _SOURCE_CONNECT_SCOPE_NAMES[source]} <= granted
+    ]
+
+
 def mark_m365_chat_reconnect_required(context):
     """Fence rejected interactive credentials without revoking workflow connections."""
     if not has_request_context() or context is None or context.workflow_id:
@@ -312,9 +347,12 @@ def _require_granted_scopes(requested_scopes, granted_scope, config):
 
 
 def _validate_callback_uri(redirect_uri, *, interactive=False):
+    # Workflow sign-in uses the registered /getAToken callback; the dedicated workflow
+    # callback stays accepted for deployments that registered it.
+    allowed_paths = {CHAT_CALLBACK_PATH} if interactive else {CHAT_CALLBACK_PATH, CONNECTION_CALLBACK_PATH}
     redirect = urlsplit(redirect_uri)
     if (
-        redirect.path != (CHAT_CALLBACK_PATH if interactive else CONNECTION_CALLBACK_PATH)
+        redirect.path not in allowed_paths
         or redirect.query or redirect.fragment or redirect.username or redirect.password
         or not redirect.hostname
         or (redirect.scheme != "https" and not (
@@ -368,37 +406,134 @@ def _default_msal_factory(cache, config):
     )
 
 
-def _default_key_provider(version=None, name=None):
+_KEY_VAULT_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9-]{1,22}[A-Za-z0-9]"
+_KEY_SECRET_NAME_PATTERN = r"[A-Za-z0-9-]{1,127}"
+_KEY_VAULT_SETTINGS_LOCATION = "Admin Settings > Security > Secrets > Key Vault"
+
+
+def workflow_key_secret_name():
+    """The Key Vault secret holding the deployment's one workflow encryption key.
+
+    Every user's saved workflow sign-in is encrypted separately with this key and bound to
+    that user's connection record. The app setting is optional; it renames the secret.
+    """
+    return (os.environ.get(KEY_SECRET_ENV) or "").strip() or DEFAULT_KEY_SECRET_NAME
+
+
+def workflow_connection_readiness(settings):
+    """Whether saved workflow connections can work here, from settings alone (no Key Vault call).
+
+    The encryption key itself is created on first use, so a missing key is not a reason.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    vault_name = settings.get("key_vault_name")
+    if not settings.get("enable_key_vault_secret_storage"):
+        return {
+            "available": False, "reason": "key_vault_disabled",
+            "message": (
+                "Workflow connections are not set up on this deployment yet: they need Key Vault "
+                f"secret storage. An administrator can turn it on in {_KEY_VAULT_SETTINGS_LOCATION}."
+            ),
+        }
+    if not isinstance(vault_name, str) or not re.fullmatch(_KEY_VAULT_NAME_PATTERN, vault_name.strip()):
+        return {
+            "available": False, "reason": "key_vault_name_missing",
+            "message": (
+                "Workflow connections are not set up on this deployment yet: they need a Key Vault "
+                f"name. An administrator can set it in {_KEY_VAULT_SETTINGS_LOCATION}."
+            ),
+        }
+    if not re.fullmatch(_KEY_SECRET_NAME_PATTERN, workflow_key_secret_name()):
+        return {
+            "available": False, "reason": "key_secret_name_invalid",
+            "message": (
+                f"The {KEY_SECRET_ENV} app setting is not a valid Key Vault secret name. An "
+                "administrator must correct it or remove it to use the default name."
+            ),
+        }
+    return {"available": True, "reason": None, "message": ""}
+
+
+def _log_key_created(name, version):
+    # The logger depends on config/settings; only a live key creation reaches this.
+    from functions_appinsights import log_event
+    log_event(
+        "[AUTH] Created the Microsoft 365 workflow encryption key in Key Vault.",
+        extra={"secret_name": name, "key_version": version},
+    )
+
+
+def _create_workflow_key_secret(client, name):
+    """Store a new random 256-bit key and return its properties and value.
+
+    The value is never logged and never leaves the server.
+    """
+    value = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+    try:
+        created = client.set_secret(
+            name, value, content_type=KEY_SECRET_CONTENT_TYPE, tags=dict(KEY_SECRET_TAGS),
+        )
+    except HttpResponseError as exc:
+        _log_failure("m365_key_provision_failed", exc)
+        if getattr(exc, "status_code", None) == 403:
+            raise M365ConnectionError(
+                "m365_key_provision_forbidden",
+                "SimpleChat could not create the workflow encryption key because its identity cannot "
+                "write Key Vault secrets. An administrator must grant it Key Vault Secrets Officer on the vault.",
+            ) from exc
+        if getattr(exc, "status_code", None) == 409:
+            raise M365ConnectionError(
+                "m365_key_deleted",
+                f"The workflow encryption key secret '{name}' was deleted and is still recoverable. "
+                "An administrator must recover or purge it in Key Vault.",
+            ) from exc
+        raise M365ConnectionError("m365_key_unavailable", "The workflow encryption key could not be created.") from exc
+    except AzureError as exc:
+        _log_failure("m365_key_provision_failed", exc)
+        raise M365ConnectionError("m365_key_unavailable", "The workflow encryption key could not be created.") from exc
+    _log_key_created(name, created.properties.version)
+    return created.properties, value
+
+
+def _load_workflow_key(settings, version=None, name=None, *, create_missing=False):
+    """Read the workflow key from Key Vault, creating it only when asked and it does not exist.
+
+    Returns the key and whether it was just created. Decryption always pins the stored key
+    version and never creates one, so two instances creating it at once is harmless: each
+    version stays readable for what it encrypted.
+    """
     # Key Vault is mandatory; there is deliberately no Flask-secret/plaintext fallback.
     from azure.keyvault.secrets import SecretClient
     import config as app_config
     from functions_keyvault import get_keyvault_credential
-    from functions_settings import get_settings
 
-    configured_name = os.environ.get(KEY_SECRET_ENV, "")
-    settings = get_settings()
-    vault_name = settings.get("key_vault_name")
-    if (
-        not settings.get("enable_key_vault_secret_storage")
-        or not isinstance(vault_name, str)
-        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{1,22}[A-Za-z0-9]", vault_name.strip())
-        or not re.fullmatch(r"[A-Za-z0-9-]{1,127}", configured_name)
-        or (name is not None and name != configured_name)
-    ):
+    readiness = workflow_connection_readiness(settings)
+    if not readiness["available"]:
+        raise M365ConnectionError("m365_key_vault_required", readiness["message"])
+    configured_name = workflow_key_secret_name()
+    if name is not None and name != configured_name:
         raise M365ConnectionError(
-            "m365_key_vault_required",
-            "Configure Key Vault and a dedicated workflow encryption-key secret before connecting Microsoft 365.",
+            "m365_key_unavailable",
+            "The workflow encryption key that protected this connection is no longer configured. "
+            "Reconnect Microsoft 365 for workflows.",
         )
     client = SecretClient(
-        vault_url=f"https://{vault_name.strip()}{app_config.KEY_VAULT_DOMAIN}",
+        vault_url=f"https://{settings['key_vault_name'].strip()}{app_config.KEY_VAULT_DOMAIN}",
         credential=get_keyvault_credential(settings=settings),
     )
+    created = False
     try:
         secret = client.get_secret(configured_name, version=version)
+        properties, secret_value = secret.properties, secret.value
+    except ResourceNotFoundError as exc:
+        if version is not None or not create_missing:
+            _log_failure("m365_key_unavailable", exc)
+            raise M365ConnectionError("m365_key_unavailable", "The workflow encryption key is unavailable.") from exc
+        properties, secret_value = _create_workflow_key_secret(client, configured_name)
+        created = True
     except AzureError as exc:
         _log_failure("m365_key_unavailable", exc)
         raise M365ConnectionError("m365_key_unavailable", "The workflow encryption key is unavailable.") from exc
-    properties = secret.properties
     if (
         properties.enabled is False
         or (properties.expires_on is not None and utc_datetime(properties.expires_on) <= utc_now())
@@ -407,10 +542,46 @@ def _default_key_provider(version=None, name=None):
     ):
         raise M365ConnectionError("m365_key_unavailable", "The workflow encryption-key version is unavailable.")
     try:
-        raw_key = base64.b64decode(secret.value, validate=True)
+        raw_key = base64.b64decode(secret_value, validate=True)
     except (ValueError, TypeError, binascii.Error) as exc:
         raise M365ConnectionError("m365_key_invalid", "The workflow encryption key must contain a base64-encoded 256-bit key.") from exc
-    return M365EncryptionKey(key=raw_key, version=properties.version, name=configured_name)
+    return M365EncryptionKey(key=raw_key, version=properties.version, name=configured_name), created
+
+
+def _default_key_provider(version=None, name=None):
+    from functions_settings import get_settings
+
+    # Encrypting (no version) creates the deployment's key on first use.
+    key, _created = _load_workflow_key(get_settings(), version, name, create_missing=version is None)
+    return key
+
+
+def ensure_m365_workflow_encryption_key(settings):
+    """Create the workflow encryption key now if it is missing. Never raises.
+
+    Admin settings saves call this so the key exists before anyone connects. The result is
+    safe to show an administrator.
+    """
+    readiness = workflow_connection_readiness(settings)
+    if not readiness["available"]:
+        return {"status": "not_configured", "reason": readiness["reason"], "message": readiness["message"]}
+    try:
+        _key, created = _load_workflow_key(settings, create_missing=True)
+    except M365ConnectionError as exc:
+        return {"status": "unavailable", "reason": exc.code, "message": exc.payload["message"]}
+    except Exception as exc:
+        # Admin saves call this after storing settings; an optional key check must not fail them.
+        _log_failure("m365_key_provision_failed", exc)
+        return {
+            "status": "unavailable", "reason": "m365_key_unavailable",
+            "message": "The workflow encryption key could not be checked in Key Vault.",
+        }
+    if created:
+        return {
+            "status": "created", "reason": None,
+            "message": f"Created the Microsoft 365 workflow encryption key '{workflow_key_secret_name()}' in Key Vault.",
+        }
+    return {"status": "ready", "reason": None, "message": ""}
 
 
 def sanitize_m365_connection(connection):
@@ -513,12 +684,16 @@ class M365ConnectionService:
         except cosmos_exceptions.CosmosResourceExistsError:
             return self._read(connection_id, user_id)
 
-    def start_connection(self, user_id, tenant_id, sources, redirect_uri, session_binding, scopes=None):
+    def start_connection(
+        self, user_id, tenant_id, sources, redirect_uri, session_binding, scopes=None, completion="page",
+    ):
         config = self.config_provider()
         _identifier(user_id)
         _identifier(session_binding)
         if tenant_id != config.tenant_id:
             raise M365ConnectionError("m365_account_mismatch", "Connect only your account in this deployment's tenant.")
+        if completion not in COMPLETION_MODES:
+            raise ValueError("Unsupported sign-in completion mode.")
         if (
             not isinstance(sources, list) or not sources or len(sources) > len(M365_SOURCES)
             or any(source not in M365_SOURCES for source in sources)
@@ -541,7 +716,7 @@ class M365ConnectionService:
         client = self.msal_factory(cache, config)
         flow = client.initiate_auth_code_flow(
             scopes=required, redirect_uri=redirect_uri,
-            state=secrets.token_urlsafe(32), prompt="select_account",
+            state=f"{WORKFLOW_AUTH_STATE_PREFIX}{secrets.token_urlsafe(32)}", prompt="select_account",
         )
         _validate_auth_flow(flow, config)
         expires_at = self.clock() + timedelta(seconds=AUTH_FLOW_SECONDS)
@@ -554,7 +729,7 @@ class M365ConnectionService:
             "session_binding": hashlib.sha256(session_binding.encode("utf-8")).hexdigest(),
             "status": "pending", "sources": sorted(set(sources)),
             "requested_scopes": required, "expires_at": expires_at.isoformat(),
-            "ttl": AUTH_FLOW_SECONDS * 2,
+            "completion": completion, "ttl": AUTH_FLOW_SECONDS * 2,
         }
         record["encrypted_flow"] = encrypt_m365_cache(
             json.dumps(flow, separators=(",", ":")), record, key,
@@ -564,6 +739,23 @@ class M365ConnectionService:
             "authorization_url": flow["auth_uri"], "connection_id": connection["id"],
             "expires_at": expires_at.isoformat(),
         }
+
+    def connection_flow_completion(self, user_id, state):
+        """How the browser that started a workflow sign-in expects the result: page, popup or auto.
+
+        Read before completing so even a failed callback can answer a popup. It never raises:
+        an unknown or unreadable flow reports "auto" and the result page decides.
+        """
+        if not isinstance(state, str) or not 20 <= len(state) <= 256:
+            return "auto"
+        try:
+            record = self._read(f"m365-oauth-{hashlib.sha256(state.encode('utf-8')).hexdigest()}", user_id)
+        except (AzureError, ValueError, TypeError):
+            return "auto"
+        if not isinstance(record, dict) or record.get("purpose") != "m365_workflow_connection":
+            return "auto"
+        completion = record.get("completion")
+        return completion if completion in COMPLETION_MODES else "page"
 
     def complete_connection(self, user_id, tenant_id, auth_response, session_binding, *, cache_writer=None):
         config = self.config_provider()
@@ -660,7 +852,14 @@ class M365ConnectionService:
         return config
 
     def read_chat_connection(self, user_id, tenant_id):
-        """Report local session state without probing Graph or exposing credential material."""
+        """Report local session state without probing Graph or exposing credential material.
+
+        ``sources`` are the sources chat can use now: the session holds a refresh token for
+        the user and Microsoft has granted each source's permissions, as recorded on the
+        cached access tokens. That includes consent given at sign-in or by an administrator,
+        not only an explicit reconnect. When a reconnect is needed, ``sources`` lists the
+        sources last connected here, to offer them again.
+        """
         config = self._interactive_config(user_id, tenant_id)
         metadata = session.get(CHAT_CONNECTION_SESSION_KEY)
         if not isinstance(metadata, dict) or (
@@ -679,24 +878,27 @@ class M365ConnectionService:
             try:
                 cache = deserialize_m365_cache(session["token_cache"])
                 accounts = list(cache.search(msal.TokenCache.CredentialType.ACCOUNT))
-                select_m365_account(accounts, user_id, tenant_id)
+                account = select_m365_account(accounts, user_id, tenant_id)
                 result["status"] = "available"
+                result["sources"] = _granted_session_sources(cache, account, config)
             except M365ConnectionError:
                 result["status"] = "reconnect_required"
         if metadata.get("connected_at"):
             result["connected_at"] = metadata["connected_at"]
         return result
 
-    def start_profile_chat_connection(self, user_id, tenant_id, sources, redirect_uri):
+    def start_profile_chat_connection(self, user_id, tenant_id, sources, redirect_uri, completion="page"):
         scopes = _source_connection_scopes(sources)
+        if completion not in COMPLETION_MODES:
+            raise ValueError("Unsupported sign-in completion mode.")
         return self._start_interactive_connection(
             user_id, tenant_id, scopes, redirect_uri,
-            purpose="profile_reconnect", sources=sorted(set(sources)),
+            purpose="profile_reconnect", sources=sorted(set(sources)), completion=completion,
         )
 
     def _start_interactive_connection(
         self, user_id, tenant_id, scopes, redirect_uri, *,
-        purpose, request_id=None, conversation_id=None, sources=None,
+        purpose, request_id=None, conversation_id=None, sources=None, completion="page",
     ):
         config = self._interactive_config(user_id, tenant_id)
         _validate_callback_uri(redirect_uri, interactive=True)
@@ -719,7 +921,7 @@ class M365ConnectionService:
             "flow": flow, "user_id": user_id, "tenant_id": tenant_id,
             "request_id": request_id, "conversation_id": conversation_id,
             "configuration": config.binding(), "required_scopes": required,
-            "purpose": purpose, "sources": sources,
+            "purpose": purpose, "sources": sources, "completion": completion,
             "expires_at": expires_at.isoformat(),
         }
         return {"authorization_url": flow["auth_uri"], "expires_at": expires_at.isoformat()}
@@ -738,7 +940,10 @@ class M365ConnectionService:
             or record.get("configuration") != config.binding()
             or utc_datetime(record["expires_at"]) <= self.clock()
         ):
-            raise M365ConnectionError("m365_auth_state_invalid", "This sign-in request expired or changed. Connect again from chat.")
+            raise M365ConnectionError(
+                "m365_auth_state_invalid",
+                "This Microsoft 365 sign-in request expired or was replaced by a newer one. Start the connection again.",
+            )
         session.pop(CHAT_AUTH_SESSION_KEY)
         cache = msal.SerializableTokenCache()
         client = self.msal_factory(cache, config)
@@ -768,6 +973,8 @@ class M365ConnectionService:
         }
         session.pop(CHAT_RECONNECT_SESSION_KEY, None)
         if record.get("purpose") == "profile_reconnect":
+            if record.get("completion") == "popup":
+                return {"return_to": "profile", "completion": "popup"}
             return {"return_to": "profile"}
         return {
             "request_id": record["request_id"], "conversation_id": record["conversation_id"],

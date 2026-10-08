@@ -71,6 +71,9 @@ def patch_handler(settings, *, write_succeeds=True, validation_error=None):
         "validate_content_screening_settings": validator,
         "update_settings": writes,
         "_refresh_branding_static_files": Mock(),
+        "ensure_m365_workflow_encryption_key": Mock(return_value={
+            "status": "not_configured", "reason": "key_vault_disabled", "message": "",
+        }),
         "_redact_admin_settings_for_v2": deepcopy,
         "log_event": Mock(),
     }
