@@ -1,8 +1,9 @@
 # test_workflow_result_store.py
 """
 Functional tests for durable, scoped workflow task-result persistence.
-Version: 0.261.106
+Version: 0.261.305
 Implemented in: 0.261.106
+HNS directory cleanup implemented in: 0.261.305
 
 JSON-copying Cosmos and byte-copying Blob fakes exercise immutable writes,
 backend selection, bounded range reads, identity/integrity checks, quota
@@ -184,12 +185,17 @@ class FakeBlob:
             data = data[offset:offset + length]
         return FakeDownload(data, self.owner, ranged=offset is not None)
 
-    def delete_blob(self, *, delete_snapshots, etag=None, match_condition=None):
+    def delete_blob(self, *, delete_snapshots=None, etag=None, match_condition=None):
         if self.owner.delete_error is not None:
             raise self.owner.delete_error
         self._check_etag(etag, match_condition)
-        self._row()
-        if delete_snapshots != "include":
+        row = self._row()
+        if row.get("directory"):
+            # HNS refuses a non-recursive delete of a directory that still has children.
+            if any(container == self.key[0] and name != self.key[1] and name.startswith(self.key[1].rstrip("/") + "/")
+                   for container, name in self.owner.records):
+                raise ResourceExistsError(message="Fake provider directory is not empty.")
+        elif delete_snapshots != "include":
             raise AssertionError("Private result snapshots should be cleaned with their blob.")
         self.owner.deletes.append(self.key)
         del self.owner.records[self.key]
@@ -204,7 +210,11 @@ class FakeBlobContainer:
         self.owner.lists.append({"container": self.name, "prefix": name_starts_with, "include": include})
         if self.owner.list_error is not None:
             raise self.owner.list_error
-        for container, name in list(self.owner.records):
+        keys = list(self.owner.records)
+        if self.owner.hierarchical:
+            # HNS flat listings are name-ordered, so each directory precedes its files.
+            keys.sort(key=lambda key: key[1])
+        for container, name in keys:
             if container == self.name and name.startswith(name_starts_with):
                 yield FakeBlob(self.owner, container, name).get_blob_properties()
 
@@ -212,6 +222,7 @@ class FakeBlobContainer:
 class FakeBlobService:
     def __init__(self):
         self.records = {}
+        self.hierarchical = False
         self.uploads = []
         self.downloads = []
         self.property_reads = []
@@ -227,6 +238,28 @@ class FakeBlobService:
 
     def get_blob_client(self, *, container, blob):
         return FakeBlob(self, container, blob)
+
+    def add_hierarchical_directories(self, container="personal-chat"):
+        """Mirror HNS: every path segment of every stored blob becomes a zero-byte directory."""
+        self.hierarchical = True
+        for blob_container, name in list(self.records):
+            if blob_container != container:
+                continue
+            parts = name.split("/")
+            for depth in range(1, len(parts)):
+                self.add_directory("/".join(parts[:depth]), container=container)
+
+    def add_directory(self, name, *, container="personal-chat", metadata=None, data=b""):
+        key = (container, name)
+        if key in self.records:
+            return
+        self.etag_counter += 1
+        self.records[key] = {
+            "data": data,
+            "metadata": {"hdi_isfolder": "true"} if metadata is None else metadata,
+            "etag": f"etag-{self.etag_counter}",
+            "directory": True,
+        }
 
     def get_container_client(self, container):
         return FakeBlobContainer(self, container)
@@ -846,6 +879,185 @@ class WorkflowResultStoreTests(unittest.TestCase):
                     store.delete_run_results(self.workflow, self.run_id)
                 self.assertEqual(service.deletes, [])
                 self.assertEqual(container.deletes, [])
+
+    def test_cleanup_on_hierarchical_namespace_removes_directories_after_files(self):
+        store, container, service = self.make_store(blob=True)
+        self.save(store)
+        store.save(self.workflow, self.run_id, "another-task", {"text": "second"})
+        store.save(self.workflow, "other-run", self.task_id, {"text": "keep"})
+        service.add_hierarchical_directories()
+        prefix = store_module._run_blob_prefix(store_module._scope(self.workflow, self.run_id))
+        run_directory = prefix.rstrip("/")
+        files = {key for key, row in service.records.items() if key[1].startswith(prefix) and not row.get("directory")}
+        task_directories = {key for key, row in service.records.items() if key[1].startswith(prefix) and row.get("directory")}
+        self.assertEqual(len(files), 2)
+        self.assertEqual(len(task_directories), 2)
+        listing = [entry.name for entry in FakeBlobContainer(service, "personal-chat").list_blobs(
+            name_starts_with=prefix, include=["metadata"])]
+        service.lists.clear()
+        self.assertTrue(store_module._is_hierarchical_directory(
+            FakeBlob(service, "personal-chat", listing[0]).get_blob_properties()))
+        store.delete_run_results(self.workflow, self.run_id)
+        self.assertFalse(any(key[1].startswith(prefix) for key in service.records))
+        self.assertEqual(set(service.deletes), files | task_directories)
+        self.assertEqual(set(service.deletes[:2]), files)
+        self.assertIn(("personal-chat", run_directory), service.records)
+        self.assertTrue(any(key[1].startswith(store_module._run_blob_prefix(
+            store_module._scope(self.workflow, "other-run"))) for key in service.records))
+        self.assertFalse(any(key[0] == self.run_id for key in container.records))
+        store.delete_run_results(self.workflow, self.run_id)
+
+    def test_cleanup_hierarchical_directory_validation_is_scope_exact(self):
+        digest = "a" * 64
+        cases = (
+            (store_module._scope(self.workflow, self.run_id), digest, True),
+            (store_module._scope({**self.workflow, "group_id": "group-one"}, self.run_id), digest, True),
+            (store_module._scope(self.workflow, self.run_id), f"{digest}/", True),
+            (store_module._scope(self.workflow, self.run_id), "analyze", False),
+            (store_module._scope(self.workflow, self.run_id), f"{digest}/{digest}", False),
+            (store_module._chat_scope("owner-one", "conversation-one"), digest, True),
+            (store_module._chat_scope("owner-one", "conversation-one", "message-one"), digest, False),
+            (store_module._orchestration_scope("owner-one", "conversation-one"), digest, True),
+            (store_module._orchestration_scope("owner-one", "conversation-one"), f"{digest}/{digest}", True),
+            (store_module._orchestration_scope("owner-one", "conversation-one"), f"{digest}/{digest}/{digest}", False),
+            (store_module._orchestration_scope("owner-one", "conversation-one", "run-one"), digest, True),
+            (store_module._orchestration_scope("owner-one", "conversation-one", "run-one"), f"{digest}/{digest}", False),
+        )
+        for scope, suffix, allowed in cases:
+            with self.subTest(scope_type=scope["scope_type"], keys=sorted(scope), suffix=suffix):
+                store, _, service = self.make_store(blob=True)
+                if scope["scope_type"] == "chat":
+                    prefix = store_module._chat_blob_prefix(scope)
+                elif scope["scope_type"] == "orchestration":
+                    prefix = store_module._orchestration_blob_prefix(scope)
+                else:
+                    prefix = store_module._run_blob_prefix(scope)
+                service.hierarchical = True
+                parts = suffix.rstrip("/").split("/")
+                for depth in range(1, len(parts) + 1):
+                    directory_name = prefix + "/".join(parts[:depth])
+                    if depth == len(parts) and suffix.endswith("/"):
+                        directory_name += "/"
+                    service.add_directory(directory_name)
+                if allowed:
+                    store._delete_scoped_blobs(scope)
+                    self.assertFalse(any(key[1].startswith(prefix) for key in service.records))
+                else:
+                    with self.assertRaises(store_module.WorkflowResultIntegrityError):
+                        store._delete_scoped_blobs(scope)
+                    self.assertEqual(service.deletes, [])
+
+    def test_cleanup_refuses_directory_markers_with_content_or_changed_type(self):
+        scope = store_module._scope(self.workflow, self.run_id)
+        prefix = store_module._run_blob_prefix(scope)
+        for variant in ("payload", "metadata_case", "became_file"):
+            with self.subTest(variant=variant):
+                store, _, service = self.make_store(blob=True)
+                service.hierarchical = True
+                name = prefix + "b" * 64
+                if variant == "payload":
+                    service.add_directory(name, data=b"hidden")
+                else:
+                    service.add_directory(name, metadata={"HDI_ISFOLDER": "TRUE"} if variant == "metadata_case" else None)
+                if variant == "metadata_case":
+                    store._delete_scoped_blobs(scope)
+                    self.assertEqual(service.deletes, [("personal-chat", name)])
+                    continue
+                original_list = FakeBlobContainer.list_blobs
+
+                def list_then_replace(container_self, **kwargs):
+                    yield from original_list(container_self, **kwargs)
+                    if variant == "became_file":
+                        service.records[("personal-chat", name)] = {"data": b"", "metadata": {}, "etag": "replaced"}
+
+                with patch.object(FakeBlobContainer, "list_blobs", list_then_replace):
+                    with self.assertRaises(store_module.WorkflowResultIntegrityError):
+                        store._delete_scoped_blobs(scope)
+                self.assertEqual(service.deletes, [])
+                self.assertIn(("personal-chat", name), service.records)
+
+    def test_cleanup_requires_explicit_directory_identity_and_size(self):
+        scope = store_module._scope(self.workflow, self.run_id)
+        prefix = store_module._run_blob_prefix(scope)
+        for variant in ("unmarked", "slash_only", "missing_size", "resource_type"):
+            with self.subTest(variant=variant):
+                store, _, service = self.make_store(blob=True)
+                name = prefix + "a" * 64 + ("/" if variant == "slash_only" else "")
+                service.add_directory(name, metadata={})
+                original_properties = FakeBlob.get_blob_properties
+
+                def properties(blob):
+                    result = original_properties(blob)
+                    if variant == "missing_size":
+                        result.metadata = {"hdi_isfolder": "true"}
+                        del result.size
+                    elif variant == "resource_type":
+                        result.resource_type = "directory"
+                    return result
+
+                with patch.object(FakeBlob, "get_blob_properties", properties):
+                    if variant == "resource_type":
+                        store._delete_scoped_blobs(scope)
+                        self.assertEqual(service.deletes, [("personal-chat", name)])
+                    else:
+                        with self.assertRaises(store_module.WorkflowResultIntegrityError):
+                            store._delete_scoped_blobs(scope)
+                        self.assertEqual(service.deletes, [])
+
+    def test_cleanup_directory_etag_change_is_not_ignored(self):
+        scope = store_module._scope(self.workflow, self.run_id)
+        store, _, service = self.make_store(blob=True)
+        name = store_module._run_blob_prefix(scope) + "a" * 64
+        service.add_directory(name)
+        original_properties = FakeBlob.get_blob_properties
+        reads = []
+
+        def properties(blob):
+            result = original_properties(blob)
+            reads.append(blob.key)
+            if len(reads) == 2:
+                blob._row()["etag"] += "-changed"
+            return result
+
+        with patch.object(FakeBlob, "get_blob_properties", properties):
+            with self.assertRaises(ResourceModifiedError):
+                store._delete_scoped_blobs(scope)
+        self.assertEqual(service.deletes, [])
+        store._delete_scoped_blobs(scope)
+        self.assertEqual(service.deletes, [("personal-chat", name)])
+
+    def test_cleanup_does_not_recursively_delete_new_directory_children(self):
+        scope = store_module._scope(self.workflow, self.run_id)
+        store, _, service = self.make_store(blob=True)
+        name = store_module._run_blob_prefix(scope) + "a" * 64
+        service.add_directory(name)
+        child_key = ("personal-chat", name + "/unexpected.txt")
+        original_list = FakeBlobContainer.list_blobs
+
+        def list_then_add_child(container, **kwargs):
+            yield from original_list(container, **kwargs)
+            service.records[child_key] = {"data": b"keep", "metadata": {}, "etag": "child"}
+
+        with patch.object(FakeBlobContainer, "list_blobs", list_then_add_child):
+            with self.assertRaises(ResourceExistsError):
+                store._delete_scoped_blobs(scope)
+        self.assertEqual(service.deletes, [])
+        self.assertIn(child_key, service.records)
+
+    def test_cleanup_tolerates_a_directory_removed_after_listing(self):
+        scope = store_module._scope(self.workflow, self.run_id)
+        store, _, service = self.make_store(blob=True)
+        name = store_module._run_blob_prefix(scope) + "a" * 64
+        service.add_directory(name)
+        original_list = FakeBlobContainer.list_blobs
+
+        def list_then_remove_directory(container, **kwargs):
+            yield from original_list(container, **kwargs)
+            del service.records[("personal-chat", name)]
+
+        with patch.object(FakeBlobContainer, "list_blobs", list_then_remove_directory):
+            store._delete_scoped_blobs(scope)
+        self.assertEqual(service.deletes, [])
 
     def test_cleanup_removes_incomplete_cosmos_chunks(self):
         store, container, _ = self.make_store(chunk_size_bytes=16)
