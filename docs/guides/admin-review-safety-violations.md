@@ -1,10 +1,10 @@
 ---
 layout: page
 title: "Review safety violations"
-description: "Review flagged activity, warn, suspend, or block a user, and recheck chat messages whose required safety checks did not finish."
+description: "Review flagged activity, warn, suspend, or block a user, get AI-suggested reviews, and recheck chat messages whose required safety checks did not finish."
 section: "Guides"
 audience: admin
-version: "0.261.298"
+version: "0.261.299"
 ---
 
 ## What this covers
@@ -65,10 +65,24 @@ Users with the **Admin** role are never restricted, even when an access restrict
 
 **Escalate** was a label with no workflow behind it, and it can no longer be chosen. Records that already carry it show **Escalated (legacy)** and can still be saved, so you can resolve them or replace the action with another one. The dashboard only mentions legacy escalations when there are some.
 
+## Get AI-suggested reviews
+
+When **Enable AI Assist in the Review Center** is on, AI can suggest a status, an action, notes, the notification for a warning, suspension or block, a suspension's length, and whether to archive, with its reason and confidence. It suggests; you decide.
+
+- In the editor, **Ask AI** then **Analyze this record** suggests a review, and **Apply to draft** fills your unsaved review and marks what it changed. Nothing is sent or requested until you save.
+- In the workbench, check violations and select **Triage with AI** to store a suggested review on each. Violations held by a pending request or a warning being sent are skipped.
+- **AI suggestions** lists them. Each row shows what approving it changes and sets off: **Sends a warning**, **Needs a second reviewer**, or **Already on this violation**. You can edit the notification's title and message on the row before you approve.
+
+Approving a suggestion saves it exactly as saving the violation yourself would: a warning is sent straight away, and a suspension or block creates an approval request that another eligible reviewer must approve. That is why **Approve all ready** never includes a suspension or block; tick each one yourself. The confirmation says how many users are about to be warned. A suggestion that repeats a suspension or block the violation already records updates the review only and requests nothing new; to request it again, open the violation and select **Request this suspension again** (or block).
+
+Some limits apply whatever the AI answers. It is never offered **Escalate**. A finding about an AI-generated response can only get **No action**, because it is about the AI, not the user. A warning, suspension or block that was already applied or sent is never replaced by a weaker action.
+
+The AI is sent the flagged text, its categories and severity, whether the user or an AI response wrote it, the review so far, where any request stands, whether a warning was acknowledged, and how many earlier violations the same user has. It is never told who the user is, and email addresses and GUIDs in the text are replaced. Your organization's **Review Guidance for the AI Assistant**, in [Security settings]({{ '/admin/security/' | relative_url }}#permissions-section), tells it your policy, for example when a first violation only gets a warning.
+
 ## Recheck unchecked chat content
 
 **Unchecked chat content** has its own page in the Safety section. It shows check metadata, not message bodies. Filter it by conversation source, message type, or incomplete scanner, then load further results as needed. **Recheck** applies current rules to a message and requires explicit confirmation; check several messages and select **Recheck selected** to recheck them one after another, with a report on each. A confirmed finding on an AI reply can remove it from saved and shared chat; rechecking cannot undo earlier views or external actions. A checker outage leaves the message available and marked for another attempt.
 
 ## Version
 
-Implemented in version **0.261.277** (`application/single_app/config.py`). Warnings without a second reviewer, warning acknowledgment, the Access restricted screen and the removal of Escalate were added in version **0.261.297**. The Review center, bulk review, unlocking violations whose request was denied or expired, and requesting a suspension or block again only on purpose were added in version **0.261.298**.
+Implemented in version **0.261.277** (`application/single_app/config.py`). Warnings without a second reviewer, warning acknowledgment, the Access restricted screen and the removal of Escalate were added in version **0.261.297**. The Review center, bulk review, unlocking violations whose request was denied or expired, and requesting a suspension or block again only on purpose were added in version **0.261.298**. AI-suggested reviews were added in version **0.261.299**.

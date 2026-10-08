@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.299)**
+
+#### New Features
+
+*   **AI Assist In The Admin Review Center**
+    *   An optional assistant suggests reviews for user feedback and safety violations in the V2 Review center. **Ask AI** in a record's editor analyzes it and fills the unsaved draft, marking each field it changed and offering **Undo**. **Triage with AI** on the workbenches' bulk bar sends the checked records ten at a time, with progress and **Cancel**, and stores a suggested review on each; records that get none stay checked. A new **AI suggestions** page in each section lists them with what each would change and why, for any eligible reviewer to approve one at a time or together, edit the user's notification first, or dismiss.
+    *   The model never writes or acts. Its answers are checked on the server against a strict schema, with one correction round, and approving a suggestion runs the same save as a hand-written review: a warning is sent when it is approved, and a suspension or block creates an approval request for a second reviewer. Suspensions and blocks are never part of **Approve all**, the confirmation counts the warnings and requests an approval sets off, and the queue never requests again a suspension or block the violation already records.
+    *   Records are read on the server by id and shown to the model under request-local handles, without ids, names or email addresses; email addresses and GUIDs in the text are replaced and long text is shortened. Policy is enforced by the server: never Escalate, no warning or restriction over AI-generated content, and never a weaker action than one already applied. When the model service's content filter declines a group, each record is retried alone, so the others still get suggestions.
+    *   A stored suggestion carries a fingerprint of the fields it was based on, so one whose record changes afterwards reads as out of date and can only be dismissed. Approvals and dismissals are recorded in the admin activity log and credited to the suggestion.
+    *   New settings on **Security > Access & Roles**: **Enable AI Assist in the Review Center** (`enable_admin_review_ai_assistant`, off by default) and **Review Guidance for the AI Assistant** (`admin_review_ai_guidance`, up to 2,000 characters, sent only to the model). Each reviewer can send 60 assist requests per 10 minutes. While it is off, no suggestion can be made, applied or dismissed.
+    *   New APIs: `POST /api/admin/review/feedback/assist` and `POST /api/admin/review/safety/assist`. Bulk `update` operations accept `suggestion_id`, `dismiss_suggestion` is a new bulk operation, and the review lists and their `/ids` routes accept `ai=pending`.
+    *   (Ref: `functions_review_assist.py`, `functions_review_assist_runtime.py`, `functions_review_center.py`, `route_backend_feedback.py`, `route_backend_safety.py`, `ReviewAskAiPanel.tsx`, `useReviewTriage.ts`, `SuggestionsQueue.tsx`, `lib/reviewSuggestions.ts`, `lib/reviewAssistApi.ts`, [AI Assist in the Admin Review Center](features/ADMIN_REVIEW_AI_ASSISTANT.md))
+
+*   **Feedback Themes**
+    *   Feedback reviews have a **Theme**: Accuracy, Citations, Retrieval, Formatting, Tone, Speed, Safety, Praise or Other. Reviewers set it in the editor, or approving an AI suggestion sets it. The feedback dashboard counts the period's feedback by theme and how much is not classified yet, each theme opens the filtered list, and the queue filters by theme. Users never see the theme.
+    *   (Ref: `route_backend_feedback.py` `theme`, `theme_mix`, `unthemed_count_in_window`, `FeedbackDashboard.tsx`, `FeedbackEditorPage.tsx`, `FeedbackWorkbench.tsx`)
+
 ### **(v0.261.298)**
 
 #### New Features
