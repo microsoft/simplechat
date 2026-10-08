@@ -1,11 +1,12 @@
 # functions_collaboration_generated_documents.py
-"""Documents that agents generated in a shared conversation, and who may download them.
+"""Documents that agents generated in a conversation, and who may download them.
 
 An agent creates a document with the SimpleChat action's upload functions. Each stores the file
 in the requester's personal workspace or in a group workspace and returns its id, which stays on
-the message in the agent citation. That is what lets a shared conversation list what was produced
-in it. Listing reveals only file names; downloading follows the workspace's own download rules,
-whichever group the reader currently has active.
+the message in the agent citation. That is what lets a conversation list what was produced in it,
+whether it is a shared conversation or a personal one. Listing reveals only file names;
+downloading follows the workspace's own download rules, whichever group the reader currently has
+active.
 """
 
 import json

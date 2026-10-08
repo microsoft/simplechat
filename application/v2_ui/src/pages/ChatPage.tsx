@@ -1,7 +1,7 @@
 // ChatPage.tsx
 // Chat surface: header, message thread, composer, and the right-hand drawer.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -16,6 +16,10 @@ import {
 import { useChatStore, type DrawerMode } from '../stores/chatStore';
 import { useCollaborationStore } from '../stores/collaborationStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
+import {
+    useConversationGeneratedDocuments,
+    useConversationGeneratedFiles,
+} from '../stores/generatedDocumentsStore';
 import { useUiStore } from '../stores/uiStore';
 import { useImageProposalStore } from '../stores/imageProposalStore';
 import {
@@ -24,6 +28,7 @@ import {
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
 import { enabledSteps, isPlanAwaitingApproval } from '../lib/orchestrationPlan';
+import { countConversationDocuments } from '../lib/conversationGeneratedFiles';
 import { resumeOrchestrationForConversation } from '../lib/orchestrationResume';
 import {
     hasWorkflowResultLaunch,
@@ -236,19 +241,15 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const shareSource = metadata ?? active;
     const shareable = collaborationEnabled && canShareConversation(shareSource);
 
-    // Counted from loaded metadata so the badge stays honest: it shows nothing rather
-    // than a guess until the real document list has arrived.
-    const documentCount = metadata
-        ? new Set(
-              [
-                  ...(metadata.used_documents ?? []),
-                  ...(metadata.legacy_used_documents ?? []),
-                  ...(metadata.linked_workspace_documents ?? []),
-              ]
-                  .map((document) => String(document?.document_id ?? '').trim())
-                  .filter(Boolean),
-          ).size
-        : null;
+    // Counted from what has loaded so the badge stays honest: it shows nothing rather than a guess
+    // until the document list, or a reply that produced a file, has arrived. Generated files and
+    // documents agents created count alongside the documents answers used, each once.
+    const generatedFiles = useConversationGeneratedFiles();
+    const { documents: generatedDocuments } = useConversationGeneratedDocuments();
+    const documentCount = useMemo(
+        () => countConversationDocuments(metadata, generatedFiles, generatedDocuments),
+        [metadata, generatedFiles, generatedDocuments],
+    );
 
     const toggle = (mode: Exclude<DrawerMode, null>) =>
         setDrawerMode(drawerMode === mode ? null : mode);

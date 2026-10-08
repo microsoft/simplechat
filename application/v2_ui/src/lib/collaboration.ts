@@ -16,7 +16,7 @@
 //     conversation with its own id and leaves the original in place as the hidden source
 //     the AI actually runs in, so callers must follow the returned id.
 
-import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { api, apiUrl } from './apiClient';
 import type { MessageVisualStyles } from './endpoints';
 import type {
     CollaborationConversation,
@@ -457,36 +457,6 @@ export const fetchCollaborationGeneratedDocuments = (conversationId: string, sig
 /** Where one generated document downloads from; the same request also feeds the preview. */
 export const collaborationGeneratedDocumentUrl = (conversationId: string, documentId: string) =>
     apiUrl(`${base(conversationId)}/generated-documents/${encodeURIComponent(documentId)}/download`);
-
-/**
- * Fetch a generated document's file, for saving or previewing.
- *
- * Rejects with the server's error message, such as the reader not being allowed to download it,
- * so the reader learns why rather than receiving a broken file.
- */
-export async function fetchCollaborationGeneratedDocument(
-    conversationId: string,
-    documentId: string,
-    signal?: AbortSignal,
-): Promise<Blob> {
-    const response = await fetch(collaborationGeneratedDocumentUrl(conversationId, documentId), {
-        credentials: CREDENTIALS_MODE,
-        signal,
-    });
-    if (!response.ok) {
-        let message = `Download failed (${response.status})`;
-        try {
-            const payload = (await response.json()) as { error?: string } | null;
-            if (payload?.error) {
-                message = payload.error;
-            }
-        } catch {
-            // Not JSON: the status line is all there is to report.
-        }
-        throw new Error(message);
-    }
-    return response.blob();
-}
 
 /* -------------------------------------------------------------------------- */
 /* Images                                                                      */
