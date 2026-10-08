@@ -71,6 +71,7 @@ import {
     workflowResultsDisplayName,
     workflowResultsSelection,
 } from '../../lib/orchestrationWorkflowResults';
+import { describeHandoffBlueprint, WORKFLOW_HANDOFF_CAPABILITY } from '../../lib/workflowHandoffs';
 
 const PREVIEW_EDITS: PlanEdits = { disabled_step_ids: [], removed_document_ids: {} };
 const PREVIEW_RUNTIME: StepRuntimeMap = {};
@@ -109,6 +110,11 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     const tabular = tabularArgumentEntries(step.capability_id, step.arguments);
     if (tabular) {
         return tabular;
+    }
+    // A hand-off's blueprint carries request-local handles and each task's full instructions, none
+    // of which is for the reader. It is put in words: the workflow's name, what it covers, its tasks.
+    if (step.capability_id === WORKFLOW_HANDOFF_CAPABILITY) {
+        return describeHandoffBlueprint(step.arguments);
     }
     const hidden = new Set<string>([
         'document_ids',
@@ -357,7 +363,9 @@ export function OrchestrationRunView({
                                 {step.title}
                             </span>
                             <span className="rounded-full bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-text-3">
-                                {isAction ? 'Use an action' : step.capability_id}
+                                {isAction ? 'Use an action'
+                                    : step.capability_id === WORKFLOW_HANDOFF_CAPABILITY ? 'Hand off large work'
+                                    : step.capability_id}
                             </span>
                             {roleLabel ? (
                                 <span className="rounded-full border border-edge px-1.5 py-0.5 text-[11px] text-text-2">

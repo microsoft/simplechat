@@ -1,13 +1,17 @@
 // supportFeedback.ts
-// The email drafts the Help group prepares: feedback for the SimpleChat team, and the
-// release notifications registration.
+// The email drafts the Help group and the Support menu prepare: feedback for the SimpleChat
+// team from administrators, feedback for the organisation's own support mailbox from users,
+// and the release notifications registration.
 //
-// Both follow the classic page. The server records the intent and returns the recipient
+// All follow the classic pages. The server records the intent and returns the recipient
 // and subject line, then the browser opens a text-only mailto: draft in the local mail app.
 // Building the draft lives here so its wording can be tested, and so the only way to a
 // mailto: URL is one that refuses anything but a single plain address.
 
 export type FeedbackKind = 'bug_report' | 'feature_request';
+
+/** Where the Support menu's Send Feedback page posts; the server owns the recipient. */
+export const SUPPORT_FEEDBACK_ENDPOINT = '/api/support/send_feedback_email';
 
 export const FEEDBACK_LABELS: Readonly<Record<FeedbackKind, string>> = {
     bug_report: 'Bug Report',
@@ -22,7 +26,7 @@ export interface FeedbackFields {
     details: string;
 }
 
-/** `POST /api/admin/settings/send_feedback_email`. */
+/** `POST /api/admin/settings/send_feedback_email` and `POST /api/support/send_feedback_email`. */
 export interface FeedbackResponse {
     success: boolean;
     recipientEmail: string;

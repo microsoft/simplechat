@@ -1,9 +1,10 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.281
+// Version: 0.261.296
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
 // Members section validation (M7B): 0.261.155
 // Workspace navigation URL validation: 0.261.281
+// User Settings Open path for a group row: 0.261.296
 // Executes the real context API and stores with controlled HTTP ordering.
 
 import assert from 'node:assert/strict';
@@ -438,6 +439,16 @@ try {
         handler = () => json({ error: 'not a workspace list' });
         const invalid = GROUP_WORKSPACES.list(1, 25, '');
         await assert.rejects(invalid, /invalid data/);
+    });
+    await run('a settings row opens its group page by encoded id without calling the server', async () => {
+        assert.equal(GROUP_WORKSPACES.openPath('group-a'), '/groups/group-a');
+        assert.equal(GROUP_WORKSPACES.openPath('group-a'), groupWorkspacePath('group-a'));
+        assert.equal(GROUP_WORKSPACES.openPath('group a&b'), '/groups/group%20a%26b');
+        for (const invalid of ['', '.', '..', 'group/a', 'group?a', 'group#a', ' group-a']) {
+            assert.throws(() => GROUP_WORKSPACES.openPath(invalid), /Invalid workspace identifier/);
+        }
+        // Open only navigates; the group page it lands on owns any activation.
+        assert.deepEqual(calls, []);
     });
     await run('revalidation keeps context while loading and retains drafts on transient failure', async () => {
         const previous = await useGroupWorkspaceStore.getState().load('group-a');

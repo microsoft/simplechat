@@ -50,7 +50,7 @@ Profile preferences are for personal comfort and control: font size, navigation 
 ## In the new interface
 
 In the new interface, open **User Settings** from the account menu. The left rail lists
-**Preferences**, **Stats**, **Groups**, **Public workspaces**, **Feedback**, and
+**Preferences**, **Stats**, **Groups**, **Public**, **Feedback**, and
 **Violations**. To give the settings more room, collapse the rail to icons with the button
 at its top. The rail stays collapsed until you expand it again, on any device.
 
@@ -103,6 +103,13 @@ page, described in the next section: **Microsoft 365 sharing**, **Chat connectio
 you to confirm first. Chat reconnect opens Microsoft sign-in in a pop-up and keeps you on the
 page; connecting for workflows signs in through the classic Profile page and returns there.
 
+The **Groups** and **Public** tabs list the workspaces you can use, with your role in each.
+From version **0.261.296**, every row has **Open**, which takes you straight to that
+workspace, next to **Set active**, which only changes where new work in this interface is
+scoped and keeps you in settings. Opening a group also makes it your active group, because a
+group's pages work in the active group. Opening a public workspace leaves your active public
+workspace as it was.
+
 **Violations** is always listed. If content safety is off for your application, the tab
 says so instead of showing an empty list.
 
@@ -146,5 +153,7 @@ Each card shows a status message after saving. Reload the app and confirm the pr
 ## Related
 
 - [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }})
+- [Manage group workspaces]({{ '/guides/manage-group-workspaces/' | relative_url }})
+- [Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }})
 - [Send feedback]({{ '/guides/send-feedback/' | relative_url }})
 - [Safety settings]({{ '/admin/security/' | relative_url }})

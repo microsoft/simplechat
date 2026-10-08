@@ -1,7 +1,8 @@
 # V2 User Settings Redesign
 
 **Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention);
-**0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features)
+**0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features);
+**0.261.296** (Open on Groups and Public rows)
 
 ## Overview
 
@@ -15,6 +16,8 @@ Profile page in stages:
    and personal retention (0.261.278).
 3. Fact memory workbench and Microsoft 365 sharing and workflows (0.261.279).
 4. Guided tours and the Latest Features shortcut (0.261.280).
+5. Opening a group or public workspace from its row, as the classic page's **Manage** link
+   does (0.261.296).
 
 Dependencies: the V2 React interface (`application/v2_ui`) and the user settings API
 (`/api/user/settings`).
@@ -146,13 +149,37 @@ The shortcut is available when all of these hold:
 - At least one Latest Features item is visible.
 
 As on the classic interface, the shortcut is hidden for everyone in development mode.
-`components/layout/LatestFeaturesLink.tsx` adds it to the navigation rail with a hide
-button, and the Preferences card shows its status with **Hide for this version** or **Show
-again**.
+`components/layout/SupportMenu.tsx` draws it in the navigation rail's Support group with a
+hide button, and the Preferences card shows its status with **Hide for this version** or
+**Show again**. Since **0.261.296** the shortcut and the card's **Open Latest Features** link
+open the V2 Latest Features page instead of the classic one; see
+[V2 Support Menu](V2_SUPPORT_MENU.md).
 
 Both surfaces write `latestFeaturesHiddenVersion`, shared with the classic page. A hide
 applies only to the version it was saved for, so the shortcut comes back after an upgrade.
 `lib/latestFeaturesNav.ts` holds the logic both surfaces use.
+
+### Groups and Public workspaces
+
+`components/settings/WorkspaceListTab.tsx` renders both tabs from a `WorkspaceKind` in
+`lib/workspaces.ts`, which holds what differs between the two: the list route, the setActive
+route and its body key, and where a row opens.
+
+- Each row shows the workspace name, the caller's role, any status other than active, an
+  **Active** badge or a **Set active** button, and **Open**.
+- **Set active** goes through the dedicated setActive route and then re-reads the list, because
+  the server resolves which workspace is active.
+- **Open** (0.261.296) navigates to `WorkspaceKind.openPath(id)`, which is
+  `groupWorkspacePath(id)` (`/groups/<id>`) or `publicWorkspacePath(id)` (`/public/<id>`). Both
+  are reviewed same-origin builders in `scripts/check_xss_sinks.py`. Like the directories'
+  **Open**, the tab never activates anything itself; the page it lands on decides. A group page
+  activates the group it shows if it isn't active already, because a group's routes work in the
+  active group. A public workspace page loads by id and leaves the active public workspace alone.
+- **Open** is disabled while a switch or a workspace-selection refresh is in progress, the same
+  as **Set active**, so two activations never race. An id the path builder refuses is reported
+  in the tab's error line.
+- Rows wrap the way the directory rows do. On a narrow screen the buttons move below the name,
+  and the role and status badges keep their width.
 
 ### Violations visibility
 
@@ -191,6 +218,15 @@ collapse or expand it, and the **On this page** index to move between cards.
   accepted by the route, every tour step's anchor present, launchers and the Help and
   guidance group, the bootstrap navigation entry, and a Node run of the shared tour and
   Latest Features logic.
+- `functional_tests/test_v2_settings_tabs.py`: each kind's Open path, the reviewed builders
+  and routes behind it, and an Open handler that never activates.
+- `functional_tests/test_v2_group_workspace_context_logic.mjs` and
+  `functional_tests/test_v2_public_workspace_context_logic.mjs`: the real `openPath` output,
+  identifier encoding, and refused identifiers.
+- `ui_tests/test_v2_settings_workspace_open.py`: against the built SPA, Open on a group that
+  isn't active (the group page activates it once), on the active group (no activation), and on
+  a public workspace (no activation), plus the row layout in both themes at desktop and phone
+  widths.
 - Related fixes: [Feedback My Routes Filter Unpack Fix](../fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md)
   and [Personal Retention Default Value Fix](../fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md).
 

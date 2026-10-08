@@ -4,7 +4,7 @@
 
 The Control Center action lets a Control Center viewer ask questions about SimpleChat usage in chat: sign-ins and active users, conversations, document uploads, processing failures and token use, ranked by user, group or public workspace. It reads the same aggregation as the V2 Control Center Dashboard, so an answer in chat matches the dashboard for the same dates. The dashboard's **Chat with this dashboard** button opens an orchestrated chat that uses it.
 
-**Version implemented:** 0.261.294
+**Version implemented:** 0.261.297
 
 **Dependencies:** Semantic Kernel actions (`enable_semantic_kernel`), Chat Orchestration with Action Access for chat use, the V2 Control Center Dashboard, and the existing Control Center role settings.
 
