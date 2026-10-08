@@ -8,7 +8,7 @@ that needs them fails with HTTP 400 before it runs. An ORDER BY over more than o
 property also fails with HTTP 400 unless the container declares a matching composite
 index. Fake containers accept any SQL, so tests run their queries through this guard.
 
-Since 0.261.294 the guard also rejects reserved keywords used as dotted property names or
+Since 0.261.296 the guard also rejects reserved keywords used as dotted property names or
 aliases, such as ``c.group.group_id`` or ``AS value``. The query grammar accepts only ALL,
 FIRST and LAST there, so Cosmos answers any other keyword with an HTTP 400 syntax error. The
 property must be written with brackets instead: ``c['group']['group_id']``.

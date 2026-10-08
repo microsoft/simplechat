@@ -2,7 +2,7 @@
 # test_v2_control_center_cosmos_query_compatibility.py
 """
 Functional test for V2 Control Center Cosmos query compatibility.
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.292
 
 The Dashboard, Users and Groups sections returned HTTP 500 because Cosmos DB rejected
@@ -11,7 +11,7 @@ GROUP BY or COUNT over DISTINCT values, and a two-property ORDER BY needs a comp
 index that user_settings does not have. This test scans every SQL string in the V2
 Control Center code paths and fails if one of those query shapes returns.
 
-Since 0.261.294 it also rejects reserved keywords used as dotted property names, such as
+Since 0.261.296 it also rejects reserved keywords used as dotted property names, such as
 c.group.group_id, in every Control Center query, classic routes included. Cosmos answers
 those with an HTTP 400 syntax error, which kept the Groups list, group details, the
 Activity Logs group filter and every Activity Logs search failing after 0.261.292.
@@ -238,7 +238,7 @@ def test_scan_covers_the_previously_failing_sections():
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.294")
+    assert_app_version_at_least("0.261.296")
 
 
 TESTS = [

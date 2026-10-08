@@ -44,7 +44,7 @@ Requesting group deletion, deleting all group documents, taking ownership, or tr
 
 ## Investigate activity
 
-Activity Logs was implemented in **0.261.284** and redesigned in **0.261.294**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. It answers who did what, where and when, with people and workspaces shown by name rather than by ID.
+Activity Logs was implemented in **0.261.284** and redesigned in **0.261.296**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. It answers who did what, where and when, with people and workspaces shown by name rather than by ID.
 
 ### Narrow the log with filter pills
 
@@ -69,7 +69,7 @@ The record drawer shows what happened, **Who** (with **Show only this person's a
 
 ### Save and reuse views
 
-**Views** opens quick views for recent sign-ins, recent token usage and document processing failures, and your saved views. **Save the current filters as** stores the current filters under a name; saving with an existing name replaces that view. Saved views live on your account, so they are there in any browser, and you can rename or delete them from the same menu. Views you saved in a browser before 0.261.294 move to your account the first time you open Activity Logs in that browser. If your settings cannot be loaded, the menu shows only the quick views until you reload the page, so a save cannot overwrite views it could not read.
+**Views** opens quick views for recent sign-ins, recent token usage and document processing failures, and your saved views. **Save the current filters as** stores the current filters under a name; saving with an existing name replaces that view. Saved views live on your account, so they are there in any browser, and you can rename or delete them from the same menu. Views you saved in a browser before 0.261.296 move to your account the first time you open Activity Logs in that browser. If your settings cannot be loaded, the menu shows only the quick views until you reload the page, so a save cannot overwrite views it could not read.
 
 ### Export
 

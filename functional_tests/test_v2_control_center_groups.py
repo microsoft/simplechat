@@ -1,7 +1,7 @@
 # test_v2_control_center_groups.py
 """
 Functional tests for V2 Control Center Groups.
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.282
 
 Run real filters and routes over isolated Cosmos services and the real guarded
@@ -9,7 +9,7 @@ group writer. Cover selection caps before writes, audit parity, detail projectio
 admin-only access, snapshot expiry, safe exports and approval-only actions.
 Since 0.261.292 the inventory fakes reject GROUP BY, because the Python Cosmos SDK
 cannot run it across partitions; the inventory aggregates streamed projections.
-Since 0.261.294 they also reject reserved keywords used as dotted property names:
+Since 0.261.296 they also reject reserved keywords used as dotted property names:
 c.group.group_id is an HTTP 400 syntax error, so the nested shape is read as c['group'].
 """
 

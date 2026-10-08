@@ -1,13 +1,13 @@
 # test_v2_control_center_activity_logs.py
 """
 Browser coverage for V2 Activity Logs.
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.284
-Redesigned in: 0.261.294
+Redesigned in: 0.261.296
 
 Uses local built assets and intercepted APIs, with the shared Azure Playwright
 connection helper when a workspace is configured. Covers desktop and mobile.
-Since 0.261.294 the page leads with Azure-portal-style filter pills, shows people and
+Since 0.261.296 the page leads with Azure-portal-style filter pills, shows people and
 workspaces by name, cross-filters from any person, activity or workspace in a row, keeps
 saved views and display preferences on the account, and shows times in local time with a
 remembered UTC toggle.
@@ -156,7 +156,7 @@ class ActivityFixture(UsersFixture):
                 })
         elif path == "/api/v2/bootstrap" and not self.allowed:
             route.fulfill(json={
-                "version": "0.261.294", "user": {"id": "reader", "display_name": "Reader", "is_admin": False, "roles": ["ControlCenterDashboardReader"]},
+                "version": "0.261.296", "user": {"id": "reader", "display_name": "Reader", "is_admin": False, "roles": ["ControlCenterDashboardReader"]},
                 "branding": {"app_title": "SimpleChat", "show_logo": False}, "features": {},
                 "control_center": {"can_view_dashboard": True, "can_manage_users": False, "can_manage_groups": False,
                                    "can_manage_workspaces": False, "can_view_activity_logs": False, "can_run_maintenance": False},

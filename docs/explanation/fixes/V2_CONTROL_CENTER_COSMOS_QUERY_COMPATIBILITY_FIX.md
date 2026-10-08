@@ -69,6 +69,6 @@ The response contracts are unchanged. Each unsupported query is replaced with a 
 
 The V2 Data health section was removed in the same release, together with the activity-log backfill APIs that only it used: `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all`. See [V2 Control Center](../features/V2_CONTROL_CENTER.md) and [Activity Log Migration Prompt Fix](ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md).
 
-## Follow-up in 0.261.294
+## Follow-up in 0.261.296
 
 Groups still failed after this fix. The inventory's latest-activity query also read the nested `group` object as `c.group.group_id`, and `GROUP` is a reserved Cosmos SQL keyword, so Cosmos rejected the query with the same HTTP 400. See [V2 Control Center Reserved Keyword Query Fix](V2_CONTROL_CENTER_RESERVED_KEYWORD_QUERY_FIX.md).

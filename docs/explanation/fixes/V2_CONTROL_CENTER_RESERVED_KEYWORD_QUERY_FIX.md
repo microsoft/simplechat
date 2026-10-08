@@ -1,6 +1,6 @@
 # V2 Control Center Reserved Keyword Query Fix
 
-**Fixed in version:** 0.261.294
+**Fixed in version:** 0.261.296
 
 ## Issue
 
@@ -52,7 +52,7 @@ Reserved segments are now written with the quoted property accessor, which Cosmo
 - `functional_tests/test_support/cosmos_query_guard.py`: `reserved_word_problems()` rejects reserved keywords used as dotted property names or aliases; `cosmos_query_problems()` includes it.
 - `functional_tests/test_v2_control_center_cosmos_query_compatibility.py`: applies the reserved-word check to every SQL string in `route_backend_control_center.py` and the `functions_control_center_*` modules, classic routes included, and to the generated Activity Logs search and group filters.
 - `functional_tests/test_v2_control_center_groups.py` and `functional_tests/test_v2_control_center_activity_logs_queries.py`: assert the bracketed form, run generated queries through the guard, and add a malformed legacy group case.
-- `application/single_app/config.py`: version 0.261.294.
+- `application/single_app/config.py`: version 0.261.296.
 
 ## Validation
 

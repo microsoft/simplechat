@@ -1,12 +1,12 @@
 # test_v2_control_center_activity_logs_queries.py
 """
 Functional tests for bounded Control Center activity queries, paging and export.
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.284
 
 Executes the actual dependency-neutral helper module with a query-contract storage fake.
 No cloud calls, Flask bootstrap replacement, or production module mutations.
-Since 0.261.294 every generated query also passes the Cosmos query guard, which rejects
+Since 0.261.296 every generated query also passes the Cosmos query guard, which rejects
 reserved keywords used as dotted property names: the search field group.group_name made
 every Activity Logs search fail with an HTTP 400 syntax error.
 """
