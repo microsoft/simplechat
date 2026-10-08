@@ -2,7 +2,7 @@
 
 Implemented in version: **0.261.111**
 
-Updated in version: **0.261.120**.
+Updated in version: **0.261.305**.
 
 Application version tracking: `application/single_app/config.py`.
 
@@ -181,6 +181,12 @@ records are excluded from ordinary task-item lists.
 
 Private lifecycle tombstones survive run cleanup. Deletion removes result
 payloads without allowing a late worker to recreate the deleted run.
+
+Since **0.261.305**, private cleanup also handles explicitly marked, empty HNS
+directories, deleting them after their result files. If cleanup fails after a
+workflow is marked for deletion, retry **Delete** to finish it; **Cancel** cannot
+restore a tombstoned runtime. Deletion-fenced saved outputs are withheld from
+history. See [Workflow deletion recovery](../fixes/WORKFLOW_DELETE_HNS_DIRECTORY_FIX.md).
 
 ## Runtime API
 

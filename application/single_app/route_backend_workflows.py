@@ -91,7 +91,12 @@ from functions_source_review import (
     validate_url_access_request,
 )
 from functions_workflow_runner import _workflow_task_run_item_id, create_workflow_run_id, run_group_workflow, run_personal_workflow
-from functions_workflow_result_store import WorkflowResultStorageUnavailableError, read_workflow_task_result_page
+from functions_workflow_result_store import (
+    AnalysisWorkUnitConflictError,
+    WorkflowResultIntegrityError,
+    WorkflowResultStorageUnavailableError,
+    read_workflow_task_result_page,
+)
 from functions_workflow_definitions import (
     WorkflowDefinitionConflict,
     WorkflowDefinitionError,
@@ -134,8 +139,50 @@ from swagger_wrapper import swagger_route, get_auth_security
 WORKFLOW_INSTRUCTION_FIELD_LIMIT = 6000
 
 
+WORKFLOW_DELETE_PENDING_MESSAGE = (
+    'This workflow is being deleted, so its runs can no longer be cancelled. '
+    'Delete the workflow again to finish cleanup.'
+)
+WORKFLOW_RUNTIME_MISSING_MESSAGE = (
+    'This workflow run can no longer be cancelled because its runtime state was removed. '
+    'If you were deleting the workflow, delete it again to finish cleanup.'
+)
+# Cleanup failures that leave the workflow retryable; anything else still surfaces as a 500.
+WORKFLOW_DELETE_FAILURE_ERRORS = (
+    AnalysisWorkUnitConflictError,
+    AzureError,
+    RuntimeUnavailable,
+    WorkflowResultIntegrityError,
+    WorkflowResultStorageUnavailableError,
+    WorkflowRuntimeConflict,
+)
+WORKFLOW_DELETE_FAILED_MESSAGE = (
+    'The workflow could not be fully deleted. Try deleting it again; '
+    'if the problem continues, contact an administrator.'
+)
+
+
 class WorkflowCancellationConflictError(RuntimeError):
     """Raised when a workflow run cannot transition into cancellation."""
+
+    def __init__(self, public_message='Workflow run cannot be cancelled in its current state.'):
+        self.public_message = public_message
+        super().__init__(public_message)
+
+
+def _workflow_delete_failure_response(exc, workflow_id, *, workspace_type, group_id=None):
+    log_event(
+        '[WORKFLOW_ROUTES] Workflow delete failed',
+        extra={
+            'workflow_id': workflow_id,
+            'workspace_type': workspace_type,
+            'group_id': group_id or '',
+            'error_type': type(exc).__name__,
+        },
+        level=logging.ERROR,
+        exceptionTraceback=True,
+    )
+    return jsonify({'error': WORKFLOW_DELETE_FAILED_MESSAGE}), 500
 
 
 def _normalize_identifier(value):
@@ -241,6 +288,8 @@ def _request_workflow_run_cancellation(
     workflow_id = _normalize_identifier(workflow.get('id'))
     active_run_id = _normalize_identifier(workflow.get('active_run_id'))
     target_run_id = _normalize_identifier(run_id) or active_run_id
+    if workflow.get('deleting') is True or _normalize_identifier(workflow.get('status')).lower() == 'deleting':
+        raise WorkflowCancellationConflictError(WORKFLOW_DELETE_PENDING_MESSAGE)
     if not target_run_id:
         raise WorkflowCancellationConflictError('No active workflow run is available to cancel.')
     if active_run_id and active_run_id != target_run_id:
@@ -252,7 +301,13 @@ def _request_workflow_run_cancellation(
     if not run_record and target_run_id != active_run_id:
         raise LookupError('Workflow run not found.')
     if run_record and run_record.get('durable_execution') is True:
-        cancelled = cancel_durable_workflow_run(workflow, target_run_id, actor_user_id=requested_by)
+        try:
+            cancelled = cancel_durable_workflow_run(workflow, target_run_id, actor_user_id=requested_by)
+        except WorkflowRuntimeConflict as exc:
+            # A deleted runtime control usually means an earlier delete already fenced this run.
+            if exc.code == 'not_found':
+                raise WorkflowCancellationConflictError(WORKFLOW_RUNTIME_MISSING_MESSAGE) from exc
+            raise WorkflowCancellationConflictError(exc.public_message) from exc
         safe_run = {key: cancelled['run'].get(key) for key in ('id', 'workflow_id', 'status', 'durable_execution', 'runtime')}
         return _workflow_definition_response(cancelled['workflow']), safe_run
 
@@ -1840,7 +1895,10 @@ def register_route_backend_workflows(bp):
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
 
-        deleted = delete_personal_workflow(user_id, workflow_id)
+        try:
+            deleted = delete_personal_workflow(user_id, workflow_id)
+        except WORKFLOW_DELETE_FAILURE_ERRORS as exc:
+            return _workflow_delete_failure_response(exc, workflow_id, workspace_type='personal')
         if not deleted:
             return jsonify({'error': 'Workflow not found.'}), 404
 
@@ -1901,7 +1959,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': 'Workflow run not found.'}), 404
         except WorkflowCancellationConflictError as exc:
             logging.exception("Workflow cancellation conflict while cancelling active user workflow run.")
-            return jsonify({'error': 'Workflow run cannot be cancelled in its current state.'}), 409
+            return jsonify({'error': exc.public_message}), 409
 
         return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
 
@@ -1935,14 +1993,14 @@ def register_route_backend_workflows(bp):
                 user_id,
             )
             return jsonify({'error': 'Workflow run not found.'}), 404
-        except WorkflowCancellationConflictError:
+        except WorkflowCancellationConflictError as exc:
             logging.exception(
                 "WorkflowCancellationConflictError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
                 sanitize_log_message(workflow_id),
                 sanitize_log_message(run_id),
                 user_id,
             )
-            return jsonify({'error': 'Workflow run cancellation conflict.'}), 409
+            return jsonify({'error': exc.public_message}), 409
 
         return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
 
@@ -2284,7 +2342,10 @@ def register_route_backend_workflows(bp):
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
 
-        deleted = delete_group_workflow(group_id, workflow_id)
+        try:
+            deleted = delete_group_workflow(group_id, workflow_id)
+        except WORKFLOW_DELETE_FAILURE_ERRORS as exc:
+            return _workflow_delete_failure_response(exc, workflow_id, workspace_type='group', group_id=group_id)
         if not deleted:
             return jsonify({'error': 'Workflow not found.'}), 404
 
@@ -2379,7 +2440,7 @@ def register_route_backend_workflows(bp):
             logging.exception('Group workflow run cancellation failed: run not found.', exc_info=exc)
             return jsonify({'error': 'Workflow run not found.'}), 404
         except WorkflowCancellationConflictError as exc:
-            return jsonify({'error': str(exc)}), 409
+            return jsonify({'error': exc.public_message}), 409
 
         return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
 
@@ -2422,7 +2483,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': 'Run not found.'}), 404
         except WorkflowCancellationConflictError as exc:
             logging.exception('Group workflow run cancellation conflict.')
-            return jsonify({'error': 'Unable to cancel run in its current state.'}), 409
+            return jsonify({'error': exc.public_message}), 409
 
         return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
 

@@ -4,7 +4,7 @@ title: "Trigger a workflow"
 description: "Run a workflow now, schedule future runs, and inspect run activity."
 section: "Guides"
 audience: user
-version: "0.261.122"
+version: "0.261.305"
 ---
 
 ## What this does
@@ -358,6 +358,7 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | A scheduled workflow does not run | It is disabled or still configured for manual trigger | Edit the trigger and confirm the workflow is enabled. |
 | A calendar-scheduled workflow stopped running | Its saved time zone is no longer in the server's time zone database, so no next run can be worked out | Open it in the V2 editor, choose a time zone from the list, and save. |
 | A run fails immediately | A runner, action, document, or File Sync source is unavailable | Open run details, fix the dependency, and run again. |
+| Delete failed and Cancel no longer works | Deletion already fenced the run, but result cleanup did not finish | On version **0.261.305** or later, retry **Delete** to finish cleanup. If it still fails, ask an administrator to inspect the workflow-delete logs. |
 | Chat never plans to run your workflow | **Run Workflows From Chat** is off, the conversation is shared, or the request didn't ask to run the workflow now | Ask from your own conversation, name the workflow and ask to run it now, or ask your administrator about the setting. |
 | The answer says only workflows with durable execution can be started from chat | The workflow runs synchronously | Turn on **Durable execution** in the V2 editor and save, or select **Run** in Workflows. |
 | The answer says the workflow is waiting for a Microsoft 365 approval or sign-in | An earlier run is waiting on Microsoft 365 | Finish that approval or sign-in, then ask again. |
