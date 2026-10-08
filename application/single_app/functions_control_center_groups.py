@@ -15,6 +15,9 @@ GROUP_FILTER_KEYS = {
     "search", "status", "status_filter", "owner", "members_min", "members_max",
     "has_documents", "created_from", "created_to", "activity_from", "activity_to",
 }
+# GROUP is a reserved word in Cosmos SQL. A dotted c.group.group_id is a syntax error that
+# makes Cosmos reject the whole query, so the nested writer shape is read with brackets.
+NESTED_GROUP_ID = "c['group']['group_id']"
 
 
 class GroupRequestError(ValueError):
@@ -76,37 +79,60 @@ def parse_group_filters(values):
     return filters
 
 
+def _group_text(value):
+    """Legacy documents can hold a non-string name or email; never let one break sorting."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
+def _group_object(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _group_ids(value):
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
 def group_members(group):
-    """Project actual membership roles, including an owner omitted from legacy users."""
-    owner = group.get("owner") or {}
-    users = list(group.get("users") or [])
-    if owner.get("id") and not any(user.get("userId") == owner["id"] for user in users):
-        users.append({"userId": owner["id"], **{k: owner.get(k, "") for k in ("email", "displayName")}})
+    """Project actual membership roles, including an owner omitted from legacy users.
+
+    Malformed legacy entries are skipped so one bad document cannot fail the inventory.
+    """
+    owner = _group_object(group.get("owner"))
+    raw_users = group.get("users")
+    users = [user for user in raw_users if isinstance(user, dict)] if isinstance(raw_users, list) else []
+    admins = _group_ids(group.get("admins"))
+    managers = _group_ids(group.get("documentManagers"))
+    owner_id = owner.get("id") if isinstance(owner.get("id"), str) else None
+    if owner_id and not any(user.get("userId") == owner_id for user in users):
+        users.append({"userId": owner_id, **{k: owner.get(k, "") for k in ("email", "displayName")}})
     members = {}
     for user in users:
         user_id = user.get("userId")
-        if not user_id:
+        if not isinstance(user_id, str) or not user_id:
             continue
-        role = ("Owner" if user_id == owner.get("id") else
-                "Admin" if user_id in (group.get("admins") or []) else
-                "DocumentManager" if user_id in (group.get("documentManagers") or []) else "User")
+        role = ("Owner" if user_id == owner_id else
+                "Admin" if user_id in admins else
+                "DocumentManager" if user_id in managers else "User")
         members[user_id] = {
-            "id": user_id, "display_name": user.get("displayName", ""),
-            "email": user.get("email", ""), "role": role,
+            "id": user_id, "display_name": _group_text(user.get("displayName")),
+            "email": _group_text(user.get("email")), "role": role,
         }
     return list(members.values())
 
 
 def group_row(group, documents, tokens, last_activity):
-    owner = group.get("owner") or {}
-    metrics = group.get("metrics") or {}
+    owner = _group_object(group.get("owner"))
+    metrics = _group_object(group.get("metrics"))
     return {
         "id": group["id"],
-        "name": group.get("name") or "",
-        "description": group.get("description") or "",
+        "name": _group_text(group.get("name")),
+        "description": _group_text(group.get("description")),
         "owner": {
-            "id": owner.get("id"), "email": owner.get("email") or "",
-            "display_name": owner.get("displayName") or owner.get("display_name") or "",
+            "id": owner.get("id") if isinstance(owner.get("id"), str) else None,
+            "email": _group_text(owner.get("email")),
+            "display_name": _group_text(owner.get("displayName") or owner.get("display_name")),
         },
         "status": group.get("status") if group.get("status") in GROUP_STATUSES else "active",
         "members": len(group_members(group)),
@@ -146,8 +172,8 @@ def load_group_inventory(groups_container, documents_container, activity_contain
     # records and includes admin CSV and approval events that use top-level group_id.
     group_expression = (
         "IIF(IS_STRING(c.group_id) AND c.group_id != '', c.group_id, "
-        "IIF(IS_STRING(c.group.group_id) AND c.group.group_id != '', "
-        "c.group.group_id, c.workspace_context.group_id))"
+        f"IIF(IS_STRING({NESTED_GROUP_ID}) AND {NESTED_GROUP_ID} != '', "
+        f"{NESTED_GROUP_ID}, c.workspace_context.group_id))"
     )
     activity_times = {}
     for row in activity_container.query_items(

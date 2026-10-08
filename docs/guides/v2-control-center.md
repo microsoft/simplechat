@@ -44,13 +44,36 @@ Requesting group deletion, deleting all group documents, taking ownership, or tr
 
 ## Investigate activity
 
-Activity Logs was implemented in **0.261.284**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. Choose a UTC date window (default 30 days, maximum 366), select one or more activity-type chips, and narrow by user or workspace ID, model, token type, text or recorded status. **Apply filters** updates the URL so a bookmark preserves the investigation. **More filters** exposes explicit group/public-workspace IDs and status.
+Activity Logs was implemented in **0.261.284** and redesigned in **0.261.296**. Open it from a dashboard chart, a user/workspace activity link, or the section rail. It answers who did what, where and when, with people and workspaces shown by name rather than by ID.
 
-The histogram and chip counts describe the filtered records. For busy ranges, they describe only the newest 5,000 matches and clearly say **Sampled**; do not use them as organization-wide totals. Expand the histogram data table to select a UTC bucket and investigate that date window. The table reads 50 records at a time in newest-first order. **Refresh** starts over with newly recorded activity; changing filters resets paging.
+### Narrow the log with filter pills
 
-Choose **Inspect** for a record's fields and raw JSON. Related links open its recorded user, group, public workspace or approval. The drawer supports Escape and restores keyboard focus to the opener. Use compact density to scan more rows. Saved views preserve applied filters for the signed-in user on this browser, not across devices; removing a saved view does not delete activity.
+The row above the log is the investigation. Each pill shows what it is set to and applies as soon as you change it:
 
-**Export CSV** uses the same filters, not just the visible page, and exports no more than 10,000 activity rows. A final `export_limit_reached` row means the limit was reached; narrow the filters to export a smaller complete range. Spreadsheet formula prefixes are escaped. The export includes raw JSON, so handle the downloaded audit information according to your organization's data policies.
+- **Search** matches people's names and emails, file names, conversation titles, models and IDs. Typing a person's name finds what they did, even on records that store only their ID.
+- **Date** offers today and the last 7, 30 or 90 days, or a custom UTC range of up to 366 days. The default is the last 30 days.
+- **Activity** lists the activity types by group, with counts for the current range.
+- **Person** finds a SimpleChat user by name, email or user ID. It shows what that person did, including approvals and admin changes they made. To investigate someone who has since been removed from SimpleChat, type their user ID and choose **Filter by user ID**.
+- **Workspace** chooses personal, all groups, all public workspaces, or one group or public workspace by name or ID. A removed workspace can be filtered the same way, with **Filter by group ID** or **Filter by public workspace ID**.
+- **Add filter** adds a model, token type or recorded status.
+
+Remove one filter with the **×** on its pill, or use **Reset filters**. The URL updates as you go, so bookmarking it keeps the investigation, and a relative range such as "Last 7 days" stays relative. If the page stays open past midnight UTC, **Refresh** moves a relative range to the new day.
+
+### Read and cross-filter the log
+
+Under the filters, a slim trend strip shows how many records match, one bar per UTC day or period, and the most frequent activity types. Select a bar to narrow the dates to it. With the keyboard, Tab to the bars, move between them with the arrow keys and press Enter. Select an activity type to filter by it. **Hide trend** collapses the strip to its count, and the page remembers your choice. For busy ranges the strip says it uses only the newest 5,000 records; do not read those counts as organization-wide totals.
+
+Each row reads as a sentence: the time, the person, the activity, what happened and the workspace. Select a person, an activity or a workspace in any row to filter the log by it. Select the details to open the record. Times show in your local time; hover over a time to see it in UTC, or switch the table to **UTC**. **Compact** fits more rows on screen. Both choices are remembered on your account. The log reads 50 records at a time, newest first; **Refresh** starts over with newly recorded activity.
+
+The record drawer shows what happened, **Who** (with **Show only this person's activity** and **Open in Users**), **Where** (with **Show only this workspace** and the group or workspace), the recorded details, and the record's IDs and approval link. The raw JSON is collapsed at the bottom with **Copy JSON**. Use **Previous** and **Next** to step through the page without closing the drawer.
+
+### Save and reuse views
+
+**Views** opens quick views for recent sign-ins, recent token usage and document processing failures, and your saved views. **Save the current filters as** stores the current filters under a name; saving with an existing name replaces that view. Saved views live on your account, so they are there in any browser, and you can rename or delete them from the same menu. Views you saved in a browser before 0.261.296 move to your account the first time you open Activity Logs in that browser. If your settings cannot be loaded, the menu shows only the quick views until you reload the page, so a save cannot overwrite views it could not read.
+
+### Export
+
+**Export CSV** uses the same filters, not just the visible page, and exports no more than 10,000 activity rows. Next to the stored IDs, the export includes the person's name and email, the activity, a readable summary, and the workspace name. A final `export_limit_reached` row means the limit was reached; narrow the filters to export a smaller complete range. Spreadsheet formula prefixes are escaped. The export includes raw JSON, so handle the downloaded audit information according to your organization's data policies.
 
 On an existing deployment, an indexing error requires an administrator to apply the new expected activity-log composite index in **Admin Settings → App Maintenance** and wait for Cosmos index transformation. The activity page does not automatically apply cloud changes. A date cutoff stabilizes forward paging against newer events, but cannot freeze deletes or late/backdated writes; the feed is not a transactional snapshot.
 
