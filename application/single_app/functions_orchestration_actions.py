@@ -511,6 +511,7 @@ async def invoke_action(
         manifest = resolve_action_manifest(
             user_id, action_ref, settings=current_settings,
             user_groups=getattr(context, 'active_group_ids', None) or None,
+            user_roles=list(identity.roles),
         )
         if invocation_capture is not None:
             current_settings = deepcopy(current_settings)
@@ -569,6 +570,7 @@ async def invoke_action(
                     fresh = resolve_action_manifest(
                         user_id, action_ref, settings=current,
                         user_groups=getattr(context, 'active_group_ids', None) or None,
+                        user_roles=list(identity.roles),
                     )
                     if fresh != manifest:
                         raise ActionExecutionError('The selected action changed during execution.')

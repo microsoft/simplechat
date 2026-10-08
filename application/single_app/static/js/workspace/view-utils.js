@@ -99,6 +99,7 @@ export function getTypeIcon(type) {
     if (t.includes("rocksdb")) return "bi-hdd-stack";
     if (t.includes("chart")) return "bi-bar-chart-line";
     if (t.includes("simplechat")) return "bi-chat-square-dots";
+    if (t === "control_center") return "bi-speedometer2";
     if (t === "mcp" || t.includes("model_context_protocol")) return "bi-diagram-3";
     if (t.includes("openapi")) return "bi-globe";
     if (t.includes("log_analytics")) return "bi-graph-up";

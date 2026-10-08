@@ -154,6 +154,7 @@ EXPECTED_PUBLIC_PATHS = {
 SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_insights"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_dashboard_chat_readiness"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_logs"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_export"): ("login_required", "control_center_required"),

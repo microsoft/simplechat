@@ -352,6 +352,10 @@ export const NATIVE_ACTION_TYPES: Record<string, ActionNativeDefinition> = {
         capabilities: { path: '/additionalFields/simplechat_capabilities', options: SIMPLECHAT_ACTION_CAPABILITIES },
         help: 'Use workspace, conversation, and document tools as the signed-in user. Capabilities never bypass the user’s permissions.',
     },
+    control_center: {
+        fields: [], internal: true, defaults: { endpoint: 'control_center://internal', auth: { type: 'user' } },
+        help: 'Answer questions about SimpleChat usage from the Control Center dashboard: sign-ins, active users, conversations, uploads, token usage and the most active users, groups and public workspaces. Read-only, available only as a global action, and usable only by Control Center administrators and dashboard readers. Chat orchestration chooses actions by their description, so describe what people can ask it.',
+    },
     msgraph: {
         fields: [
             choice('msgraph_mail_send_mode', 'Mail delivery mode', [

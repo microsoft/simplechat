@@ -745,6 +745,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
     azure_maps: 'Azure Maps',
     blob_storage: 'Blob Storage',
     document_search: 'Document Search',
+    control_center: 'Control Center',
 };
 
 export function normalizeActionType(value: unknown): string {

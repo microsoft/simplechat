@@ -365,15 +365,6 @@ class ControlCenter {
             radio.addEventListener('change', () => this.toggleExportCustomDateRange());
         });
         
-        // Chat functionality
-        document.getElementById('executeChatBtn')?.addEventListener('click', 
-            () => this.chatActivityTrends());
-        
-        // Chat modal - show/hide custom date range based on radio selection
-        document.querySelectorAll('input[name="chatTimeWindow"]').forEach(radio => {
-            radio.addEventListener('change', () => this.toggleChatCustomDateRange());
-        });
-        
         // Activity Logs event handlers
         document.getElementById('activityLogsSearchInput')?.addEventListener('input', 
             this.debounce(() => this.handleActivityLogsSearchChange(), 300));
@@ -3849,115 +3840,6 @@ class ControlCenter {
             "'": '&#039;'
         };
         return text.replace(/[&<>"']/g, m => map[m]);
-    }
-    
-    toggleChatCustomDateRange() {
-        const customRadio = document.getElementById('chatCustom');
-        const customDateRange = document.getElementById('chatCustomDateRange');
-        
-        if (customRadio.checked) {
-            customDateRange.style.display = 'block';
-            // Set default dates
-            const endDate = new Date();
-            const startDate = new Date();
-            startDate.setDate(startDate.getDate() - 29);
-            
-            document.getElementById('chatStartDate').value = startDate.toISOString().split('T')[0];
-            document.getElementById('chatEndDate').value = endDate.toISOString().split('T')[0];
-        } else {
-            customDateRange.style.display = 'none';
-        }
-    }
-    
-    async chatActivityTrends() {
-        try {
-            // Get selected charts
-            const selectedCharts = [];
-            if (document.getElementById('chatLogins').checked) selectedCharts.push('logins');
-            if (document.getElementById('chatChats').checked) selectedCharts.push('chats');
-            if (document.getElementById('chatDocuments').checked) selectedCharts.push('documents');
-            
-            if (selectedCharts.length === 0) {
-                showToast('Please select at least one chart to include in the chat.', 'warning');
-                return;
-            }
-            
-            // Get selected time window
-            const timeWindowRadio = document.querySelector('input[name="chatTimeWindow"]:checked');
-            const timeWindow = timeWindowRadio.value;
-            
-            let chatData = {
-                charts: selectedCharts,
-                time_window: timeWindow
-            };
-
-            const tokenFilters = this.getTokenFilterRequestPayload();
-            if (Object.keys(tokenFilters).length > 0) {
-                chatData.token_filters = tokenFilters;
-            }
-            
-            // Add custom dates if selected
-            if (timeWindow === 'custom') {
-                const startDate = document.getElementById('chatStartDate').value;
-                const endDate = document.getElementById('chatEndDate').value;
-                
-                if (!startDate || !endDate) {
-                    showToast('Please select both start and end dates for custom range.', 'warning');
-                    return;
-                }
-                
-                if (new Date(startDate) > new Date(endDate)) {
-                    showToast('Start date must be before end date.', 'warning');
-                    return;
-                }
-                
-                chatData.start_date = startDate;
-                chatData.end_date = endDate;
-            }
-            
-            // Show loading state
-            const chatBtn = document.getElementById('executeChatBtn');
-            const originalText = chatBtn.innerHTML;
-            chatBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Creating Chat...';
-            chatBtn.disabled = true;
-            
-            // Make API call
-            const response = await fetch('/api/admin/control-center/activity-trends/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(chatData)
-            });
-            
-            const result = await response.json();
-            
-            if (response.ok && result.success) {
-                // Close modal
-                const modal = bootstrap.Modal.getInstance(document.getElementById('chatModal'));
-                modal.hide();
-                
-                // Show success message
-                this.showAlert('success', 'Chat conversation created successfully! Redirecting...');
-                
-                // Redirect to the new conversation
-                setTimeout(() => {
-                    window.location.href = result.redirect_url;
-                }, 1500);
-                
-            } else {
-                throw new Error(result.error || 'Failed to create chat conversation');
-            }
-            
-        } catch (error) {
-            console.error('Chat creation error:', error);
-            this.showAlert('danger', `Failed to create chat: ${error.message}`);
-        } finally {
-            // Reset button state
-            const chatBtn = document.getElementById('executeChatBtn');
-            chatBtn.innerHTML = '<i class="bi bi-chat-dots me-1"></i>Start Chat';
-            chatBtn.disabled = false;
-        }
     }
     
     destroyAllCharts() {

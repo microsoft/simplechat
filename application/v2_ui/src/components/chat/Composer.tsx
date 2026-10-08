@@ -65,6 +65,7 @@ import {
     resolveContextHandoff,
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
+import { readComposerDraftHandoff } from '../../lib/composerDraftHandoff';
 import {
     isApprovalMode,
     resolveOrchestrationApproval,
@@ -1285,6 +1286,41 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         () => (location.state ?? null) as ContextHandoffState | null,
     );
     const handoffApplied = useRef(false);
+
+    /**
+     * Adopt text another page handed over, such as the Control Center's dashboard chat.
+     *
+     * It arrives in router state, never the URL, so nothing outside the application can put
+     * words in someone's composer. Captured during the first render like the selection hand-off,
+     * applied once, and the state is then cleared so a reload or Back does not apply it again.
+     * The person still reads, edits and sends the text.
+     */
+    const [draftHandoff] = useState(() => readComposerDraftHandoff(location.state));
+    const draftHandoffApplied = useRef(false);
+
+    useEffect(() => {
+        if (draftHandoffApplied.current || !draftHandoff) {
+            return;
+        }
+        draftHandoffApplied.current = true;
+        if (draftHandoff.newConversation) {
+            useChatStore.getState().startNewConversation();
+        }
+        setDraft((current) => ({ ...current, text: draftHandoff.text }));
+        if (draftHandoff.orchestrate && orchestrationAvailable) {
+            orchestrationChosen.current = true;
+            setOrchestrationOn(true);
+        }
+        setSearchParams((current) => current, { replace: true, state: null });
+        window.requestAnimationFrame(() => {
+            const textarea = textareaRef.current;
+            if (!textarea) {
+                return;
+            }
+            textarea.focus();
+            textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        });
+    }, [draftHandoff, orchestrationAvailable, setSearchParams]);
 
     useEffect(() => {
         if (handoffApplied.current || !linkedHandoff || !canPost) {

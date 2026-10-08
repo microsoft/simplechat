@@ -299,6 +299,17 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         setDraft((current) => changeActionType(current, type));
         setPendingType(null); setFieldErrors({}); setValidity({}); setError(null); setValidationFeedback(null);
     };
+    // A link can name the type a new action starts from, as the Control Center's dashboard chat
+    // set-up link does. Applied once, to a still-empty draft, and only for an offered type.
+    const requestedType = isNew ? new URLSearchParams(location.search).get('type') : null;
+    const requestedTypeApplied = useRef(false);
+    useEffect(() => {
+        if (requestedTypeApplied.current || !requestedType || draft.type || catalogueLoading || readOnly || !canAuthor) return;
+        const match = catalogue.find((type) => type.type === requestedType);
+        if (!match) return;
+        requestedTypeApplied.current = true;
+        applyType(match);
+    }, [requestedType, draft.type, catalogueLoading, catalogue, readOnly, canAuthor]);
     const identitySection = (
         <div className="space-y-5">
             {returnTo ? <p className="rounded-xl bg-accent-soft p-3 text-sm text-accent">Save this action to return to your agent draft with it selected. The agent itself will not be saved.</p> : null}

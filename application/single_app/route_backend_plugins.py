@@ -186,6 +186,11 @@ from functions_msgraph_operations import (
 )
 from functions_m365_operations import M365_PLUGIN_TYPES, get_m365_action_definition, get_m365_default_config
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
+from functions_control_center_dashboard import (
+    CONTROL_CENTER_ACTION_DEFAULT_DESCRIPTION,
+    CONTROL_CENTER_ACTION_DEFAULT_ENDPOINT,
+    CONTROL_CENTER_ACTION_TYPE,
+)
 from functions_agent_delegation import (
     AGENT_DEFAULT_ENDPOINT,
     AGENT_PLUGIN_TYPE,
@@ -394,6 +399,15 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
+
+    elif plugin_type == CONTROL_CENTER_ACTION_TYPE:
+        # Runs as the signed-in Control Center viewer; there is no connection to configure.
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = CONTROL_CENTER_ACTION_DEFAULT_ENDPOINT
+        plugin_payload['auth'] = {'type': 'user'}
+        # Orchestration chooses actions by their description, so a blank one is never saved.
+        if not str(plugin_payload.get('description') or '').strip():
+            plugin_payload['description'] = CONTROL_CENTER_ACTION_DEFAULT_DESCRIPTION
 
     elif plugin_type == AGENT_PLUGIN_TYPE:
         if not str(plugin_payload.get('endpoint') or '').strip():

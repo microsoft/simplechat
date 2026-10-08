@@ -312,6 +312,7 @@ def _revision_catalogs(
     actions = resolve_action_catalog(
         user_id, seeds=seeds, settings=settings,
         user_groups=seeds.get('active_group_ids') or None,
+        user_roles=identity.get('user_roles') or [],
     )
     runtime_options = {}
     if callable(native_bridge_for_step):
