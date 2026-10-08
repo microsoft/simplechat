@@ -2,8 +2,8 @@
 # test_workflow_plan_replay_routes.py
 """
 Functional test for the saved-plan replay routes: preview and save a completed chat plan.
-Version: 0.261.305
-Implemented in: 0.261.305
+Version: 0.261.306
+Implemented in: 0.261.306
 
 This test ensures that only the creator, in a private conversation they own, can preview or save a
 completed chat orchestration plan as a personal workflow that repeats it. The preview discloses
@@ -226,7 +226,7 @@ def _require_no_hostile_text_in_logs(h):
 
 
 def test_version_includes_plan_replay():
-    assert_app_version_at_least("0.261.305")
+    assert_app_version_at_least("0.261.306")
 
 
 def test_the_preview_discloses_every_frozen_step_and_writes_nothing(h):

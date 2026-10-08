@@ -1,8 +1,8 @@
 # test_v2_workflow_plan_replay_card.py
 """
 Real-component browser tests for saving a completed chat orchestration plan as a replay workflow.
-Version: 0.261.305
-Implemented in: 0.261.305
+Version: 0.261.306
+Implemented in: 0.261.306
 Refs: microsoft/simplechat#1550, microsoft/simplechat#1543
 
 The production MessageList, PlanReplaySaveCard, WorkflowEditorDialog and WorkflowRunHistory run in
@@ -39,7 +39,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
-IMPLEMENTED_IN = "0.261.305"
+IMPLEMENTED_IN = "0.261.306"
 CONVERSATION = "plan-replay-chat"
 RUN_ID = "plan-replay-run"
 WORKFLOW_ID = "plan-replay-workflow"
@@ -280,7 +280,7 @@ def mount_messages(page, *, feature=True, messages=None, kind="personal", conver
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.305', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.306', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: {
                     enable_chat_orchestration: true,
                     allow_user_workflows: true,

@@ -2,8 +2,8 @@
 # test_workflow_plan_replay_boundaries.py
 """
 Functional test for the workflow plan replay import and scheduler boundaries.
-Version: 0.261.305
-Implemented in: 0.261.305
+Version: 0.261.306
+Implemented in: 0.261.306
 
 This test ensures that the plan replay module never imports the web layer, so a scheduled run
 cannot reach request state, and that the runner, the personal and group workflow stores and the
@@ -106,7 +106,7 @@ def require(condition, message):
 
 
 def test_version_includes_plan_replay():
-    assert_app_version_at_least("0.261.305")
+    assert_app_version_at_least("0.261.306")
 
 
 def run_probe(order, optimized):
