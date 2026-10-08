@@ -15,10 +15,14 @@ time, worded as the workflow's scheduled runs will receive theirs.
 JSON preparation states each declared output's exact shape, asks the endpoint for a JSON
 object, and makes one corrective call when a reply breaks a declared rule. Neither reply is
 logged; the log records only application codes and hashed identifiers.
+
+When an input carries citation values, such as the Microsoft 365 sources an action step lists,
+the step is told to copy them verbatim after the claims they support (0.261.303).
 """
 
 import json
 import logging
+import re
 
 from jsonschema import Draft202012Validator
 
@@ -102,6 +106,16 @@ JSON_OUTPUT_POLICY = (
     'their complete values. Follow every declared schema and any matching '
     'profile definition. No Markdown fences.'
 )
+CITATION_POLICY = (
+    'Some inputs carry citation values written as (Source: <title>, Location: <where>) [#<id>], '
+    'or with Page: or Sheet: in place of Location:. When you use information from such an item, '
+    'copy its citation value verbatim right after the sentence or list line it supports. Never '
+    'invent, shorten, renumber or alter a citation value, and never cite an item you did not use. '
+    "When you list Microsoft 365 emails, events or files, follow the layout in that input's "
+    'presentation field: one numbered line per item, each ending with its citation value.'
+)
+# A citation value as it appears inside the serialized inputs.
+_CITATION_VALUE_RE = re.compile(r'\(Source:.{1,400}?\)\s*\[#')
 _COLUMN_LABELS = {'boolean': 'true or false', 'json': 'any JSON value'}
 _COLUMN_EXAMPLES = {
     'string': '...', 'integer': 1, 'number': 1.5, 'boolean': True, 'object': {}, 'array': [], 'json': '...',
@@ -296,6 +310,15 @@ def _answer_memory(context):
     return getattr(context, 'memory_context', None) or {}
 
 
+def _carries_citation_values(inputs):
+    """Whether any named input holds a citation value the answer must copy verbatim."""
+    try:
+        serialized = json.dumps(inputs, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return False
+    return _CITATION_VALUE_RE.search(serialized) is not None
+
+
 def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_requested=None):
     """Prepare all declared outputs in one content-generation call.
 
@@ -385,6 +408,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         policy = ' '.join(part for part in (
             COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], MISSING_INPUT_POLICY if missing else '',
             MISSING_IMAGE_POLICY if missing_images else '',
+            CITATION_POLICY if _carries_citation_values(inputs) else '',
             'Return only the prepared text.' if plain_text else ' '.join((
                 JSON_OUTPUT_POLICY, *(_output_shape(output) for output in outputs),
             )),

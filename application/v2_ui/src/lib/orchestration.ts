@@ -70,6 +70,8 @@ export interface OrchestrationFailure {
     provider_status?: number;
     /** The Microsoft 365 sources a sign-in or approval stop needs, when the step reported them. */
     m365_sources?: string[];
+    /** The pending Microsoft 365 approval an `m365_approval_required` stop is waiting on. */
+    approval_id?: string;
 }
 
 export interface OrchestrationRecovery {
@@ -114,6 +116,9 @@ function recordOf(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+/** Microsoft 365 approval ids are minted by the server as `m365-` and a SHA-256 hex digest. */
+const M365_APPROVAL_ID = /^m365-[0-9a-f]{64}$/;
+
 export function normalizeOrchestrationFailure(value: unknown): OrchestrationFailure | null {
     const data = recordOf(value);
     if (typeof data.code !== 'string' || typeof data.message !== 'string') return null;
@@ -126,6 +131,9 @@ export function normalizeOrchestrationFailure(value: unknown): OrchestrationFail
         ...(Array.isArray(data.m365_sources)
             ? { m365_sources: data.m365_sources.filter((source): source is string => typeof source === 'string') }
             : {}),
+        ...(data.code === 'm365_approval_required' && typeof data.approval_id === 'string'
+            && M365_APPROVAL_ID.test(data.approval_id)
+            ? { approval_id: data.approval_id } : {}),
     };
 }
 
@@ -192,6 +200,43 @@ export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAtte
         ...(Array.isArray(data.export_catalog) ? { export_catalog: data.export_catalog } : {}),
         ...(deliverableStates ? { deliverable_states: deliverableStates } : {}),
     };
+}
+
+/**
+ * The run id and the retried run id an assistant message records, read the way
+ * `normalizeOrchestrationAttempt` reads them: top-level fields win over `metadata.orchestration`.
+ */
+function attemptLineage(message: unknown): { runId?: string; retryOf?: string } {
+    const outer = recordOf(message);
+    const saved = recordOf(recordOf(outer.metadata).orchestration);
+    const text = (key: string): string | undefined => {
+        const value = outer[key] ?? saved[key];
+        return typeof value === 'string' && value ? value : undefined;
+    };
+    return { runId: text('run_id'), retryOf: text('retry_of_run_id') };
+}
+
+/**
+ * The runs a later attempt in this thread replaced.
+ *
+ * A retry saves its answer as a new assistant message and keeps the earlier attempt's message
+ * for the record. Once the retry's message is in the thread, the earlier attempt no longer
+ * describes the request: its failure and its retry controls are history, not the answer.
+ */
+export function supersededOrchestrationRunIds(messages: readonly unknown[]): Set<string> {
+    const superseded = new Set<string>();
+    for (const message of messages) {
+        const { runId, retryOf } = attemptLineage(message);
+        if (retryOf && retryOf !== runId) superseded.add(retryOf);
+    }
+    return superseded;
+}
+
+/** Whether an assistant message is an attempt that a later retry in the thread replaced. */
+export function isSupersededOrchestrationAttempt(message: unknown, superseded: ReadonlySet<string>): boolean {
+    if (superseded.size === 0 || recordOf(message).role !== 'assistant') return false;
+    const { runId } = attemptLineage(message);
+    return Boolean(runId && superseded.has(runId));
 }
 
 /** A terminal execution status can precede durable final-message publication. */

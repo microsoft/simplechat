@@ -17,6 +17,7 @@ import {
     type OrchestrationPlan, type PlanStatus,
 } from '../../lib/orchestration';
 import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
+import { M365ApprovalInlineCard } from './M365ApprovalInlineCard';
 import { OrchestrationM365Notice } from './OrchestrationM365Notice';
 
 function RecoveryConfirmation({
@@ -89,11 +90,24 @@ export function OrchestrationRecoveryNotice({
     const failed = !waiting && (outcome === 'failed' || outcome === 'partial' || outcome === 'cancelled');
     const newer = attempt.recovery?.current_run_id || attempt.latest_attempt_run_id;
     const previousRunId = attempt.retry_of_run_id;
+    // A retry that finished needs no notice: its answer is the reply, and the attempt it
+    // replaced is hidden from the thread. Its saved attempts stay reachable from the message's
+    // details. A prepared retry that has not run yet still offers to run it.
+    const preparedRetry = Boolean(attempt.retry_of_run_id) && (outcome === 'awaiting_approval' || outcome === 'approved');
     const relevant = failed || waiting || saved?.transportUnknown || saved?.error
-        || Boolean(newer && newer !== runId) || Boolean(attempt.retry_of_run_id);
+        || Boolean(newer && newer !== runId) || preparedRetry;
     const currentPlan = saved?.plan ?? plan;
     const recovery = attempt.recovery;
-    const fileOutputs = Boolean(attempt.outputs?.length);
+    const outputs = attempt.outputs ?? [];
+    const fileOutputs = outputs.length > 0;
+    // A file that failed for good cannot be retried on its own: a file retry runs in the
+    // background, where the sign-in some sources need is not available. A plan retry runs it
+    // again from this chat, as long as no other file is still being prepared.
+    const filesInProgress = outputs.some((output) =>
+        output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled');
+    const planRetryForFiles = fileOutputs && !filesInProgress
+        && outputs.some((output) => output.state === 'failed' && !output.can_retry);
+    const planRetryOffered = !fileOutputs || planRetryForFiles;
     // The server refuses runs from an earlier orchestration version: there is nothing to reload,
     // check or review, only its message to show.
     const legacy = Boolean(saved?.legacyPlan);
@@ -113,13 +127,64 @@ export function OrchestrationRecoveryNotice({
 
     if (!runId || !relevant) return null;
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
-    const retryAllowed = failed && !fileOutputs && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
+    const retryAllowed = failed && planRetryOffered && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
         && (!newer || newer === runId) && !saved?.transportUnknown;
     const retry = async (confirmedVersion?: string) => {
         const result = await retryOrchestrationRun(conversationId, runId, confirmedVersion);
         setConfirmationVersion(result.confirmationRequired && result.version ? result.version : null);
     };
     const titleFor = (stepId: string) => currentPlan?.steps.find((step) => step.step_id === stepId)?.title || stepId;
+    const allFailures = [...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])];
+    const replaced = Boolean(newer && newer !== runId);
+    const approvalFailure = allFailures.find(
+        (failure) => failure.code === 'm365_approval_required' && Boolean(failure.approval_id),
+    );
+    // The card continues the plan, so it is offered wherever a plan retry is.
+    const inlineApproval = failed && !replaced && planRetryOffered && !saved?.transportUnknown && !legacy
+        ? approvalFailure : undefined;
+    const confirmation = confirmationVersion ? (
+        <RecoveryConfirmation
+            busy={saved?.busy}
+            onConfirm={() => void retry(confirmationVersion)}
+            onClose={() => setConfirmationVersion(null)}
+        />
+    ) : null;
+
+    if (replaced && !waiting && !saved?.transportUnknown && !saved?.error) {
+        // The newer attempt carries the outcome now; its message replaces this one once saved.
+        return (
+            <section aria-label="Orchestration recovery" className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-3">
+                <p role="status">A newer attempt of this plan exists.</p>
+                <GlassButton size="sm" variant="ghost"
+                    onClick={() => openOrchestrationRecovery(conversationId, newer as string)}>
+                    View current attempt
+                </GlassButton>
+            </section>
+        );
+    }
+
+    if (inlineApproval?.approval_id) {
+        const stepTitle = inlineApproval.step_id
+            ? currentPlan?.steps.find((step) => step.step_id === inlineApproval.step_id)?.title
+            : undefined;
+        return (
+            <section aria-label="Orchestration recovery" className="mt-3 space-y-2 text-xs text-text-2">
+                <M365ApprovalInlineCard
+                    approvalId={inlineApproval.approval_id}
+                    stepTitle={stepTitle}
+                    canContinue={Boolean(retryAllowed)}
+                    continuing={Boolean(saved?.busy || streaming || active)}
+                    onContinue={() => retry()}
+                />
+                {saved?.error ? <p role="alert">{saved.error}</p> : null}
+                <GlassButton size="sm" variant="ghost"
+                    onClick={() => openOrchestrationRecovery(conversationId, runId)}>
+                    Review saved attempt
+                </GlassButton>
+                {confirmation}
+            </section>
+        );
+    }
 
     return (
         <section
@@ -136,10 +201,8 @@ export function OrchestrationRecoveryNotice({
             </p>
             {attempt.failure?.message ? <p>{attempt.failure.message}</p> : null}
             {saved?.error ? <p role="alert">{saved.error}</p> : null}
-            {failed && !saved?.transportUnknown && !legacy && (!newer || newer === runId) ? (
-                <OrchestrationM365Notice
-                    failures={[...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])]}
-                />
+            {failed && !saved?.transportUnknown && !legacy && !replaced ? (
+                <OrchestrationM365Notice failures={allFailures} />
             ) : null}
             {waiting ? (
                 <p>
@@ -148,21 +211,23 @@ export function OrchestrationRecoveryNotice({
                 </p>
             ) : null}
             {failed && !saved?.transportUnknown && !legacy ? (
-                <p>{fileOutputs ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
+                <p>{fileOutputs && !planRetryForFiles ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
+                    : planRetryForFiles && recovery?.eligible && (!newer || newer === runId)
+                    ? 'A file could not be created and cannot be retried on its own. Retry from failed step creates the plan\'s files again without repeating completed plan steps.'
                     : recovery?.message || (newer && newer !== runId
                     ? 'A newer execution attempt already exists. Review its saved result.'
                     : recovery?.eligible
                     ? 'Resume the saved plan without repeating completed plan steps.'
                     : 'This historical attempt has no verified recovery checkpoint. It cannot be resumed; start a new plan deliberately if needed.')}</p>
             ) : null}
-            {failed && !fileOutputs && recovery?.reused_step_ids.length ? (
+            {failed && planRetryOffered && recovery?.reused_step_ids.length ? (
                 <p><strong>Reuse saved results:</strong> {recovery.reused_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
-            {failed && !fileOutputs && recovery?.retry_step_ids.length ? (
+            {failed && planRetryOffered && recovery?.retry_step_ids.length ? (
                 <p><strong>Execute on retry:</strong> {recovery.retry_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
             <div className="flex flex-wrap gap-2">
-                {!fileOutputs && attempt.retry_of_run_id && (outcome === 'awaiting_approval' || outcome === 'approved') ? (
+                {!fileOutputs && preparedRetry ? (
                     <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
                         onClick={() => void runPreparedOrchestrationRetry(conversationId, runId)}>
                         Run prepared retry
@@ -205,13 +270,7 @@ export function OrchestrationRecoveryNotice({
                     </GlassButton>
                 ) : null}
             </div>
-            {confirmationVersion ? (
-                <RecoveryConfirmation
-                    busy={saved?.busy}
-                    onConfirm={() => void retry(confirmationVersion)}
-                    onClose={() => setConfirmationVersion(null)}
-                />
-            ) : null}
+            {confirmation}
         </section>
     );
 }

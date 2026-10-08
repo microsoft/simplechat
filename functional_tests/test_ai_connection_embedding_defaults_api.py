@@ -253,6 +253,9 @@ class AdminApiHarness:
             "_seed_connections_on_first_enable": lambda *_args: self.events.append("seed"),
             "_log_governance_setting_changes": lambda *_args: None,
             "_refresh_branding_static_files": lambda: None,
+            "ensure_m365_workflow_encryption_key": lambda _settings: {
+                "status": "not_configured", "reason": "key_vault_disabled", "message": "",
+            },
             "_redact_admin_settings_for_v2": lambda updates: copy.deepcopy(updates),
         })
         load_functions(

@@ -8,7 +8,7 @@ counts:
   actions: 33
   chat_controls: 47
   sub_elements: 3
-  app_pages: 30
+  app_pages: 31
   feature_surfaces: 25
 capabilities:
 - key: enable_action_ai_assistant
@@ -1236,6 +1236,8 @@ app_pages:
 - template: login.html
   slug: login
   route_url: /login
+- template: m365_connection_result.html
+  slug: m365-connection-result
 - template: manage_group.html
   slug: manage-group
   route_url: /groups/<group_id>

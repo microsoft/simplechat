@@ -49,11 +49,31 @@ OUTPUT_UNAVAILABLE_MESSAGES = {
     "output_artifact_missing": "This file is unavailable because its committed artifact is missing.",
     "output_artifact_mismatch": "This file is unavailable because its artifact binding could not be verified.",
     "output_intent_invalid": "This file is unavailable because its artifact binding could not be verified.",
+    "output_sign_in_required": (
+        "This file is unavailable here because the results it uses can only be checked with your sign-in."
+    ),
 }
-# A file a time budget stopped says so instead of the generic failed or cancelled text.
+# A failed file says why it could not be created instead of the generic failed text. A file a
+# time budget stopped names that budget.
 OUTPUT_FAILURE_MESSAGES = {
     "output_step_time_limit": "This file was stopped because its step reached the time limit.",
     "output_deadline_exceeded": "This file was stopped because the run reached its time limit.",
+    "output_sign_in_required": (
+        "This file could not be created because the results it uses can only be checked with your "
+        "sign-in, which wasn't available where the file was prepared. Retry from this chat to create it."
+    ),
+    "output_access_denied": (
+        "This file could not be created because access to its conversation or to the results it uses "
+        "could not be confirmed."
+    ),
+    "output_source_unavailable": (
+        "This file could not be created because a result it uses is missing or no longer readable."
+    ),
+    "output_source_changed": (
+        "This file could not be created because a result it uses no longer matches the retained version."
+    ),
+    "output_screening_hold": "This file could not be created while a source it uses is under review.",
+    "output_capability_disabled": "This file could not be created under the current capability settings.",
 }
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z")
 _OUTPUT_ID = re.compile(r"orender_[a-f0-9]{64}\Z")
@@ -169,6 +189,7 @@ def public_output(record, *, unavailable_code=None, withhold_details=False):
     if withhold_details or not available or record.get("error_code") in {
         "output_access_denied", "output_screening_hold", "output_deleted",
         "output_conversation_unavailable", "output_source_unavailable", "output_superseded",
+        "output_sign_in_required",
     }:
         descriptor = {}
     projected = {

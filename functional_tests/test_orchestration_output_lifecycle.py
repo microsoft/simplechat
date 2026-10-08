@@ -1,10 +1,11 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.245
+Version: 0.261.303
 Implemented in: 0.261.127
 Container-only generated-file access covered in: 0.261.232
 Merged documents rendered from their own lineage added in: 0.261.245
+Failed files say why they could not be created in: 0.261.303
 
 Production modules (including the complete upload and download modules) run with
 external Azure I/O doubled. No AST-extracted service, model call, or provider is
@@ -48,6 +49,7 @@ from functions_orchestration_artifacts import (
 )
 from functions_orchestration_output_store import (
     MAX_AUTOMATIC_ATTEMPTS,
+    OUTPUT_FAILURE_MESSAGES,
     OUTPUT_RECORD_TYPE,
     OrchestrationOutputStore,
     OutputConflictError,
@@ -1522,8 +1524,9 @@ def test_nonretryable_failures_never_schedule_automatic_or_manual_replay(lifecyc
     with pytest.raises(OutputError):
         lifecycle.service.manual_retry(output["output_id"], "invalid-retry")
     duplicate = lifecycle.run(output)
+    # The saved projection says why an access refusal stopped the file (0.261.303).
     expected = {
-        **failed, "available": True, "message": "This file could not be created.",
+        **failed, "available": True, "message": OUTPUT_FAILURE_MESSAGES["output_access_denied"],
     } if isinstance(failure, PermissionError) else failed
     assert duplicate == expected and len(lifecycle.render_calls) == 1
     assert "private" not in json.dumps(failed)

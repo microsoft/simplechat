@@ -1486,7 +1486,10 @@ tracker, running tag and posted-message footers. The last bullet of the **V2** l
 3. **Vocabulary mismatch.** Workflows have no web search, deep research, image generation, or render_file except
    through agent actions. Phase 8 plan-replay addresses this.
 4. **M365 setup.**
-   - Key Vault key `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` and the `/api/m365/connections/callback` redirect
+   - Key Vault secret storage turned on. Since 0.261.302 the workflow encryption key creates itself in Key Vault
+     and workflow sign-in returns to the registered `/getAToken` callback, so neither the
+     `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` setting nor a `/api/m365/connections/callback` redirect is required
+     ([connection session race fix](../fixes/M365_CONNECTION_SESSION_RACE_FIX.md)).
    - Profile → Connect Microsoft 365 with offline consent
    - Run as = self
    - Approval of the exact revision, unless the Run as user saved it. Since 0.261.229 (#1630), a revision the Run as

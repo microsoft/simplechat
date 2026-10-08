@@ -992,9 +992,9 @@ def test_workflow_delivery_controls_follow_the_run_as_viewer(ui):
 @pytest.mark.ui
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
 @pytest.mark.parametrize("status,sources,message", [
-    ("available", list(SOURCES), "Sign-in saved for this session"),
-    ("not_connected", [], "No Microsoft 365 sign-in is saved for this session"),
-    ("reconnect_required", ["email"], "Reconnect Microsoft 365 before using these sources in chat"),
+    ("available", list(SOURCES), "Signed in to Microsoft 365 for this session. Chat can use: Calendar, Email"),
+    ("not_connected", [], "Not signed in to Microsoft 365 in this session"),
+    ("reconnect_required", ["email"], "Microsoft 365 needs you to sign in again before chat can use Email"),
 ])
 def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewport, status, sources, message):
     page, api = ui
@@ -1004,7 +1004,7 @@ def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewp
     region = page.get_by_role("region", name="Microsoft 365 chat connection", exact=True)
     expect(region.get_by_role("button", name="Reconnect Microsoft 365 for chat", exact=True)).to_be_enabled()
     expect(region.locator("#m365-chat-connection-status")).to_contain_text(message)
-    expect(region).to_contain_text("Access is checked when a source runs")
+    expect(region).to_contain_text("Microsoft still checks your access each time a source runs")
     expect(region).to_contain_text("does not require Key Vault")
     expect(region).to_contain_text("sharing approvals")
     expect(region).to_contain_text("saved workflow credentials")
@@ -1226,7 +1226,7 @@ def test_profile_chat_invalid_status_is_visible_without_blocking_workflow_contro
     api.chat_connection = {"status": "not_connected", "sources": []}
     page.locator("#m365-profile-refresh").click()
     expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
-    expect(page.locator("#m365-chat-connection-status")).to_contain_text("No Microsoft 365 sign-in is saved")
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Not signed in to Microsoft 365 in this session")
     assert not api.m365_posts
     assert not api.errors
 
@@ -1281,7 +1281,7 @@ def test_profile_chat_callback_reports_success_preserves_navigation_and_never_re
     expect(notice).to_contain_text("Microsoft 365 sign-in completed")
     expect(notice).to_contain_text("retry your original question")
     expect(notice).to_contain_text("No past requests were retried")
-    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Sign-in saved for this session")
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Signed in to Microsoft 365 for this session")
     expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
     returned_url = urlsplit(page.url)
     assert returned_url.path == "/profile"

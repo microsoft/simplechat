@@ -15,7 +15,7 @@ import { GlassButton } from '../ui/primitives';
 import { WorkflowEditorDialog } from '../workflows/WorkflowEditorDialog';
 import { WorkflowProposalRunSummary } from './WorkflowProposalRunSummary';
 import { ApiError } from '../../lib/apiClient';
-import { M365_CONNECT_HREF } from '../../lib/m365Links';
+import { M365_APPROVALS_HREF, M365_CONNECT_HREF } from '../../lib/m365Links';
 import {
     fetchWorkflowEditorOptions,
     normalizeWorkflowDefinition,
@@ -43,8 +43,6 @@ const PERSONAL_SCOPE: WorkflowScope = { type: 'personal' };
 const CREATING_POLL_MS = 3000;
 const CREATING_POLL_LIMIT = 40;
 const CREATING_WINDOW_MS = 120_000;
-// Classic pages: V2 has no Microsoft 365 connection or approval page of its own.
-const M365_APPROVALS_HREF = '/approvals';
 const URL_ACCESS_REFUSED = 'URL Access is not available for workflows created from chat.';
 
 const STATE_LABELS: Record<WorkflowProposalState, string> = {
@@ -209,8 +207,8 @@ function Microsoft365({ proposal }: { proposal: WorkflowProposal }) {
                 {runAsSelf && m365.required ? (
                     m365.approval_state === 'approved' ? ' Run as is approved.'
                         : m365.approval_state === 'waiting' ? (
-                            <> A run is waiting for your approval. <a href={M365_APPROVALS_HREF}
-                                className="font-medium text-accent underline underline-offset-2">Review Run as approval</a></>
+                            <> A run is waiting for your approval. <Link to={M365_APPROVALS_HREF}
+                                className="font-medium text-accent underline underline-offset-2">Review Run as approval</Link></>
                         )
                         : m365.approval_state === 'self_authored' ? (
                             `${created ? ' You saved it' : ' You create it'}, so it needs no separate Run as approval. `
@@ -223,9 +221,9 @@ function Microsoft365({ proposal }: { proposal: WorkflowProposal }) {
             {m365.required && m365.connected === false ? (
                 <p className="rounded-lg bg-warn-soft p-2 text-warn">
                     Microsoft 365 is not connected for workflows.{' '}
-                    <a href={M365_CONNECT_HREF} className="font-medium underline underline-offset-2">
+                    <Link to={M365_CONNECT_HREF} className="font-medium underline underline-offset-2">
                         Connect Microsoft 365 for workflows
-                    </a>
+                    </Link>
                 </p>
             ) : null}
         </>

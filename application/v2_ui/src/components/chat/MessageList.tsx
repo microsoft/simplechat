@@ -30,6 +30,7 @@ import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisi
 import { stripLegacyMapBlocks } from '../../lib/inlineMaps';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
+import { M365CitationProvider } from './M365CitationContext';
 import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
@@ -91,7 +92,9 @@ import {
 } from '../../lib/aiActivity';
 import { MessageMentionPills } from './MentionPills';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
-import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
+import {
+    isSupersededOrchestrationAttempt, normalizeOrchestrationAttempt, supersededOrchestrationRunIds,
+} from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
 import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRuns';
@@ -1127,13 +1130,16 @@ function MessageBubbleInner({
                                     results={proposalImages}
                                     generatedImages={generatedImages}
                                 >
-                                    <AssistantMarkdown
-                                        content={masks.ranges.length === 0
-                                            ? stripLegacyMapBlocks(message.content)
-                                            : message.content}
-                                        masks={masks.ranges}
-                                        messageId={message.id}
-                                    />
+                                    {/* Microsoft 365 citation chips resolve against this message's own records. */}
+                                    <M365CitationProvider citations={message.m365_citations}>
+                                        <AssistantMarkdown
+                                            content={masks.ranges.length === 0
+                                                ? stripLegacyMapBlocks(message.content)
+                                                : message.content}
+                                            masks={masks.ranges}
+                                            messageId={message.id}
+                                        />
+                                    </M365CitationProvider>
                                 </ImageProposalScope>
                             </div>
                         )}
@@ -1613,8 +1619,11 @@ export function MessageList() {
     const { threadMessages, proposalImagesByMessage } = useMemo(() => {
         // A workflow run's own post is replaced by its mirrored reply, which says the same
         // with the maps and sources attached. It stays loaded, so a reply quoting it still
-        // resolves.
-        const shown = messages.filter((message) => !isSupersededByWorkflowReply(message));
+        // resolves. An orchestration attempt a later retry replaced is hidden the same way:
+        // the thread shows the latest attempt, and the earlier one stays saved for the record.
+        const supersededRuns = supersededOrchestrationRunIds(messages);
+        const shown = messages.filter((message) => !isSupersededByWorkflowReply(message)
+            && !isSupersededOrchestrationAttempt(message, supersededRuns));
         const grouped = groupProposalImages(shown);
         if (grouped.size === 0) {
             return { threadMessages: shown, proposalImagesByMessage: grouped };

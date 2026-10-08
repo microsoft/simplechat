@@ -78,6 +78,7 @@ from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_model_capabilities import ModelTokenBudgetError, is_vision_capable_model
 from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
+from functions_m365_connections import ensure_m365_workflow_encryption_key
 from functions_orchestration_registry import (
     build_capability_client_projection,
     capabilities_for_contract,
@@ -3298,6 +3299,22 @@ def register_route_frontend_admin_settings(bp):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                # Saved Microsoft 365 workflow connections need the deployment's encryption key.
+                # Create it now rather than when someone first connects; failures are reported
+                # only when this save changed the Key Vault configuration.
+                m365_workflow_key = ensure_m365_workflow_encryption_key(updated_settings_for_file or new_settings)
+                key_vault_changed = any(
+                    settings.get(key) != new_settings.get(key)
+                    for key in ('enable_key_vault_secret_storage', 'key_vault_name', 'key_vault_identity')
+                )
+                if m365_workflow_key['status'] == 'created':
+                    flash(m365_workflow_key['message'], 'info')
+                elif m365_workflow_key['status'] == 'unavailable' and key_vault_changed:
+                    flash(
+                        f"Microsoft 365 workflow connections are not ready. {m365_workflow_key['message']}",
+                        'warning',
+                    )
 
                 if governance_toggle_changes:
                     try:

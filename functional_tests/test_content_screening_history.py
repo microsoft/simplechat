@@ -69,6 +69,9 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
                         "sanitize_saved_analysis_messages": lambda messages, user_id: messages,
                         "hydrate_agent_citations_from_artifacts": lambda messages, payloads: messages,
                         "public_history_messages": lambda messages, user_id: messages,
+                        "exclude_superseded_orchestration_attempts": import_app_module(
+                            "functions_orchestration_attempts",
+                        ).exclude_superseded_orchestration_attempts,
                         "sort_messages_by_thread": list,
                         "is_collaboration_conversation": lambda conversation: collaboration,
                         "get_thoughts_for_conversation": lambda *args: [thought],

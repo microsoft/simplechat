@@ -4,7 +4,7 @@ title: "Microsoft 365 OneDrive"
 description: "Find OneDrive files and ground conversations in their content without a workspace sync."
 section: "Reference"
 audience: user
-version: "0.261.029"
+version: "0.261.303"
 ---
 
 <!-- action-slug: m365-onedrive -->
@@ -33,6 +33,22 @@ conversation working memory instead of relying on one model context window.
 
 Example: "Find the project proposal in my Planning folder and compare its
 milestones with the latest review document."
+
+## Citations and Open online
+
+Implemented in version: **0.261.303** (`application/single_app/config.py`).
+
+Every file a search, capture or read returns carries a citation value, so the
+answer cites a OneDrive file with a chip after the claim, showing the file name.
+The chip's card shows the location, modified date and size, and **Open in
+OneDrive** opens the file in OneDrive with the reader's own sign-in. Nothing is
+downloaded from the card.
+
+Cited files, and every file whose content was captured or read for an answer,
+are listed under **SharePoint & OneDrive** in the conversation's **Documents**
+pane with **Open online**. A list of files uses one line per file:
+"**File name** — OneDrive, modified Sep 1, 2026", followed by its chip. See
+[Microsoft 365 Source Citations]({{ '/explanation/features/M365_SOURCE_CITATIONS/' | relative_url }}).
 
 ## What sharing means
 

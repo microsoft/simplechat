@@ -37,7 +37,8 @@ SHARED_ORCHESTRATION_STALE_COPY = (
 _MIRRORED_ANSWER_FIELDS = (
     'content', 'role', 'model_deployment_name', 'augmented', 'hybrid_citations',
     'web_search_citations', 'citation_tracking_version', 'cited_hybrid_citations',
-    'cited_web_search_citations', 'agent_citations', 'agent_display_name', 'agent_name',
+    'cited_web_search_citations', 'agent_citations', 'm365_citations', 'agent_display_name',
+    'agent_name',
 )
 # Metadata the shared copy keeps from when it was first mirrored.
 _MIRROR_METADATA_KEPT = ('source_conversation_id', 'source_thought_user_id')

@@ -49,6 +49,7 @@ import {
     stepReferenceIds,
     stepRoleLabel,
     stepRemovableDocumentIds,
+    stepUnfinishedByEndedRun,
 } from '../../lib/orchestrationPlan';
 import type {
     CostClass,
@@ -103,6 +104,11 @@ const STATUS_LABELS: Record<StepStatus, string> = {
     skipped: 'Skipped',
     cancelled: 'Cancelled',
 };
+
+// A step a failed or stopped run never finished. Nothing is working on it any more.
+const UNFINISHED_STEP_LABEL = 'Not finished';
+const UNFINISHED_STEP_SUMMARY = 'The run ended before this step finished.';
+const UNFINISHED_STEP_TONE = 'bg-surface-3 text-text-3';
 
 /** A step argument key/value the run will use, minus the document fields shown as chips. */
 function readableArguments(step: OrchestrationStep): Array<[string, string]> {
@@ -329,7 +335,11 @@ export function OrchestrationRunView({
         const willRun = step.enabled && !disabledStepIds.has(step.step_id);
         const rawStatus = stepRuntime[step.step_id]?.status ?? step.status;
         const status: StepStatus = willRun ? rawStatus : 'skipped';
-        const summary = stepRuntime[step.step_id]?.summary ?? '';
+        // A run that failed or stopped as a whole can leave a step pending, running or waiting.
+        const unfinished = willRun && stepUnfinishedByEndedRun(status, plan.status);
+        const statusText = unfinished ? UNFINISHED_STEP_LABEL
+            : status === 'running' && roleLabel ? stepRoleLabel(step, true) : STATUS_LABELS[status];
+        const summary = unfinished ? UNFINISHED_STEP_SUMMARY : stepRuntime[step.step_id]?.summary ?? '';
         const removed = new Set(edits.removed_document_ids[step.step_id] ?? []);
         const removable = new Set(stepRemovableDocumentIds(step));
         const references = stepReferenceIds(step);
@@ -376,12 +386,13 @@ export function OrchestrationRunView({
                                 {step.estimated_cost}
                             </span>
                             <span
+                                data-step-status={unfinished ? 'unfinished' : status}
                                 className={clsx(
                                     'ml-auto rounded-full px-1.5 py-0.5 text-[11px] capitalize',
-                                    statusTone[status],
+                                    unfinished ? UNFINISHED_STEP_TONE : statusTone[status],
                                 )}
                             >
-                                {status === 'running' && roleLabel ? stepRoleLabel(step, true) : STATUS_LABELS[status]}
+                                {statusText}
                             </span>
                             {stepRuntime[step.step_id]?.reused ? (
                                 <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">
@@ -633,7 +644,7 @@ export function OrchestrationRunView({
                                 />
                             ) : (
                                 <span className="text-[11px] text-text-3">
-                                    {STATUS_LABELS[status]}
+                                    {unfinished ? UNFINISHED_STEP_LABEL : STATUS_LABELS[status]}
                                 </span>
                             )}
                         </div>
@@ -678,6 +689,7 @@ export function OrchestrationRunView({
                 plan={plan} edits={edits}
                 statusOf={(stepId) => stepRuntime[stepId]?.status}
                 checks={savedRun?.deliverable_states}
+                runStatus={plan.status}
             />
 
             {plan.final_response !== undefined ? (

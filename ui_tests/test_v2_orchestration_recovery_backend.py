@@ -1,10 +1,11 @@
 # test_v2_orchestration_recovery_backend.py
 """
 Browser-to-Flask checkpoint recovery regressions.
-Version: 0.261.140
+Version: 0.261.304
 Implemented in: 0.261.105
 Single orchestration contract updated in: 0.261.139
 Cosmos SDK response coverage added in: 0.261.140
+A reloaded thread shows only the retry's answer, not the attempt it replaced, in: 0.261.304
 
 Real orchestration routes, executor, durable checkpoint codec, conditional attempts,
 and message persistence run in the shared backend fixture. Only Azure/model/service
@@ -161,8 +162,18 @@ def test_real_failed_agent_resume_reuses_checkpoints_and_survives_reload(integra
         row for row in backend.messages.items.values() if row.get("role") in ("user", "assistant")
     ]
     recovery_tests.mount_recovery(page, mounted, saved=True)
-    expect(page.get_by_role("button", name="View current attempt").first).to_be_visible()
-    page.get_by_role("button", name="View current attempt").first.click()
+    # After a reload the thread shows only the retry's answer: the attempt it replaced stays
+    # saved but is hidden, and the successful retry carries no attempt notice.
+    current_run_id = attempts[1]["metadata"]["orchestration"]["run_id"]
+    expect(page.locator(f'[id="message-{attempts[1]["id"]}"]')).to_be_visible()
+    expect(page.locator(f'[id="message-{attempts[0]["id"]}"]')).to_have_count(0)
+    expect(page.get_by_text(record["failure"]["message"], exact=True)).to_have_count(0)
+    expect(page.get_by_text("Saved execution attempt", exact=False)).to_have_count(0)
+    expect(page.get_by_role("button", name="View current attempt")).to_have_count(0)
+    page.evaluate(
+        "(spec) => window.OrchHarness.controller.openOrchestrationRecovery(spec.conversation, spec.run)",
+        {"conversation": "conv1", "run": current_run_id},
+    )
     try:
         expect(page.get_by_role("complementary", name="Review drawer")
                .get_by_text("Reused saved result", exact=True).first).to_be_visible()
