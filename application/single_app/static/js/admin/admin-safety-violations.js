@@ -16,6 +16,9 @@
     // Escalate is no longer an action. A record that already carries it keeps it, labelled
     // as legacy, and only that record's editor offers it again.
     const LEGACY_ESCALATE_ACTION = 'Escalate';
+    // Every value the action select can hold. The select is read through this list, so only
+    // these constant strings, never text taken from the page, reach data attributes or a save.
+    const ACTION_VALUES = ['None', 'WarnUser', 'SuspendUser', 'BlockUser', LEGACY_ESCALATE_ACTION];
     const ACTION_LABELS = {
         None: 'None',
         WarnUser: 'Warn user',
@@ -484,6 +487,15 @@
         return action === 'SuspendUser' || action === 'BlockUser';
     }
 
+    // The action chosen in the review, as the matching entry of ACTION_VALUES. An empty or
+    // unknown value reads as None, as an empty one always has.
+    function readSelectedAction() {
+        const selectedValue = document.getElementById('editAction')?.value || '';
+        return ACTION_VALUES.find(function (value) {
+            return value === selectedValue;
+        }) || 'None';
+    }
+
     // A suspension or block the violation already records is requested again only on purpose,
     // whatever became of the last request, and never while one is waiting or a warning is sent.
     function offersReissue(logItem, action) {
@@ -555,7 +567,7 @@
     }
 
     function updateRemediationFields(logItem, forcePopulate) {
-        const action = document.getElementById('editAction')?.value || 'None';
+        const action = readSelectedAction();
         const remediationFields = document.getElementById('safetyRemediationFields');
         const remediationHelp = document.getElementById('safetyRemediationHelp');
         const notificationGroup = document.getElementById('safetyNotificationGroup');
@@ -909,7 +921,7 @@
             return;
         }
 
-        const action = document.getElementById('editAction')?.value || 'None';
+        const action = readSelectedAction();
         const payload = {
             status: document.getElementById('editStatus')?.value || 'New',
             action: action,
