@@ -22,6 +22,7 @@ import time
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
+from functools import partial
 
 from azure.cosmos import exceptions
 from functions_appinsights import log_event
@@ -925,13 +926,190 @@ def _safe_error_code(error):
     return 'replay_execution_failed'
 
 
+def _completed_replay_result(orch_run_id, final_record, conversation_id, read_message):
+    from functions_orchestration_checkpoints import orchestration_answer_message_id
+
+    answer_message = None
+    try:
+        answer_message = (read_message or _read_message)(orchestration_answer_message_id(orch_run_id), conversation_id)
+    except exceptions.CosmosResourceNotFoundError:
+        answer_message = None
+    value = build_plan_replay_result(final_record, answer_message)
+    return {
+        'reply': value['final_response']['text'],
+        'authoritative_result': {'kind': 'json', 'value': value},
+        'plan_replay': plan_replay_run_item_projection(value),
+    }
+
+
+def _read_raw_run(run_id, user_id, conversation_id):
+    """Read an owned orchestration run with its ETag for a conditional write, or None if absent."""
+    from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
+
+    try:
+        return read_revision_run(run_id, user_id, conversation_id)
+    except PlanRevisionError as exc:
+        if getattr(exc, 'code', '') == 'not_found':
+            return None
+        raise
+
+
+def _read_prior_attempt(read_run, prior_id, prior, *, user_id, conversation_id, run_id, task_id, required=True):
+    record = read_run(prior_id, user_id, conversation_id)
+    if not record:
+        if required:
+            raise PlanReplayRefused('replay_execution_failed')
+        return None
+    marker = record.get('workflow_replay') if isinstance(record.get('workflow_replay'), dict) else {}
+    if (
+        str(record.get('user_id') or '') != str(user_id)
+        or record.get('conversation_id') != conversation_id
+        or marker.get('workflow_run_id') != run_id
+        or marker.get('task_id') != task_id
+        or marker.get('attempt') != prior
+    ):
+        raise PlanReplayRefused('replay_execution_failed')
+    return record
+
+
+def _settle_open_run(read, replace, failure_code, *, own_token=None):
+    """Mark an orchestration run that no worker drives any more as failed, by CAS.
+
+    A run whose lease is still live is returned untouched unless the lease is ``own_token``,
+    the stopped worker's own: a live lease is never taken over. Returns the latest record.
+    """
+    from functions_orchestration_recovery import _TERMINAL, _live, _replace
+    from functions_orchestration_schema import build_failure
+
+    failure = build_failure(failure_code)
+    for _ in range(8):
+        record = read()
+        if not record or record.get('status') in _TERMINAL:
+            return record
+        if _live(record) and (own_token is None or (record.get('execution_lease') or {}).get('token') != own_token):
+            return record
+        try:
+            settled = (replace or _replace)(record, {
+                'status': 'failed', 'outcome': 'failed', 'failure': failure, 'error': failure['message'],
+                'execution_lease': None, 'completed_at': _iso(_utc_now()), 'recovery_version': uuid.uuid4().hex,
+            })
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        log_event(
+            '[WORKFLOW_PLAN_REPLAY] Settled a replay orchestration run no worker is driving.',
+            extra={'orchestration_run_id': record.get('id'), 'failure_code': failure['code']},
+            level=logging.WARNING,
+        )
+        return settled
+    raise PlanReplayRefused('replay_execution_failed')
+
+
+def _settle_stopped_attempt(
+    orch_run_id, worker, failure_code, *, user_id, conversation_id, read_run, replace_record, fence,
+    msg_container,
+):
+    """Once this attempt's worker has stopped, nothing else will finish its orchestration run.
+
+    The orchestration scheduler leaves replay runs to the workflow, so a failed attempt settles
+    its own run rather than leave it open. A worker that is still alive was asked to stop and is
+    fenced; it finalizes its own run. Errors are logged so the original refusal still surfaces.
+    """
+    thread = worker.get('thread')
+    if thread is not None and thread.is_alive():
+        return
+    lease = worker.get('lease')
+    try:
+        if lease is not None:
+            lease.close()
+        settled = _settle_open_run(
+            partial(read_run, orch_run_id, user_id, conversation_id), replace_record, failure_code,
+            own_token=getattr(lease, 'token', None),
+        )
+        if settled and settled.get('status') != 'completed' and not worker.get('fenced'):
+            fence(settled, msg_container)
+    except Exception as exc:
+        log_event(
+            '[WORKFLOW_PLAN_REPLAY] A stopped replay attempt could not be settled.',
+            extra={'orchestration_run_id': orch_run_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+
+
+def _reconcile_prior_attempts(
+    *, run_id, task_id, attempt, user_id, conversation_id, plan_sha256, read_run, authorize,
+    request_cancel, fence, replace_record, msg_container, check_cancelled, time_source, poll_seconds,
+    reconcile_seconds,
+):
+    """Settle every earlier attempt of this task before the next one starts.
+
+    A durable restart re-enters the task with the next attempt number. An earlier attempt's
+    orchestration run may have completed, failed, or been left running by a worker that died.
+    A completed run of the same frozen plan is adopted, not repeated. Anything still open is
+    settled and fenced, so a task never has two live orchestration runs or a stale running one.
+    A run whose lease is still live is asked to stop but never taken over: if it does not stop
+    within one lease period, this attempt fails cleanly. Returns ``(run_id, record)`` to adopt.
+    """
+    from functions_orchestration_checkpoints import CheckpointError
+    from functions_orchestration_plan_revisions import PlanRevisionError
+    from functions_orchestration_recovery import HEARTBEAT_SECONDS, LEASE_SECONDS, RecoveryError, _TERMINAL, _live
+    from functions_workflow_execution import assert_workflow_execution_owned
+
+    bound = LEASE_SECONDS + HEARTBEAT_SECONDS if reconcile_seconds is None else reconcile_seconds
+    scope = {'user_id': user_id, 'conversation_id': conversation_id, 'run_id': run_id, 'task_id': task_id}
+    adopted = None
+    for prior in range(max(0, int(attempt or 0))):
+        prior_id = _deterministic_id('run', run_id, task_id, prior, 'run')
+        try:
+            record = _read_prior_attempt(read_run, prior_id, prior, required=False, **scope)
+            if record is None:
+                continue
+            deadline = time_source() + bound
+            while record.get('status') not in _TERMINAL:
+                if not _live(record):
+                    record = _settle_open_run(
+                        partial(_read_prior_attempt, read_run, prior_id, prior, **scope),
+                        replace_record, 'ownership_lost',
+                    )
+                    continue
+                if not record.get('cancellation_requested_at'):
+                    record = request_cancel(prior_id, user_id, conversation_id, authorize) or record
+                    fence(record, msg_container)
+                (check_cancelled or assert_workflow_execution_owned)()
+                if time_source() >= deadline:
+                    log_event(
+                        '[WORKFLOW_PLAN_REPLAY] An earlier replay attempt still holds a live lease.',
+                        extra={'workflow_run_id': run_id, 'orchestration_run_id': prior_id},
+                        level=logging.WARNING,
+                    )
+                    raise PlanReplayRefused('replay_execution_failed')
+                time.sleep(max(0.01, float(poll_seconds)))
+                record = _read_prior_attempt(read_run, prior_id, prior, **scope)
+            if record.get('status') == 'completed':
+                if (record.get('workflow_replay') or {}).get('plan_sha256') != plan_sha256:
+                    raise PlanReplayRefused('replay_execution_failed')
+                adopted = (prior_id, record)
+            else:
+                fence(record, msg_container)
+        except (CheckpointError, PlanRevisionError, RecoveryError) as exc:
+            log_event(
+                '[WORKFLOW_PLAN_REPLAY] An earlier replay attempt could not be settled.',
+                extra={
+                    'workflow_run_id': run_id, 'orchestration_run_id': prior_id,
+                    'error_code': getattr(exc, 'code', ''), 'error_type': type(exc).__name__,
+                },
+                level=logging.WARNING,
+            )
+            raise PlanReplayRefused('replay_execution_failed') from exc
+    return adopted
+
+
 def execute_plan_replay_task(
     workflow, task, settings, *, conversation_id, run_id, actor_user_id, attempt=0,
     user_message_id=None, now=None, clock=None, max_seconds=PLAN_REPLAY_MAX_SECONDS,
     poll_seconds=PLAN_REPLAY_POLL_SECONDS, read_conversation=None, read_message=None,
     read_workflow_run=None, create_run=None, claim_run=None, prepare_execution=None,
     get_run=None, request_cancel=None, fence=None, message_container=None, load_workflow=None,
-    check_cancelled=None,
+    check_cancelled=None, replace_record=None, reconcile_seconds=None, read_run=None,
 ):
     workflow = workflow if isinstance(workflow, dict) else {}
     task = task if isinstance(task, dict) else {}
@@ -984,7 +1162,30 @@ def execute_plan_replay_task(
     creator = create_run or create_orchestration_run
     claimer = claim_run or claim_plan_run
     get_record = get_run or get_orchestration_run
+    read_raw = read_run or _read_raw_run
+    fence_run = fence or fence_publication
     msg_container = message_container or _message_container()
+    time_source = clock or time.monotonic
+
+    def authorize():
+        _verify_workflow_conversation(
+            workflow, conversation_id, user_id, provenance.get('source_conversation_id') or '',
+            read_conversation=read_conversation,
+        )
+
+    adopted = _reconcile_prior_attempts(
+        run_id=run_id, task_id=task_id, attempt=attempt, user_id=user_id, conversation_id=conversation_id,
+        plan_sha256=ctx['plan_sha256'], read_run=read_raw, authorize=authorize,
+        request_cancel=request_cancel or request_cancellation, fence=fence_run,
+        replace_record=replace_record, msg_container=msg_container, check_cancelled=check_cancelled,
+        time_source=time_source, poll_seconds=poll_seconds, reconcile_seconds=reconcile_seconds,
+    )
+    if adopted is not None:
+        log_event(
+            '[WORKFLOW_PLAN_REPLAY] Adopted a completed earlier attempt instead of replaying again.',
+            extra={'workflow_id': workflow.get('id'), 'workflow_run_id': run_id, 'orchestration_run_id': adopted[0]},
+        )
+        return _completed_replay_result(adopted[0], adopted[1], conversation_id, read_message)
     record = creator(
         executable_plan,
         user_id,
@@ -1009,10 +1210,12 @@ def execute_plan_replay_task(
         }},
     )
 
-    def authorize():
-        _verify_workflow_conversation(
-            workflow, conversation_id, user_id, provenance.get('source_conversation_id') or '',
-            read_conversation=read_conversation,
+    stopped = {}
+
+    def settle(failure_code):
+        _settle_stopped_attempt(
+            orch_run_id, stopped, failure_code, user_id=user_id, conversation_id=conversation_id,
+            read_run=read_raw, replace_record=replace_record, fence=fence_run, msg_container=msg_container,
         )
 
     try:
@@ -1029,6 +1232,7 @@ def execute_plan_replay_task(
             },
             level=logging.WARNING,
         )
+        settle('execution_interrupted')
         raise PlanReplayRefused('replay_execution_failed') from exc
     lease = ExecutionLease(claimed, authorize, message_container=msg_container)
     from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
@@ -1050,8 +1254,8 @@ def execute_plan_replay_task(
             execution_error['error'] = exc
 
     thread = threading.Thread(target=worker, name=f'plan-replay-{orch_run_id}', daemon=True)
+    stopped.update({'thread': thread, 'lease': lease})
     thread.start()
-    time_source = clock or time.monotonic
     deadline = time_source() + max_seconds
 
     def cancel_and_fence():
@@ -1062,7 +1266,8 @@ def execute_plan_replay_task(
             )
         finally:
             try:
-                (fence or fence_publication)(latest or record, msg_container)
+                fence_run(latest or record, msg_container)
+                stopped['fenced'] = True
             except Exception as exc:
                 log_event(
                     '[WORKFLOW_PLAN_REPLAY] Publication fence failed during cancellation.',
@@ -1078,12 +1283,18 @@ def execute_plan_replay_task(
             # The runner passes its cancel check, which also asserts a durable run's lease.
             (check_cancelled or assert_workflow_execution_owned)()
         except BaseException:
-            cancel_and_fence()
-            thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)
+            try:
+                cancel_and_fence()
+            finally:
+                thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)
+                settle('execution_interrupted')
             raise
         if time_source() >= deadline:
-            cancel_and_fence()
-            thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)
+            try:
+                cancel_and_fence()
+            finally:
+                thread.join(timeout=PLAN_REPLAY_STOP_GRACE_SECONDS)
+                settle('run_timeout')
             raise PlanReplayRefused('replay_budget_exceeded')
     if execution_error:
         error = execution_error['error']
@@ -1097,6 +1308,7 @@ def execute_plan_replay_task(
             },
             level=logging.ERROR,
         )
+        settle('execution_interrupted')
         raise PlanReplayRefused(code) from error
     final_record = get_record(orch_run_id, user_id, conversation_id, strict=True)
     if not final_record or final_record.get('status') != 'completed':
@@ -1110,20 +1322,9 @@ def execute_plan_replay_task(
             },
             level=logging.ERROR,
         )
+        settle('execution_interrupted')
         raise PlanReplayRefused('replay_execution_failed')
-    from functions_orchestration_checkpoints import orchestration_answer_message_id
-
-    answer_message = None
-    try:
-        answer_message = (read_message or _read_message)(orchestration_answer_message_id(orch_run_id), conversation_id)
-    except exceptions.CosmosResourceNotFoundError:
-        answer_message = None
-    value = build_plan_replay_result(final_record, answer_message)
-    return {
-        'reply': value['final_response']['text'],
-        'authoritative_result': {'kind': 'json', 'value': value},
-        'plan_replay': plan_replay_run_item_projection(value),
-    }
+    return _completed_replay_result(orch_run_id, final_record, conversation_id, read_message)
 
 
 def plan_replay_run_item_projection(value):
