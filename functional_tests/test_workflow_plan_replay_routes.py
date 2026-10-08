@@ -466,6 +466,13 @@ def test_the_frozen_plan_stays_read_only_through_the_ordinary_save(h):
     require(saved["tasks"][0]["type"] == h.replay.PLAN_REPLAY_TASK_TYPE, "The task keeps its type.")
     require(saved["tasks"][0]["plan_replay"]["plan_sha256"] == original["plan_sha256"], "The plan is unchanged.")
 
+    # The chat-workflow cadence floor applies every time the schedule is saved, not only at creation.
+    faster = json.loads(json.dumps(saved))
+    faster["schedule"] = {"unit": "minutes", "value": 5}
+    cadence_error = importlib.import_module("functions_workflow_definitions").WorkflowCadenceError
+    with pytest.raises(cadence_error):
+        h.personal.save_personal_workflow(OWNER, faster, actor_user_id=OWNER)
+
     tampered = json.loads(json.dumps(stored(h)[0]))
     tampered["tasks"][0]["plan_replay"]["frozen_plan"]["steps"][0]["arguments"]["instruction"] = "Email everyone."
     with pytest.raises(h.replay.PlanReplaySaveError) as caught:
