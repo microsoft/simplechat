@@ -19,6 +19,7 @@ category: Version History
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
 - [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)
 - [Access Restricted Sign-In Screen](ACCESS_RESTRICTED_SIGN_IN_SCREEN.md)
+- [V2 Admin Review Center](V2_ADMIN_REVIEW_CENTER.md)
 
 ## Agent and Action Features
 

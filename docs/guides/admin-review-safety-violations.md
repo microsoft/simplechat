@@ -4,38 +4,50 @@ title: "Review safety violations"
 description: "Review flagged activity, warn, suspend, or block a user, and recheck chat messages whose required safety checks did not finish."
 section: "Guides"
 audience: admin
-version: "0.261.297"
+version: "0.261.298"
 ---
 
 ## What this covers
 
-The React v2 Safety Violations page separates administrator review from a user's personal Violations tab. It combines the violation queue with the unchecked-chat-content queue used when a required check could not finish.
+Safety review separates administrator review from a user's personal Violations tab. In the V2 interface it is the **Safety** section of the [Review center]({{ '/guides/admin-review-center/' | relative_url }}): a dashboard, a violations workbench, and the unchecked-chat-content queue used when a required check could not finish. The classic **Safety Violations** page offers the same review through the same APIs.
 
 ## Who can use it
 
-The page appears in the account menu when either **Content Safety** or **Content Screening** is enabled. By default, users with the **Admin** app role can open it. When **Require Safety Violation Admin Role** is enabled, only users with the **SafetyViolationAdmin** app role can use the review APIs and the v2 menu shows the page to that role.
+Safety review is available when either **Content Safety** or **Content Screening** is enabled. By default, users with the **Admin** app role can use it. When **Require Safety Violation Admin Role** is enabled, only users with the **SafetyViolationAdmin** app role can use the review APIs, and the V2 account menu shows **Review center** to that role.
+
+## See what needs attention
+
+The safety dashboard shows open violations (new or in review), suspensions and blocks waiting for another reviewer, users restricted now, warnings sent in the last 7, 30 or 90 days and how many were acknowledged, and unchecked chat content. Charts break the period down by day and category, by severity and by the action taken, and list users with repeat violations. Select any figure to open the violations it counts; the remediation figure opens the waiting requests in **Approval requests**.
 
 ## Review violations
 
-The summary shows total, open, resolved, dismissed, recent, and blocked counts, plus status and action distributions. Filter by status, recorded action, and active/archived records. Choose the page size and list or card view; export CSV downloads all violations matching the active filters.
+The workbench lists violations as rows beside the selected violation. Search the message, notes, categories and the user's name or email; filter by status (including **Open**), action, remediation state, and active or archived records. **Export CSV** downloads every violation matching the current search and filters.
 
-Open **Review** to inspect the flagged message, triggered categories, user notes, and current review status. Reviewers can set a status and administrator notes, and choose an action. The server validates the action and reviewer permissions; AI-generated findings cannot be used to warn or restrict a user.
+Select a row to read the flagged message and triggered categories, the user's other violations and whether their access is restricted now, and where any warning, suspension or block stands, with a link to its approval request. Select **Review** to open the editor, where you set a status and notes and choose an action. The server validates the action and reviewer permissions; AI-generated findings cannot be used to warn or restrict a user.
 
-Archive preserves a violation outside the active queue and can be reversed from the archived view. Permanent deletion cannot be undone, is confirmed in the page, preserves audit history, and is refused by the server while a remediation approval is pending.
+To review several violations at once, check their rows, or Shift+click to check a range, then **Set status**, **Archive** or **Restore**, or **Delete**. **Select all matching** extends the selection to every violation matching the filters, up to 500. The report names any violation that could not be changed and why; a violation waiting for a suspension or block to be approved is always left as it is.
+
+Archive preserves a violation outside the active queue and can be reversed from the archived view. Permanent deletion cannot be undone, is confirmed with the number of violations, preserves audit history, and is refused by the server while a remediation approval is pending.
 
 ## Warn, suspend, or block a user
 
-Each action sends the user the notification text in the review. Leave it as generated, or edit it: the default text names the violation, its triggered categories and your administrator notes.
+Each action sends the user the notification in the review. The editor fills in the standard title and message for the action, which name the violation, its triggered categories and your administrator notes; change them as needed, or reset them to the standard text.
 
 | Action | What happens when you save | Who else is involved |
 | --- | --- | --- |
 | **Warn user** | The warning is sent to the user straight away. | Nobody. A warning restricts nothing, so it doesn't wait for another reviewer. Your decision is recorded in the activity log. |
-| **Suspend user** | An approval request is created. Access is restricted until the restore date you set only once the request is approved. | Another eligible reviewer approves it in **Approval Requests**. You can deny your own request to cancel it, but never approve it. |
+| **Suspend user** | An approval request is created. Access is restricted until the restore time you choose only once the request is approved. | Another eligible reviewer approves it in **Approval Requests**. You can deny your own request to cancel it, but never approve it. |
 | **Block user** | An approval request is created. Access is blocked, with no restore date, only once the request is approved. | The same as a suspension. |
 
-Suspensions and blocks need a second reviewer because they take away a person's access; requiring two people for that decision protects users from a single mistaken or malicious reviewer. A record with a pending approval can't be changed or deleted until the request is decided.
+For a suspension, choose 24 hours, 7 days or 30 days from when you save, or a custom date and time.
+
+Suspensions and blocks need a second reviewer because they take away a person's access; requiring two people for that decision protects users from a single mistaken or malicious reviewer. A record with a pending approval can't be changed or deleted until the request is decided. When the request is denied, or expires after three days without a decision, the violation is unlocked again and shows the outcome, so you can choose another action or request it again.
+
+Saving a violation whose suspension or block was already requested or applied, for example to resolve it, doesn't request it again. To ask for it again, such as to change when access returns, tick **Request this suspension again** (or block) before saving.
 
 Saving a warned record again, for example to resolve it, doesn't send the warning a second time. Neither do two saves that overlap, such as a double-click or two reviewers saving the same violation at once: only the first sends it, and the other is refused and asks you to reload. While a warning is being sent, the violation shows **Sending** and can't be changed or deleted. If you change the action away from **Warn user**, save, and later choose **Warn user** again, a new warning is sent. It replaces the earlier one on the record, and the user has to acknowledge the new warning even if they acknowledged the earlier one.
+
+If someone else changes a violation after you open it, including the user acknowledging a warning, your save is refused instead of overwriting their change. Reload the violation and make your change again.
 
 ### Warning acknowledgment
 
@@ -51,12 +63,12 @@ Users with the **Admin** role are never restricted, even when an access restrict
 
 ### Escalate
 
-**Escalate** was a label with no workflow behind it, and it can no longer be chosen. Records that already carry it show **Escalated (legacy)** and can still be saved, so you can resolve them or replace the action with another one. The summary only mentions legacy escalations when there are some.
+**Escalate** was a label with no workflow behind it, and it can no longer be chosen. Records that already carry it show **Escalated (legacy)** and can still be saved, so you can resolve them or replace the action with another one. The dashboard only mentions legacy escalations when there are some.
 
 ## Recheck unchecked chat content
 
-The unchecked queue shows check metadata, not message bodies. Filter it by conversation source, message type, or incomplete scanner, then load further results as needed. **Recheck** applies current rules to the selected message and requires explicit confirmation. A confirmed finding on an AI reply can remove it from saved and shared chat; rechecking cannot undo earlier views or external actions. A checker outage leaves the message available and marked for another attempt.
+**Unchecked chat content** has its own page in the Safety section. It shows check metadata, not message bodies. Filter it by conversation source, message type, or incomplete scanner, then load further results as needed. **Recheck** applies current rules to a message and requires explicit confirmation; check several messages and select **Recheck selected** to recheck them one after another, with a report on each. A confirmed finding on an AI reply can remove it from saved and shared chat; rechecking cannot undo earlier views or external actions. A checker outage leaves the message available and marked for another attempt.
 
 ## Version
 
-Implemented in version **0.261.277** (`application/single_app/config.py`). Warnings without a second reviewer, warning acknowledgment, the Access restricted screen and the removal of Escalate were added in version **0.261.297**.
+Implemented in version **0.261.277** (`application/single_app/config.py`). Warnings without a second reviewer, warning acknowledgment, the Access restricted screen and the removal of Escalate were added in version **0.261.297**. The Review center, bulk review, unlocking violations whose request was denied or expired, and requesting a suspension or block again only on purpose were added in version **0.261.298**.

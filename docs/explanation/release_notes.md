@@ -2,6 +2,38 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.298)**
+
+#### New Features
+
+*   **Admin Review Center**
+    *   The V2 Feedback Review and Safety Violations pages are replaced by one **Review center**, opened from a single account menu entry when either section is open to you. A rail lists each section's pages: a **Dashboard**, a workbench, and for safety the **Unchecked chat content** queue. Section access follows the same roles and feature switches as the server: FeedbackAdmin or Admin with user feedback on, SafetyViolationAdmin or Admin with content safety or screening on. A user with neither section sees a clear not-available state.
+    *   Dashboards cover the last 7, 30 or 90 days. Feedback shows feedback awaiting review, negative feedback, the acknowledgement rate, archived feedback, feedback per day by rating and the oldest feedback awaiting review. Safety shows open violations, remediation awaiting approval, users restricted now, warnings sent and acknowledged, unchecked chat content, violations per day by category, severity and action breakdowns, and repeat users. Every figure opens the workbench filtered to what it counts, and every chart offers a data table.
+    *   Workbenches list records beside the selected record's detail, with search (including the user's name), filters, page and selection in the address. Check rows, Shift+click a range or select every matching record (up to 500), then act on all of them: Acknowledge, Archive, Restore or Delete feedback; Set status, Archive, Restore or Delete violations; recheck unchecked messages one after another. Each record is changed as its own save would change it, and the report names every record that could not be changed and why.
+    *   Records open in full-page editors with **Back**, a prompt before discarding unsaved changes, and **Reload** when the record changed underneath. The feedback editor records who reviewed it and can notify the user with the response. The violation editor prefills the notification, offers 24-hour, 7-day, 30-day or custom suspensions, and shows the approval request and warning acknowledgment.
+    *   New and extended APIs: list `search` and filters with display names, `GET /feedback/review/ids` and `GET /api/safety/logs/ids`, `days` on both stats endpoints (existing fields unchanged), `GET /api/safety/logs/<id>`, and `POST /feedback/review/bulk` and `POST /api/safety/logs/bulk` (up to 100 operations, per-item results). Exports now take the list filters. The old V2 addresses redirect; the classic pages are unchanged.
+    *   (Ref: `pages/review/`, `components/review/`, `CategoryRail.tsx`, `DashboardParts.tsx`, `lib/reviewAccess.ts`, `lib/reviewCenter.ts`, `functions_review_center.py`, `route_backend_feedback.py`, `route_backend_safety.py`, [V2 Admin Review Center](features/V2_ADMIN_REVIEW_CENTER.md))
+
+*   **Approvals Dashboard And Safety Remediation Category**
+    *   The V2 Approvals rail adds a **Dashboard**: requests waiting on you and those expiring within 24 hours, your own pending requests, decisions in the last 7, 30 or 90 days by outcome, pending requests by type, and the oldest waiting on you. Each figure opens the list filtered through its address. **All requests** is still where the page opens.
+    *   A **Safety remediation** category lists warn, suspend and block requests for the Admin, ControlCenterAdmin and SafetyViolationAdmin roles, and **Group requests** no longer includes them.
+    *   `GET /api/approvals/stats` counts only the requests `GET /api/approvals` shows the caller.
+    *   (Ref: `ApprovalsPage.tsx`, `ApprovalsDashboard.tsx`, `GenericApprovalsPanel.tsx`, `functions_approvals.py` `summarize_visible_approvals`, `route_backend_control_center.py`)
+
+#### Bug Fixes
+
+*   **Denied And Expired Remediation Requests Unlock Their Violation**
+    *   Denying a suspend or block request, or letting it expire, left its violation pending for good: it could not be edited or deleted. The violation is now released as denied or expired when the request is decided, and any violation still waiting on a request that was decided or no longer exists is settled the next time it is listed or opened. A request that is still pending keeps its violation locked.
+    *   (Ref: `functions_approvals.py` `deny_request`, `functions_safety_remediation.py` `release_safety_log_after_approval_decision`, `reconcile_pending_safety_logs`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **An Applied Suspension Or Block Is Not Requested Twice**
+    *   Saving a violation whose suspension or block was already applied or requested, for example to change only its status or notes, created another approval request. A new request is now created only when the action changes or the reviewer asks to request it again (`reissue`); otherwise the save reports `remediation_already_applied` or `remediation_unchanged`.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **Review Saves No Longer Overwrite Concurrent Changes**
+    *   Safety and feedback review saves replaced the whole record, so a warning acknowledged while a reviewer was saving could be lost. Saves, archives and deletes are now conditional on the stored version and merge only their own fields; a save made against an older version is refused with `409 record_changed`, which the V2 editors offer to reload.
+    *   (Ref: `functions_safety_remediation.py` `write_safety_log_updates`, `functions_review_center.py` `replace_review_record`, `route_backend_feedback.py`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
 ### **(v0.261.297)**
 
 #### New Features

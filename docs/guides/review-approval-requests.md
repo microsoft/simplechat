@@ -4,7 +4,7 @@ title: "Review approval requests"
 description: "Find, approve, or deny requests that need reviewer action."
 section: "Guides"
 audience: user
-version: "0.261.297"
+version: "0.261.298"
 ---
 
 ## What this does
@@ -55,15 +55,25 @@ From **0.261.287**, **Approval requests** in the V2 sidebar opens a full-page vi
 
 | Category | What it holds |
 | --- | --- |
-| **All requests** | Every approval request you can see. |
-| **Group requests** | Ownership changes, document and group deletion, and user actions on groups. |
+| **Dashboard** | What is waiting on you, what you asked for, and what was decided recently. From **0.261.298**. |
+| **All requests** | Every approval request you can see. The page opens here. |
+| **Group requests** | Ownership changes, document and group deletion, and user document deletion. |
 | **Microsoft 365** | Source-sharing, extended file analysis, and workflow Run as approvals. |
+| **Safety remediation** | Warn, suspend and block requests raised from safety violation reviews. Shown to the **Admin**, **ControlCenterAdmin** and **SafetyViolationAdmin** roles. From **0.261.298**. |
 | **Content screening** | Screened documents waiting for review. Shown only while content screening is turned on. |
 | **Outgoing actions** | Emails and other Microsoft 365 actions waiting for you to send or cancel. |
 | **Waiting requests** | Saved chat requests paused for an approval or a sign-in, with **Resume** or connect-and-resume. |
 | **Agent templates** | Templates submitted for the shared gallery. Shown to admins only. |
 
 The badge on the active category counts its pending items, and **Refresh** reloads the current queue. Each selected request has its own address, such as `/v2/approvals/group/<id>`, so it can be bookmarked or shared with another reviewer. Links in notifications and older bookmarks (`?approval_id=`, `?m365_approval=`, `#agent-template-approvals`) open the matching request. On a narrow screen the rail becomes a category picker, and the rail can be collapsed on wider screens; that choice is remembered.
+
+### Dashboard
+
+The **Dashboard** category counts the requests you can see, the same ones the lists show you: requests waiting on you, those of them that expire within 24 hours, your own pending requests, every pending request you can see, requests decided in the last 7, 30 or 90 days by outcome, pending requests by type, and the oldest requests waiting on you. Select a figure to open the list it counts; the list keeps that filter in its address, such as `/v2/approvals/all?show=mine` for requests waiting on you, so it can be bookmarked too.
+
+### Safety remediation
+
+Safety reviewers can follow the suspensions and blocks they requested, and approvers can find the ones waiting for them, without searching every request. **Group requests** no longer lists these requests. Which requests you see, and whether you can approve them, is still decided by the server as for every other request.
 
 ## Microsoft 365 outgoing actions
 
@@ -93,6 +103,8 @@ The request status changes in the table. Approved executable requests complete t
 From **0.261.297**, a safety reviewer's **Warn user** is sent as soon as the review is saved and no longer creates an approval request: a warning restricts nothing, so it does not need a second person. **Suspend user** and **Block user** still create one, because they take away a person's access. Another eligible reviewer must approve them; the reviewer who requested one can deny it to cancel it but can never approve it. Eligible reviewers hold the `Admin` role, or `ControlCenterAdmin` when Control Center requires that role. A **Warn User** request created before 0.261.297 can still be approved, and the warning is then sent.
 
 When an approved suspension or block takes effect, the user sees an **Access restricted** screen whenever they sign in, with the notification from the request and, for a suspension, when access returns. Accounts with the `Admin` role are not affected by access restrictions. See [Review safety violations]({{ '/guides/admin-review-safety-violations/' | relative_url }}).
+
+From **0.261.298**, denying a suspension or block request, or letting it expire after three days without a decision, unlocks the violation it was raised from, which then shows the outcome. The safety reviewer can choose another action or request it again from the violation.
 
 ## Review screened document content
 
