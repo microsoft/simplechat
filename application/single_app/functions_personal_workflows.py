@@ -1103,7 +1103,8 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
             workflow_data.get('schedule'),
             existing_workflow=existing_workflow,
             settings=settings,
-            **({'orchestration': True} if origin is not None else {}),
+            # A saved chat plan keeps the chat-workflow floor whenever its schedule is saved.
+            **({'orchestration': True} if origin is not None or existing_plan_replay_task is not None else {}),
         )
 
     workflow = {

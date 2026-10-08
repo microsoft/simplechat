@@ -732,8 +732,19 @@ def _canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
 
 
+def _browser_json(value):
+    # A browser reads 1.0 as 1, so a whole float and its integer are the same saved value.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _browser_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_browser_json(item) for item in value]
+    return value
+
+
 def _same_json(left, right):
-    return _canonical(left) == _canonical(right)
+    return _canonical(_browser_json(left)) == _canonical(_browser_json(right))
 
 
 def normalize_plan_replay_update(existing_workflow, payload):
