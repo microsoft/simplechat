@@ -140,6 +140,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "canceled_source_count",
     "citation_count",
     "completed_source_count",
+    "completion_tokens",
     "duplicate_evidence_count",
     "engine_call_count",
     "evidence_omitted_count",
@@ -165,6 +166,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "unexpected_evidence_count",
     "unsupported_source_count",
     "unresolved_source_count",
+    "xml_schema_source_count",
 })
 MIXED_SOURCE_TELEMETRY_DIMENSIONS = frozenset({
     "cancellation_phase",

@@ -391,7 +391,7 @@ test('The run-level cancel route answers 202, 404 or a code-less 409', () => {
     assert.ok(cancel.includes('_request_workflow_run_cancellation('));
     assert.ok(cancel.includes("return jsonify({'error': 'Workflow not found.'}), 404"));
     assert.ok(cancel.includes("return jsonify({'error': 'Workflow run not found.'}), 404"));
-    assert.ok(cancel.includes("return jsonify({'error': 'Workflow run cancellation conflict.'}), 409"));
+    assert.ok(cancel.includes("return jsonify({'error': exc.public_message}), 409"));
     assert.ok(cancel.includes("return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202"));
     assert.ok(!cancel.includes("'code'"), 'The cancel route started sending a code; read it in cancelWorkflowRun.');
 

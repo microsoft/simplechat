@@ -249,6 +249,21 @@ def _orchestration_blob_prefix(scope):
     return prefix
 
 
+def _is_hierarchical_directory(properties):
+    """Return True for an ADLS Gen2 (hierarchical namespace) directory entry.
+
+    Flat Blob listings on HNS-enabled accounts also yield zero-byte directory
+    objects for every path segment; they carry no result payload or result-specific metadata.
+    """
+    metadata = getattr(properties, "metadata", None) or {}
+    metadata_is_folder = isinstance(metadata, Mapping) and any(
+        isinstance(key, str) and key.lower() == "hdi_isfolder" and str(value).strip().lower() == "true"
+        for key, value in metadata.items()
+    )
+    resource_type = str(getattr(properties, "resource_type", "") or "").lower()
+    return metadata_is_folder or resource_type == "directory"
+
+
 def _blob_name(identity, reference):
     if identity["scope_type"] == "chat":
         return f"{_chat_blob_prefix(identity)}{reference['sha256']}.json"
@@ -1505,10 +1520,26 @@ class WorkflowResultStore:
             prefix = _orchestration_blob_prefix(scope)
         else:
             prefix = _run_blob_prefix(scope)
+        if is_orchestration and "run_id" not in scope:
+            directory_pattern = r"[0-9a-f]{64}(?:/[0-9a-f]{64})?"
+        elif is_chat and "message_id" in scope:
+            directory_pattern = None
+        else:
+            directory_pattern = r"[0-9a-f]{64}"
+        directories = []
         container = self.blob_client.get_container_client(self.blob_container_name)
         for properties in container.list_blobs(name_starts_with=prefix, include=["metadata"]):
             name = properties.name
             suffix = name[len(prefix):] if isinstance(name, str) and name.startswith(prefix) else ""
+            if _is_hierarchical_directory(properties):
+                directory_suffix = suffix[:-1] if suffix.endswith("/") else suffix
+                if (
+                    directory_pattern is None or getattr(properties, "size", None) != 0
+                    or not re.fullmatch(directory_pattern, directory_suffix)
+                ):
+                    raise WorkflowResultIntegrityError("Unexpected object in the private result prefix.")
+                directories.append(name)
+                continue
             if is_orchestration and "run_id" not in scope:
                 if not re.fullmatch(r"[0-9a-f]{64}/[0-9a-f]{64}/[0-9a-f]{64}\.json", suffix):
                     raise WorkflowResultIntegrityError("Unexpected object in the private result prefix.")
@@ -1564,6 +1595,17 @@ class WorkflowResultStore:
                     delete_snapshots="include",
                     etag=properties.etag, match_condition=MatchConditions.IfNotModified,
                 )
+            except ResourceNotFoundError:
+                continue
+        # Directories are removed only after their files, deepest first. Each one is
+        # re-read so the conditional delete uses its current ETag and type.
+        for name in sorted(set(directories), key=lambda value: (-value.rstrip("/").count("/"), value)):
+            blob = self.blob_client.get_blob_client(container=self.blob_container_name, blob=name)
+            try:
+                current = blob.get_blob_properties()
+                if not _is_hierarchical_directory(current) or getattr(current, "size", None) != 0:
+                    raise WorkflowResultIntegrityError("Unexpected object in the private result prefix.")
+                blob.delete_blob(etag=current.etag, match_condition=MatchConditions.IfNotModified)
             except ResourceNotFoundError:
                 continue
 

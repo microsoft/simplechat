@@ -19,7 +19,7 @@ from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
 from functions_workflow_identity import normalize_workflow_iteration_path
 from functions_workflow_result_masking import message_uses_workflow_result, withhold_workflow_result_message
-from functions_workflow_result_store import WorkflowResultStorageUnavailableError, _quota_bytes
+from functions_workflow_result_store import AnalysisWorkUnitConflictError, WorkflowResultStorageUnavailableError, _quota_bytes
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_results import (
     ANALYSIS_SOURCE_ACCESS_VERSION,
@@ -1927,7 +1927,10 @@ def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=N
                         bound_workflow or workflow, producer["run_id"], producer.get("task_id"), reference,
                         reader_user_id=user_id, **selectors,
                     )
-                except (PermissionError, LookupError, ValueError, AzureError, WorkflowResultStorageUnavailableError, WorkflowRuntimeConflict) as exc:
+                except (
+                    PermissionError, LookupError, ValueError, AzureError, AnalysisWorkUnitConflictError,
+                    WorkflowResultStorageUnavailableError, WorkflowRuntimeConflict,
+                ) as exc:
                     log_event(
                         "[DOCUMENT_ANALYSIS] Workflow analysis preview withheld.",
                         extra={"run_id": run_record.get("id"), "task_id": task_id, "error_type": type(exc).__name__},
