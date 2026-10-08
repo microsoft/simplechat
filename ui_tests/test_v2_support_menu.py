@@ -2,8 +2,9 @@
 """
 Browser coverage for the V2 Support menu: the rail group, the Latest Features page and the
 Send Feedback page.
-Version: 0.261.296
+Version: 0.261.305
 Implemented in: 0.261.296
+Native agent catalogue shortcuts: 0.261.305
 
 Administrators configure the Support menu in Admin Settings. The classic navigation offers it
 to users as a collapsible section; V2 used to carry only a Latest Features link that left for
@@ -399,7 +400,7 @@ def test_latest_features_page_lists_reads_and_searches(support_ui):
     expect(panel).to_contain_text("This matters because trends and outliers")
     expect(panel.get_by_text("How to try it")).to_be_visible()
     expect(panel.get_by_role("link", name="Open Chat")).to_have_attribute("href", "/v2/chat")
-    expect(panel.get_by_role("link", name=re.compile("^Open Agents"))).to_have_attribute("href", "/agents")
+    expect(panel.get_by_role("link", name="Open Agents", exact=True)).to_have_attribute("href", "/v2/agents")
     guide = panel.get_by_role("link", name=re.compile("^Read the guide"))
     expect(guide).to_have_attribute("target", "_blank")
     expect(guide).to_have_attribute("rel", "noopener noreferrer")

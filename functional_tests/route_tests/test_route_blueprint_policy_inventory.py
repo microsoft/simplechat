@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.299
+Version: 0.261.305
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -20,6 +20,7 @@ V2 Support menu Latest Features route policy coverage: 0.261.296
 Access restricted screen and safety warning policy coverage: 0.261.297
 Review center ids, bulk, detail and approvals summary policy coverage: 0.261.298
 Review center AI assist policy coverage: 0.261.299
+V2 Agents catalogue policy coverage: 0.261.305
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -296,6 +297,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_public_workspace_context"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_v2.py", "v2_support_latest_features"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_v2.py", "v2_agents_catalog"): ("login_required", "user_required", "enabled_required"),
     # Global agent and action editors: the organisation's records, Admin role only.
     ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agents_list"): ("login_required", "admin_required"),
     ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agents_create"): ("login_required", "admin_required"),

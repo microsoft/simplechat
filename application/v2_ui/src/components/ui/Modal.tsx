@@ -209,7 +209,7 @@ export function Modal({
             >
                 {banner ?? (
                 <div className="flex items-start justify-between gap-3 border-b border-edge px-4 py-3">
-                    <div className="min-w-0">
+                    <div className="min-w-0 [overflow-wrap:anywhere]">
                         <h2 className="text-sm font-semibold text-text-1">{title}</h2>
                         {description ? (
                             <p className="mt-0.5 text-xs text-text-3">{description}</p>

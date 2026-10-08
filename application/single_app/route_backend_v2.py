@@ -191,6 +191,7 @@ from functions_support_latest_features import (
     build_latest_features_payload,
     build_user_latest_features_payload,
 )
+from functions_v2_agents_catalog import build_v2_agents_catalog_payload
 from functions_workspace_context import (
     WorkspaceContextError,
     build_group_workspace_context,
@@ -202,10 +203,17 @@ from route_frontend_chats import (
     _build_initial_chat_model_selection,
     _is_chat_agent_allowed_by_governance,
 )
+# Shared with the server-rendered Agents page so both interfaces read the same
+# title, hero colours, disclaimer and instructions setting.
+from route_frontend_agents import build_agents_page_config
 # Shared with the server-rendered admin page so both interfaces run the same
 # connection tests rather than maintaining two lists of what can be tested.
 from route_backend_settings import run_admin_settings_connection_test
-from functions_agent_catalog import build_accessible_agent_catalog
+from functions_agent_catalog import (
+    apply_agent_popular_promotions,
+    apply_agent_usage_counts,
+    build_accessible_agent_catalog,
+)
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_model_capabilities import resolve_model_vision_support
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
@@ -939,6 +947,48 @@ def register_route_backend_v2(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to load Latest Features."}), 500
+
+    @bp.route("/api/v2/agents/catalog", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_semantic_kernel")
+    def v2_agents_catalog():
+        """Return the agents this user may chat with, for the V2 Agents page.
+
+        The V2 counterpart of the classic ``/agents`` page, behind the same gates: an
+        application role and Semantic Kernel. Unlike the classic catalogue it leaves out
+        agents governance blocks for this user, as the chat picker does, so every card it
+        draws can start a chat. Usage counts and the administrator's Popular promotions
+        are applied after that filter, and the page configuration is sent alongside so
+        the SPA does not need a second request to draw the hero.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            settings = get_settings()
+            payload = build_v2_agents_catalog_payload(
+                load_catalog=lambda: build_accessible_agent_catalog(user_id, settings=settings),
+                is_allowed=lambda agent, scope: _is_chat_agent_allowed_by_governance(
+                    user_id, agent, scope
+                ),
+                apply_usage_counts=apply_agent_usage_counts,
+                apply_promotions=lambda catalog: apply_agent_popular_promotions(
+                    catalog, settings=settings
+                ),
+                page_config=build_agents_page_config(sanitize_settings_for_user(settings)),
+            )
+            return jsonify(payload), 200
+        except Exception as exc:
+            log_event(
+                "[AGENTS_CATALOG] Failed to load the V2 agent catalogue.",
+                extra={"user_id": user_id, "error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load agents."}), 500
 
     @bp.route("/api/v2/bootstrap", methods=["GET"])
     @swagger_route(security=get_auth_security())

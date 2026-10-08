@@ -24,7 +24,7 @@ import { AdminActionEditorPage, AdminAgentEditorPage } from './pages/AdminGlobal
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { safeSameOriginUrl } from './lib/adminOperations';
-import { PlaceholderPage } from './pages/PlaceholderPage';
+import { AgentsCatalogPage } from './pages/AgentsCatalogPage';
 import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
 import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
 import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
@@ -290,17 +290,7 @@ export function App() {
                 <Route path="/approvals" element={<ApprovalsPage />} />
                 <Route path="/approvals/:category" element={<ApprovalsPage />} />
                 <Route path="/approvals/:category/:itemId" element={<ApprovalsPage />} />
-                <Route
-                    path="/agents"
-                    element={
-                        <PlaceholderPage
-                            title="Agents"
-                            description="The agent catalogue has not been rebuilt in the V2 interface yet. Agents you can access are still selectable from the chat composer."
-                            classicHref="/agents"
-                            classicLabel="Open the agent catalogue"
-                        />
-                    }
-                />
+                <Route path="/agents" element={<AgentsCatalogPage />} />
                 <Route path="/groups" element={<GroupWorkspacePage />} />
                 <Route path="/groups/directory" element={<GroupDirectoryPage />} />
                 <Route path="/groups/:groupId" element={<GroupWorkspacePage />} />

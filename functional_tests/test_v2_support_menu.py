@@ -2,8 +2,9 @@
 # test_v2_support_menu.py
 """
 Functional test for the V2 Support menu: Latest Features and Send Feedback for end users.
-Version: 0.261.296
+Version: 0.261.305
 Implemented in: 0.261.296
+Native agent catalogue shortcuts: 0.261.305
 
 Administrators configure the Support menu in Admin Settings, and the classic navigation
 offers it to users. V2 had only a Latest Features link that bounced users out to the
