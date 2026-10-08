@@ -943,6 +943,27 @@ const SETTLED_STEP_STATUSES: ReadonlySet<StepStatus> = new Set<StepStatus>([
     'completed', 'partial', 'skipped', 'failed', 'cancelled',
 ]);
 
+type StepProgress = Readonly<Record<string, { status: StepStatus; summary?: string } | undefined>>;
+
+/**
+ * The line a waiting saved workflow run step writes for itself, or null. The server lets a plan
+ * wait for a quick saved workflow and says so as plain text, naming the workflow and how long the
+ * plan waits, such as 'Waiting for "Sales digest" to finish (up to 5 min).'. It is shown as text.
+ */
+function workflowRunWaitingLine(steps: readonly OrchestrationStep[], runtime: StepProgress): string | null {
+    for (const step of steps) {
+        const entry = runtime[step.step_id];
+        if (!step.enabled || step.capability_id !== 'workflow_run' || entry?.status !== 'waiting') {
+            continue;
+        }
+        const line = typeof entry.summary === 'string' ? entry.summary.replace(/\s+/g, ' ').trim() : '';
+        if (line) {
+            return line;
+        }
+    }
+    return null;
+}
+
 /**
  * The running plan card's one-line account of what the run is doing, or null for nothing new.
  *
@@ -952,15 +973,15 @@ const SETTLED_STEP_STATUSES: ReadonlySet<StepStatus> = new Set<StepStatus>([
  * say what was being reasoned about. The server sends the answer in one piece once every step has
  * settled, so the quiet gap before it is named rather than left blank. Disabled steps never run and
  * are ignored. Between two steps, which lasts only as long as the executor takes to start the
- * next, there is nothing new to say.
+ * next, there is nothing new to say. A plan waiting for a saved workflow it started names it.
  */
 export function describeRunProgress(
     steps: readonly OrchestrationStep[],
-    runtime: Readonly<Record<string, { status: StepStatus } | undefined>>,
+    runtime: StepProgress,
     waiting = false,
 ): string | null {
     if (waiting) {
-        return 'Waiting for results';
+        return workflowRunWaitingLine(steps, runtime) ?? 'Waiting for results';
     }
     const enabled = steps.filter((step) => step.enabled);
     const statusOf = (step: OrchestrationStep): StepStatus | undefined => runtime[step.step_id]?.status;
@@ -974,7 +995,7 @@ export function describeRunProgress(
         return role || title || 'Running';
     }
     if (enabled.some((step) => statusOf(step) === 'waiting')) {
-        return 'Waiting for results';
+        return workflowRunWaitingLine(steps, runtime) ?? 'Waiting for results';
     }
     if (enabled.length > 0 && enabled.every((step) => {
         const status = statusOf(step);

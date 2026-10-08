@@ -1,5 +1,5 @@
 // test_v2_workflow_run_status.mjs
-// Version: 0.261.251
+// Version: 0.261.306
 // Implemented in: 0.261.251
 // Executes the V2 client's reading of 6b-1's chat-started workflow run status route
 // (GET /api/v2/orchestration/workflow-runs/status): the response envelope, the rows dropped for ids
@@ -7,7 +7,8 @@
 // server's closed sets, the exact projection a good row keeps, the controls each row offers (Retry
 // only from `actions.retry` on a failed run, never from the status alone), the fixed texts, the
 // step and elapsed formatting, the id checks, the one batched request, and the closed sets and the
-// status-to-phase pairing pinned against the server module that writes them.
+// status-to-phase pairing pinned against the server module that writes them. 6c adds the results a
+// chat plan waited for and used in its answer: delivered with no message, and never read as posted.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -39,6 +40,7 @@ const {
     WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT,
     WORKFLOW_RESULTS_POSTED_TEXT,
     WORKFLOW_RESULTS_POSTING_TEXT,
+    WORKFLOW_RESULTS_USED_IN_ANSWER_TEXT,
     WORKFLOW_RETRY_BLOCKED_CODES,
     WORKFLOW_RETRY_TURNED_OFF_TEXT,
     WORKFLOW_RUN_CANCELLED_TEXT,
@@ -59,6 +61,7 @@ const {
     isWorkflowRunIdentifier,
     isWorkflowRunInFlight,
     parseWorkflowRunStatusResponse,
+    workflowFinishedResultsText,
     workflowRetryBlockedText,
     workflowRunRowControls,
     workflowRunStatusLabel,
@@ -108,6 +111,15 @@ function cancelledRow(runId, overrides = {}) {
         ...rest,
         delivery,
         actions: { cancel: false, ...actions },
+    });
+}
+
+/** A completed run whose results a chat plan waited for and used in its answer, so none were posted. */
+function usedInAnswerRow(runId, overrides = {}) {
+    const { delivery = {}, ...rest } = overrides;
+    return deliveredRow(runId, 1, at(250), {
+        ...rest,
+        delivery: { message_id: null, reason: 'used_in_answer', ...delivery },
     });
 }
 
@@ -656,6 +668,7 @@ test('a run is in flight while it is going or its result is still on its way', (
         ['completed, result pending', deliveredRow('r', 1, at(250), { delivery: { status: 'pending', message_id: null, delivered_at: null } }), true, false],
         ['completed, result posting', deliveredRow('r', 1, at(250), { delivery: { status: 'delivering', message_id: null, delivered_at: null } }), true, false],
         ['completed, result posted', deliveredRow('r', 1, at(250)), false, false],
+        ['completed, results used in a chat answer', usedInAnswerRow('r'), false, false],
         ['failed, note pending', failedRow('r'), true, false],
         ['failed, nothing to post', failedRow('r', { delivery: { status: 'not_applicable' } }), false, false],
         ['undeliverable', deliveredRow('r', 1, at(250), { delivery: { status: 'undeliverable', message_id: null, delivered_at: null } }), false, false],
@@ -667,6 +680,46 @@ test('a run is in flight while it is going or its result is still on its way', (
         assert.equal(isWorkflowRunInFlight(row), inFlight, `${label} in flight`);
         assert.equal(isWorkflowRunActive(row), active, `${label} active`);
     }
+});
+
+test('a finished run says where its results went, and results a chat plan used never read as posted', () => {
+    // The route's projection of a delivery the plan consumed: delivered, with nothing posted.
+    const used = parseRow(usedInAnswerRow('r'));
+    assert.deepEqual(used.delivery, {
+        status: 'delivered',
+        generation: 1,
+        message_id: null,
+        delivered_at: at(250),
+        reason: 'used_in_answer',
+    });
+    const deliveryOf = (overrides) => parseRow(deliveredRow('r', 1, at(250), { delivery: overrides })).delivery;
+    const cases = [
+        ['used in a chat answer', used.delivery, WORKFLOW_RESULTS_USED_IN_ANSWER_TEXT],
+        ['posted', deliveryOf({}), WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT],
+        ['posted, with no message to jump to', deliveryOf({ message_id: null }), WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT],
+        ['pending', deliveryOf({ status: 'pending', message_id: null, delivered_at: null }), WORKFLOW_RESULTS_POSTING_TEXT],
+        ['posting', deliveryOf({ status: 'delivering', message_id: null, delivered_at: null }), WORKFLOW_RESULTS_POSTING_TEXT],
+        [
+            'undeliverable',
+            deliveryOf({ status: 'undeliverable', message_id: null, delivered_at: null, reason: 'chat_unavailable' }),
+            WORKFLOW_RESULTS_IN_HISTORY_TEXT,
+        ],
+        ['expired', deliveryOf({ status: 'expired', message_id: null, delivered_at: null }), WORKFLOW_RESULTS_IN_HISTORY_TEXT],
+        [
+            'nothing to post',
+            deliveryOf({ status: 'not_applicable', message_id: null, delivered_at: null }),
+            WORKFLOW_RESULTS_IN_HISTORY_TEXT,
+        ],
+    ];
+    for (const [label, delivery, expected] of cases) {
+        assert.equal(workflowFinishedResultsText(delivery), expected, label);
+    }
+    assert.doesNotMatch(workflowFinishedResultsText(used.delivery), /posted|posting/i);
+    // A reason the client doesn't know still fails closed, whatever it says.
+    assert.deepEqual(
+        parseRuns([usedInAnswerRow('run-1', { delivery: { reason: 'used_in_a_plan' } })]),
+        [unavailableRow()],
+    );
 });
 
 // ----- Fixed texts -----
@@ -718,6 +771,7 @@ test('every status, waiting reason, retry block and card sentence reads as fixed
     assert.equal(WORKFLOW_RESULTS_POSTING_TEXT, 'Posting results…');
     assert.equal(WORKFLOW_RESULTS_POSTED_TEXT, 'Results posted below');
     assert.equal(WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT, 'Results were posted to this chat.');
+    assert.equal(WORKFLOW_RESULTS_USED_IN_ANSWER_TEXT, 'Its results were used in a chat answer.');
     assert.equal(WORKFLOW_RESULTS_IN_HISTORY_TEXT, 'The results are in the workflow\'s run history.');
     assert.equal(WORKFLOW_STATUS_READ_ERROR_TEXT, 'Couldn\'t check the run status right now. Try again.');
     assert.equal(WORKFLOW_STATUS_HALTED_TEXT, 'Live status isn\'t available right now.');
