@@ -450,6 +450,17 @@ def test_a_stored_role_gated_step_is_refused_before_step_one(replay):
              "role_required")
 
 
+def test_a_stored_plan_that_asks_a_question_is_refused_before_step_one(replay):
+    # Normalizing keeps step arguments, so a question reference there survives into a stored plan.
+    in_plan = _task(replay)
+    in_plan["plan_replay"]["frozen_plan"]["steps"][0]["arguments"]["elicitation_ref"] = "q-1"
+    in_seeds = _task(replay)
+    in_seeds["plan_replay"]["frozen_seeds"]["elicitation_references"] = ["q-1"]
+    for task in (in_plan, in_seeds):
+        _refused(replay, lambda: replay.authorize_plan_replay_run(_workflow(), _rehash(replay, task), REPLAY_SETTINGS),
+                 "elicitation_not_replayable")
+
+
 def test_manual_and_scheduled_runs_are_allowed_the_same_capabilities(replay, monkeypatch):
     require(list(inspect.signature(replay.authorize_plan_replay_run).parameters) == ["workflow", "task", "settings"],
             "Run authorization never takes the trigger's roles.")

@@ -360,6 +360,9 @@ def authorize_plan_replay_run(workflow, task, settings):
         _refuse('plan_hash_mismatch')
     if normalize_plan_contract(frozen_plan) != frozen_plan:
         _refuse('plan_hash_mismatch')
+    if _contains_elicitation_marker(frozen_plan) or _contains_elicitation_marker(frozen_seeds):
+        # Freezing refuses a plan that asked a question; a stored one is refused again before step 1.
+        _refuse('elicitation_not_replayable')
     refusals = classify_plan_steps(frozen_plan)
     if refusals:
         _refuse(refusals[0]['code'], refusals)
