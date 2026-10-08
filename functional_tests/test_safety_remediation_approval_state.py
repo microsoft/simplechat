@@ -477,6 +477,26 @@ with offline_app_imports(), ExitStack() as stack:
     check(stored["action_request_id"] == block_request and approvable("log-two") == [block_request], str(stored))
     check(stored["action_notification_message"] == "Blocked.", "the request recorded is not the one that stayed")
 
+    # The same for two suspensions of one violation: the request recorded is the save that
+    # landed, with its own message, and the other is withdrawn.
+    violation("log-two-suspensions")
+    LONGER = {**SUSPEND, "notification_message": "Suspended for a month.",
+              "datetime_to_allow": (NOW + timedelta(days=30)).isoformat()}
+    created_then(lambda: during.__setitem__(
+        "longer", other.patch("/api/safety/logs/log-two-suspensions", json=LONGER)))
+    response = client.patch("/api/safety/logs/log-two-suspensions", json=SUSPEND)
+    check(during["longer"].status_code == 200 and during["longer"].get_json()["approval_required"] is True,
+          str(during["longer"].get_json()))
+    first_request = refused_and_withdrawn(response)
+    second_request = h.approvals[-1]["id"]
+    check(second_request != first_request, "the two suspensions shared a request")
+    stored = container.items["log-two-suspensions"]
+    check(stored["action"] == "SuspendUser" and stored["action_request_status"] == "pending", str(stored))
+    check(stored["action_request_id"] == second_request
+          and approvable("log-two-suspensions") == [second_request], str(stored))
+    check(stored["action_notification_message"] == "Suspended for a month.",
+          "the request recorded is not the one that stayed")
+
     # 4. Another reviewer's notes land while the request is created. A save that names the
     # version it read is refused and requests nothing; one that doesn't keeps their notes.
     violation("log-notes")
