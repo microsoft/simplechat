@@ -1,14 +1,17 @@
 # test_classic_safety_review_and_access_restricted.py
 """
 Browser coverage for the classic safety review changes and the classic Access restricted page.
-Version: 0.261.297
+Version: 0.261.298
 Implemented in: 0.261.297
+Requesting a suspension or block again: 0.261.298
 
 Render the real classic templates with Jinja and run the real local scripts behind a closed,
 in-memory API. Check that the admin review no longer offers Escalate, labels a legacy
 escalated record and offers its legacy action only on that record, describes which actions
 wait for a second reviewer, shows whether a sent warning was acknowledged without offering to
-resend it, and shows Blocked statistics with legacy escalations only when there are some; and
+resend it, and shows Blocked statistics with legacy escalations only when there are some;
+that saving a suspension or block the violation already records requests nothing unless the
+reviewer asks for it again, which sends the new notification and restore time; and
 that the classic Access restricted page renders the notice as text and shows the restore time
 in the reader's locale. Unexpected requests, page errors and browser dialogs fail.
 """
@@ -231,6 +234,99 @@ def test_legacy_escalations_are_only_mentioned_when_there_are_some(classic_ui):
     page.goto(f"{ORIGIN}/admin/safety_violations", wait_until="networkidle")
     expect(page.locator("#safetyBlockedCount")).to_have_text("4")
     expect(page.locator("#safetyStatsLegacyEscalateRow")).to_be_hidden()
+
+
+def test_a_suspension_or_block_is_requested_again_only_on_purpose(classic_ui):
+    restore_at = "2031-06-01T09:30:00Z"
+    classic_ui.logs.extend([
+        {
+            "id": "log-denied", "user_id": "user-4", "message": "Denied suspension.", "status": "In-Review",
+            "action": "SuspendUser", "action_request_status": "denied", "action_request_id": "approval-9",
+            "action_notification_message": "Your access is suspended.", "action_datetime_to_allow": restore_at,
+            "notes": "", "created_at": "2026-05-04T12:00:00Z", "last_updated": "2026-05-04T12:00:00Z",
+            "triggered_categories": [{"category": "Hate", "severity": 6}],
+        },
+        {
+            "id": "log-blocked", "user_id": "user-5", "message": "Applied block.", "status": "Resolved",
+            "action": "BlockUser", "action_request_status": "executed", "action_request_id": "approval-8",
+            "notes": "", "created_at": "2026-05-05T12:00:00Z", "last_updated": "2026-05-05T12:00:00Z",
+            "triggered_categories": [{"category": "Violence", "severity": 6}],
+        },
+        {
+            "id": "log-waiting", "user_id": "user-6", "message": "Waiting suspension.", "status": "In-Review",
+            "action": "SuspendUser", "action_request_status": "pending", "action_request_id": "approval-7",
+            "notes": "", "created_at": "2026-05-06T12:00:00Z", "last_updated": "2026-05-06T12:00:00Z",
+            "triggered_categories": [{"category": "Hate", "severity": 4}],
+        },
+    ])
+    page = classic_ui.page
+    page.goto(f"{ORIGIN}/admin/safety_violations", wait_until="networkidle")
+    page.get_by_role("tab", name="All Data").click()
+    help_text = page.locator("#safetyRemediationHelp")
+    reissue = page.locator("#editReissue")
+
+    # A denied suspension: saving it as it is requests nothing, so nothing is sent with it.
+    modal = _open_review(page, "log-denied")
+    expect(help_text).to_contain_text(
+        "This suspension request was denied. Saving updates the review only and requests nothing new."
+    )
+    expect(page.get_by_label("Request this suspension again")).not_to_be_checked()
+    expect(page.locator("#safetyNotificationGroup")).to_be_hidden()
+    expect(page.locator("#safetySuspendUntilGroup")).to_be_hidden()
+    unchanged = (
+        'Safety log updated. No new suspension was requested. To request it again, select '
+        '"Request this suspension again" and save.'
+    )
+    classic_ui.patch_reply = (200, {"message": unchanged, "approval_required": False, "remediation_unchanged": True})
+    page.locator("#saveChangesBtn").click()
+    expect(page.locator("#safetyPageStatusAlert")).to_have_text(unchanged)
+    log_id, payload = classic_ui.patches[-1]
+    assert log_id == "log-denied" and payload == {"status": "In-Review", "action": "SuspendUser", "notes": ""}, payload
+
+    # Asking for it again offers the last message and a restore time, and says what it does.
+    modal = _open_review(page, "log-denied")
+    expect(reissue).not_to_be_checked()
+    reissue.check()
+    expect(help_text).to_contain_text("saving creates an approval request")
+    expect(page.locator("#editReissueHelp")).to_contain_text("notification and restore date below")
+    expect(page.locator("#safetyNotificationGroup")).to_be_visible()
+    expect(page.locator("#editNotificationMessage")).to_have_value("Your access is suspended.")
+    expect(page.locator("#safetySuspendUntilGroup")).to_be_visible()
+    expect(page.locator("#editSuspendUntil")).not_to_have_value("")
+    page.locator("#editSuspendUntil").fill("2031-07-01T12:00")
+    classic_ui.patch_reply = (200, {"message": "Safety log updated and remediation approval request created.", "approval_required": True})
+    page.locator("#saveChangesBtn").click()
+    expect(page.locator("#safetyPageStatusAlert")).to_have_text("Safety log updated and remediation approval request created.")
+    _, payload = classic_ui.patches[-1]
+    expected_restore = page.evaluate("new Date('2031-07-01T12:00').toISOString()")
+    assert payload["reissue"] is True and payload["notification_message"] == "Your access is suspended.", payload
+    assert payload["datetime_to_allow"] == expected_restore, payload
+
+    # An applied block says so, and offers the same choice under its own name.
+    modal = _open_review(page, "log-blocked")
+    expect(help_text).to_contain_text("This block was approved and applied.")
+    expect(page.get_by_label("Request this block again")).to_be_visible()
+    expect(page.locator("#editReissueHelp")).to_contain_text("notification below")
+    modal.locator(".btn-close").click()
+    expect(modal).to_be_hidden()
+
+    # One still waiting for approval offers nothing to request.
+    modal = _open_review(page, "log-waiting")
+    expect(help_text).to_contain_text("waiting for another eligible reviewer to approve it")
+    expect(page.locator("#safetyReissueGroup")).to_be_hidden()
+    expect(page.locator("#safetyNotificationGroup")).to_be_hidden()
+    modal.locator(".btn-close").click()
+    expect(modal).to_be_hidden()
+
+    # Choosing a different action still requests it, as before.
+    modal = _open_review(page, "log-blocked")
+    page.locator("#editAction").select_option("SuspendUser")
+    expect(page.locator("#safetyReissueGroup")).to_be_hidden()
+    expect(help_text).to_contain_text("saving creates an approval request")
+    expect(page.locator("#safetySuspendUntilGroup")).to_be_visible()
+    expect(page.locator("#editSuspendUntil")).to_have_value("")
+    modal.locator(".btn-close").click()
+    expect(modal).to_be_hidden()
 
 
 def test_save_waits_for_its_request_so_a_double_click_sends_one(classic_ui):

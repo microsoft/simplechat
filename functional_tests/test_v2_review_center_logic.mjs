@@ -104,6 +104,23 @@ assert.match(review.remediationStatusText(denied), /block request was denied .* 
 const failed = record({ action: 'SuspendUser', action_request_status: 'failed', action_execution_error: 'Traceback: secret detail' });
 assert.doesNotMatch(review.remediationStatusText(failed), /Traceback|secret/, 'stored failure text is never quoted');
 assert.equal(review.remediationStatusText(record({ action: 'None' })), null);
+
+// A suspension or block the violation already records is requested again only on purpose,
+// whatever became of its last request, and never while one waits or a warning is sent.
+for (const state of ['executed', 'failed', 'denied', 'expired', null]) {
+    assert.equal(review.offersRestrictionReissue(record({ action: 'BlockUser', action_request_status: state }), 'BlockUser'), true, String(state));
+}
+assert.equal(review.offersRestrictionReissue(pending, 'SuspendUser'), false);
+assert.equal(review.offersRestrictionReissue(record({ action: 'SuspendUser', action_request_status: 'sending' }), 'SuspendUser'), false);
+assert.equal(review.offersRestrictionReissue(denied, 'SuspendUser'), false, 'a changed action is requested anyway');
+assert.equal(review.offersRestrictionReissue(record({ action: 'WarnUser', action_request_status: 'executed' }), 'WarnUser'), false);
+assert.equal(
+    review.existingRestrictionText(denied, 'BlockUser'),
+    'This block request was denied. Saving updates the review only and requests nothing new. To ask another eligible reviewer to approve it again, select "Request this block again".',
+);
+assert.match(review.existingRestrictionText(failed, 'SuspendUser'), /^This suspension was approved but could not be applied\./);
+assert.match(review.existingRestrictionText(record({ action: 'SuspendUser', action_request_status: 'expired' }), 'SuspendUser'), /^This suspension request expired without a decision\./);
+assert.match(review.existingRestrictionText(record({ action: 'BlockUser', action_request_status: 'executed' }), 'BlockUser'), /^This block was approved and applied\./);
 const top = review.topCategory(record({ triggered_categories: [{ category: 'Hate', severity: 2 }, { category: 'Violence', severity: 6 }] }));
 assert.deepEqual(top, { category: 'Violence', severity: 6 });
 

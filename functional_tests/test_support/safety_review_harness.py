@@ -4,12 +4,15 @@
 Version: 0.261.299
 Implemented in: 0.261.297
 Review center coverage (approvals lookup, user names, feedback routes): 0.261.298
+Approval decisions and withdrawal on the fake approvals store, and a hook inside approval
+request creation: 0.261.298
 Review center AI assist coverage (route modules read the harness settings): 0.261.299
 
 Used inside ``offline_app_imports()`` by fresh-process probes. The real route modules,
 decorators and helpers run on a real Flask app and session. Only the storage and delivery
 seams are replaced: the safety and feedback containers (with ETags and conditional replace
-and delete), the approvals lookup, user settings, notifications, approval requests and the
+and delete), the approvals store (with ETags, used by the lookup and by the real deny and
+withdraw decisions), user settings, notifications, approval request creation and the
 activity log.
 """
 
@@ -140,15 +143,24 @@ class FakeSafetyContainer:
 
 
 class FakeApprovalsContainer:
-    """The approval requests the remediation lookup reads, keyed by id."""
+    """The approval requests the remediation lookup and decisions read and write, keyed by id.
+
+    Every stored version gets a new ETag, and a conditional replace refuses a stale one.
+    ``fail`` makes lookups fail; ``fail_writes`` makes writes fail.
+    """
 
     def __init__(self):
         self.items = {}
         self.queries = []
+        self.revision = itertools.count(1)
         self.fail = False
+        self.fail_writes = False
 
     def add(self, approval):
-        self.items[approval["id"]] = copy.deepcopy(approval)
+        stored = copy.deepcopy(approval)
+        stored["_etag"] = f"a{next(self.revision)}"
+        self.items[approval["id"]] = stored
+        return copy.deepcopy(stored)
 
     def read_item(self, item, partition_key, **kwargs):
         if item not in self.items:
@@ -156,8 +168,19 @@ class FakeApprovalsContainer:
         return copy.deepcopy(self.items[item])
 
     def upsert_item(self, body, **kwargs):
-        self.add(body)
-        return copy.deepcopy(body)
+        if self.fail_writes:
+            raise RuntimeError("approvals store unavailable")
+        return self.add(body)
+
+    def replace_item(self, item, body, etag=None, match_condition=None, **kwargs):
+        if self.fail_writes:
+            raise RuntimeError("approvals store unavailable")
+        current = self.items.get(item)
+        if current is None:
+            raise cosmos_exceptions.CosmosResourceNotFoundError(status_code=404, message="Not found")
+        if etag is not None and current.get("_etag") != etag:
+            raise cosmos_exceptions.CosmosAccessConditionFailedError(status_code=412, message="Changed")
+        return self.add(body)
 
     def query_items(self, query, parameters=None, **kwargs):
         self.queries.append(query)
@@ -277,6 +300,9 @@ def build_safety_app(stack):
         # Called once, just before the next notification is created: stands in for a request
         # that arrives while a warning is being sent.
         before_notification=None,
+        # Called once, just after the next approval request is created and before the save that
+        # created it records it: stands in for a save that lands while a request is created.
+        before_approval_recorded=None,
         unchecked_count=0,
     )
     _patch_app_settings(stack, state.settings, safety_routes)
@@ -313,6 +339,9 @@ def build_safety_app(stack):
         })
         state.approvals.append(approval)
         approvals_container.add(approval)
+        if state.before_approval_recorded is not None:
+            hook, state.before_approval_recorded = state.before_approval_recorded, None
+            hook()
         return approval
 
     def log_general_admin_action(**kwargs):
@@ -329,6 +358,7 @@ def build_safety_app(stack):
     for module in (remediation, safety_routes, auth, review_center):
         stack.enter_context(patch.object(module, "log_event", _quiet))
     stack.enter_context(patch.object(remediation, "debug_print", _quiet))
+    patch_approval_decisions(stack, state)
 
     app = Flask("safety-review-harness", root_path=str(APP_ROOT))
     app.secret_key = "offline-test-only"
@@ -345,22 +375,33 @@ def build_safety_app(stack):
 
 
 def patch_approval_decisions(stack, state):
-    """Let the real ``functions_approvals.deny_request`` run against the harness's approvals.
+    """Let the real approval decisions in ``functions_approvals`` run on the harness's approvals.
 
-    The denial is stored in ``state.approvals_container``; the requester's notification is
-    recorded in ``state.decision_notifications``. Returns the real module.
+    ``deny_request`` and ``withdraw_approval_request`` store their decision in
+    ``state.approvals_container``. Notifications they create are recorded in
+    ``state.decision_notifications``, and notifications they remove in
+    ``state.cleared_notifications``. ``build_safety_app`` applies this; calling it again
+    changes nothing. Returns the real module.
     """
     import functions_approvals as approvals
 
+    if getattr(state, "approval_decisions_patched", False):
+        return approvals
+    state.approval_decisions_patched = True
     state.decision_notifications = []
+    state.cleared_notifications = []
 
     def create_notification(**kwargs):
         state.decision_notifications.append(kwargs)
         return {"id": f"decision-{len(state.decision_notifications)}"}
 
+    def delete_notifications_by_metadata(**kwargs):
+        state.cleared_notifications.append(kwargs)
+        return 0
+
     stack.enter_context(patch.object(approvals, "cosmos_approvals_container", state.approvals_container))
     stack.enter_context(patch.object(approvals, "create_notification", create_notification))
-    stack.enter_context(patch.object(approvals, "delete_notifications_by_metadata", lambda **kwargs: 0))
+    stack.enter_context(patch.object(approvals, "delete_notifications_by_metadata", delete_notifications_by_metadata))
     stack.enter_context(patch.object(approvals, "log_event", _quiet))
     stack.enter_context(patch.object(approvals, "debug_print", _quiet))
     return approvals

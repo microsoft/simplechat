@@ -92,7 +92,7 @@ The safety dashboard reports open violations, remediation awaiting approval, use
 }
 ```
 
-`update` carries the same fields as the record's PATCH and runs through the same function, so a bulk Warn user sends the warning at once and a bulk Suspend or Block creates an approval request. `archive` and `delete` run through the same functions as their single routes, with the same audit entries. Every write is conditional on the stored version; `etag`, when sent, must also match. A violation waiting on a remediation request, or whose warning is being sent, is left unchanged. Unknown fields are refused, and a second operation on the same record is refused with `duplicate_operation`.
+`update` carries the same fields as the record's PATCH and runs through the same function, so a bulk Warn user sends the warning at once and a bulk Suspend or Block creates an approval request. `archive` and `delete` run through the same functions as their single routes, with the same audit entries. Every write is conditional on the stored version and writes only the fields the operation changes. An operation that sends `etag` must match it, and is then written on that version or not at all: a conflict is reported as `record_changed`, never merged onto a newer version. A violation waiting on a remediation request, or whose warning is being sent, is left unchanged, and a suspension or block that can't be recorded on the violation as it was read is withdrawn. Unknown fields are refused, and a second operation on the same record is refused with `duplicate_operation`.
 
 The response is `{results, succeeded, failed}`: one result per operation, in request order, holding the single route's response with `ok`, `status`, `index`, `id`, `op` and, on failure, a `code` such as `record_changed`, `not_found`, `remediation_pending` or `invalid_operation`. The accepted operation keys are `REVIEW_BULK_OPERATION_KEYS` in `functions_review_center.py`; a later attribution field is added there on purpose.
 
@@ -104,7 +104,7 @@ Editors use `WorkspaceEditorFrame`: **Back** returns to the workbench with its f
 
 The feedback editor records the reviewer as `adminReview.analyzedBy` (`{id, displayName}`), which `GET /feedback/my` never returns to the user. **Notify the user** sends a `feedback_response` notification with the response to the user, linking to `/profile?tab=feedback`, which V2 opens as **Settings > Feedback**.
 
-The violation editor prefills the notification title and message from the server's standard text and keeps them in step until edited, offers 24 hours, 7 days, 30 days or a custom time for a suspension, and offers **Request this suspension again** (or block) for one already requested or applied.
+The violation editor prefills the notification title and message from the server's standard text and keeps them in step until edited, offers 24 hours, 7 days, 30 days or a custom time for a suspension, and offers **Request this suspension again** (or block) whenever the violation already records that action and no request is waiting, as the classic review does.
 
 ### Approvals
 
