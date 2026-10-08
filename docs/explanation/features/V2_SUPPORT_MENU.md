@@ -1,6 +1,6 @@
 # V2 Support Menu
 
-**Implemented in version: 0.261.294**
+**Implemented in version: 0.261.296**
 
 ## Overview
 

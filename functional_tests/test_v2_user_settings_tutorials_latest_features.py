@@ -2,10 +2,10 @@
 # test_v2_user_settings_tutorials_latest_features.py
 """
 Functional test for V2 guided tours and the Latest Features shortcut.
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.280
 URL sink hardening updated in: 0.261.281
-Support menu pages updated in: 0.261.294
+Support menu pages updated in: 0.261.296
 
 The V2 interface now has guided tours for chat and the workspace, with a master switch
 shared with the classic tutorial buttons plus a per-tour choice, and a Latest Features
@@ -13,7 +13,7 @@ shortcut in the navigation rail that a user can hide until the next release. Thi
 pins the backend validation, the bootstrap navigation entry, the tour anchors, and the
 pure resolution logic the rail and the Preferences page share.
 
-Since 0.261.294 the shortcut lives in the rail's Support menu and opens the V2 Latest
+Since 0.261.296 the shortcut lives in the rail's Support menu and opens the V2 Latest
 Features page rather than the classic one (test_v2_support_menu.py covers the menu).
 """
 

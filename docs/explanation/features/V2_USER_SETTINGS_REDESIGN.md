@@ -148,7 +148,7 @@ The shortcut is available when all of these hold:
 As on the classic interface, the shortcut is hidden for everyone in development mode.
 `components/layout/SupportMenu.tsx` draws it in the navigation rail's Support group with a
 hide button, and the Preferences card shows its status with **Hide for this version** or
-**Show again**. Since **0.261.294** the shortcut and the card's **Open Latest Features** link
+**Show again**. Since **0.261.296** the shortcut and the card's **Open Latest Features** link
 open the V2 Latest Features page instead of the classic one; see
 [V2 Support Menu](V2_SUPPORT_MENU.md).
 

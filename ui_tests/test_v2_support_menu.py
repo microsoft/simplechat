@@ -2,8 +2,8 @@
 """
 Browser coverage for the V2 Support menu: the rail group, the Latest Features page and the
 Send Feedback page.
-Version: 0.261.294
-Implemented in: 0.261.294
+Version: 0.261.296
+Implemented in: 0.261.296
 
 Administrators configure the Support menu in Admin Settings. The classic navigation offers it
 to users as a collapsible section; V2 used to carry only a Latest Features link that left for
@@ -41,7 +41,7 @@ STATIC_ROOT = REPO_ROOT / "application" / "single_app" / "static"
 SPA_INDEX = STATIC_ROOT / "v2" / "index.html"
 ARTIFACTS = REPO_ROOT / "ui_tests" / "artifacts" / "v2_support_menu"
 ORIGIN = "http://simplechat.test"
-VERSION = "0.261.294"
+VERSION = "0.261.296"
 
 # Chromium has no mail handler in the test browser, so opening a draft logs this.
 MAILTO_LAUNCH_ERROR = re.compile(r"Failed to launch 'mailto:")

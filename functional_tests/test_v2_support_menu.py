@@ -2,8 +2,8 @@
 # test_v2_support_menu.py
 """
 Functional test for the V2 Support menu: Latest Features and Send Feedback for end users.
-Version: 0.261.294
-Implemented in: 0.261.294
+Version: 0.261.296
+Implemented in: 0.261.296
 
 Administrators configure the Support menu in Admin Settings, and the classic navigation
 offers it to users. V2 had only a Latest Features link that bounced users out to the
@@ -68,7 +68,7 @@ def build_user(settings):
         settings,
         resolve_endpoint_url=resolve_endpoint,
         resolve_static_url=lambda path: f"/static/{path}",
-        version="0.261.294",
+        version="0.261.296",
     )
 
 
@@ -101,7 +101,7 @@ def _read(path):
 def test_version_is_at_least_the_implementing_release():
     """The application carries at least the version the V2 Support menu arrived in."""
     print("Testing the application version...")
-    assert_app_version_at_least("0.261.294")
+    assert_app_version_at_least("0.261.296")
     return True
 
 
@@ -139,7 +139,7 @@ def test_user_payload_shares_only_what_administrators_shared():
         {"support_latest_features_visibility": {feature_id: False for feature_id in defaults}}
     )
     assert everything_hidden["groups"] == [], "Hiding everything leaves nothing to draw"
-    assert everything_hidden["version"] == "0.261.294"
+    assert everything_hidden["version"] == "0.261.296"
 
     print(f"  {len(default_ids)} default announcement(s); hidden ones and empty releases are dropped.")
     return True
@@ -324,7 +324,7 @@ def _catalogue_hrefs():
         },
         resolve_endpoint_url=resolve_endpoint,
         resolve_static_url=lambda path: f"/static/{path}",
-        version="0.261.294",
+        version="0.261.296",
     )
     return sorted(
         {

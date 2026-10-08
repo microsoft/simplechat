@@ -2,9 +2,9 @@
 # test_v2_bootstrap_branding_and_navigation.py
 """
 Functional test for the V2 bootstrap branding and navigation blocks.
-Version: 0.261.294
+Version: 0.261.296
 Implemented in: 0.261.047
-Send Feedback navigation entry added in: 0.261.294
+Send Feedback navigation entry added in: 0.261.296
 
 The V2 SPA cannot read Jinja context, so everything the classic interface gets from
 ``app_settings`` and the ``inject_settings`` context processor has to arrive in the
@@ -418,7 +418,7 @@ def test_send_feedback_entry_follows_the_classic_gate():
     """Send Feedback appears only where the classic Support menu would offer it."""
     print("\nTesting the Send Feedback navigation entry...")
 
-    assert_app_version_at_least("0.261.294")
+    assert_app_version_at_least("0.261.296")
     on = {
         "enable_support_menu": True,
         "enable_support_send_feedback": True,

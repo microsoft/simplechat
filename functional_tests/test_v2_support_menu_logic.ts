@@ -2,8 +2,8 @@
 //
 // Runtime test for the V2 Support menu: the rail group, the Latest Features page and the Send
 // Feedback page.
-// Version: 0.261.294
-// Implemented in: 0.261.294
+// Version: 0.261.296
+// Implemented in: 0.261.296
 //
 // The judgement calls here do not show in a screenshot: which destinations the rail offers
 // once a user has hidden Latest Features, where each catalogue shortcut lands in V2, that a
@@ -402,7 +402,7 @@ check('the feedback form is labelled and prefilled', () => {
         createElement(SupportFeedbackForm, {
             defaultName: 'Ada Lovelace',
             defaultEmail: 'ada@contoso.example',
-            appVersion: '0.261.294',
+            appVersion: '0.261.296',
         }),
     );
     for (const id of ['name', 'email', 'organization', 'details']) {
