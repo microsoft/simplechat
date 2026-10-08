@@ -269,7 +269,7 @@ def test_a_suspension_or_block_is_requested_again_only_on_purpose(classic_ui):
     reissue = page.locator("#editReissue")
 
     # A denied suspension: saving it as it is requests nothing, so nothing is sent with it.
-    modal = _open_review(page, "log-denied")
+    _open_review(page, "log-denied")
     expect(help_text).to_contain_text(
         "This suspension request was denied. Saving updates the review only and requests nothing new."
     )
@@ -287,7 +287,7 @@ def test_a_suspension_or_block_is_requested_again_only_on_purpose(classic_ui):
     assert log_id == "log-denied" and payload == {"status": "In-Review", "action": "SuspendUser", "notes": ""}, payload
 
     # Asking for it again offers the last message and a restore time, and says what it does.
-    modal = _open_review(page, "log-denied")
+    _open_review(page, "log-denied")
     expect(reissue).not_to_be_checked()
     reissue.check()
     expect(help_text).to_contain_text("saving creates an approval request")
