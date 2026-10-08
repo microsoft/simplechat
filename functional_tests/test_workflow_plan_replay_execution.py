@@ -458,6 +458,16 @@ def test_a_deleted_or_changed_workflow_stops_before_step_one(harness, replay):
     _refused(replay, lambda: _run(
         replay, harness, workflow, task, settings={**_settings(harness), "allow_user_workflows": False},
     ), "personal_workflows_disabled")
+    _refused(replay, lambda: _run(
+        replay, harness, workflow, task, settings={**_settings(harness), "enable_chat_orchestration": False},
+    ), "orchestration_disabled")
+    with pytest.raises(replay.PlanReplayRefused) as removed:
+        _run(replay, harness, workflow, task,
+             settings={**_settings(harness), "chat_orchestration_enabled_capabilities": ["document_search"]})
+    require(removed.value.code == "capability_unavailable", removed.value.code)
+    require(removed.value.public_message.startswith("Step 1 (")
+            and "is turned off or no longer available" in removed.value.public_message,
+            removed.value.public_message)
 
     require(harness.runs.items == runs_before, "Nothing runs once the workflow is gone or changed.")
     require(len(harness.model_calls) == calls_before, "No model call happens before re-authorization.")
