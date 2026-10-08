@@ -6,8 +6,9 @@
 // been fetched would quietly hide matches.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Check, Globe2, Loader2, Search, Users } from 'lucide-react';
+import { ArrowUpRight, Check, Globe2, Loader2, Search, Users } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
 import type { WorkspaceKind, WorkspaceSummary } from '../../lib/workspaces';
 import { GlassPanel, Skeleton } from '../ui/primitives';
@@ -23,13 +24,14 @@ function RoleBadge({ role }: { role?: string }) {
         return null;
     }
     return (
-        <span className="rounded-full border border-edge px-2 py-0.5 text-[11px] text-text-3">
+        <span className="shrink-0 rounded-full border border-edge px-2 py-0.5 text-[11px] text-text-3">
             {role}
         </span>
     );
 }
 
 export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
+    const navigate = useNavigate();
     const needsReconciliation = useGroupWorkspaceStore((state) => kind.scope === 'group' && state.needsReconciliation);
     const [items, setItems] = useState<WorkspaceSummary[]>([]);
     const [page, setPage] = useState(1);
@@ -128,6 +130,18 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
         }
     };
 
+    // Open never activates from here; the page it lands on decides, as with the directories.
+    const openWorkspace = (workspace: WorkspaceSummary) => {
+        let path: string;
+        try {
+            path = kind.openPath(workspace.id);
+        } catch {
+            setActionError(`Could not open that ${kind.noun}.`);
+            return;
+        }
+        navigate(path);
+    };
+
     const lastPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
     const title = `Your ${kind.pluralNoun}`;
 
@@ -186,15 +200,17 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
                     <ul className="space-y-2">
                         {items.map((workspace) => (
                             <li key={workspace.id}>
-                                <GlassPanel className="flex items-center gap-3 p-3">
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2">
+                                {/* Wraps like the directory rows: on a narrow screen the actions drop
+                                    below the name instead of squeezing it to a few letters. */}
+                                <GlassPanel className="flex flex-wrap items-center gap-3 p-3">
+                                    <div className="min-w-0 flex-1 basis-48">
+                                        <div className="flex min-w-0 items-center gap-2">
                                             <span className="truncate text-sm font-medium text-text-1">
                                                 {workspace.name || 'Untitled'}
                                             </span>
                                             <RoleBadge role={workspace.userRole} />
                                             {workspace.status && workspace.status !== 'active' && (
-                                                <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] text-warn">
+                                                <span className="shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[11px] text-warn">
                                                     {workspace.status}
                                                 </span>
                                             )}
@@ -206,27 +222,41 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
                                         )}
                                     </div>
 
-                                    {workspace.isActive ? (
-                                        <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-ok-soft px-2.5 py-1.5 text-xs font-medium text-ok">
-                                            <Check size={13} /> Active
-                                        </span>
-                                    ) : (
+                                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                                        {workspace.isActive ? (
+                                            <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-ok-soft px-2.5 py-1.5 text-xs font-medium text-ok">
+                                                <Check size={13} /> Active
+                                            </span>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => void activate(workspace)}
+                                                disabled={activating !== null || needsReconciliation}
+                                                className={clsx(
+                                                    'shrink-0 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1',
+                                                    'hover:bg-surface-2 disabled:opacity-60',
+                                                )}
+                                            >
+                                                {activating === workspace.id ? (
+                                                    <Loader2 size={13} className="animate-spin" />
+                                                ) : (
+                                                    'Set active'
+                                                )}
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
-                                            onClick={() => void activate(workspace)}
+                                            onClick={() => openWorkspace(workspace)}
                                             disabled={activating !== null || needsReconciliation}
+                                            aria-label={`Open ${workspace.name || 'Untitled'}`}
                                             className={clsx(
-                                                'shrink-0 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1',
+                                                'flex shrink-0 items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1',
                                                 'hover:bg-surface-2 disabled:opacity-60',
                                             )}
                                         >
-                                            {activating === workspace.id ? (
-                                                <Loader2 size={13} className="animate-spin" />
-                                            ) : (
-                                                'Set active'
-                                            )}
+                                            Open<ArrowUpRight size={13} />
                                         </button>
-                                    )}
+                                    </div>
                                 </GlassPanel>
                             </li>
                         ))}
