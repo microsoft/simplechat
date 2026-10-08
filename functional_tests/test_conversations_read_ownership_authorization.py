@@ -2,8 +2,9 @@
 # test_conversations_read_ownership_authorization.py
 """
 Functional test for personal conversation read authorization hardening.
-Version: 0.250.101
+Version: 0.261.306
 Implemented in: 0.241.011; 0.241.022; 0.241.032; 0.250.033; 0.250.035; 0.250.074; 0.250.101
+Deletion diagnostics import compatibility and scoped test imports added in: 0.261.306
 
 This test ensures authenticated users can only read messages and images from
 their own personal conversations, and that foreign conversation reads fail with
@@ -18,6 +19,7 @@ import importlib
 import os
 import sys
 import types
+from unittest.mock import patch
 
 from flask import Flask, jsonify
 import werkzeug
@@ -130,8 +132,8 @@ def _passthrough_decorator(*args, **kwargs):
     return lambda func: func
 
 
-def _install_route_import_stubs():
-    """Install lightweight module stubs so the route module imports in isolation."""
+def _route_import_stubs():
+    """Build lightweight dependencies without mutating process-wide imports."""
     stub_modules = {}
 
     config_module = types.ModuleType('config')
@@ -156,6 +158,16 @@ def _install_route_import_stubs():
     collaboration_module.list_personal_collaboration_conversations_for_user = lambda *args, **kwargs: []
     collaboration_module.serialize_collaboration_conversation = lambda item, *args, **kwargs: item
     stub_modules['functions_collaboration'] = collaboration_module
+
+    generated_documents_module = types.ModuleType('functions_collaboration_generated_documents')
+    generated_documents_module.collect_generated_documents = lambda *args, **kwargs: []
+    generated_documents_module.can_download_generated_document = lambda *args, **kwargs: False
+
+    def unexpected_generated_download(*args, **kwargs):
+        raise AssertionError('Conversation read tests unexpectedly entered generated-document downloads.')
+
+    generated_documents_module.authorize_generated_document_download = unexpected_generated_download
+    stub_modules['functions_collaboration_generated_documents'] = generated_documents_module
 
     auth_module = types.ModuleType('functions_authentication')
     auth_module.login_required = _passthrough_decorator
@@ -229,6 +241,7 @@ def _install_route_import_stubs():
 
     orchestration_recovery_module = types.ModuleType('functions_orchestration_recovery')
     orchestration_recovery_module.cleanup_conversation_checkpoints = lambda *args, **kwargs: None
+    orchestration_recovery_module.conversation_cleanup_failure_context = lambda *args, **kwargs: {}
     stub_modules['functions_orchestration_recovery'] = orchestration_recovery_module
 
     orchestration_artifacts_module = types.ModuleType('functions_orchestration_artifacts')
@@ -291,6 +304,7 @@ def _install_route_import_stubs():
     stub_modules['functions_debug'] = debug_module
 
     documents_module = types.ModuleType('functions_documents')
+    documents_module.build_document_download_response = lambda *args, **kwargs: None
     documents_module.delete_chat_upload_workspace_documents_for_conversation = lambda *args, **kwargs: None
     documents_module.serialize_chat_upload_workspace_documents_for_conversation = lambda *args, **kwargs: []
     stub_modules['functions_documents'] = documents_module
@@ -340,52 +354,96 @@ def _install_route_import_stubs():
     utils_cache_module.invalidate_personal_search_cache = lambda *args, **kwargs: None
     stub_modules['utils_cache'] = utils_cache_module
 
-    for module_name, module in stub_modules.items():
-        sys.modules[module_name] = module
+    return stub_modules
 
 
 def _load_route_backend_conversations_module():
-    """Import the route module after installing lightweight dependency stubs."""
-    _install_route_import_stubs()
-    if 'route_backend_conversations' in sys.modules:
-        del sys.modules['route_backend_conversations']
-    return importlib.import_module('route_backend_conversations')
+    """Keep fake imports scoped to the request tests, including import failures."""
+    imports = patch.dict(sys.modules, _route_import_stubs())
+    imports.start()
+    try:
+        sys.modules.pop('route_backend_conversations', None)
+        module = importlib.import_module('route_backend_conversations')
+    except BaseException:
+        imports.stop()
+        raise
+    return module, imports.stop
 
 
 def build_test_app(test_user_id, conversation_items, message_items, blob_items=None):
     """Register the conversation routes with fake auth and fake Cosmos containers."""
-    route_backend_conversations = _load_route_backend_conversations_module()
+    route_backend_conversations, restore = _load_route_backend_conversations_module()
+    try:
+        conversation_container = FakeConversationContainer(conversation_items)
+        message_container = FakeMessageContainer(message_items)
+        cache_bumps = []
 
-    conversation_container = FakeConversationContainer(conversation_items)
-    message_container = FakeMessageContainer(message_items)
-    cache_bumps = []
+        route_backend_conversations.cosmos_conversations_container = conversation_container
+        route_backend_conversations.cosmos_messages_container = message_container
+        route_backend_conversations.login_required = lambda func: func
+        route_backend_conversations.user_required = lambda func: func
+        route_backend_conversations.swagger_route = lambda **kwargs: (lambda func: func)
+        route_backend_conversations.get_auth_security = lambda: {}
+        route_backend_conversations.get_current_user_id = lambda: test_user_id
+        route_backend_conversations.debug_print = lambda *args, **kwargs: None
+        route_backend_conversations.filter_assistant_artifact_items = lambda items: items
+        route_backend_conversations.CosmosResourceNotFoundError = DummyNotFoundError
+        route_backend_conversations.bump_conversation_cache_version = (
+            lambda user_id, reason=None: cache_bumps.append((user_id, reason)) or len(cache_bumps)
+        )
+        route_backend_conversations.mark_chat_response_notifications_read_for_conversation = lambda *args, **kwargs: 0
+        route_backend_conversations.CLIENTS = {
+            'storage_account_office_docs_client': FakeBlobServiceClient(blob_items),
+        }
 
-    route_backend_conversations.cosmos_conversations_container = conversation_container
-    route_backend_conversations.cosmos_messages_container = message_container
-    route_backend_conversations.login_required = lambda func: func
-    route_backend_conversations.user_required = lambda func: func
-    route_backend_conversations.swagger_route = lambda **kwargs: (lambda func: func)
-    route_backend_conversations.get_auth_security = lambda: {}
-    route_backend_conversations.get_current_user_id = lambda: test_user_id
-    route_backend_conversations.debug_print = lambda *args, **kwargs: None
-    route_backend_conversations.filter_assistant_artifact_items = lambda items: items
-    route_backend_conversations.CosmosResourceNotFoundError = DummyNotFoundError
-    route_backend_conversations.bump_conversation_cache_version = (
-        lambda user_id, reason=None: cache_bumps.append((user_id, reason)) or len(cache_bumps)
+        app = Flask(__name__)
+        app.config['TESTING'] = True
+        app.config['conversation_container'] = conversation_container
+        app.config['conversation_cache_bumps'] = cache_bumps
+        app.config['route_backend_conversations'] = route_backend_conversations
+        route_backend_conversations.register_route_backend_conversations(app)
+    except BaseException:
+        restore()
+        raise
+    return app, message_container, restore
+
+
+def test_route_import_dependencies_are_restored_after_requests_and_setup_failures():
+    """The legacy read fixture must not poison real deletion-module imports."""
+    names = {*_route_import_stubs(), 'route_backend_conversations'}
+    original = {name: sys.modules.get(name) for name in names}
+    app, _, restore = build_test_app(
+        'user-owner', [{'id': 'conversation-owner', 'user_id': 'user-owner'}], [],
     )
-    route_backend_conversations.mark_chat_response_notifications_read_for_conversation = lambda *args, **kwargs: 0
-    route_backend_conversations.CLIENTS = {
-        'storage_account_office_docs_client': FakeBlobServiceClient(blob_items),
-    }
+    try:
+        with app.test_client() as client:
+            response = client.get('/api/get_messages?conversation_id=conversation-owner')
+        assert response.status_code == 200
+    finally:
+        restore()
+    restored = {name: sys.modules.get(name) for name in names}
+    assert restored == original
 
-    app = Flask(__name__)
-    app.config['TESTING'] = True
-    app.config['conversation_container'] = conversation_container
-    app.config['conversation_cache_bumps'] = cache_bumps
-    app.config['route_backend_conversations'] = route_backend_conversations
-    route_backend_conversations.register_route_backend_conversations(app)
+    with patch.object(importlib, 'import_module', side_effect=ImportError('Injected route-import failure')):
+        try:
+            build_test_app('user-owner', [], [])
+        except ImportError:
+            pass
+        else:
+            raise AssertionError('The injected route-import failure was not propagated.')
+    restored_after_failure = {name: sys.modules.get(name) for name in names}
+    assert restored_after_failure == original
 
-    return app, message_container, (lambda: None)
+    with patch.object(Flask, 'add_url_rule', side_effect=RuntimeError('Injected app-setup failure')):
+        try:
+            build_test_app('user-owner', [], [])
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('The injected app-setup failure was not propagated.')
+    restored_after_setup_failure = {name: sys.modules.get(name) for name in names}
+    assert restored_after_setup_failure == original
+    return True if __name__ == '__main__' else None
 
 
 def test_owner_can_read_messages():
@@ -837,6 +895,7 @@ def test_fork_conflict_logging_preserves_409_response():
 
 if __name__ == '__main__':
     tests = [
+        test_route_import_dependencies_are_restored_after_requests_and_setup_failures,
         test_owner_can_read_messages,
         test_foreign_messages_return_forbidden_before_query,
         test_missing_conversation_preserves_empty_message_history_response,
