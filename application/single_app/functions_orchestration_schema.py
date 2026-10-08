@@ -1865,6 +1865,11 @@ FAILURE_MESSAGES = {
     ),
     'document_merge_failed': "The selected files couldn't be merged into one file.",
     'step_failed': 'This operation could not complete.',
+    'file_sign_in_required': (
+        'A file could not be created because the results it uses can only be checked with your '
+        "sign-in, which wasn't available where the file was prepared. Select Retry from failed step "
+        'to create it again.'
+    ),
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
 }

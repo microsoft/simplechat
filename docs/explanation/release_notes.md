@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.303)**
+
+#### Bug Fixes
+
+*   **Orchestrated Runs Reported Failure While Their Work Was Still Running**
+    *   A plan waiting on a long tabular analysis could reply "The request could not be completed. Saved step inputs changed." while the analysis was still running. The plan panel kept showing the step as **Waiting for results** and the answer as **In progress**, and offered no retry. A saved run's checkpoints were bound to a fingerprint of the whole settings document, so any settings save, including the Cosmos DB throughput autoscale recording a scale action, made the waiting run, and later retries of failed runs, look like their inputs had changed.
+    *   The fingerprint now leaves out storage metadata and the runtime state background tasks save. A configuration change by an administrator still stops saved work from being reused.
+    *   A run that fails or is stopped while a step is waiting shows that step as **Not finished** and its deliverable as **Not delivered**, and offers **Retry from failed step**, which runs the waiting step again and reuses completed ones.
+    *   Runs saved before this version can't be retried after the upgrade; ask again.
+    *   (Ref: `functions_settings_runtime_state.py`, `functions_orchestration_checkpoints.py`, `functions_orchestration_recovery.py`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`, [Orchestration Runs Failing While Their Work Was Still Running Fix](fixes/ORCHESTRATION_SETTINGS_WRITE_RECOVERY_FIX.md))
+
+*   **Files Built From Web, Agent or Action Results Failed Without a Reason**
+    *   An orchestrated file whose content came from web search, linked pages, deep research, an agent or an action rendered, then failed with only "This file could not be created." and no retry. Publishing it rechecked its sources through a new service that didn't have the user's sign-in. Publication now uses the rendering service that ran the attempt, which has it.
+    *   A file that still can't be checked without a sign-in, such as one prepared in the background, says so. A failed file now explains why it could not be created. When a failed file can't be retried on its own, the chat offers **Retry from failed step**.
+    *   (Ref: `functions_orchestration_artifacts.py` `render_attempt_scope`, `functions_orchestration_rendering.py`, `functions_orchestration_output_store.py`, `OrchestrationRecoveryNotice.tsx`, [Orchestration Files From External Results Failing Without a Reason Fix](fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md))
+
 ### **(v0.261.302)**
 
 #### Bug Fixes
