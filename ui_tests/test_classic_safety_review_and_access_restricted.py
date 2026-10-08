@@ -4,6 +4,7 @@ Browser coverage for the classic safety review changes and the classic Access re
 Version: 0.261.298
 Implemented in: 0.261.297
 Requesting a suspension or block again: 0.261.298
+Reading the action select through a fixed list of actions: 0.261.298
 
 Render the real classic templates with Jinja and run the real local scripts behind a closed,
 in-memory API. Check that the admin review no longer offers Escalate, labels a legacy
@@ -11,9 +12,11 @@ escalated record and offers its legacy action only on that record, describes whi
 wait for a second reviewer, shows whether a sent warning was acknowledged without offering to
 resend it, and shows Blocked statistics with legacy escalations only when there are some;
 that saving a suspension or block the violation already records requests nothing unless the
-reviewer asks for it again, which sends the new notification and restore time; and
-that the classic Access restricted page renders the notice as text and shows the restore time
-in the reader's locale. Unexpected requests, page errors and browser dialogs fail.
+reviewer asks for it again, which sends the new notification and restore time; that only a
+known action, never other text placed in the action select, reaches the review's data
+attributes or a save; and that the classic Access restricted page renders the notice as text
+and shows the restore time in the reader's locale. Unexpected requests, page errors and
+browser dialogs fail.
 """
 
 import copy
@@ -327,6 +330,43 @@ def test_a_suspension_or_block_is_requested_again_only_on_purpose(classic_ui):
     expect(page.locator("#editSuspendUntil")).to_have_value("")
     modal.locator(".btn-close").click()
     expect(modal).to_be_hidden()
+
+
+def test_only_a_known_action_reaches_the_page_or_a_save(classic_ui):
+    page = classic_ui.page
+    page.goto(f"{ORIGIN}/admin/safety_violations", wait_until="networkidle")
+    page.get_by_role("tab", name="All Data").click()
+    _open_review(page, "log-new")
+    notification = page.locator("#editNotificationMessage")
+    restore_time = page.locator("#editSuspendUntil")
+
+    # A chosen action is kept as it is.
+    page.locator("#editAction").select_option("SuspendUser")
+    expect(notification).to_have_attribute("data-action", "SuspendUser")
+    expect(restore_time).to_have_attribute("data-action", "SuspendUser")
+
+    # Text put into the select some other way reads as no action, so it never reaches the
+    # review's data attributes or the save.
+    forged = '"><img src=x onerror=alert(1)>'
+    page.locator("#editAction").evaluate(
+        """(select, value) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = 'Forged';
+            select.appendChild(option);
+            select.value = value;
+            select.dispatchEvent(new Event('change'));
+        }""",
+        forged,
+    )
+    expect(notification).to_have_attribute("data-action", "None")
+    expect(restore_time).to_have_attribute("data-action", "None")
+    expect(page.locator("#safetyRemediationFields")).to_be_hidden()
+    classic_ui.patch_reply = (200, {"message": "Safety log updated successfully.", "approval_required": False})
+    page.locator("#saveChangesBtn").click()
+    expect(page.locator("#safetyPageStatusAlert")).to_have_text("Safety log updated successfully.")
+    log_id, payload = classic_ui.patches[-1]
+    assert log_id == "log-new" and payload == {"status": "New", "action": "None", "notes": ""}, payload
 
 
 def test_save_waits_for_its_request_so_a_double_click_sends_one(classic_ui):
