@@ -1,9 +1,10 @@
 # test_saved_analysis_service.py
 """
 Functional tests for saved Analyze data in chat and follow-up reads.
-Version: 0.261.232
+Version: 0.261.305
 Implemented in: 0.261.109
 Container-only saved-result access covered in: 0.261.232
+Deletion-fenced workflow previews covered in: 0.261.305
 
 The production result builder/readers use serialized sections and authorized
 message seams without re-uploading, indexing, or analyzing source files. A saved
@@ -233,7 +234,11 @@ def test_invalid_page_bounds_do_not_load_results(saved_chat, offset, limit):
     assert fixture["store"].reads == []
 
 
-def test_workflow_history_cannot_reveal_a_blocked_result_preview():
+@pytest.mark.parametrize("failure", [
+    PermissionError("source revoked"),
+    saved.AnalysisWorkUnitConflictError("analysis_work_deleted"),
+])
+def test_workflow_history_cannot_reveal_a_blocked_result_preview(failure):
     workflow = {"id": "workflow-1", "user_id": "owner"}
     summary = {
         "analysis_result": True,
@@ -248,7 +253,7 @@ def test_workflow_history_cannot_reveal_a_blocked_result_preview():
     item = {**deepcopy(task), "output_summary": "PRIVATE FINDING"}
 
     def deny(*args, **kwargs):
-        raise PermissionError("source revoked")
+        raise failure
 
     filtered_run, items, allowed = saved.sanitize_workflow_analysis_history(
         workflow, run, "viewer", items=[item], result_reader=deny,
