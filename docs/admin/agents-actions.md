@@ -204,6 +204,13 @@ See [Configure model endpoint identity]({{ '/guides/model-endpoint-identity-setu
 Controls how the Agents catalog page presents itself. That page is served behind
 **Enable Agents**, so none of this applies while agents are off.
 
+These settings apply to both the classic catalogue and the native V2 **Agents**
+page. In V2, the catalogue omits agents blocked by the user's governance policy
+before adding usage rankings or promotions. It does not show restricted-agent
+cards or request-access controls. The instructions setting also redacts
+instructions from `GET /api/v2/agents/catalog`, not just from its details dialog.
+See the [Agents browsing guide]({{ '/guides/workspace-agents-and-actions/#find-and-start-an-agent' | relative_url }}).
+
 The promotion controls exist because the Popular tab ranks agents by how often
 people run them, which leaves a newly published agent unable to be found: nothing
 becomes popular until it is already popular. Promoting an agent places it in that

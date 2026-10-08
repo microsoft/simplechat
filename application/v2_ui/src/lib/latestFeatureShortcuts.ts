@@ -5,7 +5,7 @@
 // shortcuts name classic pages: `/chats#chatbox`, `/workspace#documents-tab`,
 // `/profile?tab=stats`. Followed as written, every one of them would drop a V2 reader into the
 // classic interface. Where V2 has rebuilt the page, the shortcut is translated to the V2 route;
-// where it has not -- the agent catalogue, workflow activity -- the page opens as written, the
+// where it has not -- workflow activity -- the page opens as written, the
 // same choice notificationLinks.ts makes for a notification. Documentation links leave the site
 // and open in a new tab.
 //
@@ -44,6 +44,7 @@ export type LatestFeatureShortcutTarget =
     | { kind: 'external'; href: string };
 
 const CHAT_PATH = '/chat';
+const AGENTS_PATH = '/agents';
 const WORKSPACE_PATH = '/workspace';
 const SETTINGS_PATH = '/settings';
 const SETTINGS_STATS_PATH = '/settings?tab=stats';
@@ -77,6 +78,7 @@ const WORKSPACE_FEATURE_ACTION_SECTIONS: Readonly<Record<string, string>> = {
 /** Every router path a shortcut may produce. */
 const V2_SHORTCUT_PATHS: ReadonlySet<string> = new Set([
     CHAT_PATH,
+    AGENTS_PATH,
     WORKSPACE_PATH,
     SETTINGS_PATH,
     SETTINGS_STATS_PATH,
@@ -132,6 +134,8 @@ function v2RouteFor(url: URL): LatestFeatureShortcutRoute | null {
     const featureAction = url.searchParams.get('feature_action') ?? '';
 
     switch (path) {
+        case '/agents':
+            return route(AGENTS_PATH);
         case '/chats':
         case '/chat':
         case '/conversations':

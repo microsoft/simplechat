@@ -2,8 +2,9 @@
 //
 // Runtime test for the V2 Support menu: the rail group, the Latest Features page and the Send
 // Feedback page.
-// Version: 0.261.296
+// Version: 0.261.305
 // Implemented in: 0.261.296
+// Native agent catalogue shortcuts: 0.261.305
 //
 // The judgement calls here do not show in a screenshot: which destinations the rail offers
 // once a user has hidden Latest Features, where each catalogue shortcut lands in V2, that a
@@ -205,6 +206,9 @@ check('only the offered destinations are drawn', () => {
 /* ---------------------------------- shortcuts ---------------------------------- */
 
 const ROUTES: [string, string, Record<string, unknown>?][] = [
+    ['/agents', '/agents'],
+    ['/agents/', '/agents'],
+    ['/agents?feature_action=discover#popular', '/agents'],
     ['/chats#chatbox', '/chat', { freshChat: true }],
     ['/chats?feature_action=conversation_export', '/chat', { freshChat: true }],
     ['/chats#chat-tutorial-launch', '/chat', { freshChat: true, tour: 'chat' }],
@@ -252,7 +256,7 @@ check('classic shortcuts land on the matching V2 page', () => {
 });
 
 check('pages V2 has not rebuilt open as written', () => {
-    for (const href of ['/agents', '/workflow-activity', '/groups/abc', '/admin/safety_violations']) {
+    for (const href of ['/workflow-activity', '/groups/abc', '/admin/safety_violations']) {
         assert.deepEqual(resolveLatestFeatureShortcut(href), { kind: 'page', href });
     }
 });
@@ -326,7 +330,7 @@ check('announcement shortcuts render by kind', () => {
     assert.match(html, /href="\/chat"[^>]*>.*Open Chat/);
     assert.match(html, /Ask a question from Chat\./);
     assert.match(html, /href="\/agents"/);
-    assert.match(html, /opens in the classic interface/);
+    assert.doesNotMatch(html, /opens in the classic interface/);
     assert.match(html, /href="https:\/\/microsoft\.github\.io\/simplechat\/"[^>]*target="_blank"[^>]*rel="noopener noreferrer"|target="_blank"[^>]*rel="noopener noreferrer"[^>]*href="https:\/\/microsoft\.github\.io\/simplechat\/"/);
     assert.match(html, /opens in a new tab/);
     assert.doesNotMatch(html, /javascript:/i);

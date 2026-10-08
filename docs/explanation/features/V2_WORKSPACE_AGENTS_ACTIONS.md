@@ -10,8 +10,12 @@ connected makes it possible to build an assistant without switching interfaces.
 Implemented in version: **0.261.096**, recorded in
 `application/single_app/config.py`.
 
-The change is limited to personal workspace management. Group/global management,
-the standalone agent catalogue, and the delegation execution rules are unchanged.
+That authoring release was limited to personal workspace management; group/global
+management and delegation execution rules were unchanged. The standalone
+[V2 Agents catalogue](V2_AGENTS_CATALOG.md) was subsequently implemented in version
+**0.261.305**, recorded in `application/single_app/config.py`. It discovers permitted
+agents across scopes and links to the native personal editor when creation is
+available, without changing authoring permissions.
 
 ### Dependencies
 

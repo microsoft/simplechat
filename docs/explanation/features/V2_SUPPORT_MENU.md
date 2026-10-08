@@ -2,6 +2,9 @@
 
 **Implemented in version: 0.261.296**
 
+**Native Agents shortcut updated in version: 0.261.305**, recorded in
+`application/single_app/config.py`.
+
 ## Overview
 
 Administrators configure the Support menu in Admin Settings: whether it appears, its name,
@@ -101,6 +104,7 @@ one to a V2 route when V2 has rebuilt the page:
 
 | Classic link | V2 destination |
 | --- | --- |
+| `/agents` | `/agents`, the native V2 catalogue |
 | `/chats` (any fragment or `feature_action`), `/conversations` | `/chat`, arriving at an empty chat as the rail's Chats link does |
 | `/chats#chat-tutorial-launch` | `/chat`, starting the chat guided tour |
 | `/workspace#documents-tab`, `#prompts-tab`, `#agents-tab`, `#plugins-tab`, `#workflows-tab`, `#identities-tab`, `#endpoints-tab`, `#sync-tab` | The matching `/workspace/<section>` |
@@ -110,7 +114,7 @@ one to a V2 route when V2 has rebuilt the page:
 | `/group_workspaces`, `/public_workspaces`, `/public_directory`, `/approvals` | `/groups`, `/public`, `/public/directory`, `/approvals` |
 | `/support/latest-features`, `/support/send-feedback` | The V2 Support pages |
 
-Anything else on the site, such as the agent catalogue or workflow activity, opens as written
+Anything else on the site, such as workflow activity, opens as written
 in the classic interface. http(s) links open in a new tab. Every V2 destination is a constant
 from an allowlist, so a router target can never be built from catalogue data (#1698).
 Classic and external links go through `safeLatestFeatureHref`, which refuses script URLs,
@@ -197,7 +201,7 @@ Features**. V2 and classic users see the same menu.
 
 - Classic-only behaviour carried in a shortcut, such as `feature_action` opening a dialog,
   has no V2 counterpart. The shortcut lands on the closest V2 page.
-- The agent catalogue and workflow activity are not rebuilt in V2, so their shortcuts open
-  the classic interface.
+- Workflow activity is not rebuilt in V2, so its shortcuts open the classic
+  interface. Agents shortcuts open the [native V2 catalogue](V2_AGENTS_CATALOG.md).
 - No email is sent by the server. The user sends the draft from their own mail app, as on
   the classic page.
