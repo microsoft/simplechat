@@ -266,6 +266,23 @@ const DELIVERABLE_STATE_LABELS: Record<DeliverableState, string> = {
     turned_off: 'Turned off',
 };
 
+/** Run statuses after which nothing in the run can still finish. */
+const ENDED_RUN_STATUSES: ReadonlySet<PlanStatus> = new Set<PlanStatus>(['failed', 'cancelled', 'superseded']);
+
+/**
+ * Whether a step's work was left unfinished by a run that has ended.
+ *
+ * A run can fail or stop as a whole while a step is still pending, running or waiting for a
+ * result. Nothing will finish that step any more, so it must not read as running or waiting.
+ */
+export function stepUnfinishedByEndedRun(status: StepStatus | undefined, runStatus?: PlanStatus): boolean {
+    return runStatus !== undefined && ENDED_RUN_STATUSES.has(runStatus)
+        && (status === undefined || status === 'pending' || status === 'running' || status === 'waiting');
+}
+
+/** Shown for a deliverable whose steps the run ended before finishing. */
+export const RUN_ENDED_DELIVERABLE_REASON = 'The run ended before this was finished.';
+
 /**
  * Each declared deliverable with the state its producing steps imply.
  *
@@ -274,6 +291,8 @@ const DELIVERABLE_STATE_LABELS: Record<DeliverableState, string> = {
  * it off. The server's delivery notes remain the authority after a run; this is the preview.
  * `checks` are the server's own checks after a run of the charts and diagrams the user asked
  * for. They win over step status, because a step can finish without its chart being shown.
+ * `runStatus` is the run's own status: once the run has failed or stopped, a deliverable whose
+ * steps never finished is not delivered rather than in progress.
  * The implicit answer of plans that declared nothing is left out.
  */
 export function deliverableRows(
@@ -281,14 +300,17 @@ export function deliverableRows(
     statusOf: (stepId: string) => StepStatus | undefined,
     edits?: PlanEdits,
     checks?: OrchestrationDeliverableCheck[],
+    runStatus?: PlanStatus,
 ): DeliverableRow[] {
     const disabled = new Set(edits?.disabled_step_ids ?? []);
     const checked = new Map((checks ?? []).map((check) => [check.id, check]));
+    const runEnded = runStatus !== undefined && ENDED_RUN_STATUSES.has(runStatus);
     return (plan.deliverables ?? []).filter((deliverable) => !deliverable.implicit).map((deliverable) => {
         const producers = plan.steps.filter((step) => step.delivers?.includes(deliverable.id));
         const enabled = producers.filter((step) => step.enabled && !disabled.has(step.step_id));
         const check = checked.get(deliverable.id);
         let state: DeliverableState = 'planned';
+        let endedReason = false;
         if (deliverable.status === 'unavailable') {
             state = 'unavailable';
         } else if (producers.length > 0 && enabled.length === 0) {
@@ -301,6 +323,9 @@ export function deliverableRows(
                 state = 'delivered';
             } else if (statuses.some((status) => status === 'failed' || status === 'skipped' || status === 'cancelled')) {
                 state = 'not_delivered';
+            } else if (runEnded && statuses.length > 0) {
+                state = 'not_delivered';
+                endedReason = true;
             } else if (statuses.some((status) => status === 'running' || status === 'waiting' || status === 'partial')) {
                 state = 'running';
             }
@@ -316,7 +341,8 @@ export function deliverableRows(
             steps: producers.map((step) => step.title || step.step_id),
             ...(deliverable.status === 'unavailable'
                 ? { reason: deliverable.unavailable_message || 'This is not available here.' }
-                : state === 'not_delivered' && check?.message ? { reason: check.message } : {}),
+                : state === 'not_delivered' && check?.message ? { reason: check.message }
+                : endedReason ? { reason: RUN_ENDED_DELIVERABLE_REASON } : {}),
         };
     });
 }

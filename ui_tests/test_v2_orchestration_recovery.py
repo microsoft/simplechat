@@ -1,11 +1,13 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.238
+Version: 0.261.302
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
 Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.238
+Ended runs show unfinished steps and retry them; files that cannot be retried alone offer
+Retry from failed step, in: 0.261.302
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -785,3 +787,96 @@ def test_legacy_refusal_at_run_start_puts_the_plan_away_with_the_server_message(
     assert state["streamError"] == LEGACY_PLAN_MESSAGE
     assert not has_active_orchestration(page)
     assert len(api.calls("/run")) == 1
+
+
+# A run can fail as a whole while a step still waits on a long computation: the continuation
+# that would have finished it ended the attempt instead. Nothing will finish those steps now.
+WAIT_FAILURE = {
+    "code": "recovery_changed",
+    "message": "Saved step inputs changed. Previously completed work will not be repeated.",
+}
+SIGN_IN_FILE_MESSAGE = (
+    "This file could not be created because the results it uses can only be checked with your "
+    "sign-in, which wasn't available where the file was prepared. Retry from this chat to create it."
+)
+
+
+def interrupt_waiting_run(api):
+    """Save a failed run whose research step and answer were still waiting when it ended."""
+    run_id = api.plan["run_id"]
+    api.failure = dict(WAIT_FAILURE)
+    api.finish(run_id, "failed")
+    api.steps[run_id] = [
+        {"step_id": "read", "step_index": 0, "status": "completed", "summary": "Read saved reports",
+         "checkpoint_available": True},
+        {"step_id": "research", "step_index": 1, "status": "waiting",
+         "summary": "Native computation is pending; no result is ready to consume."},
+        {"step_id": "answer", "step_index": 2, "status": "waiting", "summary": "Waiting for required results."},
+    ]
+    return run_id
+
+
+def fail_file(api, *, can_retry):
+    """Save a partial run whose Word file failed, retryable on its own or not."""
+    run_id = api.plan["run_id"]
+    api.finish(run_id, "failed")
+    record = api.records[run_id]
+    output = {
+        "output_id": "orender_" + "a" * 64, "step_id": "answer", "file_name": "bank_analysis.docx",
+        "output_format": "docx", "profile": "prepared_report_v1", "state": "failed", "available": True,
+        "attempt_count": 1, "automatic_attempts": 1, "max_automatic_attempts": 3, "next_retry_at": None,
+        "can_retry": can_retry,
+        "error_code": "output_storage_unavailable" if can_retry else "output_sign_in_required",
+        "message": "This file could not be created." if can_retry else SIGN_IN_FILE_MESSAGE,
+        "artifact_message_id": None, "row_count": None, "character_count": None, "size_bytes": None,
+    }
+    record.update(outcome="partial", outputs=[output])
+    for message in api.messages:
+        if message["id"] == record["assistant_message_id"]:
+            message["metadata"]["orchestration"].update(outcome="partial", outputs=[copy.deepcopy(output)])
+    return output
+
+
+def test_ended_run_shows_unfinished_steps_as_not_finished_and_offers_retry(recovery_ui):
+    page, api = recovery_ui
+    interrupt_waiting_run(api)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(WAIT_FAILURE["message"], exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    page.get_by_role("button", name="Review saved attempt").first.click()
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    research = drawer.locator('[data-step-id="research"]')
+    expect(research.locator('[data-step-status="unfinished"]')).to_have_text("Not finished")
+    expect(research.get_by_text("The run ended before this step finished.", exact=True)).to_be_visible()
+    expect(drawer.locator('[data-step-id="answer"] [data-step-status="unfinished"]')).to_have_text("Not finished")
+    expect(drawer.locator('[data-step-id="read"] [data-step-status="completed"]')).to_be_visible()
+    expect(drawer.get_by_text("Waiting for results", exact=True)).to_have_count(0)
+    expect(drawer.get_by_text("Native computation is pending; no result is ready to consume.", exact=True)).to_have_count(0)
+    answer = drawer.locator('[data-deliverable-id="answer"]')
+    expect(answer).to_have_attribute("data-deliverable-state", "not_delivered")
+    expect(answer).to_contain_text("The run ended before this was finished.")
+    expect(drawer.get_by_role("button", name="Retry from failed step")).to_be_enabled()
+    expect(drawer.locator("p").filter(has_text="Execute on retry:")).to_contain_text("Ask the selected agent")
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_file_that_cannot_be_retried_alone_offers_retry_from_failed_step(recovery_ui):
+    page, api = recovery_ui
+    fail_file(api, can_retry=False)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(SIGN_IN_FILE_MESSAGE, exact=True).first).to_be_visible()
+    expect(page.get_by_text("A file could not be created and cannot be retried on its own.", exact=False).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    expect(page.get_by_text("Review each file separately.", exact=False)).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry file bank_analysis.docx")).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_file_that_can_be_retried_alone_keeps_only_the_file_retry(recovery_ui):
+    page, api = recovery_ui
+    fail_file(api, can_retry=True)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_role("button", name="Retry file bank_analysis.docx").first).to_be_visible()
+    expect(page.get_by_text("Review each file separately.", exact=False).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")

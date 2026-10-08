@@ -375,9 +375,9 @@ limits. Running image steps in parallel is a possible follow-up.
   portraits, is not supported; reports link those sources instead.
 - Markdown and plain-text files do not contain images.
 - A plan generates at most four images.
-- React V2 offers **Retry from failed step** only for an attempt without files, because
-  preparing a whole-run retry withdraws the attempt's available files. So a run that
-  delivered its file but missed a requested image offers no whole-run retry in the chat,
-  and **Retry file** cannot generate an image. Ask again to create a new plan. The
-  server-side retry itself delivers the image and the file; only the chat does not offer
-  it for such an attempt.
+- React V2 offers **Retry from failed step** for an attempt with files only when a failed
+  file can't be retried on its own (since **0.261.302**), because preparing a whole-run
+  retry withdraws the attempt's available files. So a run that delivered its file but
+  missed a requested image offers no whole-run retry in the chat, and **Retry file**
+  cannot generate an image. Ask again to create a new plan. The server-side retry itself
+  delivers the image and the file; only the chat does not offer it for such an attempt.

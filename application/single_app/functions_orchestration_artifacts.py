@@ -4,10 +4,15 @@
 The application owner registers an actor-scoped service factory at bootstrap.
 This module never discovers clients, settings, credentials, or source paths.
 The output row, not file-message metadata, authorizes visibility.
+A file's publication is authorized by the rendering service running its attempt on the
+same task, so a signed-in execution checks the file's sources with that sign-in instead of
+a fresh service that has none (0.261.302).
 """
 
 import re
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 
 from azure.core import MatchConditions
@@ -27,12 +32,15 @@ from functions_orchestration_output_store import (
     parse_time,
     safe_identity,
 )
-from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, canonical_digest
+from functions_orchestration_result_contracts import (
+    EXTERNAL_SESSION_UNAVAILABLE_REASON, ProducerIdentity, ResultContractError, canonical_digest,
+)
 
 
 ORCHESTRATION_ARTIFACT_KIND = "orchestration_retained_output"
 ORCHESTRATION_ARTIFACT_VERSION = 1
 ORCHESTRATION_ARTIFACT_KEY_PREFIX = "orchestration-output:v1:"
+OUTPUT_SIGN_IN_REQUIRED = "output_sign_in_required"
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _OUTPUT_ID = re.compile(r"orender_[a-f0-9]{64}\Z")
 _SOURCE_FIELDS = frozenset({
@@ -40,6 +48,31 @@ _SOURCE_FIELDS = frozenset({
     "source_digest", "spec_digest",
 })
 _service_factory = None
+# The rendering service running a file attempt on this task. Never shared across threads.
+_attempt_service = ContextVar("orchestration_render_attempt_service", default=None)
+
+
+@contextmanager
+def render_attempt_scope(service):
+    """Authorize this task's file publications with the service that is rendering them."""
+    token = _attempt_service.set(service)
+    try:
+        yield
+    finally:
+        _attempt_service.reset(token)
+
+
+def signed_in_session_required(error):
+    """Whether a refusal came only from having no signed-in session to check current access."""
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for reason in (getattr(current, "code", None), getattr(current, "authority_reason", None)):
+            if type(reason) is str and reason in (EXTERNAL_SESSION_UNAVAILABLE_REASON, OUTPUT_SIGN_IN_REQUIRED):
+                return True
+        current = current.__cause__
+    return False
 
 
 def _external_authority_failure(error, *, include_configuration):
@@ -277,7 +310,16 @@ def _conversation_service(user_id, conversation_id):
 def _bound_service(user_id, value):
     binding = validate_orchestration_artifact_binding(value)
     producer = binding["producer"]
-    if user_id != producer["user_id"] or _service_factory is None:
+    if user_id != producer["user_id"]:
+        raise OutputUnavailableError("output_access_denied")
+    attempt_service = _attempt_service.get()
+    if (
+        attempt_service is not None
+        and attempt_service.store.user_id == user_id
+        and attempt_service.store.conversation_id == producer["conversation_id"]
+    ):
+        return attempt_service, binding
+    if _service_factory is None:
         raise OutputUnavailableError("output_access_denied")
     return _conversation_service(user_id, producer["conversation_id"]), binding
 
@@ -311,7 +353,9 @@ def load_orchestration_artifact_binding(
         raise OutputStorageError() from exc
     except (PermissionError, LookupError, ValueError, TypeError, RuntimeError) as exc:
         _raise_typed_artifact_failure(exc)
-        raise OutputUnavailableError("output_source_unavailable") from exc
+        raise OutputUnavailableError(
+            OUTPUT_SIGN_IN_REQUIRED if signed_in_session_required(exc) else "output_source_unavailable",
+        ) from exc
     except (AttributeError, OSError) as exc:
         _raise_typed_artifact_failure(exc)
         raise

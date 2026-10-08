@@ -170,6 +170,15 @@ offers **Retry file** for each failed file rather than **Retry from failed step*
 so recovering one file never withdraws another that is already available. If
 other work in that attempt failed, ask again to create a new plan.
 
+Since **0.261.302**, a failed file says why it could not be created. A file built
+from web search, linked pages, deep research, an agent or an action is checked
+with your sign-in before it's published. If it was prepared where your sign-in
+wasn't available, for example after a run waited for a long computation, it says
+so. File retries run in the background without your sign-in, so the conversation
+offers **Retry from failed step** for such a file instead of **Retry file**. That
+retry runs from the chat, reuses the completed steps and creates the plan's files
+again.
+
 Retrying cannot repair an unsupported format, invalid data or revoked source
 access. Restore the required access or revise the plan when its requirements
 have changed. An authorization or storage outage is not proof that a previously
