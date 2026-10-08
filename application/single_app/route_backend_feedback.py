@@ -11,7 +11,7 @@ from config import *
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_notifications import create_notification
-from functions_review_assist import FEEDBACK_THEMES, ReviewAssistError, present_suggestion
+from functions_review_assist import FEEDBACK_THEMES, ReviewAssistError, present_suggestion, review_record_fingerprint
 from functions_review_assist_runtime import (
     ReviewRecordStore,
     handle_review_assist_request,
@@ -38,7 +38,9 @@ from functions_review_center import (
     review_day,
     review_excerpt,
     review_text_matches,
+    review_version_matches,
     review_window,
+    run_suggestion_operation,
     summarize_review_bulk_results,
 )
 from functions_review_lifecycle import (
@@ -146,6 +148,10 @@ def _serialize_feedback_item(item, include_suggestion=False):
     if include_suggestion:
         # Reviewers see the AI suggestion as it stands now; the stored fingerprint stays here.
         serialized_item["ai_suggestion"] = present_suggestion('feedback', item)
+        # A save sends these back: the record's version, and its reviewable fields' fingerprint,
+        # which an AI suggestion written meanwhile leaves as it is.
+        serialized_item["etag"] = item.get("_etag")
+        serialized_item["fingerprint"] = review_record_fingerprint('feedback', item)
     return serialized_item
 
 
@@ -548,8 +554,10 @@ def _apply_feedback_review_update(feedback_id, data, actor):
 
     Shared by PATCH /feedback/review/<id> and the bulk ``update`` operation. Only the fields
     sent change; the reviewer is recorded as ``adminReview.analyzedBy``. ``etag``, when
-    sent, must match the stored record. ``notify_user: true`` sends the user a notification
-    with the response once the review is saved.
+    sent, must match the stored record, unless ``fingerprint`` is sent too and the record's
+    reviewable fields still match it: then only an AI suggestion or other bookkeeping changed,
+    and the save is made on the current version. ``notify_user: true`` sends the user a
+    notification with the response once the review is saved.
     """
     if not isinstance(data, dict):
         return {"error": "The request body must be an object."}, 400
@@ -559,6 +567,9 @@ def _apply_feedback_review_update(feedback_id, data, actor):
     expected_etag = data.get('etag')
     if expected_etag is not None and not isinstance(expected_etag, str):
         return {"error": "The etag must be text."}, 400
+    expected_fingerprint = data.get('fingerprint')
+    if expected_fingerprint is not None and not isinstance(expected_fingerprint, str):
+        return {"error": "The fingerprint must be text."}, 400
     if not actor.get('id'):
         return {'error': 'No user ID found in session'}, 403
 
@@ -572,7 +583,7 @@ def _apply_feedback_review_update(feedback_id, data, actor):
             'error_type': type(e).__name__,
         }, level=logging.ERROR)
         return {"error": "Failed to read feedback item"}, 500
-    if expected_etag and feedback_doc.get('_etag') != expected_etag:
+    if not review_version_matches('feedback', feedback_doc, expected_etag, expected_fingerprint):
         return _feedback_record_changed_body(), 409
 
     notify_user = data.get('notify_user') is True
@@ -592,8 +603,9 @@ def _apply_feedback_review_update(feedback_id, data, actor):
         record["adminReview"] = admin_review
 
     try:
-        # A save that names the version it read is written on that version or not at all;
-        # one that doesn't is merged field by field onto a newer version.
+        # A save that names the version it read is written on that version or not at all --
+        # or, when only bookkeeping changed since, on the version just read -- and one that
+        # doesn't is merged field by field onto a newer version.
         stored = replace_review_record(
             cosmos_feedback_container,
             feedback_id,
@@ -899,12 +911,16 @@ def register_route_backend_feedback(bp):
         """Return the ids of the feedback matching the list filters, for "select all matching".
 
         Takes the same filters as GET /feedback/review. At most 500 ids are returned:
-        ``total`` is how many matched, and ``capped`` says whether the cap applied.
+        ``total`` is how many matched, and ``capped`` says whether the cap applied. ``owners``
+        maps each returned id to the user who gave the feedback.
         """
         try:
             filters = _parse_feedback_list_filters()
             items, _users = _load_admin_feedback(filters)
-            return jsonify(cap_review_ids([item.get('id') for item in items])), 200
+            return jsonify(cap_review_ids(
+                [item.get('id') for item in items],
+                owners={item.get('id'): item.get('userId') for item in items},
+            )), 200
         except ValueError:
             return jsonify({"error": "Invalid request parameters."}), 400
         except Exception as e:
@@ -1008,18 +1024,29 @@ def register_route_backend_feedback(bp):
                 if operation['etag']:
                     changes['etag'] = operation['etag']
                 if operation.get('suggestion_id'):
-                    body, status = apply_suggested_review(
-                        cosmos_feedback_container, 'feedback', operation['id'], operation['suggestion_id'], changes, actor,
-                        lambda checked, record_id=operation['id']: _apply_feedback_review_update(record_id, checked, actor),
+                    body, status = run_suggestion_operation(
+                        'feedback',
+                        operation,
+                        lambda operation=operation, changes=changes: apply_suggested_review(
+                            cosmos_feedback_container, 'feedback', operation['id'], operation['suggestion_id'],
+                            changes, actor,
+                            lambda checked, record_id=operation['id']: _apply_feedback_review_update(
+                                record_id, checked, actor,
+                            ),
+                        ),
                     )
                 else:
                     body, status = _apply_feedback_review_update(operation['id'], changes, actor)
             elif operation['op'] == 'archive':
                 body, status = _archive_feedback(operation['id'], operation['archived'], actor, operation['etag'])
             elif operation['op'] == 'dismiss_suggestion':
-                body, status = dismiss_review_suggestion(
-                    cosmos_feedback_container, 'feedback', operation['id'], operation['suggestion_id'], actor,
-                    operation['etag'],
+                body, status = run_suggestion_operation(
+                    'feedback',
+                    operation,
+                    lambda operation=operation: dismiss_review_suggestion(
+                        cosmos_feedback_container, 'feedback', operation['id'], operation['suggestion_id'], actor,
+                        operation['etag'],
+                    ),
                 )
             else:
                 body, status = _delete_feedback(operation['id'], actor, operation['etag'])
@@ -1045,7 +1072,9 @@ def register_route_backend_feedback(bp):
         Body: ``{"mode": "analyze" | "triage", "ids": [...]}``. ``analyze`` takes one record
         and returns a suggested review for the editor's unsaved draft; nothing is stored.
         ``triage`` takes up to 10 records and stores each suggestion on its record for a
-        reviewer to apply or dismiss. The model never changes a review. Answers are never cached.
+        reviewer to apply or dismiss. Records from different users are never sent to the model
+        together; those not reached in the request's time are answered ``deferred``, to be sent
+        again. The model never changes a review. Answers are never cached.
         """
         settings = get_settings()
         actor = _get_feedback_admin_actor()
@@ -1077,7 +1106,8 @@ def register_route_backend_feedback(bp):
         Fetch a single feedback item by its ID.
         Needed for the edit modal after switching to pagination.
 
-        Also carries ``etag`` (send it back with a save) and the user's display name and email.
+        Also carries ``etag`` and ``fingerprint`` (send both back with a save) and the user's
+        display name and email.
         """
         try:
             # Assuming feedbackId is the partition key as well
@@ -1095,6 +1125,7 @@ def register_route_backend_feedback(bp):
                 "timestamp": feedback_doc.get("timestamp"),
                 "adminReview": feedback_doc.get("adminReview", {}),
                 "etag": feedback_doc.get("_etag"),
+                "fingerprint": review_record_fingerprint('feedback', feedback_doc),
                 "ai_suggestion": present_suggestion('feedback', feedback_doc),
             }
             result.update(serialize_archive_metadata(feedback_doc))
@@ -1119,8 +1150,10 @@ def register_route_backend_feedback(bp):
         Patch admin fields: acknowledged, analysisNotes, responseToUser, actionTaken.
 
         The reviewer is recorded as adminReview.analyzedBy. ``etag``, when sent, must match
-        the stored record, or 409 ``record_changed`` is returned. ``notify_user: true`` sends
-        the user a notification with the response to their feedback.
+        the stored record, or 409 ``record_changed`` is returned -- unless ``fingerprint`` is
+        sent too and the record's reviewable fields still match it, because only an AI
+        suggestion or other bookkeeping was written since. ``notify_user: true`` sends the user
+        a notification with the response to their feedback.
         """
         data = request.get_json()
         body, status = _apply_feedback_review_update(feedbackId, data, _get_feedback_admin_actor())

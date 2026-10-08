@@ -22,8 +22,15 @@ Safeguards:
 * Records are read on the server by id. The model sees no record, user, conversation or message
   ids, no emails and no names: records are named by handles, identity fields are never copied
   into a view, and email addresses and GUIDs inside text are replaced before the model sees it.
+* One model call never mixes records about different users. A request's records are grouped by
+  the user each one is about, and each group is its own call, so text one user wrote can't be
+  steered into what another user reads. Groups that don't fit in the request's time are
+  answered ``deferred``, for the browser to send again.
 * Every record's text reaches the model inside one JSON document, labeled as untrusted data. Only
   the organization's review guidance, written by an administrator, is guidance.
+* Text a user can read -- a feedback review's analysis notes, action taken and response, and a
+  violation's notes and notification -- is refused, never cut, when it is too long, and refused
+  when it repeats a long run of another record's text from the same request.
 * Policy is enforced here, not trusted to the model: Escalate is never suggested, an AI-generated
   finding never gets a warning, suspension or block, an applied remediation is never weakened, and
   a suspension names one of the offered durations.
@@ -94,6 +101,14 @@ SAFETY_RESTRICTIVE_SUGGESTIONS = ('SuspendUser', 'BlockUser')
 SAFETY_SUSPEND_DURATIONS = ('24h', '7d', '30d')
 SAFETY_LEGACY_ESCALATE = 'Escalate'
 _ACTION_STRENGTH = {'None': 0, 'WarnUser': 1, 'SuspendUser': 2, 'BlockUser': 3}
+# Everything a remediation decision on a violation rests on, besides the request's status, which
+# the fingerprint holds in its normalized form: functions_safety_remediation's
+# SAFETY_REMEDIATION_STATE_FIELDS (that module reads the app configuration, so it isn't imported
+# here) and the warning's acknowledgment.
+SAFETY_REMEDIATION_FINGERPRINT_FIELDS = (
+    'action_request_id', 'warning_send_claim_id', 'warning_notification_id', 'warning_issued_at',
+    'warning_acknowledged_at',
+)
 
 SUGGESTION_STATUS_PENDING = 'pending'
 SUGGESTION_STATUS_APPLIED = 'applied'
@@ -114,9 +129,12 @@ OUTCOME_NOT_ANALYZED = 'not_analyzed'
 OUTCOME_RECORD_CHANGED = 'record_changed'
 OUTCOME_SAVE_FAILED = 'save_failed'
 OUTCOME_TOO_LARGE = 'too_large'
+# Not reached in this request, because the records about other users before it used the time;
+# the browser sends it again.
+OUTCOME_DEFERRED = 'deferred'
 REVIEW_ASSIST_OUTCOMES = (
     OUTCOME_SUGGESTED, OUTCOME_CONTENT_FILTERED, OUTCOME_NOT_FOUND, OUTCOME_LOCKED, OUTCOME_NO_SUGGESTION,
-    OUTCOME_NOT_ANALYZED, OUTCOME_RECORD_CHANGED, OUTCOME_SAVE_FAILED, OUTCOME_TOO_LARGE,
+    OUTCOME_NOT_ANALYZED, OUTCOME_RECORD_CHANGED, OUTCOME_SAVE_FAILED, OUTCOME_TOO_LARGE, OUTCOME_DEFERRED,
 )
 _OUTCOME_MESSAGES = {
     OUTCOME_CONTENT_FILTERED: (
@@ -131,6 +149,7 @@ _OUTCOME_MESSAGES = {
     OUTCOME_RECORD_CHANGED: 'The record changed while the assistant was working, so the suggestion was not kept. Try again.',
     OUTCOME_SAVE_FAILED: 'The suggestion could not be saved. Try again.',
     OUTCOME_TOO_LARGE: 'This record is too large for the assistant. Review it yourself.',
+    OUTCOME_DEFERRED: 'The assistant ran out of time before it reached this record, so it is sent again.',
 }
 
 # One deadline covers the whole request, the correction round and any one-record retries included.
@@ -142,6 +161,16 @@ ASSIST_MIN_MODEL_SECONDS = 15.0
 # Time kept after a model call for validation, storage and the response.
 ASSIST_POST_MODEL_SECONDS = 5.0
 ASSIST_MODEL_ATTEMPTS = 2
+
+# Text a user can read that repeats this many characters of another record's text in the same
+# request, and not of its own record's, is refused as copied. Runs of fewer distinct characters,
+# such as a line of dashes, are not evidence of copying.
+REVIEW_COPY_WINDOW = 40
+_COPY_MIN_DISTINCT_CHARACTERS = 5
+# The suggestion fields each record's user can read: on their feedback (/feedback/my), and in
+# their violations and the export of them (/api/safety/logs/my) or the notification they get.
+FEEDBACK_USER_VISIBLE_FIELDS = ('analysisNotes', 'actionTaken', 'responseToUser')
+SAFETY_USER_VISIBLE_FIELDS = ('notes', 'notification_title', 'notification_message')
 
 _REQUEST_FIELDS = frozenset({'mode', 'ids'})
 _CONTROL_CHARACTERS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
@@ -375,7 +404,9 @@ def review_record_fingerprint(section, record):
     A record's ETag changes whenever a suggestion is stored on it, so it can't tell whether the
     record itself changed. This digest covers what the model read and what a suggestion would
     change, and nothing else: no timestamps of past saves, no archive bookkeeping, no
-    ``ai_suggestion``.
+    ``ai_suggestion``. For a violation it also covers everything a remediation decision rests on
+    (the request it waits on, a warning being sent, the warning recorded and its acknowledgment),
+    so a save that names it never lands on another save's claim, request or warning.
     """
     record = record if isinstance(record, dict) else {}
     if section == 'feedback':
@@ -402,12 +433,32 @@ def review_record_fingerprint(section, record):
             'notes': _text(record.get('notes')),
             'user_notes': _text(record.get('user_notes')),
             'request': _request_state(record),
-            'warning_issued_at': _text(record.get('warning_issued_at')),
-            'warning_acknowledged_at': _text(record.get('warning_acknowledged_at')),
             'archived': bool(record.get('is_archived')),
         }
+        for field in SAFETY_REMEDIATION_FINGERPRINT_FIELDS:
+            material[field] = _text(record.get(field))
     encoded = json.dumps(material, sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
     return hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:32]
+
+
+def review_record_owner(section, record):
+    """The user a record is about -- who gave the feedback, or whose content was flagged -- or None."""
+    owner = (record or {}).get('userId' if section == 'feedback' else 'user_id') if isinstance(record, dict) else None
+    return owner.strip() if isinstance(owner, str) and owner.strip() else None
+
+
+def group_records_by_owner(section, entries):
+    """``(record_id, entry)`` pairs grouped by the user each record is about, in request order.
+
+    Each group is one model call, so text one user wrote never shares a call with another user's
+    records. A record whose user isn't known gets a group of its own.
+    """
+    groups = {}
+    for record_id, entry in entries:
+        owner = review_record_owner(section, getattr(entry, 'record', None))
+        key = ('owner', owner) if owner else ('record', record_id)
+        groups.setdefault(key, []).append((record_id, entry))
+    return list(groups.values())
 
 
 def _categories(record):
@@ -519,8 +570,8 @@ _FEEDBACK_RULES = """Each record is feedback a user gave on an AI response: a ra
 Each suggestion is a JSON object with exactly these fields:
 - "handle": the record's handle, exactly as given. Use each handle once.
 - "acknowledged": true when this review settles the feedback; false when a person still needs to investigate it.
-- "analysisNotes": what the feedback is about and what you found, for other reviewers, in one to four sentences.
-- "actionTaken": what should change because of this feedback, such as a prompt, document or setting to check, or "" when nothing should change.
+- "analysisNotes": what the feedback is about and what you found, in one to four sentences. The user who gave the feedback can read it.
+- "actionTaken": what should change because of this feedback, such as a prompt, document or setting to check, or "" when nothing should change. The user can read it too.
 - "responseToUser": a short, polite reply the user may read with their feedback, or "" when no reply is needed. Never promise a change, a date or anything about other people.
 - "theme": one of "accuracy", "citations", "retrieval", "formatting", "tone", "latency", "safety", "praise", "other".
 - "archive": true only when the feedback needs nothing more and can leave the active list.
@@ -529,6 +580,7 @@ Each suggestion is a JSON object with exactly these fields:
 
 Rules:
 - Base each suggestion only on its record. When its text is missing or unclear, say so and use "low" confidence.
+- "analysisNotes", "actionTaken" and "responseToUser" are shown to the user who gave that record's feedback. Write them only from that record: never copy, quote or describe another record's text in them.
 - Use "safety" for feedback about harmful or policy-breaking content, and "praise" for positive feedback with nothing to fix.
 - Keep every field plain text, without names, email addresses, ids or links."""
 
@@ -538,7 +590,7 @@ Each suggestion is a JSON object with these fields:
 - "handle": the record's handle, exactly as given. Use each handle once.
 - "status": "New", "In-Review", "Resolved" or "Dismissed". Use "Dismissed" for a false positive, "Resolved" when the review is complete, and "In-Review" when a person needs to look further.
 - "action": one of the record's "allowed_actions": "None", "WarnUser", "SuspendUser" or "BlockUser".
-- "notes": notes for other reviewers: what the content is and why the action fits, in one to four sentences.
+- "notes": notes on the review: what the content is and why the action fits, in one to four sentences. The user the record is about can read them.
 - "notification_title" and "notification_message": only when "action" is "WarnUser", "SuspendUser" or "BlockUser". They are what the user receives: write to the user calmly and factually, name the policy area the content broke and what is expected, and do not quote the content. Leave both out otherwise.
 - "suspend_duration": only when "action" is "SuspendUser": "24h", "7d" or "30d". Leave it out otherwise.
 - "archive": true only when the record needs nothing more and can leave the active list.
@@ -547,6 +599,7 @@ Each suggestion is a JSON object with these fields:
 
 Rules:
 - "Escalate" no longer exists. Never suggest it.
+- "notes", "notification_title" and "notification_message" can be read by the user the record is about. Write them only from that record: never copy, quote or describe another record's text in them.
 - Choose the least severe action that fits. "WarnUser" fits a clear but limited breach by the user. "SuspendUser" or "BlockUser" fit only severe content or a repeated pattern. A warning reaches the user as soon as an administrator applies it; a suspension or block also needs a second administrator's approval.
 - Content that is "ai_generated" is a finding about the AI, not the user, so its action is "None".
 - When "remediation_request" is "executed", that action was already applied or sent: keep it unless the record clearly needs a stronger one. Never suggest a weaker one.
@@ -709,18 +762,36 @@ def _check_common(entry, fields, required, problems):
             problems.append(f'"{field}" is required.')
 
 
-def check_feedback_suggestion(entry, view):
-    """The feedback review a suggestion proposes, or raise ``_Problems``."""
+def _check_copies(values, fields, view, copied, problems):
+    """Refuse text the record's user can read that repeats a long run of another record's text."""
+    if copied is None:
+        return
+    for field in fields:
+        text = values.get(field)
+        if isinstance(text, str) and text and copied(view.get('handle'), text):
+            problems.append(
+                f'"{field}" repeats text from a different record, and this record\'s user can read it. '
+                'Write it only from this record, in your own words.'
+            )
+
+
+def check_feedback_suggestion(entry, view, copied=None):
+    """The feedback review a suggestion proposes, or raise ``_Problems``.
+
+    ``copied(handle, text)`` says whether text this record's user can read repeats another
+    record's text.
+    """
     problems = []
     _check_common(entry, _FEEDBACK_FIELDS, _FEEDBACK_REQUIRED, problems)
     payload = {
         'acknowledged': _boolean(entry.get('acknowledged'), 'acknowledged', problems),
-        'analysisNotes': _reviewer_text(entry.get('analysisNotes'), 'analysisNotes', FEEDBACK_ANALYSIS_MAX_LENGTH, problems, required=True),
-        'actionTaken': _reviewer_text(entry.get('actionTaken'), 'actionTaken', FEEDBACK_ACTION_MAX_LENGTH, problems),
+        'analysisNotes': _user_facing_text(entry.get('analysisNotes'), 'analysisNotes', FEEDBACK_ANALYSIS_MAX_LENGTH, problems, required=True),
+        'actionTaken': _user_facing_text(entry.get('actionTaken'), 'actionTaken', FEEDBACK_ACTION_MAX_LENGTH, problems),
         'responseToUser': _user_facing_text(entry.get('responseToUser'), 'responseToUser', FEEDBACK_RESPONSE_MAX_LENGTH, problems),
         'theme': _choice(entry.get('theme'), 'theme', FEEDBACK_THEMES, problems),
         'archive': _boolean(entry.get('archive'), 'archive', problems),
     }
+    _check_copies(payload, FEEDBACK_USER_VISIBLE_FIELDS, view, copied, problems)
     rationale = _reviewer_text(entry.get('rationale'), 'rationale', SUGGESTION_RATIONALE_MAX_LENGTH, problems, required=True)
     confidence = _choice(entry.get('confidence'), 'confidence', SUGGESTION_CONFIDENCE_LEVELS, problems)
     if problems:
@@ -728,8 +799,12 @@ def check_feedback_suggestion(entry, view):
     return Suggestion(payload, rationale, confidence)
 
 
-def check_safety_suggestion(entry, view):
-    """The safety review a suggestion proposes, within the record's allowed actions, or raise ``_Problems``."""
+def check_safety_suggestion(entry, view, copied=None):
+    """The safety review a suggestion proposes, within the record's allowed actions, or raise ``_Problems``.
+
+    ``copied(handle, text)`` says whether text this record's user can read repeats another
+    record's text.
+    """
     problems = []
     _check_common(entry, _SAFETY_FIELDS, _SAFETY_REQUIRED, problems)
     allowed = view.get('allowed_actions') or ['None']
@@ -752,7 +827,7 @@ def check_safety_suggestion(entry, view):
     payload = {
         'status': _choice(entry.get('status'), 'status', SAFETY_SUGGESTED_STATUSES, problems),
         'action': action,
-        'notes': _reviewer_text(entry.get('notes'), 'notes', SAFETY_NOTES_MAX_LENGTH, problems, required=True),
+        'notes': _user_facing_text(entry.get('notes'), 'notes', SAFETY_NOTES_MAX_LENGTH, problems, required=True),
         'archive': _boolean(entry.get('archive'), 'archive', problems),
     }
     if action in SAFETY_REMEDIATION_SUGGESTIONS:
@@ -765,6 +840,7 @@ def check_safety_suggestion(entry, view):
         )
     if action == 'SuspendUser':
         payload['suspend_duration'] = _choice(entry.get('suspend_duration'), 'suspend_duration', SAFETY_SUSPEND_DURATIONS, problems)
+    _check_copies(payload, SAFETY_USER_VISIBLE_FIELDS, view, copied, problems)
     rationale = _reviewer_text(entry.get('rationale'), 'rationale', SUGGESTION_RATIONALE_MAX_LENGTH, problems, required=True)
     confidence = _choice(entry.get('confidence'), 'confidence', SUGGESTION_CONFIDENCE_LEVELS, problems)
     if problems:
@@ -775,12 +851,14 @@ def check_safety_suggestion(entry, view):
 _CHECKERS = {'feedback': check_feedback_suggestion, 'safety': check_safety_suggestion}
 
 
-def evaluate_review_output(section, views, output):
+def evaluate_review_output(section, views, output, copied=None):
     """Check a reply against the records it answers.
 
     Returns ``(valid, problems)``: ``valid`` maps each handle whose suggestion passed to its
     ``Suggestion``; ``problems`` lists what the correction round must fix, one message each. An
     unknown or repeated handle is refused, and a record left without a suggestion is a problem.
+    ``copied(handle, text)``, when given, refuses text a record's user can read that repeats
+    another record's text.
     """
     by_handle = {view['handle']: view for view in views}
     valid = {}
@@ -808,13 +886,63 @@ def evaluate_review_output(section, views, output):
             continue
         seen.add(handle)
         try:
-            valid[handle] = checker(entry, by_handle[handle])
+            valid[handle] = checker(entry, by_handle[handle], copied=copied)
         except _Problems as exc:
             problems.extend(f'{handle}: {message}' for message in exc.messages)
     for handle in by_handle:
         if handle not in seen:
             problems.append(f'{handle}: no suggestion was given for this record.')
     return valid, problems
+
+
+# ---------------------------------------------------------------------------
+# Copied text
+# ---------------------------------------------------------------------------
+
+def _copy_text(value):
+    return ' '.join(str(value).split()).casefold()
+
+
+def _copy_windows(text):
+    for start in range(len(text) - REVIEW_COPY_WINDOW + 1):
+        window = text[start:start + REVIEW_COPY_WINDOW]
+        if len(set(window)) >= _COPY_MIN_DISTINCT_CHARACTERS:
+            yield window
+
+
+def _view_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _view_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _view_strings(item)
+
+
+class ReviewCopyIndex:
+    """Which records of a request each long run of text appears in, read from the records' views.
+
+    A suggestion is written for one record, so text its user can read that repeats a run of
+    another record's view, and not of its own, was copied across records. Records about
+    different users never share a model call; this is the check behind that.
+    """
+
+    def __init__(self, views_by_record):
+        self._records = {}
+        for record_id, view in (views_by_record or {}).items():
+            for text in _view_strings(view):
+                for window in _copy_windows(_copy_text(text)):
+                    self._records.setdefault(hash(window), set()).add(record_id)
+
+    def copied(self, record_id, text):
+        """Whether ``text``, written for ``record_id``, repeats another record's text."""
+        for window in _copy_windows(_copy_text(text)):
+            found = self._records.get(hash(window))
+            if found and record_id not in found:
+                return True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1036,10 +1164,12 @@ class _Run:
         self.started = services.clock()
         self.deadline = self.started + ASSIST_DEADLINE_SECONDS
         self.model_called = False
+        self.copies = None
         self.metrics = {
             'actor_id': self.actor.get('id'), 'section': section, 'mode': None, 'status': None, 'code': None,
             'stage': 'request', 'error_type': None, 'fault_location': None, 'record_count': 0, 'eligible_count': 0,
-            'model_calls': 0, 'correction_count': 0, 'isolated': False, 'guidance_used': bool(guidance),
+            'owner_groups': 0, 'model_calls': 0, 'correction_count': 0, 'isolated': False,
+            'copy_rejections': 0, 'deferred_reason': None, 'guidance_used': bool(guidance),
             'outcomes': {}, 'duration_ms': 0,
         }
 
@@ -1066,10 +1196,26 @@ class _Run:
             raise ReviewAssistError('assistant_refused')
         return content, finish_reason
 
-    def _model_turns(self, views):
+    def _copy_check(self, record_of):
+        """The copied-text check for one call, whose handles name the records in ``record_of``."""
+        copies = self.copies
+        if copies is None:
+            return None
+
+        def copied(handle, text):
+            record_id = record_of.get(handle)
+            hit = record_id is not None and copies.copied(record_id, text)
+            if hit:
+                self.metrics['copy_rejections'] += 1
+            return hit
+
+        return copied
+
+    def _model_turns(self, views, record_of):
         """Valid suggestions by handle for one group of records, with one correction round."""
         previous = None
         best = {}
+        copied = self._copy_check(record_of)
         for attempt in range(1, ASSIST_MODEL_ATTEMPTS + 1):
             if self.remaining() < ASSIST_MIN_MODEL_SECONDS:
                 if best:
@@ -1087,7 +1233,7 @@ class _Run:
             try:
                 if finish_reason == 'length':
                     raise _Correctable(['The reply was cut off. Keep every field shorter.'], 'length')
-                valid, problems = evaluate_review_output(self.section, views, parse_model_output(content))
+                valid, problems = evaluate_review_output(self.section, views, parse_model_output(content), copied=copied)
             except _Correctable as exc:
                 valid, problems = {}, exc.messages
             best.update(valid)
@@ -1097,7 +1243,7 @@ class _Run:
             previous = _correction_messages(problems)
         return best
 
-    def _isolate(self, views):
+    def _isolate(self, views, record_of):
         """Ask about each record alone, after the model's filter refused the group."""
         self.metrics['isolated'] = True
         results = {}
@@ -1112,7 +1258,7 @@ class _Run:
                 results[handle] = (OUTCOME_NOT_ANALYZED, stopped)
                 continue
             try:
-                best = self._model_turns([view])
+                best = self._model_turns([view], record_of)
             except ReviewAssistError as exc:
                 if exc.code == 'assistant_refused':
                     results[handle] = (OUTCOME_CONTENT_FILTERED, None)
@@ -1126,14 +1272,14 @@ class _Run:
             results[handle] = (OUTCOME_SUGGESTED, suggestion) if suggestion else (OUTCOME_NO_SUGGESTION, None)
         return results
 
-    def _suggest(self, views):
-        """``{handle: (outcome, Suggestion or error code)}`` for the eligible records."""
+    def _suggest(self, views, record_of):
+        """``{handle: (outcome, Suggestion or error code)}`` for one owner's records."""
         try:
-            best = self._model_turns(views)
+            best = self._model_turns(views, record_of)
         except ReviewAssistError as exc:
             if exc.code in ('assistant_refused', 'assistant_input_too_large'):
                 if len(views) > 1:
-                    return self._isolate(views)
+                    return self._isolate(views, record_of)
                 outcome = OUTCOME_CONTENT_FILTERED if exc.code == 'assistant_refused' else OUTCOME_TOO_LARGE
                 return {views[0]['handle']: (outcome, None)}
             raise
@@ -1182,21 +1328,42 @@ class _Run:
         self.metrics['eligible_count'] = len(eligible)
         eligible_by_id = dict(eligible)
 
-        handles = {}
-        views = []
+        # One model call per user the records are about, each with its own handles r1, r2, ...
+        groups = []
         fingerprints = {}
-        for index, (record_id, entry) in enumerate(eligible, start=1):
-            handle = f'r{index}'
-            handles[handle] = record_id
-            fingerprints[record_id] = review_record_fingerprint(self.section, entry.record)
-            if self.section == 'feedback':
-                views.append(build_feedback_view(handle, entry.record))
-            else:
-                views.append(build_safety_view(handle, entry.record, entry.prior_violations))
+        views_by_record = {}
+        for members in group_records_by_owner(self.section, eligible):
+            record_of = {}
+            views = []
+            for index, (record_id, entry) in enumerate(members, start=1):
+                handle = f'r{index}'
+                record_of[handle] = record_id
+                fingerprints[record_id] = review_record_fingerprint(self.section, entry.record)
+                if self.section == 'feedback':
+                    view = build_feedback_view(handle, entry.record)
+                else:
+                    view = build_safety_view(handle, entry.record, entry.prior_violations)
+                views.append(view)
+                views_by_record[record_id] = view
+            groups.append((record_of, views))
+        self.metrics['owner_groups'] = len(groups)
+        self.copies = ReviewCopyIndex(views_by_record) if len(views_by_record) > 1 else None
 
-        if views:
-            for handle, result in self._suggest(views).items():
-                outcomes[handles[handle]] = result
+        for position, (record_of, views) in enumerate(groups):
+            # The first group always runs, so every request either answers a record or fails.
+            if position and self.remaining() < ASSIST_MIN_MODEL_SECONDS:
+                self._defer(groups[position:], outcomes, 'time')
+                break
+            try:
+                answered = self._suggest(views, record_of)
+            except ReviewAssistError as exc:
+                if not position:
+                    raise
+                # What the earlier groups got is kept; this group and the rest are sent again.
+                self._defer(groups[position:], outcomes, exc.code)
+                break
+            for handle, result in answered.items():
+                outcomes[record_of[handle]] = result
 
         created_at = self.services.now()
         model = self.services.model_name()
@@ -1227,6 +1394,13 @@ class _Run:
             raise ReviewAssistError('assistant_output_invalid')
         self.stage('response')
         return {'section': self.section, 'mode': request.mode, 'results': results}
+
+    def _defer(self, groups, outcomes, reason):
+        """Answer every record in ``groups`` as deferred, for the browser to send again."""
+        self.metrics['deferred_reason'] = reason
+        for record_of, _views in groups:
+            for record_id in record_of.values():
+                outcomes[record_id] = (OUTCOME_DEFERRED, None)
 
     def _store(self, record_id, entry, fingerprint, suggestion, *, model, created_at):
         document = build_suggestion_document(

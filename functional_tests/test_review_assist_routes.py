@@ -17,7 +17,14 @@ stale ones flagged, through ai=pending; apply a suggestion only through the norm
 reviewer's edits, crediting it in the audit log, so a warning is sent and a suspension still needs
 a second reviewer; refuse stale and already-decided suggestions; dismiss suggestions; keep
 suggestions and reviewer-only classifications out of what users read about themselves; and record
-feedback themes for the dashboard. Real modules run in fresh processes with network access blocked,
+feedback themes for the dashboard. It also ensures that a triage never puts two users' records in
+one model call and that "select all matching" says whose each record is; that the lists and the
+single-record reads carry each record's version and fingerprint, so an editor's save still goes
+ahead when only an AI suggestion was stored or dismissed meanwhile, but is refused with 409
+record_changed when someone else edited the record, a warning is being sent, a new request was
+made, the user acknowledged a warning, or a write lands between the read and the save; and that a
+suggestion operation whose record can't be read fails on its own with operation_failed while the
+rest of the bulk request runs. Real modules run in fresh processes with network access blocked,
 under normal and optimized Python.
 """
 
@@ -556,6 +563,231 @@ print("PASS: the real model invoker isolates a refusal and records the deploymen
 '''
 
 
+FEEDBACK_VERSIONS_PROBE = PROBE_HEADER + r'''
+from azure.cosmos import exceptions as cosmos_exceptions
+
+with offline_app_imports(), ExitStack() as stack:
+    importlib.import_module(sys.argv[2])
+    import functions_review_center as review_center
+    h = build_feedback_app(stack)
+    assistant = install_assistant(stack, "feedback")
+    client, container = h.client, h.container
+    h.settings["enable_admin_review_ai_assistant"] = True
+    for index, owner in ((1, "user-1"), (2, "user-2"), (3, "user-1"), (4, "user-3"), (5, "user-4")):
+        container.seed({
+            "id": f"fb-{index}", "userId": owner, "feedbackType": "Negative",
+            "prompt": f"Question from {owner} number {index}", "aiResponse": "An answer.", "reason": "Incomplete",
+            "timestamp": RECENT, "adminReview": {"acknowledged": False},
+        })
+    sign_in(client, "reviewer-1", roles=("Admin",), name="Rita Reviewer")
+
+    # "Select all matching" says whose each record is, so the browser can send a user's records together.
+    ids = client.get("/feedback/review/ids").get_json()
+    check(ids["owners"] == {f"fb-{index}": owner for index, owner in
+                            ((1, "user-1"), (2, "user-2"), (3, "user-1"), (4, "user-3"), (5, "user-4"))}, str(ids))
+
+    # Editors opened before the triage; the list carries the same version and fingerprint.
+    opened = {f"fb-{index}": client.get(f"/feedback/review/fb-{index}").get_json() for index in range(1, 6)}
+    listed = {item["id"]: item for item in client.get("/feedback/review").get_json()["feedback"]}
+    for record_id, record in opened.items():
+        check(len(record["fingerprint"]) == 32 and listed[record_id]["fingerprint"] == record["fingerprint"], record_id)
+        check(listed[record_id]["etag"] == record["etag"], record_id)
+    mine = h.new_client()
+    sign_in(mine, "user-1", roles=("User",))
+    for item in mine.get("/feedback/my").get_json()["feedback"]:
+        check("fingerprint" not in item and "etag" not in item, "a user read review bookkeeping")
+
+    # One model call per user: user-1's two records together, user-2's alone.
+    body = closed(post_assist(client, "feedback", {"mode": "triage", "ids": ["fb-1", "fb-2", "fb-3"]}), 200)
+    check([entry["outcome"] for entry in body["results"]] == ["suggested"] * 3, str(body))
+    calls = [[view["prompt_excerpt"] for view in json.loads(call[1]["content"])["records"]] for call in assistant.model.calls]
+    check(calls == [["Question from user-1 number 1", "Question from user-1 number 3"],
+                    ["Question from user-2 number 2"]], str(calls))
+    check(container.items["fb-1"]["_etag"] != opened["fb-1"]["etag"], "storing the suggestion kept the version")
+
+    # The editor's save goes ahead across the stored suggestion, and leaves it on the record.
+    save = {"acknowledged": True, "analysisNotes": "Checked by hand.",
+            "etag": opened["fb-1"]["etag"], "fingerprint": opened["fb-1"]["fingerprint"]}
+    closed(client.patch("/feedback/review/fb-1", json=save), 200)
+    check(container.items["fb-1"]["adminReview"]["analysisNotes"] == "Checked by hand.", "the save was lost")
+    check(container.items["fb-1"]["ai_suggestion"]["status"] == "pending", "the save dropped the suggestion")
+    check(client.get("/feedback/review/fb-1").get_json()["ai_suggestion"]["status"] == "stale", "a reviewed record kept a fresh suggestion")
+
+    # Across a colleague's dismissal too; without the fingerprint the version alone decides, as before.
+    other = h.new_client()
+    sign_in(other, "reviewer-2", roles=("Admin",), name="Omar Other")
+    fb2_suggestion = container.items["fb-2"]["ai_suggestion"]["id"]
+    check(bulk(other, "/feedback/review/bulk", [
+        {"id": "fb-2", "op": "dismiss_suggestion", "suggestion_id": fb2_suggestion},
+    ])["fb-2"]["ok"], "the dismissal failed")
+    closed(client.patch("/feedback/review/fb-2", json={"acknowledged": True, "etag": opened["fb-2"]["etag"]}), 409, "record_changed")
+    closed(client.patch("/feedback/review/fb-2", json={
+        "acknowledged": True, "etag": opened["fb-2"]["etag"], "fingerprint": opened["fb-2"]["fingerprint"],
+    }), 200)
+
+    # A real edit by someone else still refuses the save, and survives it.
+    check(other.patch("/feedback/review/fb-3", json={"analysisNotes": "Another reviewer's notes."}).status_code == 200, "edit")
+    closed(client.patch("/feedback/review/fb-3", json={
+        "acknowledged": True, "etag": opened["fb-3"]["etag"], "fingerprint": opened["fb-3"]["fingerprint"],
+    }), 409, "record_changed")
+    check(container.items["fb-3"]["adminReview"]["analysisNotes"] == "Another reviewer's notes.", "a real edit was overwritten")
+    closed(client.patch("/feedback/review/fb-3", json={"acknowledged": True, "fingerprint": 7}), 400)
+
+    # A write landing between the fresh read and the save is refused: the save names that version.
+    container.seed({**container.items["fb-4"], "bookkeeping": "touched"})
+    container.before_replace = lambda fake: fake.seed({
+        **fake.items["fb-4"], "adminReview": {"acknowledged": False, "analysisNotes": "Raced in."},
+    })
+    closed(client.patch("/feedback/review/fb-4", json={
+        "acknowledged": True, "etag": opened["fb-4"]["etag"], "fingerprint": opened["fb-4"]["fingerprint"],
+    }), 409, "record_changed")
+    check(container.items["fb-4"]["adminReview"]["analysisNotes"] == "Raced in.", "the racing write was overwritten")
+
+    # Approving from the queue sends the list's version and fingerprint; bookkeeping since doesn't refuse it.
+    closed(post_assist(client, "feedback", {"mode": "triage", "ids": ["fb-5"]}), 200)
+    queued = {item["id"]: item for item in client.get("/feedback/review?ai=pending").get_json()["feedback"]}["fb-5"]
+    container.seed({**container.items["fb-5"], "bookkeeping": "touched"})
+    payload = queued["ai_suggestion"]["payload"]
+    results = bulk(client, "/feedback/review/bulk", [{
+        "id": "fb-5", "op": "update", "suggestion_id": queued["ai_suggestion"]["id"], "etag": queued["etag"],
+        "changes": {**{key: payload[key] for key in ("acknowledged", "analysisNotes", "actionTaken", "responseToUser", "theme")},
+                    "fingerprint": queued["fingerprint"]},
+    }])
+    check(results["fb-5"]["ok"] and results["fb-5"]["suggestion"]["status"] == "applied", str(results["fb-5"]))
+
+    # A record that can't be read fails its own operation; the rest of the request still runs.
+    read_item = container.read_item
+
+    def flaky(item, partition_key, **kwargs):
+        if item in ("fb-2", "fb-3"):
+            raise cosmos_exceptions.CosmosHttpResponseError(status_code=503, message="Service unavailable")
+        return read_item(item, partition_key, **kwargs)
+
+    container.read_item = flaky
+    results = bulk(client, "/feedback/review/bulk", [
+        {"id": "fb-1", "op": "update", "changes": {"actionTaken": "Re-indexed."}},
+        {"id": "fb-2", "op": "dismiss_suggestion", "suggestion_id": "a" * 32},
+        {"id": "fb-3", "op": "update", "suggestion_id": "b" * 32, "changes": {"acknowledged": True}},
+        {"id": "fb-4", "op": "archive", "archived": True},
+    ])
+    container.read_item = read_item
+    check(results["fb-1"]["ok"] and results["fb-4"]["ok"], str(results))
+    for record_id in ("fb-2", "fb-3"):
+        check(results[record_id]["status"] == 500 and results[record_id]["code"] == "operation_failed", str(results[record_id]))
+        check("Service unavailable" not in json.dumps(results[record_id]), "provider text reached the browser")
+
+    # Anything else unexpected in a suggestion operation fails only that operation as well.
+    with patch.object(review_center, "suggestion_problem", side_effect=RuntimeError("boom")):
+        results = bulk(client, "/feedback/review/bulk", [
+            {"id": "fb-1", "op": "update", "suggestion_id": "c" * 32, "changes": {"acknowledged": True}},
+            {"id": "fb-4", "op": "archive", "archived": False},
+        ])
+    check(results["fb-1"]["code"] == "operation_failed" and results["fb-4"]["ok"], str(results))
+
+print("PASS: feedback owners, versions and failed operations")
+'''
+
+
+SAFETY_VERSIONS_PROBE = PROBE_HEADER + r'''
+from azure.cosmos import exceptions as cosmos_exceptions
+
+with offline_app_imports(), ExitStack() as stack:
+    importlib.import_module(sys.argv[2])
+    h = build_safety_app(stack)
+    assistant = install_assistant(stack, "safety")
+    client, container = h.client, h.container
+    h.settings["enable_admin_review_ai_assistant"] = True
+    base = {"status": "New", "action": "None", "created_at": RECENT, "content_origin": "user",
+            "message": "Hateful text", "triggered_categories": [{"category": "Hate", "severity": 4}]}
+    owners = {"log-1": "user-1", "log-2": "user-2", "log-3": "user-1", "log-4": "user-3", "log-5": "user-4"}
+    for log_id, owner in owners.items():
+        container.seed({**base, "id": log_id, "user_id": owner, "message": f"Hateful text from {owner} in {log_id}"})
+    warned = {"action": "WarnUser", "action_request_status": "executed", "warning_requires_acknowledgment": True,
+              "warning_issued_at": RECENT, "warning_notification_id": "notification-0", "status": "Resolved"}
+    container.seed({**container.items["log-4"], **warned})
+    sign_in(client, "reviewer-1", roles=("Admin",), name="Rita Reviewer")
+
+    ids = client.get("/api/safety/logs/ids").get_json()
+    check(ids["owners"] == owners, str(ids))
+    opened = {log_id: client.get(f"/api/safety/logs/{log_id}").get_json() for log_id in owners}
+    listed = {item["id"]: item for item in client.get("/api/safety/logs").get_json()["logs"]}
+    for log_id, record in opened.items():
+        check(len(record["fingerprint"]) == 32 and listed[log_id]["fingerprint"] == record["fingerprint"], log_id)
+        check(listed[log_id]["etag"] == record["etag"], log_id)
+    mine = h.new_client()
+    sign_in(mine, "user-1", roles=("User",))
+    for item in mine.get("/api/safety/logs/my").get_json()["logs"]:
+        check("fingerprint" not in item and "ai_suggestion" not in item, "a user read review bookkeeping")
+
+    # One model call per user.
+    body = closed(post_assist(client, "safety", {"mode": "triage", "ids": ["log-1", "log-2", "log-3"]}), 200)
+    check([entry["outcome"] for entry in body["results"]] == ["suggested"] * 3, str(body))
+    calls = [[view["flagged_text_excerpt"] for view in json.loads(call[1]["content"])["records"]] for call in assistant.model.calls]
+    check(calls == [["Hateful text from user-1 in log-1", "Hateful text from user-1 in log-3"],
+                    ["Hateful text from user-2 in log-2"]], str(calls))
+
+    def save(log_id, **fields):
+        return client.patch(f"/api/safety/logs/{log_id}", json={
+            "status": "Resolved", "action": "None", "notes": "Reviewed.",
+            "etag": opened[log_id]["etag"], "fingerprint": opened[log_id]["fingerprint"], **fields,
+        })
+
+    # Across the stored suggestion, the editor's save goes ahead -- here sending a warning, which
+    # claims the violation on the version just read and is sent once.
+    closed(save("log-1", action="WarnUser", notification_title="Safety warning",
+                notification_message="Please keep messages respectful."), 200)
+    check(len(h.notifications) == 1 and container.items["log-1"]["action_request_status"] == "executed", str(h.notifications))
+    check(container.items["log-1"]["ai_suggestion"]["status"] == "pending", "the save dropped the suggestion")
+
+    # Across a colleague's dismissal too.
+    other = h.new_client()
+    sign_in(other, "reviewer-2", roles=("Admin",), name="Omar Other")
+    check(bulk(other, "/api/safety/logs/bulk", [
+        {"id": "log-2", "op": "dismiss_suggestion", "suggestion_id": container.items["log-2"]["ai_suggestion"]["id"]},
+    ])["log-2"]["ok"], "the dismissal failed")
+    closed(save("log-2"), 200)
+    check(container.items["log-2"]["notes"] == "Reviewed.", "the save was lost")
+
+    # A warning being sent, a new request, the user's acknowledgment, or a real edit still refuse it.
+    now = datetime.now(timezone.utc).isoformat()
+    container.seed({**container.items["log-3"], "action": "WarnUser", "action_request_status": "sending",
+                    "warning_send_claim_id": "claim-1", "warning_send_claimed_at": now})
+    closed(save("log-3"), 409, "record_changed")
+    container.seed({**container.items["log-4"], "warning_acknowledged_at": now})
+    closed(save("log-4", action="WarnUser"), 409, "record_changed")
+    container.seed({**container.items["log-5"], "action": "SuspendUser", "action_request_status": "pending",
+                    "action_request_id": "approval-9", "action_requested_at": now})
+    closed(save("log-5"), 409, "record_changed")
+    check(container.items["log-5"]["action_request_status"] == "pending" and not container.items["log-5"].get("notes"),
+          "a new request was overwritten")
+    check(container.items["log-4"]["warning_acknowledged_at"] == now, "an acknowledgment was overwritten")
+    opened["log-2"] = client.get("/api/safety/logs/log-2").get_json()
+    check(other.patch("/api/safety/logs/log-2", json={"notes": "Another reviewer's notes."}).status_code == 200, "edit")
+    closed(save("log-2"), 409, "record_changed")
+    check(len(h.notifications) == 1, "a refused save sent something")
+
+    # A record that can't be read fails its own operation; the rest of the request still runs.
+    read_item = container.read_item
+
+    def flaky(item, partition_key, **kwargs):
+        if item == "log-3":
+            raise cosmos_exceptions.CosmosHttpResponseError(status_code=503, message="Service unavailable")
+        return read_item(item, partition_key, **kwargs)
+
+    container.read_item = flaky
+    results = bulk(client, "/api/safety/logs/bulk", [
+        {"id": "log-1", "op": "update", "changes": {"status": "Resolved", "notes": "Closed."}},
+        {"id": "log-3", "op": "update", "suggestion_id": "a" * 32, "changes": {"status": "Resolved"}},
+        {"id": "log-2", "op": "archive", "archived": True},
+    ])
+    container.read_item = read_item
+    check(results["log-1"]["ok"] and results["log-2"]["ok"], str(results))
+    check(results["log-3"]["status"] == 500 and results["log-3"]["code"] == "operation_failed", str(results["log-3"]))
+
+print("PASS: safety owners, versions and failed operations")
+'''
+
+
 def _run(probe, first_import, optimized, marker):
     command = [sys.executable, "-B"]
     if optimized:
@@ -586,6 +818,16 @@ def test_safety_assist_routes_and_suggestions(first_import, optimized):
 def test_the_real_model_invoker_isolates_a_refusal():
     _run(REAL_INVOKER_PROBE, "route_backend_feedback", False,
          "PASS: the real model invoker isolates a refusal and records the deployment")
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_feedback_owners_versions_and_failed_operations(optimized):
+    _run(FEEDBACK_VERSIONS_PROBE, "route_backend_feedback", optimized, "PASS: feedback owners, versions and failed operations")
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_safety_owners_versions_and_failed_operations(optimized):
+    _run(SAFETY_VERSIONS_PROBE, "route_backend_safety", optimized, "PASS: safety owners, versions and failed operations")
 
 
 def test_version():

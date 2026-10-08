@@ -204,7 +204,7 @@ with offline_app_imports(), ExitStack() as stack:
     page = client.get("/feedback/review?page=1&page_size=10&search=uma&archive=all").get_json()
     check(page["total_count"] == 3 and all(item["userDisplayName"] == "Uma User" for item in page["feedback"]), str(page))
     ids = client.get("/feedback/review/ids?ack=false").get_json()
-    check(ids == {"ids": [], "total": 0, "capped": False, "cap": 500}, str(ids))
+    check(ids == {"ids": [], "total": 0, "capped": False, "cap": 500, "owners": {}}, str(ids))
     sign_in(client, "user-1", roles=("User",))
     mine = client.get("/feedback/my").get_json()
     reviews = [item.get("adminReview") or {} for item in mine.get("feedback", mine if isinstance(mine, list) else [])]

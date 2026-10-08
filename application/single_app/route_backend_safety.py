@@ -31,7 +31,7 @@ from functions_approvals import (
     withdraw_approval_request,
 )
 from functions_authentication import *
-from functions_review_assist import ReviewAssistError, present_suggestion, strip_suggestion
+from functions_review_assist import ReviewAssistError, present_suggestion, review_record_fingerprint, strip_suggestion
 from functions_review_assist_runtime import (
     ReviewRecordStore,
     handle_review_assist_request,
@@ -56,7 +56,9 @@ from functions_review_center import (
     review_bulk_result,
     review_day,
     review_text_matches,
+    review_version_matches,
     review_window,
+    run_suggestion_operation,
     summarize_review_bulk_results,
 )
 from functions_review_lifecycle import (
@@ -341,6 +343,10 @@ def _query_safety_logs(
         else:
             # Read from the stored fields, before they are prepared for display.
             log_item['ai_suggestion'] = present_suggestion('safety', log_item)
+            # A save sends these back: the violation's version, and the fingerprint of its
+            # reviewable fields and remediation state, which an AI suggestion leaves as it is.
+            log_item['etag'] = log_item.get('_etag')
+            log_item['fingerprint'] = review_record_fingerprint('safety', log_item)
         log_item.update(serialize_archive_metadata(log_item))
         present_safety_warning_send_state(log_item)
         log_item.update(serialize_safety_warning_state(log_item))
@@ -1231,12 +1237,16 @@ def register_route_backend_safety(bp):
         """Return the ids of the violations matching the list filters, for "select all matching".
 
         Takes the same filters as GET /api/safety/logs. At most 500 ids are returned:
-        ``total`` is how many matched, and ``capped`` says whether the cap applied.
+        ``total`` is how many matched, and ``capped`` says whether the cap applied. ``owners``
+        maps each returned id to the user whose content was flagged.
         """
         try:
             filters = _parse_safety_list_filters()
             logs, _users = _load_admin_safety_logs(filters)
-            return jsonify(cap_review_ids([log_item.get('id') for log_item in logs])), 200
+            return jsonify(cap_review_ids(
+                [log_item.get('id') for log_item in logs],
+                owners={log_item.get('id'): log_item.get('user_id') for log_item in logs},
+            )), 200
         except ValueError:
             return jsonify({"error": "Invalid request parameters."}), 400
         except Exception as e:
@@ -1287,9 +1297,9 @@ def register_route_backend_safety(bp):
     def get_safety_log(log_id):
         """Return one violation for the Review center editor.
 
-        Besides the stored record, the response carries ``etag`` (send it back with a save),
-        the user's display name and email, whether the user's access is restricted now,
-        and how many other violations the user has.
+        Besides the stored record, the response carries ``etag`` and ``fingerprint`` (send both
+        back with a save), the user's display name and email, whether the user's access is
+        restricted now, and how many other violations the user has.
         """
         try:
             item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
@@ -1314,6 +1324,7 @@ def register_route_backend_safety(bp):
         entry = users.get(user_id) or {}
         record.update({
             'etag': item.get('_etag'),
+            'fingerprint': review_record_fingerprint('safety', item),
             'user_display_name': entry.get('display_name') or None,
             'user_email': entry.get('email') or None,
             'user_access': entry.get('access'),
@@ -1359,10 +1370,12 @@ def register_route_backend_safety(bp):
 
         Saving a suspension or block again with the same action requests nothing more unless
         the body carries ``reissue: true``. ``etag``, when sent, must match the stored record,
-        or the save is refused with 409 ``record_changed``; it is then written on that version
-        only, never merged onto a newer one. A suspension or block that can't be recorded on
-        the violation, because another save moved it on meanwhile, is withdrawn and refused
-        with 409 ``record_changed``.
+        or the save is refused with 409 ``record_changed`` -- unless ``fingerprint`` is sent too
+        and the violation's reviewable fields and request and warning state still match it,
+        because only an AI suggestion or other bookkeeping was written since. The save is then
+        written on that version only, never merged onto a newer one. A suspension or block that
+        can't be recorded on the violation, because another save moved it on meanwhile, is
+        withdrawn and refused with 409 ``record_changed``.
         """
         data = request.get_json() or {}
         if not isinstance(data, dict):
@@ -1393,9 +1406,16 @@ def register_route_backend_safety(bp):
             if notes is not None and not isinstance(notes, str):
                 return jsonify({'error': 'Notes must be text.'}), 400
 
+            expected_fingerprint = data.get('fingerprint')
+            if expected_fingerprint is not None and not isinstance(expected_fingerprint, str):
+                return jsonify({'error': 'The fingerprint must be text.'}), 400
+
             item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
             expected_etag = data.get('etag')
-            if expected_etag and item.get('_etag') != expected_etag:
+            # A version changed only by an AI suggestion or other bookkeeping, with the reviewable
+            # fields and the request and warning state as the save read them, is saved on this
+            # read; every check below runs on it, and the write is conditional on its version.
+            if not review_version_matches('safety', item, expected_etag, expected_fingerprint):
                 return jsonify(_record_changed_body()), 409
             # A request that was denied or has expired no longer locks the violation.
             item = reconcile_pending_safety_log(item)
@@ -1686,10 +1706,15 @@ def register_route_backend_safety(bp):
                 if operation['etag']:
                     changes['etag'] = operation['etag']
                 if operation.get('suggestion_id'):
-                    body, status = apply_suggested_review(
-                        cosmos_safety_container, 'safety', operation['id'], operation['suggestion_id'], changes, actor,
-                        lambda checked, record_id=operation['id']: _response_parts(
-                            apply_safety_review_update(record_id, checked),
+                    body, status = run_suggestion_operation(
+                        'safety',
+                        operation,
+                        lambda operation=operation, changes=changes: apply_suggested_review(
+                            cosmos_safety_container, 'safety', operation['id'], operation['suggestion_id'],
+                            changes, actor,
+                            lambda checked, record_id=operation['id']: _response_parts(
+                                apply_safety_review_update(record_id, checked),
+                            ),
                         ),
                     )
                 else:
@@ -1697,9 +1722,13 @@ def register_route_backend_safety(bp):
             elif operation['op'] == 'archive':
                 body, status = _archive_safety_log(operation['id'], operation['archived'], actor, operation['etag'])
             elif operation['op'] == 'dismiss_suggestion':
-                body, status = dismiss_review_suggestion(
-                    cosmos_safety_container, 'safety', operation['id'], operation['suggestion_id'], actor,
-                    operation['etag'],
+                body, status = run_suggestion_operation(
+                    'safety',
+                    operation,
+                    lambda operation=operation: dismiss_review_suggestion(
+                        cosmos_safety_container, 'safety', operation['id'], operation['suggestion_id'], actor,
+                        operation['etag'],
+                    ),
                 )
             else:
                 body, status = _delete_safety_log(operation['id'], actor, operation['etag'])
@@ -1726,7 +1755,9 @@ def register_route_backend_safety(bp):
         and returns a suggested review for the editor's unsaved draft; nothing is stored.
         ``triage`` takes up to 10 violations and stores each suggestion on its violation for a
         reviewer to apply or dismiss. A violation held by a pending remediation request or a
-        warning being sent is skipped. The model never warns, suspends or blocks anyone: those
+        warning being sent is skipped. Violations of different users are never sent to the model
+        together; those not reached in the request's time are answered ``deferred``, to be sent
+        again. The model never warns, suspends or blocks anyone: those
         happen only when a reviewer applies a suggestion through the normal save, and a
         suspension or block still needs a second reviewer. Answers are never cached.
         """

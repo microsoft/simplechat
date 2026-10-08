@@ -30,6 +30,7 @@ from functions_review_assist import (
     SUGGESTION_STATUS_APPLIED,
     SUGGESTION_STATUS_DISMISSED,
     mark_suggestion,
+    review_record_fingerprint,
     stored_suggestion,
     suggestion_problem,
     suggestion_was_edited,
@@ -268,15 +269,43 @@ def review_user_label(user_id, users):
     return entry.get('display_name') or entry.get('email') or user_id or ''
 
 
-def cap_review_ids(ids):
-    """The ids a "select all matching" may act on, capped, and whether the cap applied."""
+def cap_review_ids(ids, owners=None):
+    """The ids a "select all matching" may act on, capped, and whether the cap applied.
+
+    ``owners`` maps a record id to the user the record is about. When given, the result carries
+    it for the returned ids, so the Review center can send each user's records to the AI
+    assistant together.
+    """
     unique = [item for item in dict.fromkeys(ids or []) if isinstance(item, str) and item]
-    return {
+    result = {
         'ids': unique[:REVIEW_IDS_CAP],
         'total': len(unique),
         'capped': len(unique) > REVIEW_IDS_CAP,
         'cap': REVIEW_IDS_CAP,
     }
+    if owners is not None:
+        result['owners'] = {
+            record_id: owners[record_id] for record_id in result['ids']
+            if isinstance(owners.get(record_id), str) and owners[record_id]
+        }
+    return result
+
+
+def review_version_matches(section, record, expected_etag, expected_fingerprint=None):
+    """Whether a save that read a record at ``expected_etag`` may still be made on this read of it.
+
+    Without ``expected_etag`` there is nothing to check. Otherwise the record must be the version
+    the save read, or one whose reviewable fields -- and for a violation, its request and warning
+    state -- still match ``expected_fingerprint``: then only an AI suggestion or other bookkeeping
+    was written since, and the save goes ahead on this read, written conditionally on its version.
+    """
+    if not expected_etag or record.get('_etag') == expected_etag:
+        return True
+    return (
+        isinstance(expected_fingerprint, str)
+        and bool(expected_fingerprint)
+        and review_record_fingerprint(section, record) == expected_fingerprint
+    )
 
 
 def _operation_error(index, record_id, op, message):
@@ -454,6 +483,31 @@ REVIEW_ASSISTANT_OFF_MESSAGE = (
     'AI assist for the Review center is turned off in Admin Settings, so AI suggestions cannot be applied '
     'or dismissed.'
 )
+REVIEW_SUGGESTION_OPERATION_FAILED_MESSAGE = (
+    'This record could not be read or written, so nothing was changed for it. Try again.'
+)
+
+
+def _suggestion_operation_failed(section, record_id, step, exc):
+    """Log a suggestion operation's unexpected failure, and fail that one operation."""
+    log_event(
+        '[REVIEW_ASSIST] An AI suggestion operation failed.',
+        extra={'section': section, 'record_id': record_id, 'step': step, 'error_type': type(exc).__name__},
+        level=logging.ERROR,
+    )
+    return {'error': REVIEW_SUGGESTION_OPERATION_FAILED_MESSAGE, 'code': REVIEW_OPERATION_FAILED_CODE}, 500
+
+
+def run_suggestion_operation(section, operation, run):
+    """Run one bulk operation on an AI suggestion; an unexpected failure fails only that operation.
+
+    The operations before it in the request may already have sent a warning or created a request,
+    so the rest of the request still runs and every result is reported.
+    """
+    try:
+        return run()
+    except Exception as exc:
+        return _suggestion_operation_failed(section, operation.get('id'), operation.get('op'), exc)
 
 
 def refuse_suggestion_operations_while_off(operations, assistant_enabled):
@@ -519,19 +573,25 @@ def apply_suggested_review(container, section, record_id, suggestion_id, changes
     match its record, and unless the reviewer sent an etag of their own, the save is conditional
     on the version that was checked, so the record cannot change between the check and the save.
     Once saved, the suggestion is marked applied, with whether the reviewer edited it first, and
-    the decision is credited to the suggestion in the audit log. Returns ``(body, status)``.
+    the decision is credited to the suggestion in the audit log. Returns ``(body, status)``; a
+    record that can't be read fails with ``operation_failed``.
     """
     try:
         record = _read_review_record(container, record_id)
     except cosmos_exceptions.CosmosResourceNotFoundError:
         return {'error': 'The record was not found.', 'code': REVIEW_NOT_FOUND_CODE}, 404
+    except Exception as exc:
+        return _suggestion_operation_failed(section, record_id, 'read', exc)
     problem = suggestion_problem(section, record, suggestion_id)
     if problem:
         code, message = problem
         return {'error': message, 'code': code}, 409
     checked = dict(changes or {})
     if not checked.get('etag') and record.get('_etag'):
+        # Pinned to the version just checked; only an AI suggestion or other bookkeeping written
+        # in between, which leaves the fingerprint as it is, lets the save go ahead.
         checked['etag'] = record.get('_etag')
+        checked['fingerprint'] = review_record_fingerprint(section, record)
     body, status = run_update(checked)
     if not 200 <= int(status) < 300:
         return body, status
@@ -566,11 +626,14 @@ def dismiss_review_suggestion(container, section, record_id, suggestion_id, acto
 
     Nothing about the review changes. ``expected_etag``, when sent, must match the stored record,
     and is then honoured strictly: a record that changes before the write is refused, not merged.
+    A record that can't be read fails with ``operation_failed``.
     """
     try:
         record = _read_review_record(container, record_id)
     except cosmos_exceptions.CosmosResourceNotFoundError:
         return {'error': 'The record was not found.', 'code': REVIEW_NOT_FOUND_CODE}, 404
+    except Exception as exc:
+        return _suggestion_operation_failed(section, record_id, 'read', exc)
     if expected_etag and record.get('_etag') != expected_etag:
         return {'error': REVIEW_SUGGESTION_RECORD_CHANGED_MESSAGE, 'code': REVIEW_RECORD_CHANGED_CODE}, 409
     problem = suggestion_problem(section, record, suggestion_id, allow_stale=True)
