@@ -204,6 +204,68 @@ def test_the_phase_6c_saved_workflow_run_wait_is_refused(replay):
     require(_codes(refusals) == ["replay_wait_unsupported"], str(refusals))
 
 
+def _waited_run_plan(**extra):
+    """A plan as Phase 6c stores it: one workflow_run step that waits, read by a compose step."""
+    summarize = _step("compose", 2, instruction="Summarize the workflow's results.")
+    summarize["depends_on"] = ["s1"]
+    return _plan(_step("workflow_run", 1, workflow="w1"), summarize, **extra)
+
+
+def test_a_waited_workflow_run_step_is_refused_as_a_wait_when_frozen(replay):
+    label = replay.capability_label("workflow_run")
+    # Phase 6c's stored shape: plan["workflow_run_waits"] = {step_id: {"version": 1, "workflow": handle}}.
+    marker = {"s1": {"version": 1, "workflow": "w1"}}
+    record = _record(plan=_waited_run_plan(workflow_run_waits=marker))
+    freeze = replay.freeze_source_run(record, _conversation(), OWNER, REPLAY_SETTINGS)
+    refusals = freeze["refusals"]
+    require(_codes(refusals) == ["replay_wait_unsupported"], f"One refusal for the waited step: {refusals}")
+    require(refusals[0]["step_number"] == 1 and refusals[0]["step_id"] == "s1", str(refusals))
+    require(refusals[0]["capability_id"] == "workflow_run", str(refusals))
+    require(
+        refusals[0]["message"]
+        == f"Step 1 ({label}) waits for a saved workflow run to finish, which a repeated run can't do yet.",
+        refusals[0]["message"],
+    )
+    require("workflow_run_waits" not in freeze["frozen_plan"], "The frozen plan never carries the marker.")
+    preview = replay.build_plan_replay_preview(freeze, REPLAY_SETTINGS)
+    require(preview["eligible"] is False and preview["refusals"] == refusals, str(preview))
+
+    unmarked = replay.freeze_source_run(_record(plan=_waited_run_plan()), _conversation(), OWNER, REPLAY_SETTINGS)
+    require(_codes(unmarked["refusals"]) == ["capability_not_replayable"],
+            f"Without the marker the run step is refused as a workflow step: {unmarked['refusals']}")
+
+
+@pytest.mark.parametrize("marker", [
+    {"missing": {"version": 1, "workflow": "w1"}},
+    {"s2": {"version": 1, "workflow": "w1"}},
+    ["s1"],
+    "s1",
+    True,
+])
+def test_a_wait_marker_that_matches_no_running_step_refuses_the_whole_plan(replay, marker):
+    switched_off = _step("workflow_run", 2, workflow="w1")
+    switched_off["enabled"] = False
+    plan = _plan(_step("compose", 1, instruction="Summarize the notes."), switched_off, workflow_run_waits=marker)
+    freeze = replay.freeze_source_run(_record(plan=plan), _conversation(), OWNER, REPLAY_SETTINGS)
+    refusals = freeze["refusals"]
+    require(_codes(refusals) == ["replay_wait_unsupported"], f"{marker!r}: {refusals}")
+    require(refusals[0]["step_number"] == 0 and refusals[0]["step_id"] == "", str(refusals))
+    require(
+        refusals[0]["message"]
+        == "This plan waits for a saved workflow run to finish, which a repeated run can't do yet.",
+        refusals[0]["message"],
+    )
+
+
+@pytest.mark.parametrize("marker", [None, {}])
+def test_an_absent_or_empty_wait_marker_changes_nothing(replay, marker):
+    baseline = replay.freeze_source_run(_record(), _conversation(), OWNER, REPLAY_SETTINGS)
+    record = _record(plan=_plan(_step("compose", instruction="Summarize the notes."), workflow_run_waits=marker))
+    freeze = replay.freeze_source_run(record, _conversation(), OWNER, REPLAY_SETTINGS)
+    require(freeze["refusals"] == [], f"{marker!r}: {freeze['refusals']}")
+    require(freeze["plan_sha256"] == baseline["plan_sha256"], "An empty marker leaves the frozen plan unchanged.")
+
+
 def test_a_merge_that_feeds_render_file_is_refused_naming_render_file(replay):
     label = replay.capability_label("render_file")
     plan = _plan(

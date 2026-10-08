@@ -71,6 +71,10 @@ WAIT_CAPABILITIES = frozenset({'tabular_analyze', 'render_file'})
 # Phase 6c in-plan wait kind. Mirrors SAVED_WORKFLOW_RUN_WAIT_KIND in
 # functions_orchestration_workflow_run_wait.py, which is not on this base yet.
 SAVED_WORKFLOW_RUN_WAIT_KIND = 'saved_workflow_run'
+# Phase 6c stores which workflow_run step waits as plan['workflow_run_waits'] =
+# {step_id: {'version': 1, 'workflow': handle}}. Contract normalization drops the key, so it is
+# read from the source run before the plan is frozen.
+WORKFLOW_RUN_WAITS_PLAN_KEY = 'workflow_run_waits'
 REFUSED_WAIT_KINDS = frozenset({
     'native_tabular_compute', 'orchestration_output', 'orchestration_result',
     SAVED_WORKFLOW_RUN_WAIT_KIND,
@@ -188,15 +192,19 @@ def _refusal(code, number, step, message):
     }
 
 
-def classify_plan_steps(plan):
+def classify_plan_steps(plan, workflow_run_waits=None):
     """Return every refusal for ``plan``; an empty list means every enabled step may replay.
 
     One function serves the freeze and the run-time preflight, so both apply the same rules.
+    ``workflow_run_waits`` is the source run's Phase 6c wait marker, read before normalization.
     """
     plan = plan if isinstance(plan, dict) else {}
     steps = plan.get('steps') if isinstance(plan.get('steps'), list) else []
     refusals = []
     enabled = [step for step in steps if isinstance(step, dict) and step.get('enabled', True)]
+    # Any marker that is present fails closed: an unreadable one refuses the whole plan below.
+    waited_step_ids = set(workflow_run_waits) if isinstance(workflow_run_waits, dict) else set()
+    waited_matched = False
     if not enabled:
         refusals.append(_refusal('capability_unavailable', 0, {}, 'This plan has no steps to repeat.'))
     if len(enabled) > PLAN_REPLAY_MAX_STEPS:
@@ -210,7 +218,13 @@ def classify_plan_steps(plan):
         label = capability_label(capability_id)
         prefix = f'Step {number} ({label})'
         arguments = step.get('arguments') if isinstance(step.get('arguments'), dict) else {}
-        if _declared_wait_kinds(step):
+        if isinstance(step.get('step_id'), str) and step['step_id'] in waited_step_ids:
+            waited_matched = True
+            refusals.append(_refusal(
+                'replay_wait_unsupported', number, step,
+                f'{prefix} waits for a saved workflow run to finish, which a repeated run can\'t do yet.',
+            ))
+        elif _declared_wait_kinds(step):
             refusals.append(_refusal(
                 'replay_wait_unsupported', number, step,
                 f'{prefix} waits for work to finish after the plan stops, which a repeated run can\'t do yet.',
@@ -242,6 +256,11 @@ def classify_plan_steps(plan):
                 'capability_not_replayable', number, step,
                 f'{prefix} offers an image for you to accept, which a repeated run can\'t do.',
             ))
+    if workflow_run_waits not in (None, {}) and not waited_matched:
+        refusals.append(_refusal(
+            'replay_wait_unsupported', 0, {},
+            'This plan waits for a saved workflow run to finish, which a repeated run can\'t do yet.',
+        ))
     # Every compiled plan declares at least the implicit answer. Only a file waits on render_file;
     # any other kind outside the answer, image and visuals is refused too.
     deliverables = plan.get('deliverables') if isinstance(plan.get('deliverables'), list) else []
@@ -552,8 +571,10 @@ def freeze_source_run(record, conversation, user_id, settings):
     if not request:
         raise PlanReplaySaveError('source_run_not_eligible')
     frozen_seeds = build_frozen_seeds(seeds)
+    # Read Phase 6c's wait marker before normalization drops it from the frozen plan.
+    workflow_run_waits = record['plan'].get(WORKFLOW_RUN_WAITS_PLAN_KEY)
     frozen_plan = normalize_plan_contract(record['plan'])
-    refusals = classify_plan_steps(frozen_plan)
+    refusals = classify_plan_steps(frozen_plan, workflow_run_waits)
     if not refusals:
         try:
             authorize_replay_capabilities(user_id, frozen_plan, settings)

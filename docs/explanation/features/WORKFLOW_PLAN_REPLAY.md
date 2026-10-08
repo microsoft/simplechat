@@ -154,7 +154,7 @@ Refused, with the per-step reason shown on the card:
 
 | Class | Capabilities | Code |
 | --- | --- | --- |
-| Asynchronous waits | `tabular_analyze`, `render_file`, any step declaring a wait kind (`native_tabular_compute`, `orchestration_output`, `orchestration_result`, and Phase 6c's `saved_workflow_run`), and a plan that delivers a `file` | `replay_wait_unsupported` |
+| Asynchronous waits | `tabular_analyze`, `render_file`, any step declaring a wait kind (`native_tabular_compute`, `orchestration_output`, `orchestration_result`, and Phase 6c's `saved_workflow_run`), a `workflow_run` step that Phase 6c marked as waiting, and a plan that delivers a `file` | `replay_wait_unsupported` |
 | Needs the caller's roles | `web_search` | `role_required` |
 | Workflow capabilities | `workflow_propose`, `workflow_run`, `workflow_results`, `workflow_handoff` | `capability_not_replayable` |
 | External effects | `action_invoke`, `agent_invoke` (and `workflow_run`) | `capability_not_replayable` |
@@ -167,8 +167,20 @@ Refused, with the per-step reason shown on the card:
 | Size | No enabled steps, or more than 8 | `capability_unavailable`, `replay_budget_exceeded` |
 
 Phase 6c's wait kind isn't on this base yet, so its value is mirrored as
-`SAVED_WORKFLOW_RUN_WAIT_KIND` in `functions_workflow_plan_replay.py`.
+`SAVED_WORKFLOW_RUN_WAIT_KIND` in `functions_workflow_plan_replay.py`. The real
+constant is `functions_orchestration_workflow_run_wait.SAVED_WORKFLOW_RUN_WAIT_KIND`.
 `workflow_run` is refused regardless, which already covers it.
+
+Phase 6c records which `workflow_run` step waits in the source plan as
+`plan['workflow_run_waits'] = {step_id: {'version': 1, 'workflow': handle}}`.
+Freezing reads that marker before normalization drops it, so the frozen plan
+never carries it:
+
+- Each enabled step the marker names is refused once as `replay_wait_unsupported`
+  ("Step N (label) waits for a saved workflow run to finish…"), in place of
+  `capability_not_replayable`.
+- A marker that names no enabled step, or that can't be read, refuses the whole
+  plan with the same code. It fails closed.
 
 Microsoft 365 is unreachable in this version. Mail and calendar steps reach
 Microsoft 365 only through `action_invoke`, which is refused.
@@ -444,7 +456,7 @@ builds and run-history redaction against a golden captured from base
 | Test | Covers |
 | --- | --- |
 | `functional_tests/test_workflow_plan_replay_off_golden.py` | Off-golden against the base, the fixed reason while off, default off and the save-path coercion. |
-| `functional_tests/test_workflow_plan_replay_freeze.py` | Allowlist reasons and every refused class, wait kinds including Phase 6c's, freeze eligibility, the hash, edit invalidation, per-run setting, capability, role, question and source checks, creator-only actor, group refusal, manual and scheduled parity. |
+| `functional_tests/test_workflow_plan_replay_freeze.py` | Allowlist reasons and every refused class, wait kinds including Phase 6c's, Phase 6c's stored wait marker (matched, unmatched and unreadable), freeze eligibility, the hash, edit invalidation, per-run setting, capability, role, question and source checks, creator-only actor, group refusal, manual and scheduled parity. |
 | `functional_tests/test_workflow_plan_replay_execution.py` | End-to-end replay under the headless harness with the model and search stubbed, the conversation binding and later sharing, creator-only runs, deleted or changed workflows, cancellation, budget and lease loss, durable restart, adoption and reconciliation, typed output and redaction, relative time. |
 | `functional_tests/test_workflow_plan_replay_routes.py` | Preview disclosure, paused save, hash binding, settings, cadence floor, shared chats, refused steps, group access lost at save, quota and conflicts, read-only saves, the chat-route 409s. |
 | `functional_tests/test_workflow_plan_replay_boundaries.py` | Import order and boundaries, scheduler exclusion. |
