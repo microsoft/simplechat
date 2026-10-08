@@ -1162,10 +1162,9 @@ def _begin_wait(step, context, *, settings, user_id, producer, workflow, outcome
         kind, posts = WAIT_OUTCOME_POSTED, True
     elif decision in (PLAN_WAIT_ENDED, PLAN_WAIT_CONSUMED):
         kind, posts = WAIT_OUTCOME_ENDED, False
-    elif outcome.get('chat_delivery') is True:
-        kind, posts = WAIT_OUTCOME_TIMEOUT, True
     else:
-        kind, posts = WAIT_OUTCOME_ENDED, False
+        # The run is still running and was never waited for; only its own post-back, if any, reports it.
+        kind, posts = WAIT_OUTCOME_TIMEOUT, outcome.get('chat_delivery') is True
     outcome['wait'] = _wait_record(kind, run_id=outcome.get('run_id'), run_status=outcome['status'], posts_to_chat=posts)
     return None
 
