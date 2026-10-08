@@ -113,8 +113,18 @@ screening refusal returns its public message.
 kind, so a list read from one family of routes is never downloaded through the other.
 The list is requested only when the thread can hold such a document: a reply whose tool
 calls include an upload action, or an agent's reply that finished in this tab, whose
-tool calls are not loaded until the conversation is read again. It is read again after
-each new reply.
+tool calls are not loaded until the conversation is read again.
+
+It is read again whenever the replies the thread shows change: a reply arrives or is
+deleted, another attempt of an answer is shown, or a reply is masked or unmasked. A
+reply count would miss the last two, because they leave the count unchanged. Only
+documents whose reply the thread shows, and does not fully mask, are listed or counted,
+so a document from an attempt that is no longer shown never lingers with a **Show in
+conversation** that leads nowhere. A shared conversation's list is read only once the
+reader has joined: while an invitation can still be accepted the server would refuse
+it, so it is not requested, and joining reads it straight away. A refused or failed
+read is not kept, so the drawer asks again the next time it opens, and a conversation
+opened again after another one is read afresh.
 
 ### One Generated section, counted by the Documents button
 
@@ -161,7 +171,8 @@ No setting, deployment or data change is needed.
   It covers the reported CSV with its download route, each format a plan can render
   with its label, every status, live run state over the saved snapshot, exports,
   Analyze files, background exports, approval-held files, masked and replaced replies,
-  saved Analyze gating, de-duplication, ordering with agent documents, the request gate
+  saved Analyze gating, de-duplication, ordering with agent documents, the request gate,
+  what makes the agent-document list read again, which agent documents stay listed,
   and the badge count.
 - `functional_tests/test_personal_conversation_generated_documents.py` runs the real
   route helper against a fake container with the real message, deletion and
@@ -174,9 +185,20 @@ No setting, deployment or data change is needed.
   workbook, an agent's Word brief and an Analyze summary in conversation order. It
   downloads the CSV and the brief through their routes and previews the summary. It
   scrolls to the reply that produced a file, keeps the empty state, and checks that the
-  header badge counts generated files while sharing one request with the drawer.
+  header badge counts generated files while sharing one request with the drawer. A
+  background export that finishes while the conversation is open becomes downloadable
+  in the drawer. Showing another attempt or masking a reply re-reads the agent documents
+  and hides what the thread no longer shows; a refused list is asked again when the
+  drawer reopens; and returning to a conversation reads its list afresh.
 - `ui_tests/test_v2_collaboration_ux.py` now gives its reply the upload citations its
-  documents come from, which the shared list requires.
+  documents come from, which the shared list requires. It also checks that an invited
+  reader's drawer makes no request the server would refuse, and that joining lists the
+  documents without reopening the drawer.
+
+These regression tests were checked against the code before the fix: the attempt and
+masking, refused-list and invitation tests fail on the earlier version of the shared
+store, and the background export test fails without the export card's report to the
+drawer.
 
 The route policy suites, the existing drawer, media and shared generated-document
 tests, the V2 type check and production build, and the related V2 UI suites (planning
@@ -197,9 +219,9 @@ output publication) pass.
 - The classic chat page is unchanged.
 - A background export's progress reaches the drawer through its card in the thread,
   which polls the run while the conversation is open.
-- Whether an agent document can be downloaded is decided when the list is read. A change
-  to the download settings shows after the next reply or when the conversation is
-  reopened, and the download itself always rechecks.
+- Whether an agent document can be downloaded is decided when the list is read, so a
+  change to the download settings shows the next time it is read, for example when the
+  conversation is opened again. The download itself always rechecks.
 
 ## Related
 

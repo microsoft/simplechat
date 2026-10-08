@@ -130,8 +130,9 @@ Since 0.261.302 personal conversations list these documents too, through
 `/api/conversations/<id>/generated-documents` and its `/download` route, which require the
 conversation's owner and apply the same reader and download rules. The **Generated** section also
 lists every file a reply produced, such as a CSV a plan rendered, an export or an Analyze summary,
-with its status, and the list is only requested for a thread whose replies ran an upload action or
-came from an agent. See the
+with its status. The list is only requested for a thread whose replies ran an upload action or came
+from an agent, and in a shared conversation only once the reader has joined; joining reads it
+straight away. See the
 [Documents drawer generated files fix](../fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX.md).
 
 ### Media

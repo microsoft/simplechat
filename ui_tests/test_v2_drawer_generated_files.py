@@ -10,10 +10,13 @@ reported case), files that are still rendering or failed, and an Analyze summary
 document an agent created with a SimpleChat upload action, all in conversation order. Ready files
 download through their authorized routes; a file that is not ready shows its status and offers no
 download. A Markdown summary opens in a preview, and Show in conversation scrolls to the reply that
-produced the file. A conversation that produced nothing still says so, and the chat header's
-Documents badge counts generated files alongside the documents answers used. Only HTTP boundaries
-are mocked; the real ConversationDrawer, ChatPage, MessageList and stores run in Chromium with
-production CSS.
+produced the file. A background export that finishes while the conversation is open becomes
+downloadable in the drawer. Agent documents follow the thread: showing another attempt of an
+answer or masking a reply re-reads them and hides what the thread no longer shows, and a refused
+list is asked again when the drawer reopens. A conversation that produced nothing still says so,
+and the chat header's Documents badge counts generated files alongside the documents answers used.
+Only HTTP boundaries are mocked; the real ConversationDrawer, ChatPage, MessageList and stores run
+in Chromium with production CSS.
 
 Build: npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
 Run: python -m pytest .\\ui_tests\\test_v2_drawer_generated_files.py -q
@@ -44,6 +47,10 @@ WORD_NAME = "Capitals brief.docx"
 SUMMARY_NAME = "capitals-summary.md"
 GENERATED = f"/api/conversations/{CONVERSATION}/generated-documents"
 RUN_ID = "run-states"
+EXPORT_RUN = "export-run-capitals"
+EXPORT_NAME = "county-seats.csv"
+RETRY_ID = "88888888-9999-aaaa-bbbb-cccccccccccc"
+RETRY_NAME = "Capitals brief, second attempt.docx"
 
 
 def message(message_id, role, content, **extra):
@@ -67,6 +74,28 @@ def output(output_id, file_name, output_format, state, **extra):
     }
 
 
+def agent_document(document_id, file_name, message_id):
+    """One entry of the server's list of documents agents created."""
+    return {
+        "document_id": document_id, "file_name": file_name, "workspace_scope": "personal", "preview": None,
+        "message_id": message_id, "created_at": "2026-10-08T14:40:00Z", "can_download": True,
+    }
+
+
+def agent_reply(message_id, document_id, file_name, **metadata):
+    """An agent's reply whose upload action created a workspace document."""
+    return message(
+        message_id, "assistant", "I saved the brief to your workspace.",
+        agent_display_name="Report Writer",
+        agent_citations=[{
+            "plugin_name": "SimpleChatPlugin", "function_name": "upload_word_document",
+            "function_result": {"success": True, "workspace_scope": "personal",
+                                "document": {"id": document_id, "file_name": file_name}},
+        }],
+        metadata=metadata,
+    )
+
+
 PLAN_OUTPUTS = [
     output("out-csv", CSV_NAME, "csv", "completed", artifact_message_id=CSV_ARTIFACT, row_count=50, size_bytes=1006),
     output("out-pdf", "Capitals briefing.pdf", "pdf", "rendering"),
@@ -87,15 +116,7 @@ def conversation_messages():
             metadata={"orchestration": {"run_id": RUN_ID, "outputs": PLAN_OUTPUTS}},
             generated_artifacts=[CSV_RECEIPT],
         ),
-        message(
-            "a-agent", "assistant", "I saved the brief to your workspace.",
-            agent_display_name="Report Writer",
-            agent_citations=[{
-                "plugin_name": "SimpleChatPlugin", "function_name": "upload_word_document",
-                "function_result": {"success": True, "workspace_scope": "personal",
-                                    "document": {"id": WORD_ID, "file_name": WORD_NAME}},
-            }],
-        ),
+        agent_reply("a-agent", WORD_ID, WORD_NAME),
         message(
             "a-summary", "assistant", "Here is a short summary.",
             metadata={"generated_analysis_artifacts": [{
@@ -113,6 +134,9 @@ class GeneratedFilesApi:
     def __init__(self, assets):
         self.assets = assets
         self.messages = conversation_messages()
+        # What the server's list of agent documents answers, and with which status.
+        self.agent_documents = [agent_document(WORD_ID, WORD_NAME, "a-agent")]
+        self.list_status = 200
         self.requests = []
         self.unexpected = []
         self.errors = []
@@ -134,10 +158,10 @@ class GeneratedFilesApi:
             return
         self.requests.append({"method": request.method, "path": path, "query": query})
         if request.method == "GET" and path == GENERATED:
-            route.fulfill(json={"documents": [{
-                "document_id": WORD_ID, "file_name": WORD_NAME, "workspace_scope": "personal", "preview": None,
-                "message_id": "a-agent", "created_at": "2026-10-08T14:40:00Z", "can_download": True,
-            }]})
+            if self.list_status != 200:
+                route.fulfill(status=self.list_status, json={"error": "Conversation not found"})
+            else:
+                route.fulfill(json={"documents": self.agent_documents})
             return
         if request.method == "GET" and path == f"{GENERATED}/{WORD_ID}/download":
             route.fulfill(status=200, body=b"PK\x03\x04docx", headers={
@@ -158,6 +182,15 @@ class GeneratedFilesApi:
             route.fulfill(json={"run": {
                 "run_id": RUN_ID, "conversation_id": CONVERSATION, "status": "running",
                 "outputs": PLAN_OUTPUTS, "generated_artifacts": [CSV_RECEIPT],
+            }})
+            return
+        if request.method == "GET" and path == f"/api/tabular/generated-output/runs/{EXPORT_RUN}":
+            route.fulfill(json={"success": True, "run": {
+                "run_id": EXPORT_RUN, "status": "completed", "background_export": True,
+                "generated_artifacts": [{
+                    "capability": "tabular", "artifact_message_id": "artifact-export", "conversation_id": CONVERSATION,
+                    "storage_scope": "chat", "file_name": EXPORT_NAME, "output_format": "csv", "row_count": 120000,
+                }],
             }})
             return
         # The rest of the chat page, for the header badge test.
@@ -250,6 +283,19 @@ def generated_region(page):
     return page.get_by_role("region", name="Generated documents")
 
 
+def is_generated_list(request):
+    return urlsplit(request.url).path == GENERATED
+
+
+def set_messages(page, messages):
+    """Replace the thread, as reading it again after an attempt switch or a mask does."""
+    page.evaluate("(messages) => window.OrchHarness.stores.chat.useChatStore.setState({ messages })", messages)
+
+
+def set_drawer(page, mode):
+    page.evaluate("(mode) => window.OrchHarness.stores.chat.useChatStore.getState().setDrawerMode(mode)", mode)
+
+
 def test_drawer_lists_every_generated_file_in_conversation_order(drawer_ui):
     page, api = drawer_ui
     mount(page, api, "ConversationDrawer", conversation_messages(), drawer="documents")
@@ -339,3 +385,107 @@ def test_header_badge_counts_generated_files(drawer_ui):
     expect(generated_region(page).locator("li")).to_have_count(5)
     expect(page.get_by_role("complementary", name="Conversation details")).to_contain_text("Census tables.pdf")
     assert len(api.calls(GENERATED)) == 1, "the badge and the drawer share one read of the agent documents"
+
+
+def test_a_background_export_that_finishes_becomes_downloadable_in_the_drawer(drawer_ui):
+    page, api = drawer_ui
+    export_reply = message(
+        "a-export", "assistant", "The county seats export is running in the background.",
+        metadata={"generated_tabular_outputs": [{
+            "capability": "tabular", "export_run_id": EXPORT_RUN, "background_export": True,
+            "output_format": "csv", "status": "running",
+        }]},
+    )
+    mount(page, api, "ConversationDrawer", [conversation_messages()[0], export_reply], drawer="documents")
+    generated = generated_region(page)
+    running = generated.locator(f"[data-generated-file='run:{EXPORT_RUN}']")
+    expect(running).to_have_attribute("data-generated-file-status", "pending")
+    expect(running).to_contain_text("Generating")
+
+    # The thread's card polls the run; the drawer follows it without the conversation being reread.
+    page.evaluate("() => window.OrchHarness.mount('mount-a', 'MessageList')")
+    finished = generated.locator("[data-generated-file='artifact:artifact-export']")
+    expect(finished).to_have_attribute("data-generated-file-status", "ready", timeout=15000)
+    expect(finished).to_contain_text(EXPORT_NAME)
+    expect(finished.get_by_role("button", name=f"Download {EXPORT_NAME}")).to_be_visible()
+    expect(running).to_have_count(0)
+    assert api.calls(f"/api/tabular/generated-output/runs/{EXPORT_RUN}"), "the card polled the run"
+
+
+def test_agent_documents_follow_the_attempt_and_masking_the_thread_shows(drawer_ui):
+    page, api = drawer_ui
+    question = conversation_messages()[0]
+    mount(page, api, "ConversationDrawer", [question, agent_reply("a-agent", WORD_ID, WORD_NAME)],
+          drawer="documents")
+    generated = generated_region(page)
+    expect(generated.locator(f"[data-generated-document='{WORD_ID}']")).to_be_visible()
+    assert len(api.calls(GENERATED)) == 1
+
+    # Another attempt of the answer is shown: as many replies as before, but a different one.
+    api.agent_documents = [agent_document(RETRY_ID, RETRY_NAME, "a-agent-2")]
+    with page.expect_request(is_generated_list):
+        set_messages(page, [question, agent_reply("a-agent-2", RETRY_ID, RETRY_NAME)])
+    expect(generated.locator(f"[data-generated-document='{RETRY_ID}']")).to_be_visible()
+    expect(generated.locator(f"[data-generated-document='{WORD_ID}']")).to_have_count(0)
+
+    # Masking the reply hides what it created at once, and the list is read again.
+    api.agent_documents = []
+    with page.expect_request(is_generated_list):
+        set_messages(page, [question, agent_reply("a-agent-2", RETRY_ID, RETRY_NAME, masked=True)])
+    expect(generated_region(page)).to_have_count(0)
+    expect(page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    assert len(api.calls(GENERATED)) == 3
+
+
+def test_a_refused_list_is_asked_again_when_the_drawer_reopens(drawer_ui):
+    page, api = drawer_ui
+    api.list_status = 404
+    question = conversation_messages()[0]
+    mount(page, api, "ConversationDrawer", [question, agent_reply("a-agent", WORD_ID, WORD_NAME)],
+          drawer="documents")
+    # The refusal is answered, and not kept as the final word on this conversation.
+    page.wait_for_function(
+        """() => {
+            const state = window.OrchHarness.stores.generatedDocuments.useGeneratedDocumentsStore.getState();
+            return state.conversationId !== null && state.requestKey === null;
+        }"""
+    )
+    assert len(api.calls(GENERATED)) == 1
+    expect(generated_region(page)).to_have_count(0)
+
+    api.list_status = 200
+    set_drawer(page, None)
+    expect(page.get_by_role("complementary", name="Conversation details")).to_have_count(0)
+    with page.expect_request(is_generated_list):
+        set_drawer(page, "documents")
+    expect(generated_region(page).locator(f"[data-generated-document='{WORD_ID}']")).to_be_visible()
+
+
+def test_returning_to_a_conversation_reads_its_documents_again(drawer_ui):
+    page, api = drawer_ui
+    question = conversation_messages()[0]
+    thread = [question, agent_reply("a-agent", WORD_ID, WORD_NAME)]
+    mount(page, api, "ConversationDrawer", thread, drawer="documents")
+    expect(generated_region(page).locator(f"[data-generated-document='{WORD_ID}']")).to_be_visible()
+
+    # Another conversation, where no agent created anything, so nothing is requested for it.
+    page.evaluate(
+        """() => window.OrchHarness.stores.chat.useChatStore.setState({
+            activeConversationId: 'other-chat',
+            messages: [{ id: 'u-other', conversation_id: 'other-chat', role: 'user', content: 'Hello' }],
+        })"""
+    )
+    expect(generated_region(page)).to_have_count(0)
+
+    # Coming back shows the list as it is now, not as it was when the conversation was left.
+    api.agent_documents = [agent_document(RETRY_ID, RETRY_NAME, "a-agent")]
+    with page.expect_request(is_generated_list):
+        page.evaluate(
+            """(spec) => window.OrchHarness.stores.chat.useChatStore.setState({
+                activeConversationId: spec.conversation, messages: spec.thread,
+            })""",
+            {"conversation": CONVERSATION, "thread": thread},
+        )
+    expect(generated_region(page).locator(f"[data-generated-document='{RETRY_ID}']")).to_be_visible()
+    expect(generated_region(page).locator(f"[data-generated-document='{WORD_ID}']")).to_have_count(0)
+    assert len(api.calls(GENERATED)) == 2

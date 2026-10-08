@@ -9,32 +9,42 @@
 // - Documents agents created with the SimpleChat upload actions, which the server lists. One copy
 //   of that list is kept here, so opening the drawer never repeats a request the badge already
 //   made, and the two cannot disagree about what the conversation produced. It is read again
-//   whenever another reply arrives, which is when an agent can have created another document,
-//   and only for a conversation that can hold one at all.
+//   whenever the replies the thread shows change, which is when an agent can have created another
+//   document or one stopped being shown, and only for a conversation that can hold one at all.
+//   A shared conversation's list is only read once the reader has joined it, because the server
+//   refuses an invitation that has not been accepted; joining reads it straight away.
 
 import { useEffect, useMemo } from 'react';
 import { create } from 'zustand';
 import { ApiError } from '../lib/apiClient';
 import {
     collectConversationGeneratedFiles,
+    generatedDocumentsThreadKey,
     mayHaveGeneratedDocuments,
+    visibleGeneratedDocuments,
     type ConversationGeneratedFile,
 } from '../lib/conversationGeneratedFiles';
 import type { ConversationKind } from '../lib/endpoints';
 import { fetchGeneratedDocuments, type GeneratedDocument } from '../lib/generatedDocuments';
 import { useChatStore } from './chatStore';
+import { useCollaborationStore } from './collaborationStore';
 import { useGeneratedExportRunStore } from './generatedExportRunStore';
 import { useOrchestrationStore } from './orchestrationStore';
 
 const EMPTY_DOCUMENTS: GeneratedDocument[] = [];
 
 interface GeneratedDocumentsState {
-    /** The request the list answers or is waiting on: conversation, kind and reply count. */
+    /**
+     * The request the list answers or is waiting on: the conversation, its kind, and what of it the
+     * server's answer depends on. Null after a failure, so the next reader to mount tries again.
+     */
     requestKey: string | null;
     conversationId: string | null;
     documents: GeneratedDocument[];
     error: string | null;
-    load: (conversationId: string, kind: ConversationKind, replyCount: number) => void;
+    load: (conversationId: string, kind: ConversationKind, threadKey: string) => void;
+    /** Forget the list, so the conversation is read afresh the next time it needs one. */
+    clear: () => void;
 }
 
 let inFlight: AbortController | null = null;
@@ -44,8 +54,8 @@ export const useGeneratedDocumentsStore = create<GeneratedDocumentsState>((set, 
     conversationId: null,
     documents: [],
     error: null,
-    load: (conversationId, kind, replyCount) => {
-        const requestKey = JSON.stringify([conversationId, kind, replyCount]);
+    load: (conversationId, kind, threadKey) => {
+        const requestKey = JSON.stringify([conversationId, kind, threadKey]);
         if (get().requestKey === requestKey) {
             return;
         }
@@ -67,11 +77,11 @@ export const useGeneratedDocumentsStore = create<GeneratedDocumentsState>((set, 
                 if (controller.signal.aborted || get().requestKey !== requestKey) {
                     return;
                 }
-                // Refused or gone, as for an invitation not yet accepted: there is nothing to list.
+                // Refused or gone: there is nothing to list. Neither answer is kept as final, so a
+                // reader who mounts later, such as the drawer being reopened, asks again.
                 const refused = cause instanceof ApiError && (cause.status === 403 || cause.status === 404);
                 set((state) => ({
-                    // Cleared so the next reader to mount, such as the drawer being reopened, tries again.
-                    requestKey: refused ? requestKey : null,
+                    requestKey: null,
                     documents: refused ? [] : state.documents,
                     error: refused
                         ? null
@@ -84,31 +94,58 @@ export const useGeneratedDocumentsStore = create<GeneratedDocumentsState>((set, 
                 }
             });
     },
+    clear: () => {
+        const state = get();
+        if (state.requestKey === null && state.conversationId === null) {
+            return;
+        }
+        inFlight?.abort();
+        inFlight = null;
+        set({ requestKey: null, conversationId: null, documents: [], error: null });
+    },
 }));
 
-/** The documents agents created in the open conversation, kept current as replies arrive. */
+/**
+ * The documents agents created in the open conversation and the thread still shows, kept current
+ * as replies arrive, attempts change or replies are masked.
+ */
 export function useConversationGeneratedDocuments(): { documents: GeneratedDocument[]; error: string | null } {
     const conversationId = useChatStore((state) => state.activeConversationId);
     const kind = useChatStore((state) => state.activeConversationKind);
     const messages = useChatStore((state) => state.messages);
-    const replyCount = useMemo(
-        () => messages.filter((message) => message.role !== 'user').length,
-        [messages],
-    );
-    const wanted = useMemo(() => mayHaveGeneratedDocuments(messages), [messages]);
+    // Who the reader is in a shared conversation, once that has loaded. Null while it has not, and
+    // while an invitation can still be accepted, because the server refuses the list until then.
+    const access = useCollaborationStore((state) => {
+        if (kind !== 'collaborative') {
+            return 'personal';
+        }
+        const conversation = state.conversation;
+        if (!conversation || conversation.id !== conversationId || conversation.can_accept_invite) {
+            return null;
+        }
+        return String(conversation.membership_status ?? 'member');
+    });
+    const threadKey = useMemo(() => generatedDocumentsThreadKey(messages), [messages]);
+    const wanted = useMemo(() => mayHaveGeneratedDocuments(messages), [messages]) && access !== null;
     const loadedFor = useGeneratedDocumentsStore((state) => state.conversationId);
     const documents = useGeneratedDocumentsStore((state) => state.documents);
     const error = useGeneratedDocumentsStore((state) => state.error);
+    const visible = useMemo(() => visibleGeneratedDocuments(documents, messages), [documents, messages]);
 
     useEffect(() => {
+        const store = useGeneratedDocumentsStore.getState();
         if (conversationId && kind && wanted) {
-            useGeneratedDocumentsStore.getState().load(conversationId, kind, replyCount);
+            store.load(conversationId, kind, `${access}:${threadKey}`);
+        } else {
+            // Nothing to list here. Forgetting the last list means a conversation opened again
+            // later is read afresh, rather than shown as it was when it was left.
+            store.clear();
         }
-    }, [conversationId, kind, wanted, replyCount]);
+    }, [conversationId, kind, wanted, access, threadKey]);
 
     const current = Boolean(conversationId && wanted && loadedFor === conversationId);
     return {
-        documents: current ? documents : EMPTY_DOCUMENTS,
+        documents: current ? visible : EMPTY_DOCUMENTS,
         error: current ? error : null,
     };
 }

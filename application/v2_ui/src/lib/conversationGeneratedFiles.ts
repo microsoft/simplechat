@@ -388,10 +388,49 @@ export function mayHaveGeneratedDocuments(messages: readonly ChatMessage[]): boo
 }
 
 /**
+ * What the server's list of agent documents depends on in the thread, as one comparable key.
+ *
+ * The server reads the replies the thread shows and skips a fully masked one, so the list is
+ * read again whenever those change: a reply arrives or is deleted, another attempt of an answer
+ * is shown, or a reply is masked or unmasked. Counting replies is not enough, because showing
+ * another attempt or masking a reply leaves the count unchanged. A person's own message cannot
+ * hold such a document, so sending one does not cost a request.
+ */
+export function generatedDocumentsThreadKey(messages: readonly ChatMessage[]): string {
+    return JSON.stringify(
+        messages
+            .filter((message) => message?.id && message.role !== 'user')
+            .map((message) => [message.id, readMaskState(message).fullyMasked]),
+    );
+}
+
+/**
+ * The agent documents whose reply the thread shows.
+ *
+ * The server's list describes the thread as it was read, so it can briefly describe a thread the
+ * reader is no longer looking at, such as another attempt of an answer or a reply just masked.
+ * A document is kept only while its reply is shown and not fully masked, which is also what
+ * Show in conversation needs to scroll to.
+ */
+export function visibleGeneratedDocuments(
+    documents: readonly GeneratedDocument[],
+    messages: readonly ChatMessage[],
+): GeneratedDocument[] {
+    const shown = new Set(
+        messages
+            .filter((message) => message?.id && !isSupersededByWorkflowReply(message)
+                && !readMaskState(message).fullyMasked)
+            .map((message) => message.id),
+    );
+    return documents.filter((document) => shown.has(text(document?.message_id)));
+}
+
+/**
  * Files the replies produced and documents agents created, as one list in conversation order.
  *
  * A file saved to a workspace and a document an agent created are the same thing when their
- * document ids agree, so it is listed once.
+ * document ids agree, so it is listed once. Documents are expected to have been narrowed to the
+ * replies the thread shows (`visibleGeneratedDocuments`).
  */
 export function mergeGeneratedEntries(
     files: readonly ConversationGeneratedFile[],

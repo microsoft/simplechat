@@ -6,8 +6,9 @@
 // format an orchestration plan can render, the screenshot case of a finished CSV, legacy
 // tabular, Analyze and background exports, and approval-withheld files. Each file carries its
 // status, and the live run state takes precedence. The section hides what the thread hides,
-// lists each file once in conversation order, gates the agent-document request, and counts the
-// header badge without double counting.
+// lists each file once in conversation order, gates the agent-document request and re-reads it
+// whenever the replies the thread shows change, lists only agent documents whose reply is shown,
+// and counts the header badge without double counting.
 
 import assert from 'node:assert/strict';
 import './test_support/tsResolve.mjs';
@@ -24,10 +25,12 @@ try {
     const {
         collectConversationGeneratedFiles,
         countConversationDocuments,
+        generatedDocumentsThreadKey,
         generatedFileDetails,
         mayHaveGeneratedDocuments,
         mergeGeneratedEntries,
         messageGeneratedFiles,
+        visibleGeneratedDocuments,
     } = await import('../application/v2_ui/src/lib/conversationGeneratedFiles.ts');
     const { artifactDownloadPath, normalizeGeneratedArtifact } = await import(
         '../application/v2_ui/src/lib/generatedArtifacts.ts'
@@ -241,6 +244,46 @@ try {
     assert.equal(mayHaveGeneratedDocuments([reply('a-1', {}, { agent_display_name: 'Analyst', agent_citations: [] })]), false);
     assert.equal(mayHaveGeneratedDocuments([reply('a-1')]), false);
     assert.equal(mayHaveGeneratedDocuments([{ id: 'u-1', role: 'user', content: '', agent_citations: [upload] }]), false);
+
+    // The agent-document list is read again whenever the replies the thread shows change, which a
+    // reply count misses: showing another attempt of an answer, or masking a reply, keeps the count.
+    const asked = { id: 'u-1', conversation_id: CONVERSATION, role: 'user', content: 'Write the brief' };
+    const shown = [asked, reply('a-1'), reply('a-2')];
+    const threadKey = generatedDocumentsThreadKey(shown);
+    assert.notEqual(generatedDocumentsThreadKey([asked, reply('a-1'), reply('a-2b')]), threadKey, 'another attempt shown');
+    assert.notEqual(generatedDocumentsThreadKey([asked, reply('a-1'), reply('a-2', { masked: true })]), threadKey,
+        'a reply fully masked');
+    assert.notEqual(generatedDocumentsThreadKey([...shown, reply('a-3')]), threadKey, 'a new reply');
+    assert.notEqual(generatedDocumentsThreadKey([asked, reply('a-2')]), threadKey, 'a reply deleted');
+    assert.equal(generatedDocumentsThreadKey([...shown, { ...asked, id: 'u-2' }]), threadKey,
+        "a person's own message cannot hold an agent document, so it costs no request");
+    assert.equal(generatedDocumentsThreadKey([asked, reply('a-1'), { ...reply('a-2'), content: 'Edited.' }]), threadKey);
+
+    // Only documents whose reply the thread still shows are listed and counted.
+    const agentDocument = (documentId, messageId) => ({
+        document_id: documentId, file_name: `${documentId}.docx`, workspace_scope: 'personal', preview: null,
+        message_id: messageId, created_at: '', can_download: true,
+    });
+    const listed = [
+        agentDocument('doc-shown', 'a-1'),
+        agentDocument('doc-other-attempt', 'a-2'),
+        agentDocument('doc-masked', 'a-masked'),
+        agentDocument('doc-replaced', 'a-replaced'),
+        agentDocument('doc-unattributed', ''),
+    ];
+    assert.deepEqual(visibleGeneratedDocuments(listed, [
+        asked,
+        reply('a-1'),
+        reply('a-masked', { masked: true }),
+        reply('a-replaced', { superseded_by_workflow_reply: true }),
+        reply('a-partly-masked', { masked_ranges: [{ start: 0, end: 2 }] }),
+    ]).map((document) => document.document_id), ['doc-shown']);
+    assert.deepEqual(
+        visibleGeneratedDocuments([agentDocument('doc-partial', 'a-partly-masked')], [
+            reply('a-partly-masked', { masked_ranges: [{ start: 0, end: 2 }] }),
+        ]).map((document) => document.document_id),
+        ['doc-partial'], 'masking part of a reply keeps its documents, as the server does',
+    );
 
     // Files and agent documents share one list in conversation order; a shared document id is listed once.
     const brief = {
