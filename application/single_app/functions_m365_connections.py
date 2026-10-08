@@ -510,6 +510,14 @@ def _load_workflow_key(settings, version=None, name=None, *, create_missing=Fals
     readiness = workflow_connection_readiness(settings)
     if not readiness["available"]:
         raise M365ConnectionError("m365_key_vault_required", readiness["message"])
+    # The name becomes the request's hostname, so validate the exact string used here: a valid
+    # Key Vault name can only address a vault in the configured Key Vault domain.
+    vault_name = settings["key_vault_name"].strip()
+    if not re.fullmatch(_KEY_VAULT_NAME_PATTERN, vault_name):
+        raise M365ConnectionError(
+            "m365_key_vault_required",
+            f"The Key Vault name is not valid. An administrator can correct it in {_KEY_VAULT_SETTINGS_LOCATION}.",
+        )
     configured_name = workflow_key_secret_name()
     if name is not None and name != configured_name:
         raise M365ConnectionError(
@@ -518,7 +526,7 @@ def _load_workflow_key(settings, version=None, name=None, *, create_missing=Fals
             "Reconnect Microsoft 365 for workflows.",
         )
     client = SecretClient(
-        vault_url=f"https://{settings['key_vault_name'].strip()}{app_config.KEY_VAULT_DOMAIN}",
+        vault_url=f"https://{vault_name}{app_config.KEY_VAULT_DOMAIN}",
         credential=get_keyvault_credential(settings=settings),
     )
     created = False

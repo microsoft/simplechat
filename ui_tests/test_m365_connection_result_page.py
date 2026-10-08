@@ -185,10 +185,11 @@ def test_popup_reports_a_failure_with_its_code_and_message_as_text(result_ui):
 def test_failure_without_an_opener_stays_readable_with_a_link_back(result_ui, viewport):
     page, fixture = result_ui
     page.set_viewport_size(viewport)
-    _status, fixture.result_html = render_result_page(
+    status, fixture.result_html = render_result_page(
         kind="chat", outcome="failed", completion="auto", status=400,
         code="m365_auth_state_invalid", message=UNSAFE_MESSAGE, continue_url=CLASSIC_CHAT_CONNECTION_URL,
     )
+    assert status == 400
     page.goto(f"{ORIGIN}/getAToken?code=ui&state=fixture")
     expect(page.get_by_role("heading", name="Microsoft 365 was not connected")).to_be_visible()
     expect(page.get_by_role("status")).to_have_text(UNSAFE_MESSAGE)
@@ -206,9 +207,10 @@ def test_failure_without_an_opener_stays_readable_with_a_link_back(result_ui, vi
 
 def test_full_page_success_continues_to_the_fixed_settings_page(result_ui):
     page, fixture = result_ui
-    _status, fixture.result_html = render_result_page(
+    status, fixture.result_html = render_result_page(
         kind="workflow", outcome="connected", completion="auto", continue_url=CLASSIC_WORKFLOW_CONNECTED_URL,
     )
+    assert status == 200
     page.goto(f"{ORIGIN}/getAToken?code=ui&state=fixture")
     expect(page.get_by_role("heading", name="Profile fixture")).to_be_visible()
     returned = urlsplit(page.url)
@@ -219,9 +221,10 @@ def test_full_page_success_continues_to_the_fixed_settings_page(result_ui):
 
 def test_popup_that_lost_its_opener_offers_to_close_instead_of_navigating(result_ui):
     page, fixture = result_ui
-    _status, fixture.result_html = render_result_page(
+    status, fixture.result_html = render_result_page(
         kind="chat", outcome="connected", completion="popup", continue_url=CLASSIC_CHAT_CONNECTION_URL,
     )
+    assert status == 200
     page.goto(f"{ORIGIN}/getAToken?code=ui&state=fixture")
     expect(page.get_by_role("heading", name="Microsoft 365 is connected")).to_be_visible()
     expect(page.get_by_role("button", name="Close window")).to_be_visible()

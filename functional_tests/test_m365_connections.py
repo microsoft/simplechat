@@ -1099,6 +1099,22 @@ class M365ConnectionTests(unittest.TestCase):
         self.assertEqual(pinned.name, "workflow-token-key")
         self.assertEqual(renamed.exception.code, "m365_key_unavailable")
 
+    def test_key_vault_hostname_comes_only_from_a_valid_vault_name(self):
+        # Readiness rejects these names too; bypassing it proves the hostname check stands alone.
+        for vault_name in ("evil.example.com/x", "test-vault.evil.example", "user@test-vault", "test-vault:8443"):
+            with self.subTest(vault_name=vault_name):
+                settings = {"enable_key_vault_secret_storage": True, "key_vault_name": vault_name}
+                with patch.dict(sys.modules, self.key_vault_modules(settings)), patch.dict(
+                    os.environ, {connections.KEY_SECRET_ENV: ""},
+                ), patch.object(
+                    connections, "workflow_connection_readiness",
+                    return_value={"available": True, "reason": None, "message": ""},
+                ), patch("azure.keyvault.secrets.SecretClient") as constructor:
+                    with self.assertRaises(connections.M365ConnectionError) as raised:
+                        connections._default_key_provider()
+                constructor.assert_not_called()
+                self.assertEqual(raised.exception.code, "m365_key_vault_required")
+
     def test_missing_key_is_created_once_when_encrypting_and_never_when_decrypting(self):
         from azure.core.exceptions import ResourceNotFoundError
         client = Mock()
