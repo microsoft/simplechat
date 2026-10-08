@@ -39,7 +39,7 @@ sys.path.insert(0, str(TESTS))
 
 # The shared harness sets the application path and doubles; its fixtures run here too.
 from test_orchestration_m365_actions import (  # noqa: E402,F401
-    ACTION_REF, CONVERSATION, REQUEST_KEY, TENANT, USER, env, module, request_record, run_step, world,
+    ACTION_REF, CONVERSATION, TENANT, USER, env, module, request_record, run_step, world,
 )
 from test_support.m365 import CosmosContainer  # noqa: E402
 
