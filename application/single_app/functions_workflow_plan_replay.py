@@ -672,7 +672,9 @@ def _workflow_payload_from_body(body, request):
         'task_prompt': request,
         'definition_version': 2,
         'runner_type': 'model',
-        'durable_execution': False,
+        # Every run holds the workflow's durable lease, so the scheduler and a worker restart
+        # resume the same run instead of starting a second replay.
+        'durable_execution': True,
         'trigger_type': trigger_type,
         'is_enabled': body.get('enabled') is True or body.get('is_enabled') is True,
         'schedule': schedule or {},

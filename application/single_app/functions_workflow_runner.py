@@ -11252,10 +11252,17 @@ def _execute_workflow_task_sequence(
                         task_unit_key,
                         lambda: execute_plan_replay_task(
                             workflow, task, settings, conversation_id=conversation_id, run_id=run_id,
-                            actor_user_id=actor_id, attempt=attempt_index,
+                            actor_user_id=actor_id,
+                            # A durable run numbers attempts across worker restarts, so a resumed
+                            # attempt never reuses the identity a dead worker left behind.
+                            attempt=(durable.unit(task_unit_key)['attempt'] if durable is not None
+                                     else attempt_index),
                             check_cancelled=lambda: _raise_if_workflow_run_cancelled(workflow, run_id),
                         ),
                         inputs={'task': task},
+                        # The replay has no external effects and reconciles the attempt before it,
+                        # so a run a dead worker left behind retries instead of pausing for review.
+                        replay_safe=True,
                     )
                     attempt_workflow = {**workflow, 'consumed_inputs': []}
                     runner_audit = {'requested_mode': PLAN_REPLAY_TASK_TYPE, 'resolved_type': PLAN_REPLAY_TASK_TYPE}

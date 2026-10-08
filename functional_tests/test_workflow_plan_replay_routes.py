@@ -261,7 +261,7 @@ def test_saving_creates_one_paused_personal_workflow_that_repeats_the_frozen_pla
     require(workflow["id"] == body["workflow"]["id"], "The response names the stored workflow.")
     require(workflow["user_id"] == OWNER and workflow.get("created_by") == OWNER, "The creator owns it.")
     require(not workflow.get("group_id") and workflow.get("is_enabled") is False, "It is personal and paused.")
-    require(workflow.get("durable_execution") is False, "A replay workflow is not durable in this slice.")
+    require(workflow.get("durable_execution") is True, "A replay workflow runs under the durable workflow lease.")
     require(workflow["name"] == HOSTILE_NAME[:120], "The name is stored as data.")
     require(workflow["schedule"].get("unit") == "hours" and workflow["schedule"].get("value") == 24, str(workflow))
     origin = workflow.get("origin") or {}
