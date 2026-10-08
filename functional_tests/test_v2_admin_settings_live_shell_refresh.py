@@ -1,8 +1,9 @@
+# test_v2_admin_settings_live_shell_refresh.py
 #!/usr/bin/env python3
 """
 Functional test for the V2 interface refreshing its shell after an admin save.
 
-Version: 0.261.046
+Version: 0.261.305
 Implemented in: 0.261.046
 
 An administrator enabled the classification banner in the V2 admin settings, saved, and
@@ -78,7 +79,10 @@ def test_the_store_can_reread_bootstrap():
         "classification banner exists at all -- it is emitted only when enabled and "
         "non-empty -- and applies its colour defaults, so the browser cannot re-derive it"
     )
-    assert "set({ data })" in body, "The refresh must apply the payload it fetched"
+    assert "set({ data: withCurrentScope(data," in body, (
+        "The refresh must apply its fetched branding and catalogs while preserving "
+        "a newer active workspace selection"
+    )
 
     print("Bootstrap refresh action test passed!")
     return True

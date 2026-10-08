@@ -200,8 +200,8 @@ function M365ItemRow({ item }: { item: UsedM365Item }) {
                 </div>
                 <M365OpenLink
                     record={item}
-                    label="Open online"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-surface-2"
+                    label={item.kind === 'file' ? 'Open online' : undefined}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-accent-hover transition-colors hover:bg-surface-2 dark:text-accent"
                 />
             </div>
         </li>

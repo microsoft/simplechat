@@ -18,6 +18,7 @@ from content_screening.access import (
     strict_source_authority_enabled,
 )
 from content_screening.contracts import SCREENING_FIELD, ScreeningError, SourceAuthorityUnverifiedError
+from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
 
 def log_event(*args, **kwargs):
     """Lazily resolve telemetry logging to avoid module-level import cycles."""
@@ -140,6 +141,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "canceled_source_count",
     "citation_count",
     "completed_source_count",
+    "completion_tokens",
     "duplicate_evidence_count",
     "engine_call_count",
     "evidence_omitted_count",
@@ -165,6 +167,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "unexpected_evidence_count",
     "unsupported_source_count",
     "unresolved_source_count",
+    "xml_schema_source_count",
 })
 MIXED_SOURCE_TELEMETRY_DIMENSIONS = frozenset({
     "cancellation_phase",
@@ -2108,6 +2111,7 @@ def build_mixed_source_evidence_handoff(
             "action to obtain it and reason over the handoff and the action results together before answering. "
             "Never derive numeric conclusions from an indexed preview of a tabular source whose evidence status "
             "is not completed; obtain those values from a computed tabular result instead. "
+            f"{M365_ANSWER_STYLE_INSTRUCTIONS} "
             f"{partial_coverage_instruction}\n\n{serialized_payload}"
         ),
         "mixed_source_coverage": coverage,

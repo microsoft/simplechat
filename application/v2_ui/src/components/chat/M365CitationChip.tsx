@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { CalendarDays, ExternalLink, FileText, Mail, TriangleAlert, X } from 'lucide-react';
-import { GlassPanel } from '../ui/primitives';
+import { Modal } from '../ui/Modal';
 import {
     m365ChipLabel,
     m365DetailRows,
@@ -81,38 +81,23 @@ function M365SourceCard({
 
     useEffect(() => {
         closeRef.current?.focus();
-        const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', onKeyDown);
-        return () => document.removeEventListener('keydown', onKeyDown);
-    }, [onClose]);
+    }, []);
 
     const rows = record ? m365DetailRows(record) : [];
     const title = record ? record.title : fallbackTitle || 'Microsoft 365 source';
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Microsoft 365 source"
-        >
-            <div className="absolute inset-0 bg-black/40" aria-hidden="true" onClick={onClose} />
-
-            <GlassPanel
-                elevation="modal"
-                edge
-                className="relative flex max-h-[70vh] w-full max-w-lg flex-col"
-            >
+        <Modal
+            title="Microsoft 365 source"
+            onClose={onClose}
+            bodyClassName="overflow-y-auto px-5 py-4"
+            banner={(
                 <div className="flex shrink-0 items-start gap-3 border-b border-edge px-5 py-3.5">
                     <M365KindIcon kind={record?.kind} size={17} className="mt-0.5 shrink-0 text-text-3" />
                     <div className="min-w-0 flex-1">
                         <h2 className="break-words text-sm font-semibold text-text-1">{title}</h2>
                         {record?.location_label && (
-                            <p className="text-xs text-text-3">{record.location_label}</p>
+                            <p className="text-xs text-text-2">{record.location_label}</p>
                         )}
                     </div>
                     <button
@@ -125,58 +110,59 @@ function M365SourceCard({
                         <X size={17} />
                     </button>
                 </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                    {record ? (
-                        rows.length > 0 ? (
-                            <dl className="space-y-2">
-                                {rows.map((row) => (
-                                    <div key={row.label} className="flex gap-3 text-sm">
-                                        <dt className="w-24 shrink-0 text-text-3">{row.label}</dt>
-                                        <dd className="min-w-0 flex-1 break-words text-text-1">{row.value}</dd>
-                                    </div>
-                                ))}
-                            </dl>
-                        ) : (
-                            <p className="text-sm text-text-3">No further details were recorded for this item.</p>
-                        )
-                    ) : (
-                        <p className="flex items-start gap-2 text-sm text-text-2">
-                            <TriangleAlert size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
-                            This Microsoft 365 source is no longer available in this conversation.
-                        </p>
-                    )}
-                </div>
-
-                {record && safeM365Url(record.web_url) && (
-                    <div className="flex shrink-0 justify-end border-t border-edge px-5 py-3">
-                        <M365OpenLink
-                            record={record}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-accent px-3 text-sm font-medium text-on-accent shadow-sm transition-colors hover:bg-accent-hover"
-                        />
-                    </div>
-                )}
-            </GlassPanel>
-        </div>
+            )}
+            footer={record ? (
+                safeM365Url(record.web_url) ? (
+                    <M365OpenLink
+                        record={record}
+                        className={clsx(
+                            'inline-flex h-8 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-on-accent shadow-sm transition-colors',
+                            'bg-accent-hover hover:underline dark:bg-accent dark:hover:bg-accent-hover',
+                        )}
+                    />
+                ) : (
+                    <p className="text-sm text-text-2">
+                        No online link is available for this source. Recall the item again to refresh its details.
+                    </p>
+                )
+            ) : undefined}
+        >
+            {record ? (
+                rows.length > 0 ? (
+                    <dl className="space-y-2">
+                        {rows.map((row) => (
+                            <div key={row.label} className="flex gap-3 text-sm">
+                                <dt className="w-24 shrink-0 text-text-2">{row.label}</dt>
+                                <dd className="min-w-0 flex-1 break-words text-text-1">{row.value}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                ) : (
+                    <p className="text-sm text-text-2">No further details were recorded for this item.</p>
+                )
+            ) : (
+                <p className="flex items-start gap-2 text-sm text-text-2">
+                    <TriangleAlert size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+                    This Microsoft 365 source is no longer available in this conversation.
+                </p>
+            )}
+        </Modal>
     );
 }
 
 function M365Chip({ citation, fallbackLabel }: { citation: ParsedCitation; fallbackLabel: string }) {
     const record = useM365Citation(citation.citationId);
     const [open, setOpen] = useState(false);
-    const chipRef = useRef<HTMLButtonElement>(null);
     const label = record ? m365ChipLabel(record) : fallbackLabel || 'Microsoft 365 source';
     const where = record?.location_label;
 
     const close = useCallback(() => {
         setOpen(false);
-        chipRef.current?.focus();
     }, []);
 
     return (
         <>
             <button
-                ref={chipRef}
                 type="button"
                 onClick={() => setOpen(true)}
                 title={where ? `${label} \u2014 ${where}` : label}

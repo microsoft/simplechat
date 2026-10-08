@@ -4,7 +4,7 @@
 // from here rather than refetching.
 
 import { create } from 'zustand';
-import { fetchBootstrap } from '../lib/endpoints';
+import { fetchActiveScope, fetchBootstrap } from '../lib/endpoints';
 import { ApiError, isAccessRestricted, isTermsOfUseRequired } from '../lib/apiClient';
 import type { BootstrapPayload, PromptOption } from '../lib/types';
 
@@ -16,6 +16,37 @@ import type { BootstrapPayload, PromptOption } from '../lib/types';
  * on the payload from before the second save.
  */
 let refreshSequence = 0;
+
+/**
+ * Bumped whenever `refreshScope` starts or commits.
+ *
+ * A workspace switch confirms the new active group with a scope-only read. A full bootstrap
+ * read that left before that one -- a tab refocus, say -- may have been built before the
+ * switch was saved, so when it lands it must not put the previous group back. Its scope
+ * fields are dropped in favour of the ones already in the store; everything else applies.
+ */
+let scopeSequence = 0;
+
+/** Install a full payload, keeping the newer active scope if one arrived after it left. */
+function withCurrentScope(
+    data: BootstrapPayload,
+    startedAtScope: number,
+    current: BootstrapPayload | null,
+): BootstrapPayload {
+    if (startedAtScope === scopeSequence || !current?.scope || !data?.scope
+        || current.user?.id !== data.user?.id) {
+        return data;
+    }
+    return {
+        ...data,
+        scope: {
+            ...data.scope,
+            active_group_id: current.scope.active_group_id,
+            active_group_name: current.scope.active_group_name,
+            active_public_workspace_id: current.scope.active_public_workspace_id,
+        },
+    };
+}
 
 /**
  * When a bootstrap read last started, and how many are in flight.
@@ -60,6 +91,14 @@ interface BootstrapState {
     /** An identity-bound selection must not install a response from a different sign-in. */
     refreshRequired: (expectedViewerId?: string) => Promise<BootstrapPayload>;
     /**
+     * Re-read only the active group and public workspace, and patch them in place.
+     *
+     * Switching group workspaces changes nothing else in the payload, and the full read
+     * takes seconds to build. Holds the same identity guard as `refreshRequired`, and
+     * throws if a newer scope read started while this one was running.
+     */
+    refreshScope: (expectedViewerId: string) => Promise<BootstrapPayload>;
+    /**
      * Put a prompt into the catalog straight away, before a refresh has been round-tripped.
      *
      * The composer's picker and its `/` menu read `catalogs.prompts`, which is built server-side
@@ -80,9 +119,10 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
     load: async () => {
         set({ loading: true, error: null, authExpired: false });
         const settle = startBootstrapRead();
+        const startedAtScope = scopeSequence;
         try {
             const data = await fetchBootstrap();
-            set({ data, loading: false });
+            set({ data: withCurrentScope(data, startedAtScope, get().data), loading: false });
         } catch (error) {
             // The terms gate or the access gate refused the call and apiClient is already
             // navigating to the page that explains it. Staying on the boot screen avoids
@@ -111,10 +151,11 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
     refresh: async () => {
         const sequence = ++refreshSequence;
         const settle = startBootstrapRead();
+        const startedAtScope = scopeSequence;
         try {
             const data = await fetchBootstrap();
             if (sequence === refreshSequence) {
-                set({ data });
+                set({ data: withCurrentScope(data, startedAtScope, get().data) });
             }
         } catch {
             // Advisory on purpose, and the reason this cannot be `load()`. App.tsx
@@ -138,6 +179,7 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
     refreshRequired: async (expectedViewerId) => {
         const sequence = ++refreshSequence;
         const settle = startBootstrapRead();
+        const startedAtScope = scopeSequence;
         let data: BootstrapPayload;
         try {
             data = await fetchBootstrap();
@@ -151,6 +193,51 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
             || data?.user?.id !== expectedViewerId)) {
             throw new Error('Your sign-in changed during refresh. Reload the workspace.');
         }
+        data = withCurrentScope(data, startedAtScope, get().data);
+        set({ data });
+        return data;
+    },
+
+    refreshScope: async (expectedViewerId) => {
+        const previous = get().data;
+        if (get().authExpired || previous?.user?.id !== expectedViewerId) {
+            throw new Error('Your sign-in changed during refresh. Reload the workspace.');
+        }
+        const sequence = ++scopeSequence;
+        const result = await fetchActiveScope();
+        if (sequence !== scopeSequence) {
+            throw new Error('The active workspace changed during refresh. Try again.');
+        }
+        const current = get().data;
+        if (!current || get().authExpired || current.user?.id !== expectedViewerId
+            || result?.user?.id !== expectedViewerId) {
+            throw new Error('Your sign-in changed during refresh. Reload the workspace.');
+        }
+        const scope = result?.scope;
+        if (!scope || typeof scope !== 'object'
+            || ![scope.active_group_id, scope.active_public_workspace_id].every(
+                (id) => id === null || (typeof id === 'string' && id.trim().length > 0),
+            )
+            || !(scope.active_group_name === null || typeof scope.active_group_name === 'string')) {
+            throw new Error('The active workspace could not be read.');
+        }
+        if ((['active_group_id', 'active_public_workspace_id'] as const).some(
+            (key) => current.scope?.[key] !== previous.scope?.[key]
+                && current.scope?.[key] !== scope[key],
+        )) {
+            throw new Error('The active workspace changed during refresh. Try again.');
+        }
+        const data: BootstrapPayload = {
+            ...current,
+            scope: {
+                ...current.scope,
+                active_group_id: scope.active_group_id,
+                active_group_name: scope.active_group_name,
+                active_public_workspace_id: scope.active_public_workspace_id,
+            },
+        };
+        // A full read may have started while this scope read was pending.
+        ++scopeSequence;
         set({ data });
         return data;
     },

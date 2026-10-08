@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 items as first-class answer citations.
-Version: 0.261.303
+Version: 0.261.305
 Implemented in: 0.261.303
+Outlook metadata and direct-answer guidance refined in: 0.261.305
 
 This test ensures that SharePoint and OneDrive files, emails and calendar events an answer uses
 become citation records with deterministic, underscore-free ids; that their model-facing citation
@@ -38,6 +39,7 @@ sys.path.insert(0, str(APP_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import functions_m365_citations as citations  # noqa: E402
+import functions_mixed_source_orchestration as mixed_source  # noqa: E402
 from functions_citation_tracking import extract_explicit_document_citation_ids, rebuild_conversation_used_documents  # noqa: E402
 from functions_m365_transport import M365CloudConfig, M365Transport  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
@@ -48,6 +50,7 @@ from test_m365_provider_core import (  # noqa: E402,F401
 
 
 IMPLEMENTED_IN = "0.261.303"
+REFINED_IN = "0.261.305"
 SHARED_MARKER_PATTERN = (
     r"\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*"
     r"((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)"
@@ -99,6 +102,7 @@ def _file_identity(item_id="01ITEM", name="20170010188.pdf"):
 
 def test_version_is_at_least_the_implementing_release():
     assert_app_version_at_least(IMPLEMENTED_IN)
+    assert_app_version_at_least(REFINED_IN)
 
 
 def test_citation_ids_are_deterministic_and_never_contain_an_underscore():
@@ -321,15 +325,111 @@ def _load_private_plugin_logger(monkeypatch):
     return module
 
 
-def _scripted_graph_plugin(modules, source, pages):
+def _scripted_graph_plugin(modules, source, pages, calls=None):
+    selected_fields = set()
+
+    def request(method, url, **kwargs):
+        nonlocal selected_fields
+        params = dict(kwargs.get("params") or {})
+        if calls is not None:
+            calls.append({"url": url, "params": params})
+        if "$select" in params:
+            selected_fields = {field.strip().lower() for field in params["$select"].split(",")}
+        payload = dict(pages.pop(0))
+        if isinstance(payload.get("value"), list):
+            payload["value"] = [
+                {key: value for key, value in item.items() if key.lower() in selected_fields}
+                for item in payload["value"]
+            ]
+        return FakeResponse(payload)
+
     plugin = modules["msgraph_plugin"].MSGraphPlugin({"id": "legacy"})
     plugin._transports[source] = M365Transport(
         source, "legacy",
         cloud=M365CloudConfig("https://graph.microsoft.com/v1.0", "https://login.microsoftonline.com/tenant"),
-        request=Mock(side_effect=lambda method, url, **kwargs: FakeResponse(pages.pop(0))),
+        request=Mock(side_effect=request),
         token_provider=Mock(return_value={"access_token": "unit-test-token"}),
     )
     return plugin
+
+
+@pytest.mark.parametrize("source,selection,matching", [
+    ("email", "", False),
+    ("email", "subject,bodyPreview", False),
+    ("email", "subject", True),
+    ("calendar", "", False),
+    ("calendar", "subject,bodyPreview", False),
+    ("calendar", "subject", True),
+])
+def test_graph_selections_retain_outlook_links_and_source_card_metadata(graph_plugins, source, selection, matching):
+    modules, _ = graph_plugins
+    calls = []
+    if source == "email":
+        item = _message("AAMkSelected", "Project review", "2026-10-07T16:52:00Z", bodyPreview="Review the plan.")
+    else:
+        item = _event(
+            "selected-occurrence", "Project review", "2026-10-08T18:00:00", "2026-10-08T18:30:00",
+            bodyPreview="Review the plan.", attendees=[], categories=[],
+        )
+    plugin = _scripted_graph_plugin(modules, source, [{"value": [item]}], calls=calls)
+
+    with citations.m365_display_time_zone("America/New_York"):
+        if source == "email":
+            result = plugin.get_my_messages(
+                select_fields=selection, search="review" if matching else "",
+                received_from="2026-10-01", received_to="2026-10-31",
+            )
+            required = plugin.DEFAULT_MESSAGE_SELECT.split(",")
+        else:
+            result = plugin.get_my_events(
+                select_fields=selection, query="review" if matching else "",
+                start_datetime="2026-10-08", end_datetime="2026-10-09",
+            )
+            required = plugin.DEFAULT_EVENT_SELECT.split(",")
+    records = citations.captured_m365_records(result)
+
+    assert set(required) <= set(calls[0]["params"]["$select"].split(","))
+    assert len(records) == 1
+    record = records[0]
+    assert record["web_url"] == item["webLink"]
+    assert record["title"] == "Project review"
+    assert result["value"][0]["citation_id"] == record["citation_id"]
+    assert result["coverage"]["complete"] is True
+    if source == "email":
+        assert record["from_name"] == "Microsoft Security"
+        assert record["received_display"] == "Oct 7, 2026, 12:52 PM EDT"
+        assert record["is_read"] is False
+    else:
+        assert record["when_display"] == "Thu, Oct 8, 2026, 2:00 PM \u2013 2:30 PM EDT"
+        assert record["organizer_name"] == "Ann Lee"
+        assert record["location"] == "Teams"
+        assert "attendees" not in result["value"][0] and "categories" not in result["value"][0]
+        assert ("bodyPreview" in result["value"][0]) == ("bodyPreview" in selection)
+
+
+def test_custom_mail_selection_keeps_outlook_links_across_pagination_and_continuation(graph_plugins):
+    modules, _ = graph_plugins
+    calls = []
+    newest = _message("AAMkNewest", "Newest", "2026-10-07T16:52:00Z")
+    older = _message("AAMkOlder", "Older", "2026-10-07T12:00:00Z", webLink=OUTLOOK_LINK + "&page=older")
+    plugin = _scripted_graph_plugin(modules, "email", [
+        {"value": [newest], "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?page=2"},
+        {"value": [older]},
+        {"value": [older]},
+    ], calls=calls)
+
+    first = plugin.get_my_messages(top=1, folder="all", select_fields="subject")
+    second = plugin.get_my_messages(**first["coverage"]["continue_with"])
+    first_records = citations.captured_m365_records(first)
+    second_records = citations.captured_m365_records(second)
+
+    assert calls[1]["params"] == {}
+    assert first["coverage"]["continue_with"]["select_fields"] == "subject"
+    assert "webLink" in calls[0]["params"]["$select"].split(",")
+    assert "webLink" in calls[2]["params"]["$select"].split(",")
+    assert [record["web_url"] for record in first_records] == [newest["webLink"]]
+    assert [record["web_url"] for record in second_records] == [older["webLink"]]
+    assert first["coverage"]["complete"] is False and second["coverage"]["complete"] is True
 
 
 def test_real_graph_plugin_returns_cited_mail_and_events_in_the_readers_zone(graph_plugins):
@@ -683,15 +783,53 @@ def test_workflow_answers_record_and_mirror_their_m365_citations():
     assert "_merge_workflow_m365_items(conversation_doc, mirrored_assistant_doc)" in mirror
 
 
-def test_compose_and_handoff_prompts_require_verbatim_citations():
+def test_m365_answer_guidance_is_direct_without_hiding_provenance_or_limitations():
+    guidance = citations.M365_ANSWER_STYLE_INSTRUCTIONS
+    records = [
+        citations.normalize_m365_email(_message("message-1", "Budget", "2026-10-07T16:00:00Z")),
+        citations.normalize_m365_event(_event("event-1", "Standup", "2026-10-08T18:00:00", "2026-10-08T18:30:00")),
+        citations.normalize_m365_file(_file_identity(), "spo"),
+    ]
+    note = citations.build_m365_sources_note(records)
+    empty_note = citations.build_m365_sources_note([])
+    markers = [citations.build_m365_citation_marker(record) for record in records]
+    assert guidance.startswith("For Microsoft 365 items,")
+    for requirement in (
+        "answer the user's question directly", "without routine source-provenance",
+        "when the user asks about provenance", "conflicting evidence",
+        "Preserve uncertainty, missing evidence and partial-coverage disclosures",
+    ):
+        assert requirement in guidance
+    assert guidance in citations.M365_CITATION_INSTRUCTIONS
+    assert 'copying its "citation" value verbatim' in citations.M365_CITATION_INSTRUCTIONS
+    assert guidance in note
+    assert empty_note == ""
+    for marker in markers:
+        assert marker in note
+    assert "organizer Ann Lee" in note and "Teams" in note
+
+
+def test_compose_and_handoff_prompts_require_verbatim_citations_and_direct_answers():
     composition = (APP_DIR / "functions_orchestration_composition.py").read_text(encoding="utf-8")
     mixed = (APP_DIR / "functions_mixed_source_orchestration.py").read_text(encoding="utf-8")
+    policy = next(
+        node for node in ast.parse(composition).body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "CITATION_POLICY" for target in node.targets)
+    )
+    namespace = {"M365_ANSWER_STYLE_INSTRUCTIONS": citations.M365_ANSWER_STYLE_INSTRUCTIONS}
+    exec(compile(ast.Module(body=[policy], type_ignores=[]), "composition_citation_policy", "exec"), namespace)
+    handoff = mixed_source.build_mixed_source_evidence_handoff([], [], mixed_source.SELECTION_MODE_RELEVANCE)
+    marker = citations.build_m365_citation_marker(citations.normalize_m365_email(_message("a", "b", "2026-10-07T16:00:00Z")))
+    pattern = re.compile(r"\(Source:.{1,400}?\)\s*\[#")
+    assert "from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS" in composition
+    assert citations.M365_ANSWER_STYLE_INSTRUCTIONS in namespace["CITATION_POLICY"]
+    assert citations.M365_ANSWER_STYLE_INSTRUCTIONS in handoff["content"]
+    assert handoff["role"] == "system" and handoff["mixed_source_coverage"]["partial_coverage"] is False
     assert "CITATION_POLICY if _carries_citation_values(inputs) else ''" in composition
     assert "copy its citation value verbatim" in composition
     assert "presentation field" in composition
     assert "verbatim right after the claim it supports" in mixed
-    pattern = re.compile(r"\(Source:.{1,400}?\)\s*\[#")
-    marker = citations.build_m365_citation_marker(citations.normalize_m365_email(_message("a", "b", "2026-10-07T16:00:00Z")))
     assert pattern.search(json.dumps({"notes": [marker]}, ensure_ascii=False))
     assert not pattern.search(json.dumps({"notes": ["No sources here."]}))
 
