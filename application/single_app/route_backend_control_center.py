@@ -5,7 +5,6 @@ import logging
 import math
 import re
 import time
-from collections import Counter, defaultdict
 from io import StringIO
 
 from flask import Response, make_response, stream_with_context
@@ -31,12 +30,10 @@ from functions_control_center_dashboard import (
     CONTROL_CENTER_ACTION_TYPE,
     DASHBOARD_INVALID_RANGE_ERROR,
     DashboardStores,
-    append_token_usage_filters,
     build_token_usage_query_context,
     extract_token_filters,
     get_dashboard_insights,
     get_dashboard_summary,
-    normalize_token_filter_value,
     parse_dashboard_period,
 )
 from functions_control_center_dashboard_chat import (
@@ -117,7 +114,6 @@ from functions_public_workspaces import (
 from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
-import json
 from functions_debug import debug_print
 from functions_appinsights import log_event
 

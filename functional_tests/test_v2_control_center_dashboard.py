@@ -17,12 +17,9 @@ separately so changing a token filter does not re-read the period's other activi
 
 import ast
 import importlib.util
-import json
 import logging
 import sys
-import time
-from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from importlib.metadata import version as package_version
 from pathlib import Path
 from unittest.mock import patch

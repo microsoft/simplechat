@@ -37,9 +37,11 @@ for path in (ROOT / "functional_tests", APP):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-# Imported up front so they stay loaded when each test restores sys.modules.
-import semantic_kernel.functions  # noqa: E402,F401
-import semantic_kernel_plugins.base_plugin  # noqa: E402,F401
+# Load these before any test patches sys.modules. Each test's patch restores sys.modules when it
+# ends, so a module first imported inside one would be dropped and Semantic Kernel re-imported
+# by the next test.
+for _preloaded_module in ("semantic_kernel.functions", "semantic_kernel_plugins.base_plugin"):
+    importlib.import_module(_preloaded_module)
 
 from test_support.app_stubs import stubbed_app_imports  # noqa: E402
 from test_support.cosmos_query_guard import cosmos_query_problems  # noqa: E402
