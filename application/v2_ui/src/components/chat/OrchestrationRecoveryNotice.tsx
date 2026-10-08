@@ -93,7 +93,16 @@ export function OrchestrationRecoveryNotice({
         || Boolean(newer && newer !== runId) || Boolean(attempt.retry_of_run_id);
     const currentPlan = saved?.plan ?? plan;
     const recovery = attempt.recovery;
-    const fileOutputs = Boolean(attempt.outputs?.length);
+    const outputs = attempt.outputs ?? [];
+    const fileOutputs = outputs.length > 0;
+    // A file that failed for good cannot be retried on its own: a file retry runs in the
+    // background, where the sign-in some sources need is not available. A plan retry runs it
+    // again from this chat, as long as no other file is still being prepared.
+    const filesInProgress = outputs.some((output) =>
+        output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled');
+    const planRetryForFiles = fileOutputs && !filesInProgress
+        && outputs.some((output) => output.state === 'failed' && !output.can_retry);
+    const planRetryOffered = !fileOutputs || planRetryForFiles;
     // The server refuses runs from an earlier orchestration version: there is nothing to reload,
     // check or review, only its message to show.
     const legacy = Boolean(saved?.legacyPlan);
@@ -113,7 +122,7 @@ export function OrchestrationRecoveryNotice({
 
     if (!runId || !relevant) return null;
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
-    const retryAllowed = failed && !fileOutputs && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
+    const retryAllowed = failed && planRetryOffered && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
         && (!newer || newer === runId) && !saved?.transportUnknown;
     const retry = async (confirmedVersion?: string) => {
         const result = await retryOrchestrationRun(conversationId, runId, confirmedVersion);
@@ -148,17 +157,19 @@ export function OrchestrationRecoveryNotice({
                 </p>
             ) : null}
             {failed && !saved?.transportUnknown && !legacy ? (
-                <p>{fileOutputs ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
+                <p>{fileOutputs && !planRetryForFiles ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
+                    : planRetryForFiles && recovery?.eligible && (!newer || newer === runId)
+                    ? 'A file could not be created and cannot be retried on its own. Retry from failed step creates the plan\'s files again without repeating completed plan steps.'
                     : recovery?.message || (newer && newer !== runId
                     ? 'A newer execution attempt already exists. Review its saved result.'
                     : recovery?.eligible
                     ? 'Resume the saved plan without repeating completed plan steps.'
                     : 'This historical attempt has no verified recovery checkpoint. It cannot be resumed; start a new plan deliberately if needed.')}</p>
             ) : null}
-            {failed && !fileOutputs && recovery?.reused_step_ids.length ? (
+            {failed && planRetryOffered && recovery?.reused_step_ids.length ? (
                 <p><strong>Reuse saved results:</strong> {recovery.reused_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
-            {failed && !fileOutputs && recovery?.retry_step_ids.length ? (
+            {failed && planRetryOffered && recovery?.retry_step_ids.length ? (
                 <p><strong>Execute on retry:</strong> {recovery.retry_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
             <div className="flex flex-wrap gap-2">

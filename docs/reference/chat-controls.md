@@ -562,7 +562,7 @@ saved effective plan, not the current composer selections or a new planner call.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints; not a substitute for individual file recovery |
+| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints. For an attempt with files, only when a failed file can't be retried on its own and no file is still being prepared (since **0.261.303**) |
 | Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. Since **0.261.212** it also appears for a step that starts a saved workflow; its retry never starts the workflow twice, and links the run when the plan already started it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
 | Run prepared retry | Starts a recovery attempt that was already prepared but has not executed. | Continue after preparation was saved but execution was interrupted by navigation or connection loss. | An unstarted saved recovery attempt |
 | Review saved attempt | Opens the selected attempt in the Plan/Run view. | Inspect the failure, completed steps, and remaining work without editing or rerunning history. | A saved orchestration attempt |
@@ -578,6 +578,12 @@ Since **0.261.127**, **Waiting for required results** keeps the same producing
 attempt active. Reload and status checks do not execute it again, and waiting
 does not expose a run-retry button or a completed-file link. File-specific
 publication and retry controls require the server's separate output lifecycle.
+
+Since **0.261.303**, an attempt that fails or is stopped as a whole while a step
+is still pending, running or waiting shows that step as **Not finished** and the
+deliverable it produces as **Not delivered**, instead of **Waiting for results**
+or **In progress**. Nothing will finish that work in the ended attempt, so
+**Retry from failed step** runs it again.
 
 Stop requests cancellation on the server. A connection loss instead requires
 checking the existing execution; it must not automatically start another one.
@@ -606,6 +612,11 @@ Automatic-attempt exhaustion alone never enables manual retry. Retry identities
 survive reload in the same browser tab, but reloading never posts a retry or
 reruns the original plan. An expired sign-in or a conflict requires checking
 saved state before another request.
+
+Since **0.261.303**, a failed file says why it could not be created, for example
+that the results it uses can only be checked with your sign-in. File retries run
+in the background, where that sign-in isn't available, so such a file offers
+**Retry from failed step** instead of **Retry file**.
 
 Generated-file history entries are informational, not uploaded-file previews or
 download receipts. Unavailable history entries show a safe explanation and close

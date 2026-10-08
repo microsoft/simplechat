@@ -1,7 +1,8 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.139
+Version: 0.261.303
+Settings fingerprints ignore storage metadata and runtime state in: 0.261.303
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 Checkpoints record Gather / Reason / Render state only. A checkpoint written by the
@@ -26,6 +27,7 @@ from functions_orchestration_result_contracts import (
     ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest as validate_result_digest,
 )
 from functions_orchestration_result_runtime import encode_step_result
+from functions_settings_runtime_state import configuration_settings
 
 
 CHECKPOINT_VERSION = 1
@@ -100,8 +102,13 @@ def orchestration_answer_message_id(run_id):
 
 
 def _execution_settings_fingerprint(settings):
-    """The settings a saved attempt's work was approved and executed under."""
-    return fingerprint(settings)
+    """The settings a saved attempt's work was approved and executed under.
+
+    Storage metadata and the runtime state background tasks write are not policy. They
+    change on every save, so including them failed waiting runs and retries with
+    ``recovery_changed`` whenever anything saved settings.
+    """
+    return fingerprint(configuration_settings(settings) if isinstance(settings, dict) else settings)
 
 
 def _manifest_address(step_id, *, waiting=False, input_only=False):
@@ -252,6 +259,21 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
     })
 
 
+def _ended_attempt_waits(tasks, run_id):
+    """Steps whose saved result is a wait that an earlier attempt left unfinished.
+
+    A checkpoint saves every result its attempt held, including the pending result of a step
+    that was still waiting. A new attempt runs that step again, so the old wait is not restored:
+    it has no outputs that anything could have read, and only its own attempt could finish it.
+    """
+    if type(run_id) is not str:
+        return set()
+    return {
+        name for name, task in tasks.items()
+        if task.status == 'pending' and not task.outputs and task.producer.run_id != run_id
+    }
+
+
 def restore_context(context, payload):
     state = payload.get('state')
     allowed = set(STATE_FIELDS) | set(OPTIONAL_STATE_FIELDS) | set(DEPENDENCY_STATE_FIELDS)
@@ -274,6 +296,7 @@ def restore_context(context, payload):
             raise CheckpointError('checkpoint_invalid')
         setattr(context, key, deepcopy(value))
     try:
+        ended_waits = set()
         for field, descriptor_type in (('task_results', TaskResult), ('result_aliases', ResultRef)):
             values = state.get(field)
             if type(values) is not dict:
@@ -282,8 +305,12 @@ def restore_context(context, payload):
             current = getattr(context, field)
             if field == 'task_results' and any(name != value.producer.step_id for name, value in restored.items()):
                 raise CheckpointError('checkpoint_invalid')
+            if field == 'task_results':
+                ended_waits = _ended_attempt_waits(restored, getattr(context, 'run_id', None))
             for name, value in restored.items():
-                if field == 'task_results' and name in getattr(context, '_failed_result_step_ids', ()):
+                if field == 'task_results' and (
+                    name in getattr(context, '_failed_result_step_ids', ()) or name in ended_waits
+                ):
                     continue
                 previous = current.get(name)
                 if previous is not None and previous != value:
@@ -308,6 +335,7 @@ def restore_context(context, payload):
                 (task is not None and task.status in ('complete', 'partial'))
                 or step_id in getattr(context, '_completed_result_step_ids', ())
                 or step_id in getattr(context, '_failed_result_step_ids', ())
+                or step_id in ended_waits
             ):
                 continue
             if step_id in context.pending_results and context.pending_results[step_id] != wait:
