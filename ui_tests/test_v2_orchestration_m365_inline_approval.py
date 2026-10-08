@@ -25,9 +25,9 @@ from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import expect
 
-import test_v2_orchestration_plan_editor as editor_tests
 import test_v2_orchestration_recovery as recovery_tests
 from test_v2_orchestration_plan_editor import (  # noqa: F401
+    RUN,
     connect_options,
     editor_assets,
     editor_browser,
@@ -116,7 +116,7 @@ class InlineApprovalApi(recovery_tests.RecoveryApi):
             self.records[run_id]["recovery"].update(eligible=False, current_run_id=child["run_id"])
             route.fulfill(json={"run": child})
             return
-        if (path == editor_tests.RUN and self.hold_retry_run and body
+        if (path == RUN and self.hold_retry_run and body
                 and self.records.get(body.get("run_id"), {}).get("retry_of_run_id")):
             self.requests.append({"path": path, "method": "POST", "body": body})
             run_id = body["run_id"]
@@ -281,7 +281,7 @@ def test_confirmed_retry_closes_its_dialog_while_the_retry_runs(held_ui):
     page.get_by_role("button", name="Retry from failed step").click()
     dialog = page.get_by_role("dialog", name="Retry this failed step?")
     expect(dialog).to_be_visible()
-    with page.expect_request(f"**{editor_tests.RUN}"):
+    with page.expect_request(f"**{RUN}"):
         dialog.get_by_role("button", name="Confirm retry").click()
     # Admitted: the confirmation is gone although the retry's run is still streaming.
     expect(dialog).to_have_count(0)
