@@ -15,6 +15,7 @@
 import type { SidebarMenuState } from './sidebarMenuState';
 import type { ApprovalMode } from './orchestration';
 import type { DocumentExplorerPrefs, DocumentSavedView } from './types';
+import type { ActivityLogPrefs, ActivityLogSavedView } from './activityLogs';
 
 /** Text scale, matching the values the route normalises to. */
 export type FontSizePreference = 'xs' | 's' | 'm' | 'l' | 'xl';
@@ -91,6 +92,13 @@ export interface UserSettings {
     v2ApprovalsRailCollapsed?: boolean;
     /** Whether the V2 Control Center section rail is collapsed to icons. */
     v2ControlCenterRailCollapsed?: boolean;
+
+    /**
+     * Activity Logs saved views and display preferences. Stored on the account so they follow
+     * the administrator across browsers; see lib/activityLogSavedViews.ts.
+     */
+    v2ActivityLogSavedViews?: ActivityLogSavedView[];
+    v2ActivityLogPrefs?: Partial<ActivityLogPrefs>;
 
     /**
      * Whether the User Settings sections rail shows icons only. Its own key for the same
@@ -245,6 +253,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2UserSettingsRailCollapsed',
     // Separate from the shell and Admin Settings rails so each keeps its own layout.
     'v2ControlCenterRailCollapsed',
+    // Control Center Activity Logs: saved filter combinations and display preferences.
+    'v2ActivityLogSavedViews',
+    'v2ActivityLogPrefs',
     // Workspace documents explorer: how the list is presented, and the saved filter
     // combinations pinned in its navigation rail.
     'v2DocumentsPrefs',

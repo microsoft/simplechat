@@ -1,7 +1,7 @@
 # test_v2_control_center_groups.py
 """
 Functional tests for V2 Control Center Groups.
-Version: 0.261.292
+Version: 0.261.294
 Implemented in: 0.261.282
 
 Run real filters and routes over isolated Cosmos services and the real guarded
@@ -9,6 +9,8 @@ group writer. Cover selection caps before writes, audit parity, detail projectio
 admin-only access, snapshot expiry, safe exports and approval-only actions.
 Since 0.261.292 the inventory fakes reject GROUP BY, because the Python Cosmos SDK
 cannot run it across partitions; the inventory aggregates streamed projections.
+Since 0.261.294 they also reject reserved keywords used as dotted property names:
+c.group.group_id is an HTTP 400 syntax error, so the nested shape is read as c['group'].
 """
 
 import ast
@@ -83,13 +85,15 @@ class InventoryActivity:
             return iter([{"group_id": "group-1", "tokens": 100}, {"group_id": "group-1", "tokens": 20}])
         if "IIF(" in query:
             assert "IS_STRING(c.group_id) AND c.group_id != ''" in query
-            assert "IS_STRING(c.group.group_id) AND c.group.group_id != ''" in query
+            assert "IS_STRING(c['group']['group_id']) AND c['group']['group_id'] != ''" in query
+            assert "c.group.group_id" not in query
             return iter([
                 {"group_id": "group-1", "timestamp": "2026-10-06T00:00:00Z"},
                 {"group_id": "group-1", "timestamp": "2026-10-01T00:00:00Z"},
             ])
         if "TOP 20" in query:
             assert "c.group_id = @group_id" in query and "c.workspace_context.group_id = @group_id" in query
+            assert "c['group']['group_id'] = @group_id" in query and "c.group." not in query
             return [{"id": "event-1", "activity_type": "group_status_change", "timestamp": "2026-10-06T00:00:00Z"}]
         raise AssertionError(f"Unexpected activity query: {query}")
 
@@ -255,6 +259,29 @@ def test_missing_status_and_dates_and_all_sorts_are_consistent():
         assert len(result) == 2
     result = inventory_module.filter_group_inventory([first, second], inventory_module.parse_group_filters({"activity_to": "2026-10-07"}))
     assert [row["id"] for row in result] == ["b"]
+
+
+def test_malformed_legacy_groups_cannot_fail_the_inventory():
+    """One legacy document with unexpected shapes must not turn the list into a 500."""
+    legacy = inventory_module.group_row({
+        "id": "legacy", "name": 2024, "description": None, "owner": "someone@example.test",
+        "users": ["user-a", None, {"userId": "user-b", "displayName": 7}, {"userId": None}],
+        "admins": "user-b", "documentManagers": None, "metrics": [],
+    }, 0, 0, None)
+    assert legacy["name"] == "2024" and legacy["description"] == ""
+    assert legacy["owner"] == {"id": None, "email": "", "display_name": ""}
+    assert legacy["members"] == 1
+    members = inventory_module.group_members({"id": "legacy", "users": "not-a-list", "owner": {"id": "owner-1"}})
+    assert members == [{"id": "owner-1", "display_name": "", "email": "", "role": "Owner"}]
+    current = inventory_module.group_row({"id": "current", "name": "Beta", "owner": {"id": "o"}, "users": []}, 1, 2, None)
+    for field in inventory_module.GROUP_SORTS:
+        for direction in ("asc", "desc"):
+            filters = inventory_module.parse_group_filters({"sort": field, "direction": direction, "search": "2"})
+            inventory_module.filter_group_inventory([legacy, current], filters)
+    rows = inventory_module.filter_group_inventory(
+        [legacy, current], inventory_module.parse_group_filters({"sort": "name"}),
+    )
+    assert [row["id"] for row in rows] == ["legacy", "current"]
 
 
 def test_detail_shape_is_allowlisted_and_fresh_membership_has_roles(routes):

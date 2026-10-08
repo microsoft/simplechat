@@ -7,6 +7,11 @@ and a few others). GroupBy and DCount are not on that list, so a cross-partition
 that needs them fails with HTTP 400 before it runs. An ORDER BY over more than one
 property also fails with HTTP 400 unless the container declares a matching composite
 index. Fake containers accept any SQL, so tests run their queries through this guard.
+
+Since 0.261.294 the guard also rejects reserved keywords used as dotted property names or
+aliases, such as ``c.group.group_id`` or ``AS value``. The query grammar accepts only ALL,
+FIRST and LAST there, so Cosmos answers any other keyword with an HTTP 400 syntax error. The
+property must be written with brackets instead: ``c['group']['group_id']``.
 """
 
 import re
@@ -23,6 +28,15 @@ ORDER_BY_PATTERN = re.compile(
 )
 ORDER_ITEM_PATTERN = re.compile(r"^(?P<expression>.+?)(?:\s+(?P<direction>ASC|DESC))?$", re.IGNORECASE | re.DOTALL)
 PROPERTY_PATH_PATTERN = re.compile(r"^c((?:\.[A-Za-z_][A-Za-z0-9_]*)+)$")
+# The keyword tokens of the Cosmos SQL grammar, less ALL, FIRST and LAST, which the grammar
+# also accepts as identifiers. Each is a syntax error as a dotted property name or alias.
+COSMOS_RESERVED_WORDS = frozenset({
+    "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BY", "DESC", "DISTINCT", "ESCAPE", "EXISTS",
+    "FALSE", "FROM", "GROUP", "IN", "JOIN", "LEFT", "LIKE", "LIMIT", "NOT", "NULL", "OFFSET",
+    "OR", "ORDER", "RANK", "RIGHT", "SELECT", "TOP", "TRUE", "UDF", "UNDEFINED", "VALUE", "WHERE",
+})
+DOTTED_NAME_PATTERN = re.compile(r"(?<=[A-Za-z0-9_\]\)])\.(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
+ALIAS_PATTERN = re.compile(r"\bAS\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
 
 
 def _split_order_items(items):
@@ -66,9 +80,22 @@ def _served_by_composite_index(order_items, composite_indexes):
     return False
 
 
+def reserved_word_problems(query):
+    """Return reserved keywords used as dotted property names or aliases, which never parse."""
+    problems = []
+    for pattern, kind in ((DOTTED_NAME_PATTERN, "property name"), (ALIAS_PATTERN, "alias")):
+        for match in pattern.finditer(query):
+            if match.group("name").upper() in COSMOS_RESERVED_WORDS:
+                problems.append(
+                    f"reserved keyword '{match.group('name')}' used as a {kind}; "
+                    f"write it with brackets, for example c['{match.group('name')}']"
+                )
+    return list(dict.fromkeys(problems))
+
+
 def cosmos_query_problems(query, composite_indexes=()):
     """Return why a cross-partition query would be rejected, or an empty list."""
-    problems = []
+    problems = reserved_word_problems(query)
     if GROUP_BY_PATTERN.search(query):
         problems.append("cross-partition GROUP BY is not supported by the Python SDK")
     if DISTINCT_COUNT_PATTERN.search(query):

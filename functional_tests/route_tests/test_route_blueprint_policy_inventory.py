@@ -157,6 +157,8 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_control_center.py", "api_v2_control_center_activity_logs"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_activity_export"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_people"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_workspaces"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_users"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_user_detail"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_users_bulk_action"): ("login_required", "control_center_required"),
