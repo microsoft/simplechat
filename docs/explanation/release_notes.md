@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.307)**
+
+#### New Features
+
+*   **Plans Can Wait For A Quick Saved Workflow And Use Its Result**
+    *   With **Wait For Quick Workflows In Chat** on, a chat plan that starts one of the user's saved personal workflows can wait for the run and use its result in the same answer, for example "run my sales digest, then compare its totals with the Q3 report in my workspace". Before, the planner dropped any run step whose result another step needed, and the result arrived later as a separate chat post.
+    *   The server decides whether a plan waits, from the saved workflow and the settings, never from the model. It waits only for a quick workflow: personal, durable execution on, one to five tasks, no For each or Repeat until, no approval, Microsoft 365 run-as user, File Sync or review publication, and not a hand-off or structured workflow. Only answer-writing steps may read the result, and every step must be able to run without the user's sign-in. The server checks again when the run starts and on every check while the plan waits.
+    *   A plan waits at most **Wait for a workflow from chat** (default 300 seconds, range 60-1800), and always keeps enough of its run time to write the answer. A run that finishes in time reaches the answer through the existing workflow results reader, which checks access again and marks the content as untrusted. A failed or cancelled run says so, and the steps that needed its result don't run. A run still going when the wait ends is posted to the chat by the existing post-back when it finishes.
+    *   One compare-and-set write on the run's delivery record decides whether the answer or the post-back delivers the result, so it reaches the chat once. Each check while waiting confirms that the conversation is still private and the user's, the setting is still on, and the workflow is still the user's and still quick. A failed check ends the wait and leaves delivery to the post-back's own rules.
+    *   Off by default, and with it off planning and execution are unchanged. A plan that starts a workflow still always waits for the user's approval, and hand-off workflows are never waited for.
+    *   (Ref: `functions_orchestration_workflow_run_wait.py` `SAVED_WORKFLOW_RUN_WAIT_KIND` and `quick_run_eligibility`, `functions_orchestration_workflow_runs.py` `resume_workflow_run_wait`, `functions_workflow_chat_delivery.py` `apply_plan_wait_consume`, `functions_orchestration_continuation.py`, [Chat Orchestration Workflow Run Wait](features/CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT.md))
+
+#### User Interface Enhancements
+
+*   **The Plan Card Names The Workflow It Waits For, And The Run Card Says When A Result Was Used**
+    *   While a plan waits for a saved workflow, its progress line names the workflow and how long the plan waits, such as `Waiting for "Sales digest" to finish (up to 5 min).`, instead of "Waiting for results".
+    *   A run whose result a plan used says **Its results were used in a chat answer.** on its card under the answer, because there is no posted result to jump to. No bell notification is sent for it.
+    *   Workflow names are shown as text.
+    *   (Ref: `orchestrationPlan.ts` `describeRunProgress`, `workflowRunStatus.ts` `workflowFinishedResultsText`, `WorkflowRunCard.tsx`)
+
 ### **(v0.261.304)**
 
 #### Bug Fixes

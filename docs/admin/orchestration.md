@@ -348,15 +348,70 @@ not claim that research verified the requested details.
 | Enable Action Access | Lets the planner choose an existing action the user may already use, without loading a configured agent. | Off | `enable_chat_orchestration_actions`; requires Chat Orchestration and Semantic Kernel. |
 | Propose Workflows From Chat | Lets a plan turn a request for recurring or automated work, such as "email me a summary of my week every Monday", into a personal workflow proposal. The proposal appears as a card in the conversation, and no workflow exists until the user approves it there. Proposals are offered only in the user's own private conversations, and only to users who may already create personal workflows. | Off | `enable_chat_orchestration_workflows`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Propose workflows** capability when the Capabilities list is narrowed. Since **0.261.207** |
 | Run Workflows From Chat | Lets a plan start one of the user's saved personal workflows when the user asks for it, such as "run my weekly digest now". A plan that starts a workflow always waits for the user to run it, even when the approval mode would run it automatically or after a countdown, and approving it starts each named workflow once. Runs are offered only in the user's own private conversations, only to users who may already create personal workflows, and only for workflows with durable execution on. It is independent of Propose Workflows From Chat, so either can be on without the other. | Off | `enable_chat_orchestration_workflow_runs`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Run workflows** capability when the Capabilities list is narrowed. Since **0.261.212** |
+| Wait For Quick Workflows In Chat | Lets a plan wait for a quick saved workflow it started and use the result in the same answer, such as "run my sales digest, then compare its totals with the Q3 report in my workspace". Without it, a plan can start a workflow but can't build on its result, which arrives later as a separate chat post. The server alone decides whether a plan waits, and never for long: only for a quick workflow, only when the steps that write the answer use the result, and only when nothing else in the plan needs the user's sign-in. If the run is still going when the wait ends, the answer says so and the result is posted to the chat when the run finishes, so each result reaches the chat once. Turn it on when people run short digests or lookups from chat and want to compare or combine them with other content in the same answer. | Off | `enable_chat_orchestration_workflow_run_wait`; requires Chat Orchestration, personal workflows (`allow_user_workflows`), Run Workflows From Chat and **Use Workflow Results In Chat**. No plan waits while **Require WorkflowUser App Role** is on. Capped by **Wait for a workflow from chat** under Limits. Since **0.261.307** |
 | Hand Off Large Work From Chat | Lets a plan hand a request that is too big for one chat plan, such as reviewing hundreds of documents, to a one-time durable workflow. The workflow reviews each document with Analyze and writes one report. The user approves the plan, then approves a hand-off card that names the documents, or says how many matching documents at most, the workflow will review. Accepting the card creates the workflow turned off, so it never runs on a schedule, and starts it once; when the run finishes, its report is posted back into the conversation. Hand-offs are offered only in the user's own private conversations. It is off by default because a hand-off starts background work that keeps running with the user's access after the chat turn ends. | Off | `enable_chat_orchestration_workflow_handoff`; requires Chat Orchestration, personal workflows (`allow_user_workflows`), Propose Workflows From Chat, Run Workflows From Chat and **Use Workflow Results In Chat**, and the **Hand off large work** capability when the Capabilities list is narrowed. Since **0.261.250**; since **0.261.295**, users accept, edit or decline a hand-off on the V2 hand-off card under the answer. |
 | Capabilities | Restricts which capabilities a plan may use. An empty selection means every capability the other settings already permit. | All | `chat_orchestration_enabled_capabilities` |
 
 When **Run Workflows From Chat** starts a durable personal workflow, the plan
-still ends right away. If **Use Workflow Results In Chat** is also on in
+still ends right away, unless **Wait For Quick Workflows In Chat** lets it wait
+for that run. If **Use Workflow Results In Chat** is also on in
 Workflow settings, the server records enough context to post the run's eventual
 outcome back to the same private chat later, mark it unread and send one bell
 notification. If the chat can no longer take the result, the server posts
 nothing and sends one workflow notification instead.
+
+#### Waiting for a quick workflow
+
+Since **0.261.307**, **Wait For Quick Workflows In Chat** lets a plan wait for
+the run it started and give the result to the steps that write the answer. The
+user still approves the plan first, because a plan that starts a workflow never
+runs without approval.
+
+A plan waits only for a **quick** workflow. The server reads the saved workflow,
+never the plan the model wrote, and checks it when the plan is made, when the
+run starts and every time the plan checks on the run. A quick workflow:
+
+- is the user's own personal workflow with **Durable execution** on, because
+  only a durable run records progress the waiting plan can read;
+- has one to five tasks, enough for a "gather, analyze, summarize" digest;
+- isn't a one-time hand-off or a structured workflow, and has no For each or
+  Repeat until loop, whose length depends on the data;
+- has no task that needs approval, no Microsoft 365 run-as user, no File Sync,
+  and no publication that finishes only after a review or indexing, since each
+  of those can pause the run for a person or for outside work.
+
+The plan itself must start just that one workflow, let only answer-writing
+steps read its result, and use no web search, URL reads, Deep Research, agents,
+actions, or other workflow proposals or hand-offs. A waiting plan resumes in
+the background without the user's sign-in, and those steps need it. For the
+same reason, no plan waits while **Require WorkflowUser App Role** is on.
+
+A plan waits for at most **Wait for a workflow from chat** seconds, and never
+so long that it couldn't write its answer before **Run timeout**: it keeps 90
+seconds plus a **Step timeout** for each step that uses the result. If less
+than a minute would be left, it doesn't wait. While it waits, the plan card
+names the workflow and how long the plan waits for it.
+
+- **The run finishes in time.** The answer uses its result. The run's chat
+  post-back is marked as used in the answer, so it never posts and sends no
+  bell notification.
+- **The run fails or is cancelled.** The answer says so, and the steps that
+  needed the result don't run.
+- **The wait runs out.** The answer says the workflow was still running, and
+  the post-back posts its result to the chat when it finishes.
+
+The plan and the post-back decide who delivers the result with one
+compare-and-set write on the run's delivery record, so a run that finishes just
+as the wait runs out is delivered once, never twice. Each time the plan checks
+on the run, it also confirms that the conversation is still the user's and
+still private, that the setting is still on, and that the workflow is still the
+user's and still quick. If any of those fails, the plan stops waiting and the
+post-back's own rules decide whether the result is posted.
+
+The plan checks on the run each time the orchestration scheduler picks it up:
+the scheduler runs every 30 seconds, and a claimed plan is held for 45 seconds.
+So a plan notices a finished run within about 75 seconds, or longer when many
+plans are due at once.
 
 ### Actions and agents
 
@@ -583,6 +638,7 @@ context.
 | Workflows created from chat per user | Caps how many workflows a chat plan may create for one user, so a conversation cannot fill a workspace with workflows. Workflows a user builds in the workflow editor never count toward it, and deleting a workflow created from chat frees its place. Supported range is 1-100. | 20 | `chat_orchestration_max_workflows_per_user`; since **0.261.202** |
 | Minimum schedule interval for workflows created from chat | The shortest repeat interval a chat plan may give a workflow it creates. When the general **Workflow Minimum Schedule Interval** on the Workflow tab is longer, that one applies instead. Daily, weekly and monthly schedules always pass. It is checked when the workflow is created; the owner's later edits follow the general minimum only. Supported range is 60-86,400 seconds. | 3600 | `chat_orchestration_min_workflow_interval_seconds`; since **0.261.202** |
 | Hand-offs from chat per user per day | Caps how many hand-offs one user may accept from chat in any rolling 24 hours. Each hand-off creates a one-time workflow and starts a durable run, so this bounds how much background work one user can start from chat. It counts the hand-off workflows that still exist, so deleting one frees its place, and hand-off workflows never count toward **Workflows created from chat per user**. It applies only when **Hand Off Large Work From Chat** is on. Supported range is 1-100. | 5 | `chat_orchestration_max_workflow_handoffs_per_day`; since **0.261.250** |
+| Wait for a workflow from chat | The longest a plan waits for a quick saved workflow before its answer moves on and the result is posted to the chat later instead. **Run timeout** also bounds every wait, so a plan always keeps time to write its answer. Five minutes covers the short digests people run from chat; raise it when their quick workflows routinely take longer, at the cost of holding answers open longer. It applies only when **Wait For Quick Workflows In Chat** is on. Supported range is 60-1800 seconds. | 300 | `chat_orchestration_workflow_run_wait_max_seconds`; since **0.261.307** |
 
 Since **0.261.202**, **Workflows created from chat per user** and **Minimum schedule
 interval for workflows created from chat** are enforced by the workflow draft service
@@ -800,7 +856,10 @@ names the check that failed in `sc_reason`. It shares `sc_run_id_hash` and
 | A step says "Your workflow results couldn't be read right now. Try again in a moment." | Workflow storage could not be read when the step ran. The step is retried once automatically. | Once storage is reachable, the user can select **Retry from failed step** or ask again. Reading a result changes nothing, so trying again is safe. |
 | An answer says a workflow result it used changed or is no longer available, so it was not saved | A run the plan read was deleted or changed, or its owner lost access to a source it used, while the answer was being written. | Expected. Ask again in a new message to read the current result. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
-| A chat-started workflow finishes but no result appears in the chat | The workflow settings gate for result post-back is off, the chat was deleted or shared after the run started, access to personal workflows was lost, the workflow was deleted, or the delivery worker deferred or closed the generation after retryable storage/notification failures. | Check **Use Workflow Results In Chat** under Workflow settings, keep the request in the user's private chat, and open the run from Workflows or the workflow notification. The plan itself is already complete and does not wait for delivery. |
+| A chat-started workflow finishes but no result appears in the chat | The workflow settings gate for result post-back is off, the chat was deleted or shared after the run started, access to personal workflows was lost, the workflow was deleted, or the delivery worker deferred or closed the generation after retryable storage/notification failures. A plan that waited for the run and used its result in the answer never posts it again. | Check **Use Workflow Results In Chat** under Workflow settings, keep the request in the user's private chat, and open the run from Workflows or the workflow notification. Unless the plan waited for the run, it is already complete and does not wait for delivery; a waited run is posted once the plan stops waiting. |
+| Plans start a workflow but never wait for it | Wait For Quick Workflows In Chat or one of the settings it requires is off, Require WorkflowUser App Role is on, the workflow isn't quick, the plan also uses a step that needs the user's sign-in, or less than a minute of the plan's time would be left for the wait. | Check the settings, then the workflow in its editor: durable execution on, one to five tasks, and no loop, approval, Microsoft 365 run-as user, File Sync or review publication. Ask for only that workflow and what to do with its result. |
+| An answer says a waited workflow was still running | The run didn't finish within **Wait for a workflow from chat** or the time the plan had left. | Expected. Its result is posted to the chat when the run finishes. Raise the limit only if the workflow's runs routinely finish soon after. |
+| A plan stops waiting before its limit | A check while waiting failed: the setting was turned off, the chat was shared or deleted, the workflow was deleted, changed so it's no longer quick, or the user lost access. | Expected. The post-back's own rules decide whether the run's result is posted. |
 | Plans never hand large work off to a workflow | Hand Off Large Work From Chat or one of the settings it requires is off, the **Hand off large work** capability is excluded, the user lacks the `WorkflowUser` role your deployment requires, or the conversation is shared. The capability is left out without a reason, so the planner can't say which. | Check Hand Off Large Work From Chat, personal workflows, Propose Workflows From Chat, Run Workflows From Chat and Use Workflow Results In Chat, then the capability selection and the user's role, and ask from the user's own conversation. If all of them pass, look for `workflow_context_unavailable` on `[ORCHESTRATION_WORKFLOWS]` log events. |
 | Accepting a hand-off says "You reached the daily limit for workflow hand-offs. Try again later." | The user already has as many hand-off workflows from the last 24 hours as **Hand-offs from chat per user per day** allows. | Wait, or raise the limit. Deleting a hand-off workflow frees its place. |
 | A hand-off run pauses before reviewing any document | A workspace query for all matching documents matched more than the hand-off may review. A best-matches query reviews only its best N, so more matches don't pause it. The run's deadline doesn't expire the pause. | Cancel the run with **Cancel run** on the hand-off card, which says why it paused, or from Workflows, and ask again with a narrower request. The hand-off workflow can't be resumed, and it still counts toward the daily limit. |

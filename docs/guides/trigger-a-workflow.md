@@ -78,7 +78,9 @@ Before you ask:
    is in flight, even while you're on another page. Select **Check now** to check
    straight away, or **Open run** to follow it in the workflow's run history.
 
-The plan doesn't wait for the workflow to finish. While a run is going, a spinner beside
+The plan doesn't wait for the workflow to finish, unless it can
+[use a quick workflow's result in the same answer](#use-a-quick-workflows-result-in-the-same-answer).
+While a run is going, a spinner beside
 its chat in the chat list says so. From the card you can cancel a run that's still going
 with **Cancel run**, and resume a failed one with **Retry**, which continues the same run
 instead of starting another. Stopping the plan doesn't stop a workflow it already
@@ -101,6 +103,48 @@ start it once that run finishes. If a run the plan started waits for a Microsoft
 approval or sign-in, its status shows **Needs you**, and for a sign-in the card offers
 **Reconnect Microsoft 365**; follow
 [Microsoft 365 authorization waits](#microsoft-365-authorization-waits) to continue it.
+
+### Use a quick workflow's result in the same answer
+
+Since **0.261.307**, when your administrator also turns on **Wait For Quick Workflows
+In Chat**, a plan can wait for a quick workflow it starts and use the result in its
+answer. For example: "Run my sales digest workflow, then compare its totals with the
+Q3 report in my workspace."
+
+Ask for the run and what to do with its result in the same request. The server, not
+the assistant, decides whether the plan waits, and it waits only when all of these
+hold:
+
+- The workflow is quick: **Durable execution** is on, it has one to five tasks, it has
+  no For each or Repeat until, and no task in it waits for an approval, a Microsoft 365
+  sign-in, a File Sync or a review.
+- The plan starts only that workflow and uses its result only to write the answer.
+- The plan doesn't also search the web, read a link, run Deep Research, or use an agent
+  or action. A waiting plan carries on in the background without your sign-in, and
+  those steps need it.
+
+When the workflow or the plan doesn't qualify, the plan leaves the workflow out, and
+the answer says why. You can still start it in a new message.
+
+1. Approve the plan. A plan that starts a workflow always waits for your approval.
+2. While the run goes on, the plan card says what it's waiting for, such as
+   `Waiting for "Sales digest" to finish (up to 5 min).` The plan checks on the run in
+   the background, so the answer can arrive up to about 75 seconds after the run
+   finishes.
+3. Read the answer. It ends with a note on how the wait went.
+
+- **The run finished in time.** The answer uses its results and says so. Under the
+  answer, the run's card says **Its results were used in a chat answer.** The results
+  aren't posted to the chat again, and you get no bell notification for them.
+- **The run failed or was cancelled.** The answer says so, and the plan skips the steps
+  that needed its results. Open the run in Workflows to see why.
+- **The wait ran out.** The answer says the workflow was still running. Its results are
+  posted to the chat once when it finishes, as described above.
+
+If you stop the plan while it waits, the workflow keeps going and its results are
+posted to the chat when it finishes. The plan also stops waiting if the chat is shared,
+the workflow is deleted or changed so it's no longer quick, or your administrator turns
+the setting off.
 
 ## Hand large work off to a workflow
 
