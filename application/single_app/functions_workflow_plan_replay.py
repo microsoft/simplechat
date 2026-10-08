@@ -703,7 +703,10 @@ def create_plan_replay_workflow(user_id, run_id, body, settings, *, read_run=Non
         authorize_replay_sources(user_id, freeze['frozen_plan'], freeze['frozen_seeds'], settings)
     except PlanReplayRefused as exc:
         raise PlanReplaySaveError(exc.code) from None
-    from functions_workflow_drafts import check_orchestration_workflow_quota, orchestration_workflow_id
+    from functions_settings import read_user_settings_snapshot
+    from functions_workflow_drafts import (
+        check_orchestration_workflow_quota, orchestration_workflow_id, read_only_document_resolver,
+    )
     from functions_workflow_definitions import WorkflowDefinitionConflict, normalize_workflow_origin, workflow_definition_for_editor
     from functions_personal_workflows import create_personal_workflow_if_absent
 
@@ -729,6 +732,9 @@ def create_plan_replay_workflow(user_id, run_id, body, settings, *, read_run=Non
             origin=origin,
             actor_user_id=user_id,
             settings=settings,
+            # Read-only seams, as the chat proposal create uses: saving never repairs user settings.
+            user_settings_reader=read_user_settings_snapshot,
+            resolve_document=read_only_document_resolver(user_settings_reader=read_user_settings_snapshot),
             plan_replay_task=build_plan_replay_payload(freeze, user_id, timestamp),
         )
     except WorkflowDefinitionConflict as exc:
