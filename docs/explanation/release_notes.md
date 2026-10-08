@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.305)**
+
+#### Bug Fixes
+
+*   **V2 Group Switching No Longer Rebuilds All Startup Data**
+    *   A group switch now confirms the saved selection through a lightweight scope read instead of waiting for the complete startup payload. Current-access checks, sign-in checks, and read-only recovery after an uncertain save remain in place.
+    *   An overlapping startup refresh cannot restore the previous selection. Startup and scope reads bypass the browser's HTTP cache.
+    *   Startup requests now report per-phase timing so the remaining first-load bottleneck can be measured; first-load optimization is a separate follow-up.
+    *   (Ref: `route_backend_v2.py`, `bootstrapStore.ts`, `groupWorkspaceStore.ts`, [V2 Group Switch Latency Fix](fixes/V2_GROUP_SWITCH_LATENCY_FIX.md), [#1725](https://github.com/microsoft/simplechat/issues/1725))
+
 ### **(v0.261.304)**
 
 #### Bug Fixes

@@ -2,7 +2,7 @@
 # test_route_unauthenticated_policy_contract.py
 """
 Functional test for route unauthenticated access policy contract.
-Version: 0.261.299
+Version: 0.261.305
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
 Workflow run status coverage: 0.261.227
@@ -286,6 +286,15 @@ def test_workflow_result_context_requires_a_signed_in_user_session() -> None:
     assert [route.function_name for route in matches] == ["get_user_workflow_run_result_context"]
     assert expected_policy(path) == "session_user_401_or_redirect"
     assert {"login_required", "user_required"} <= set(matches[0].decorator_names)
+
+
+def test_v2_scope_requires_a_signed_in_user_session() -> None:
+    """The lightweight scope confirmation is never public or bearer-only."""
+    path = "/api/v2/scope"
+    matches = [route for route in iter_route_functions() if route.path == path]
+    assert [route.function_name for route in matches] == ["v2_scope"]
+    assert expected_policy(path) == "session_user_401_or_redirect"
+    assert {"swagger_route", "login_required", "user_required"} <= set(matches[0].decorator_names)
 
 
 def test_workflow_run_status_requires_a_signed_in_user_session() -> None:

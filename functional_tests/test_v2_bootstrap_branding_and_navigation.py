@@ -2,7 +2,7 @@
 # test_v2_bootstrap_branding_and_navigation.py
 """
 Functional test for the V2 bootstrap branding and navigation blocks.
-Version: 0.261.296
+Version: 0.261.305
 Implemented in: 0.261.047
 Send Feedback navigation entry added in: 0.261.296
 
@@ -460,7 +460,10 @@ def test_bootstrap_payload_carries_the_navigation_block():
 
     source = BACKEND_V2.read_text(encoding="utf-8")
 
-    assert '"navigation": _build_navigation(settings, current_user_roles)' in source, (
+    assert 'navigation = _build_navigation(settings, current_user_roles)' in source, (
+        "The timed navigation builder must still use settings and the caller's roles"
+    )
+    assert '"navigation": navigation' in source, (
         "The bootstrap payload must carry a navigation block built from the caller's "
         "roles, or Custom Pages and External Links cannot appear in the V2 rail"
     )

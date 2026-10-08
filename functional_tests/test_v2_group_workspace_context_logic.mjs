@@ -1,10 +1,11 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.296
+// Version: 0.261.305
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
 // Members section validation (M7B): 0.261.155
 // Workspace navigation URL validation: 0.261.281
 // User Settings Open path for a group row: 0.261.296
+// Switch confirmed by the scope-only read, not the full bootstrap (#1725): 0.261.305
 // Executes the real context API and stores with controlled HTTP ordering.
 
 import assert from 'node:assert/strict';
@@ -68,6 +69,17 @@ function bootstrap(viewer = serverViewer, active = activeGroup) {
     };
 }
 
+function activeScope(viewer = serverViewer, active = activeGroup) {
+    return {
+        user: { id: viewer },
+        scope: {
+            active_group_id: active,
+            active_group_name: active ? `Name ${active}` : null,
+            active_public_workspace_id: null,
+        },
+    };
+}
+
 function json(body, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
@@ -81,6 +93,7 @@ function defaultResponse(call) {
         return json({ message: 'Active group updated' });
     }
     if (call.path === '/api/v2/bootstrap') return json(bootstrap());
+    if (call.path === '/api/v2/scope') return json(activeScope());
     throw new Error(`Unexpected request: ${call.method} ${call.path}`);
 }
 
@@ -101,7 +114,10 @@ async function run(name, check) {
 }
 
 globalThis.fetch = async (path, options = {}) => {
-    const call = { path: String(path), method: options.method ?? 'GET', body: options.body ? JSON.parse(options.body) : null, signal: options.signal };
+    const call = {
+        path: String(path), method: options.method ?? 'GET',
+        body: options.body ? JSON.parse(options.body) : null, signal: options.signal, cache: options.cache,
+    };
     calls.push(call);
     return handler(call);
 };
@@ -229,7 +245,7 @@ try {
         await assert.rejects(loading);
         assert.equal(useGroupWorkspaceStore.getState().context, null);
     });
-    await run('activation confirms drafts, authorization, persistence, catalogs and fresh context in order', async () => {
+    await run('activation confirms drafts, authorization, persistence, scope and fresh context in order', async () => {
         await useGroupWorkspaceStore.getState().load('group-a');
         calls = [];
         let confirmed = false;
@@ -242,9 +258,51 @@ try {
         assert.equal(result.context.scope.id, 'group-b');
         assert.deepEqual(calls.map(({ method, path }) => `${method} ${path}`), [
             'GET /api/v2/workspaces/group/group-b', 'PATCH /api/groups/setActive',
-            'GET /api/v2/bootstrap', 'GET /api/v2/workspaces/group/group-b',
+            'GET /api/v2/scope', 'GET /api/v2/workspaces/group/group-b',
         ]);
         assert.deepEqual(calls[1].body, { groupId: 'group-b' });
+        assert.equal(useBootstrapStore.getState().data.scope.active_group_id, 'group-b');
+    });
+    await run('activation patches only the active scope, read outside the HTTP cache', async () => {
+        const before = useBootstrapStore.getState().data;
+        before.features = { enable_example: true };
+        before.scope.groups = [{ id: 'group-a', name: 'A' }, { id: 'group-b', name: 'B' }];
+        const result = await useGroupWorkspaceStore.getState().activate('group-b', () => true);
+        assert.equal(result.status, 'activated');
+        assert.equal(calls.some((call) => call.path === '/api/v2/bootstrap'), false);
+        const scopeRead = calls.find((call) => call.path === '/api/v2/scope');
+        assert.equal(scopeRead.cache, 'no-store');
+        const after = useBootstrapStore.getState().data;
+        assert.equal(after.scope.active_group_id, 'group-b');
+        assert.equal(after.scope.active_group_name, 'Name group-b');
+        assert.equal(after.features, before.features);
+        assert.equal(after.scope.groups, before.scope.groups);
+    });
+    await run('a full bootstrap read issued before a switch cannot restore the previous group', async () => {
+        const stale = deferred();
+        const entered = deferred();
+        handler = (call) => {
+            if (call.path === '/api/v2/bootstrap') {
+                entered.resolve();
+                return stale.promise;
+            }
+            return defaultResponse(call);
+        };
+        // A tab refocus starts a full read built while group-a is still the saved group.
+        const background = useBootstrapStore.getState().refresh();
+        await entered.promise;
+        assert.equal(calls[0].cache, 'no-store');
+        const result = await useGroupWorkspaceStore.getState().activate('group-b', () => true);
+        assert.equal(result.status, 'activated');
+        const landed = bootstrap('viewer', 'group-a');
+        landed.features = { enable_late: true };
+        stale.resolve(json(landed));
+        await background;
+        const data = useBootstrapStore.getState().data;
+        assert.equal(data.scope.active_group_id, 'group-b');
+        assert.deepEqual(data.features, { enable_late: true });
+        handler = defaultResponse;
+        await useBootstrapStore.getState().refresh();
         assert.equal(useBootstrapStore.getState().data.scope.active_group_id, 'group-b');
     });
     await run('cancelled draft guard performs no request and preserves prior context', async () => {
@@ -277,7 +335,7 @@ try {
             assert.equal(useGroupWorkspaceStore.getState().context, previous);
             assert.equal(useGroupWorkspaceStore.getState().needsReconciliation, false);
             assert.equal(activeGroup, 'group-a');
-            assert.equal(calls.some((call) => call.path === '/api/v2/bootstrap'), false);
+            assert.equal(calls.some((call) => /^\/api\/v2\/(bootstrap|scope)$/.test(call.path)), false);
         });
     }
     await run('lost write acknowledgement requires read-only reconciliation, never a replay', async () => {
@@ -300,7 +358,7 @@ try {
         assert.equal(useGroupWorkspaceStore.getState().needsReconciliation, false);
     });
     await run('failed mandatory refresh cannot reuse cached bootstrap authorization', async () => {
-        handler = (call) => call.path === '/api/v2/bootstrap'
+        handler = (call) => call.path === '/api/v2/scope'
             ? json({ error: 'unavailable' }, 503) : defaultResponse(call);
         const switching = useGroupWorkspaceStore.getState().activate('group-b', () => true);
         await assert.rejects(switching, /could not be confirmed/);
@@ -324,7 +382,7 @@ try {
     });
     await run('a competing tab selection is reported rather than overwritten or hidden', async () => {
         handler = (call) => {
-            if (call.path === '/api/v2/bootstrap') activeGroup = 'group-c';
+            if (call.path === '/api/v2/scope') activeGroup = 'group-c';
             return defaultResponse(call);
         };
         const switching = useGroupWorkspaceStore.getState().activate('group-b', () => true);
@@ -375,7 +433,7 @@ try {
         const refresh = deferred();
         const entered = deferred();
         handler = (call) => {
-            if (call.path === '/api/v2/bootstrap') {
+            if (call.path === '/api/v2/scope') {
                 entered.resolve();
                 return refresh.promise;
             }
@@ -385,7 +443,7 @@ try {
         const rejected = assert.rejects(switching, WorkspaceRequestSuperseded);
         await entered.promise;
         useBootstrapStore.setState({ data: bootstrap('other', 'group-c') });
-        refresh.resolve(json(bootstrap('viewer', 'group-b')));
+        refresh.resolve(json(activeScope('viewer', 'group-b')));
         await rejected;
         assert.equal(useBootstrapStore.getState().data.user.id, 'other');
         assert.equal(useGroupWorkspaceStore.getState().context, null);
@@ -415,7 +473,7 @@ try {
         const result = await useGroupWorkspaceStore.getState().reconcile();
         assert.equal(result, null);
         assert.equal(useGroupWorkspaceStore.getState().needsReconciliation, false);
-        assert.deepEqual(calls.map((call) => call.path), ['/api/v2/bootstrap']);
+        assert.deepEqual(calls.map((call) => call.path), ['/api/v2/scope']);
     });
     await run('native delegation remains navigable without claiming full action authoring is enabled', async () => {
         const value = context('group-a');

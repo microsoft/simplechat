@@ -68,6 +68,11 @@ interface RequestOptions {
     body?: unknown;
     signal?: AbortSignal;
     headers?: Record<string, string>;
+    /**
+     * Fetch cache mode. Preference confirmations use `no-store` so an earlier cached
+     * response cannot stand in for a fresh server read.
+     */
+    cache?: RequestCache;
 }
 
 /** A bare machine code, one lowercase token such as `document_propagation_incomplete`. */
@@ -187,7 +192,7 @@ export interface ApiResponse<T> {
 }
 
 export async function requestWithStatus<T>(path: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
-    const { method = 'GET', body, signal, headers = {} } = options;
+    const { method = 'GET', body, signal, headers = {}, cache } = options;
 
     const init: RequestInit = {
         method,
@@ -198,6 +203,10 @@ export async function requestWithStatus<T>(path: string, options: RequestOptions
             ...headers,
         },
     };
+
+    if (cache) {
+        init.cache = cache;
+    }
 
     if (body !== undefined) {
         init.headers = { ...init.headers, 'Content-Type': 'application/json' };
