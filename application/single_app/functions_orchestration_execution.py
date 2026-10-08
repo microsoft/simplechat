@@ -1385,6 +1385,7 @@ class HarnessExecution:
 
         workflow_runs = workflow_run_note(
             self.record["plan"], current.get("execution_steps") or [], stopped=status == "cancelled",
+            composed=bool(prepared),
         )
         if workflow_runs:
             content.append(workflow_runs)

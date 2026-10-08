@@ -1521,7 +1521,9 @@ CAPABILITY_REGISTRY = (
         'id': CAPABILITY_WORKFLOW_RUN,
         'label': 'Run workflow',
         # Gather, like agent_invoke and action_invoke: it reaches outside the plan and reports
-        # back. It starts the run and links to it; it never waits for or reads its results.
+        # back. It starts the run and links to it. It reads no results itself; only when the
+        # server marked the step while checking the plan does it wait, within a bound, for a
+        # quick run whose result later steps read through workflow_results.
         'role': ROLE_GATHER,
         'result_contract_version': 'workflow-run-v1',
         'summary': (

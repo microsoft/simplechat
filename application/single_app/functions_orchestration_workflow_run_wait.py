@@ -505,6 +505,24 @@ def workflow_run_hold_until(deadline):
     return None if moment is None else moment + timedelta(seconds=WAIT_HOLD_GRACE_SECONDS)
 
 
+def plan_runs_headless(steps, settings, request_context, *, export_catalog=None):
+    """Whether a resumed continuation could still run every enabled step of this plan.
+
+    Checked again when the run step starts, against the settings and catalogs of that moment, so a
+    plan that would stall without the user's sign-in never waits. Any doubt returns False.
+    """
+    single = _single_run_step(steps or [])
+    if single is None:
+        return False
+    if isinstance(settings, dict) and settings.get('require_member_of_workflow_user'):
+        return False
+    capability_ids = {value for value in single[2] if isinstance(value, str)}
+    if not capability_ids:
+        return False
+    available = headless_capability_ids(settings, request_context, capability_ids, export_catalog=export_catalog)
+    return capability_ids <= set(available)
+
+
 __all__ = [
     'QUICK_RUN_FLOW_MAX_DEPTH',
     'QUICK_RUN_LOOP_KINDS',
@@ -536,6 +554,7 @@ __all__ = [
     'compute_workflow_run_waits',
     'headless_capability_ids',
     'headless_request_context',
+    'plan_runs_headless',
     'projection_offers_wait',
     'quick_run_eligibility',
     'quick_run_reason_text',

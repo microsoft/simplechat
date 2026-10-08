@@ -1802,6 +1802,14 @@ FAILURE_MESSAGES = {
         'Saved workflows were temporarily unavailable, so this workflow may not have started. '
         "Retrying is safe: a workflow this plan already started won't start again."
     ),
+    'workflow_run_failed': (
+        "The workflow this plan waited for didn't finish successfully, so its result wasn't used. "
+        'Open its run in Workflows to see what happened.'
+    ),
+    'workflow_run_cancelled': (
+        'The workflow this plan waited for was cancelled before it finished, so its result '
+        "wasn't used."
+    ),
     'workflow_results_unavailable': "Your workflow results couldn't be read right now. Try again in a moment.",
     'workflow_result_changed': (
         'A workflow result this answer used changed or is no longer available, so the answer was not '
