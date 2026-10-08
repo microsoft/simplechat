@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_planner.py
 """
 Functional test for planning a chat orchestration plan that waits for a quick saved workflow.
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.306
+Implemented in: 0.261.306
 
 This test ensures that the workflow planning context marks a catalog workflow "waitable" only
 when Wait For Quick Workflows In Chat is configured with everything it needs, personal workflows
@@ -125,8 +125,8 @@ def _rejected(schema, planning, steps, final="answer"):
 # ---------------------------------------------------------------------------
 
 def test_version_is_at_least_the_implementation():
-    """Planning a wait ships in 0.261.302."""
-    assert_app_version_at_least("0.261.302")
+    """Planning a wait ships in 0.261.306."""
+    assert_app_version_at_least("0.261.306")
 
 
 def test_only_quick_catalog_workflows_are_marked_waitable(wf):

@@ -5,7 +5,7 @@ Version: 0.261.139
 Initialized callers import this module after application bootstrap. It neither
 admits plans nor creates retry attempts, and never starts or cancels native jobs.
 Valid native waits use the existing recovery claim and native restore engine, and so,
-since 0.261.302, does a step waiting on a quick saved-workflow run.
+since 0.261.306, does a step waiting on a quick saved-workflow run.
 Other scheduler states share its stable producer token and fresh claim_id fences.
 Saved native and generic result waits retain their original core dispatch data.
 A run from the removed legacy plan contract is refused with the legacy-plan failure;

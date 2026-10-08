@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_eligibility.py
 """
 Functional test for the quick-run rule that decides whether a chat plan may wait for a saved workflow run.
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.306
+Implemented in: 0.261.306
 
 This test ensures that ``quick_run_eligibility`` accepts a quick personal workflow and refuses,
 with its own reason, a workflow that breaks any one rule: the wait setting and each setting it
@@ -177,8 +177,8 @@ SETTINGS_OFF = [
 
 
 def test_version_is_at_least_the_implementation():
-    """The quick-run rule ships in 0.261.302."""
-    assert_app_version_at_least('0.261.302')
+    """The quick-run rule ships in 0.261.306."""
+    assert_app_version_at_least('0.261.306')
 
 
 def test_wait_kind_constant():
