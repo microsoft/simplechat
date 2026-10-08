@@ -247,6 +247,7 @@ from functions_workflow_execution import (
     workflow_checkpoint_scope_guard,
     workflow_unit,
 )
+from functions_workflow_plan_replay import PLAN_REPLAY_TASK_TYPE, PlanReplayRefused, execute_plan_replay_task
 from functions_workflow_readiness import (
     WorkflowOutputUnavailable,
     pending_workflow_output_references,
@@ -11236,6 +11237,21 @@ def _execute_workflow_task_sequence(
                         consumed_inputs = flow_runner._receipts([*consumed_inputs, *flow_runner.control_receipts])
                     attempt_workflow = {**workflow, 'consumed_inputs': consumed_inputs}
                     runner_audit = {'requested_mode': 'publication', 'resolved_type': 'publication'}
+                    task_error = ''
+                    break
+                if task.get('type') == PLAN_REPLAY_TASK_TYPE:
+                    # A frozen chat plan replays as the workflow's creator, never through a runner.
+                    task_stage = 'execution'
+                    task_result = workflow_unit(
+                        task_unit_key,
+                        lambda: execute_plan_replay_task(
+                            workflow, task, settings, conversation_id=conversation_id, run_id=run_id,
+                            actor_user_id=actor_id, attempt=attempt_index,
+                        ),
+                        inputs={'task': task},
+                    )
+                    attempt_workflow = {**workflow, 'consumed_inputs': []}
+                    runner_audit = {'requested_mode': PLAN_REPLAY_TASK_TYPE, 'resolved_type': PLAN_REPLAY_TASK_TYPE}
                     task_error = ''
                     break
                 # Built inside the attempt so an invalid task document action fails this
