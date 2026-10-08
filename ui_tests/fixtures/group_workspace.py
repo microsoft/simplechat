@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.178
+Version: 0.261.305
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -1458,6 +1458,17 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
 
     def _dispatch(self, route, entry):
         path, method = entry.path, entry.method
+        if path == "/api/v2/scope" and method == "GET":
+            group = self.groups.get(self.active_group)
+            self._json(route, {
+                "user": {"id": self.viewer_id},
+                "scope": {
+                    "active_group_id": self.active_group if group else None,
+                    "active_group_name": group["workspace"]["name"] if group else None,
+                    "active_public_workspace_id": None,
+                },
+            })
+            return
         leak = personal_scope_leak(path, entry.query)
         if leak:
             # A group workspace page must never read a personal-scope resource. The M4 group action

@@ -21,6 +21,7 @@ Two blueprints are registered from here:
 
 import json
 import logging
+import time
 import uuid
 
 from flask import current_app, jsonify, request, session, url_for
@@ -128,6 +129,7 @@ from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_em
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_user_visible_public_workspace_ids_from_settings,
+    visible_public_workspace_ids_from_user_settings,
 )
 from functions_prompt_variables import (
     MAX_REQUEST_BYTES as PROMPT_FILL_MAX_REQUEST_BYTES,
@@ -954,53 +956,88 @@ def register_route_backend_v2(bp):
         if not user_id:
             return jsonify({"error": "User not authenticated"}), 401
 
+        # Per-section timings, emitted as one trace per request. The Cosmos calls behind
+        # this payload are instrumented, but most of its time is spent in Python between
+        # them, which no dependency span covers.
+        timer = BootstrapPhaseTimer()
         try:
             settings = get_settings()
+            timer.mark("settings")
             public_settings = sanitize_settings_for_user(settings)
+            timer.mark("sanitize_settings")
 
             user_settings = get_user_settings(user_id)
             user_settings_dict = (
                 user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
             )
+            timer.mark("user_settings")
             current_user_info = get_current_user_info() or {}
             session_user = session.get("user") or {}
             current_user_roles = session_user.get("roles", []) or []
+            timer.mark("user_info")
 
+            measure = timer.measure
             per_user_overrides = {
-                "enable_chat_file_uploads": is_chat_file_upload_enabled_for_user(
-                    settings, current_user_roles
+                "enable_chat_file_uploads": measure(
+                    "chat_file_uploads",
+                    is_chat_file_upload_enabled_for_user,
+                    settings,
+                    current_user_roles,
                 ),
-                "allow_user_workflows": is_user_workflows_enabled_for_user(
-                    settings, user_roles=current_user_roles
+                "allow_user_workflows": measure(
+                    "user_workflows",
+                    is_user_workflows_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
                 ),
-                "enable_workflow_ai_assistant": is_workflow_assistant_enabled_for_user(
-                    settings, user_roles=current_user_roles
+                "enable_workflow_ai_assistant": measure(
+                    "workflow_assistant",
+                    is_workflow_assistant_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
                 ),
                 # Only hides Ask AI; each assist route re-checks the scope permission.
-                "enable_agent_ai_assistant": is_agent_assistant_enabled(settings),
-                "enable_action_ai_assistant": is_action_assistant_enabled(settings),
+                "enable_agent_ai_assistant": measure(
+                    "agent_assistant", is_agent_assistant_enabled, settings
+                ),
+                "enable_action_ai_assistant": measure(
+                    "action_assistant", is_action_assistant_enabled, settings
+                ),
                 # Only shows the Review center's AI entry points; every assist and suggestion
                 # route re-checks the toggle and the caller's reviewer role. The guidance text
                 # itself is never sent.
-                "enable_admin_review_ai_assistant": is_admin_review_assistant_enabled(settings),
+                "enable_admin_review_ai_assistant": measure(
+                    "admin_review_assistant", is_admin_review_assistant_enabled, settings
+                ),
                 # Only hides the chip and entry points; the server re-checks every read.
-                "enable_chat_workflow_results": is_chat_workflow_results_enabled_for_user(
-                    settings, user_roles=current_user_roles
+                "enable_chat_workflow_results": measure(
+                    "chat_workflow_results",
+                    is_chat_workflow_results_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
                 ),
                 "enable_workflow_alert_sounds": (
                     settings.get("enable_workflow_alert_sounds", True) is not False
                 ),
-                "enable_source_review": is_source_review_enabled_for_user(
+                "enable_source_review": measure(
+                    "source_review",
+                    is_source_review_enabled_for_user,
                     settings,
                     user_id,
                     user_email=current_user_info.get("email"),
                     user_roles=current_user_roles,
                 ),
-                "enable_url_access": is_url_access_enabled_for_user(
-                    settings, user_roles=current_user_roles
+                "enable_url_access": measure(
+                    "url_access",
+                    is_url_access_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
                 ),
-                "enable_conversation_contents_drawer": is_conversation_contents_drawer_enabled(
-                    public_settings, user_settings_dict
+                "enable_conversation_contents_drawer": measure(
+                    "conversation_contents_drawer",
+                    is_conversation_contents_drawer_enabled,
+                    public_settings,
+                    user_settings_dict,
                 ),
             }
 
@@ -1014,6 +1051,7 @@ def register_route_backend_v2(bp):
                 ]
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to load user groups: {exc}")
+            timer.mark("groups")
 
             public_workspaces = []
             try:
@@ -1025,6 +1063,7 @@ def register_route_backend_v2(bp):
                         )
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to load public workspaces: {exc}")
+            timer.mark("public_workspaces")
 
             agents = []
             try:
@@ -1041,6 +1080,7 @@ def register_route_backend_v2(bp):
                 ]
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to load agent catalog: {exc}")
+            timer.mark("agent_catalog")
 
             models = []
             try:
@@ -1052,6 +1092,7 @@ def register_route_backend_v2(bp):
                 )
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to load model catalog: {exc}")
+            timer.mark("model_catalog")
 
             prompts = []
             try:
@@ -1063,6 +1104,7 @@ def register_route_backend_v2(bp):
                 )
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to load prompt catalog: {exc}")
+            timer.mark("prompt_catalog")
 
             initial_model_selection = None
             try:
@@ -1075,33 +1117,16 @@ def register_route_backend_v2(bp):
                 )
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to resolve initial model: {exc}")
-
-            # The stored active scope is only a UI preference, so it is reported back
-            # rather than used to authorize anything here: the chat endpoints re-derive and
-            # authorize scope on every request via _get_authorized_chat_scope_context.
-            #
-            # It is still validated against the caller's own authorized lists, because a
-            # group or workspace can be revoked after the preference was saved and echoing
-            # a stale id would show the user a scope badge they no longer have access to.
-            # bac-check: ignore - preference read, filtered against the caller's authorized
-            # group and workspace lists below; not used for an authorization decision.
-            stored_group_id = user_settings_dict.get("activeGroupOid", "") or None
-            # bac-check: ignore - preference read, filtered against the caller's visible
-            # public workspace list below; not used for an authorization decision.
-            stored_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "") or None
+            timer.mark("initial_model")
 
             authorized_group_ids = {group["id"] for group in groups}
-            active_group_id = stored_group_id if stored_group_id in authorized_group_ids else None
-            active_group_name = None
-            if active_group_id:
-                group_doc = find_group_by_id(active_group_id)
-                if group_doc:
-                    active_group_name = group_doc.get("name", "")
-
             visible_workspace_ids = {workspace["id"] for workspace in public_workspaces}
-            active_public_workspace_id = (
-                stored_workspace_id if stored_workspace_id in visible_workspace_ids else None
+            active_scope = _resolve_active_scope(
+                user_settings_dict,
+                authorized_group_ids,
+                lambda workspace_id: workspace_id in visible_workspace_ids,
             )
+            timer.mark("active_scope")
 
             # Which workspace sections this user may see. Computed server-side because the
             # answer combines settings, app-role checks and governance policy, and only
@@ -1118,6 +1143,7 @@ def register_route_backend_v2(bp):
                 )
             except Exception as exc:
                 logger.warning(f"[V2_BOOTSTRAP] Failed to resolve workspace sections: {exc}")
+            timer.mark("workspace_sections")
 
             # Safety warnings an administrator sent that still need the user's
             # acknowledgment. Only the count rides here, so the interface asks for the
@@ -1132,6 +1158,24 @@ def register_route_backend_v2(bp):
                     extra={"user_id": user_id, "error_type": type(exc).__name__},
                     level=logging.WARNING,
                 )
+            timer.mark("safety_warnings")
+
+            branding = _build_branding(settings, public_settings)
+            timer.mark("branding")
+            navigation = _build_navigation(settings, current_user_roles)
+            timer.mark("navigation")
+            features = _build_feature_flags(public_settings, per_user_overrides)
+            timer.mark("features")
+            capabilities = _build_capabilities(settings)
+            timer.mark("capabilities")
+            control_center = get_control_center_capabilities(session_user, settings)
+            timer.mark("control_center")
+            orchestration = _build_orchestration(settings, public_settings)
+            timer.mark("orchestration")
+            notices = _build_notices(public_settings, user_settings_dict)
+            timer.mark("notices")
+            workspace_uploads = _build_workspace_uploads(public_settings)
+            timer.mark("workspace_uploads")
 
             payload = {
                 "version": VERSION,
@@ -1146,12 +1190,12 @@ def register_route_backend_v2(bp):
                     "is_admin": "Admin" in current_user_roles,
                     "roles": list(current_user_roles),
                 },
-                "branding": _build_branding(settings, public_settings),
-                "navigation": _build_navigation(settings, current_user_roles),
-                "features": _build_feature_flags(public_settings, per_user_overrides),
-                "capabilities": _build_capabilities(settings),
-                "control_center": get_control_center_capabilities(session_user, settings),
-                "orchestration": _build_orchestration(settings, public_settings),
+                "branding": branding,
+                "navigation": navigation,
+                "features": features,
+                "capabilities": capabilities,
+                "control_center": control_center,
+                "orchestration": orchestration,
                 "catalogs": {
                     "models": models,
                     "agents": agents,
@@ -1159,21 +1203,21 @@ def register_route_backend_v2(bp):
                     "initial_model_selection": initial_model_selection,
                 },
                 "scope": {
-                    "active_group_id": active_group_id,
-                    "active_group_name": active_group_name,
-                    "active_public_workspace_id": active_public_workspace_id,
+                    **active_scope,
                     "groups": groups,
                     "public_workspaces": public_workspaces,
                 },
                 "admin_nav": ADMIN_NAV if "Admin" in current_user_roles else [],
-                "notices": _build_notices(public_settings, user_settings_dict),
+                "notices": notices,
                 "workspace": workspace,
-                "workspace_uploads": _build_workspace_uploads(public_settings),
+                "workspace_uploads": workspace_uploads,
                 "safety_warnings": {"pending": pending_safety_warnings},
                 "settings": public_settings,
             }
 
-            return jsonify(payload), 200
+            response = jsonify(payload)
+            timer.mark("serialize")
+            return response, 200
         except Exception as exc:
             log_event(
                 f"[V2_BOOTSTRAP] Failed to build bootstrap payload: {exc}",
@@ -1181,6 +1225,135 @@ def register_route_backend_v2(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to load application bootstrap"}), 500
+        finally:
+            timer.mark("response_tail")
+            timer.emit()
+
+    @bp.route("/api/v2/scope", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_scope():
+        """Return only the caller's active group and public workspace.
+
+        Switching group workspaces changes nothing else in the bootstrap payload, so the
+        SPA confirms a switch with this read instead of rebuilding every catalog. The
+        values are validated exactly as the bootstrap validates them, by the same helper.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401, {"Cache-Control": "no-store"}
+
+        try:
+            user_settings = get_user_settings(user_id)
+            user_settings_dict = (
+                user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+            )
+            authorized_group_ids = {
+                group["id"] for group in (get_user_groups(user_id) or []) if group.get("id")
+            }
+
+            def is_visible_workspace(workspace_id):
+                visible_ids = visible_public_workspace_ids_from_user_settings(user_settings)
+                if workspace_id not in visible_ids:
+                    return False
+                return find_public_workspace_by_id(workspace_id) is not None
+
+            active_scope = _resolve_active_scope(
+                user_settings_dict, authorized_group_ids, is_visible_workspace
+            )
+            response = jsonify({"user": {"id": user_id}, "scope": active_scope})
+            return response, 200, {"Cache-Control": "no-store"}
+        except Exception as exc:
+            log_event(
+                "[V2_SCOPE] Failed to resolve active scope.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load active scope"}), 503, {"Cache-Control": "no-store"}
+
+
+class BootstrapPhaseTimer:
+    """Accumulate elapsed milliseconds per named section of one bootstrap request."""
+
+    def __init__(self, clock=time.perf_counter):
+        self._clock = clock
+        self._started = clock()
+        self._last = self._started
+        self.phases_ms = {}
+
+    def mark(self, phase):
+        """Charge the time since the previous mark to ``phase``."""
+        now = self._clock()
+        self.phases_ms[phase] = round(
+            self.phases_ms.get(phase, 0.0) + (now - self._last) * 1000.0, 1
+        )
+        self._last = now
+
+    def measure(self, phase, func, *args, **kwargs):
+        """Call ``func`` and charge its duration to ``phase``, even when it raises."""
+        self.mark("_between")
+        try:
+            return func(*args, **kwargs)
+        finally:
+            self.mark(phase)
+
+    def total_ms(self):
+        return round((self._clock() - self._started) * 1000.0, 1)
+
+    def emit(self):
+        """Log the timings as one trace, correlated to the request by operation id.
+
+        ``log_event`` keeps only numeric values from ``extra`` (nested dicts collapse to a
+        count and strings to a length), so each phase is a flat ``phase_<name>_ms`` key.
+        """
+        extra = {"total_ms": self.total_ms()}
+        for phase, elapsed_ms in self.phases_ms.items():
+            if phase != "_between":
+                extra[f"phase_{phase}_ms"] = elapsed_ms
+        log_event("[V2_BOOTSTRAP] Phase timings", extra=extra)
+
+
+def _resolve_active_scope(user_settings_dict, authorized_group_ids, is_visible_workspace):
+    """Report the caller's stored active group and public workspace, if still authorized.
+
+    The stored active scope is only a UI preference, so it is reported back rather than
+    used to authorize anything: the chat endpoints re-derive and authorize scope on every
+    request via _get_authorized_chat_scope_context.
+
+    It is still validated against the caller's own authorized lists, because a group or
+    workspace can be revoked after the preference was saved and echoing a stale id would
+    show the user a scope badge they no longer have access to. Both the bootstrap and the
+    scope endpoint use this helper, so the two cannot disagree on a user's active scope.
+    """
+    user_settings_dict = user_settings_dict if isinstance(user_settings_dict, dict) else {}
+    # bac-check: ignore - preference read, filtered against the caller's authorized
+    # group list below; not used for an authorization decision.
+    stored_group_id = user_settings_dict.get("activeGroupOid", "") or None
+    # bac-check: ignore - preference read, filtered against the caller's visible
+    # public workspace list below; not used for an authorization decision.
+    stored_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "") or None
+
+    active_group_id = stored_group_id if stored_group_id in authorized_group_ids else None
+    active_group_name = None
+    if active_group_id:
+        group_doc = find_group_by_id(active_group_id)
+        if group_doc:
+            active_group_name = group_doc.get("name", "")
+        else:
+            active_group_id = None
+
+    active_public_workspace_id = (
+        stored_workspace_id
+        if stored_workspace_id and is_visible_workspace(stored_workspace_id)
+        else None
+    )
+    return {
+        "active_group_id": active_group_id,
+        "active_group_name": active_group_name,
+        "active_public_workspace_id": active_public_workspace_id,
+    }
 
 
 def _load_global_model_endpoints(settings=None):

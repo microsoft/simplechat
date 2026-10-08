@@ -1150,6 +1150,19 @@ export interface ControlCenterCapabilities {
     can_run_maintenance: boolean;
 }
 
+/** The caller's saved active scope, as bootstrap reports it under `scope`. */
+export interface ActiveScope {
+    active_group_id: string | null;
+    active_group_name: string | null;
+    active_public_workspace_id: string | null;
+}
+
+/** GET /api/v2/scope: the active scope alone, for confirming a workspace switch. */
+export interface ActiveScopePayload {
+    user: { id: string };
+    scope: ActiveScope;
+}
+
 export interface BootstrapPayload {
     version: string;
     user: {
@@ -1219,10 +1232,7 @@ export interface BootstrapPayload {
      * `useBootstrapStore`.
      */
     orchestration?: OrchestrationBootstrap;
-    scope: {
-        active_group_id: string | null;
-        active_group_name: string | null;
-        active_public_workspace_id: string | null;
+    scope: ActiveScope & {
         groups: WorkspaceRef[];
         public_workspaces: WorkspaceRef[];
     };

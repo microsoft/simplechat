@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.299
+Version: 0.261.305
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -355,6 +355,7 @@ SENSITIVE_ROUTE_POLICIES = {
     # The warned user's own safety warnings: a user session, deliberately not gated on the
     # content checks report, so a warning already sent stays acknowledgeable.
     ("route_backend_safety.py", "get_pending_safety_warnings"): ("login_required", "user_required"),
+    ("route_backend_v2.py", "v2_scope"): ("login_required", "user_required"),
     ("route_backend_safety.py", "acknowledge_pending_safety_warning"): ("login_required", "user_required"),
     # The Review center: each section's reviewer role and its feature gate, like the
     # single-record review routes they sit beside.
