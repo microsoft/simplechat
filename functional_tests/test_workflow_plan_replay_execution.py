@@ -15,6 +15,7 @@ is published afterwards.
 Checks raise AssertionError explicitly so they still run under ``python -O``.
 """
 
+import hashlib
 import importlib
 import json
 import sys
@@ -39,6 +40,7 @@ WORKFLOW_CONVERSATION = "workflow-conv"
 WORKFLOW_RUN = "wf-run-1"
 WORKFLOW_TURN = "workflow-turn-1"
 TASK_ID = "task-1"
+UNIT_KEY = f"task:{TASK_ID}"
 NOW = datetime(2026, 9, 28, 13, 0, tzinfo=timezone.utc)
 FROZEN_INSTRUCTION = "Prepare the complete requested content."
 REPLAY_SETTINGS = {
@@ -118,8 +120,8 @@ def _run(replay, harness, workflow, task, **overrides):
     return replay.execute_plan_replay_task(workflow, task, settings, **kwargs)
 
 
-def _replay_run_id(replay):
-    return replay._deterministic_id("run", WORKFLOW_RUN, TASK_ID, 0, "run")
+def _replay_run_id(replay, attempt=0):
+    return replay._deterministic_id("run", WORKFLOW_RUN, TASK_ID, attempt, "run")
 
 
 def _partition(container, partition):
@@ -151,18 +153,19 @@ def _require_cancelled_and_fenced(harness, run_id):
     require(record.get("cancellation_requested_at"), "The orchestration run must be cancelled.")
     require(record.get("cancellation_requested_by") == OWNER, "The creator cancels the replay.")
     require(record.get("status") != "completed", "A cancelled replay never completes.")
+    _require_fenced(harness, run_id)
+    published = json.dumps(list(_partition(harness.messages, WORKFLOW_CONVERSATION).values()), default=str)
+    require(LATE_TEXT not in published, "The late model output must never be published.")
+
+
+def _require_fenced(harness, run_id):
     guards = [
         message for (partition, _), message in harness.messages.items.items()
         if partition == WORKFLOW_CONVERSATION and message.get("run_id") == run_id
         and (message.get("metadata") or {}).get("orchestration_publication_guard")
     ]
-    require(guards and all(guard.get("token") is None for guard in guards), "Publication must be fenced.")
-    require(
-        (WORKFLOW_CONVERSATION, _answer_id(run_id)) not in harness.messages.items,
-        "Nothing is published after a cancel.",
-    )
-    published = json.dumps(list(_partition(harness.messages, WORKFLOW_CONVERSATION).values()), default=str)
-    require(LATE_TEXT not in published, "The late model output must never be published.")
+    require(guards and all(guard.get("token") is None for guard in guards), f"{run_id} must be fenced.")
+    require((WORKFLOW_CONVERSATION, _answer_id(run_id)) not in harness.messages.items, f"{run_id} never publishes.")
 
 
 class BlockingReply:
@@ -233,6 +236,95 @@ class RuntimeClock:
 
     def __call__(self):
         return self.now
+
+
+class SavedResults:
+    """Content-addressed JSON storage standing in for the durable unit's result store."""
+
+    def __init__(self):
+        self.contents = {}
+
+    def save(self, workflow, run_id, task_id, payload, **kwargs):
+        content = json.dumps(payload, ensure_ascii=True, allow_nan=False, sort_keys=True)
+        digest = hashlib.sha256(content.encode("ascii")).hexdigest()
+        self.contents[digest] = content
+        return {"task_id": task_id, "size_bytes": len(content), "sha256": digest}
+
+    def load(self, workflow, run_id, task_id, reference):
+        return json.loads(self.contents[reference["sha256"]])
+
+
+class ProcessDied(BaseException):
+    """A worker process that stops without running any cleanup."""
+
+
+def _dying_claim(*args, **kwargs):
+    importlib.import_module("functions_orchestration_plan_revisions").claim_plan_run(*args, **kwargs)
+    raise ProcessDied()
+
+
+def _runtime_store(clock):
+    store = importlib.import_module("functions_workflow_runtime_store").WorkflowRuntimeStore(
+        RuntimeContainer(), {"id": WORKFLOW_ID, "user_id": OWNER, "durable_execution": True}, WORKFLOW_RUN,
+        clock=clock,
+    )
+    store.initialize(
+        snapshot_ref={"storage": "cosmos", "schema_version": 1, "sha256": "a" * 64, "size_bytes": 100,
+                      "chunk_count": 1},
+        definition_revision="b" * 64, actor_user_id=OWNER, request_id="request-one",
+    )
+    return store
+
+
+def _durable_execution(store, lease, results, polls=None):
+    execution = importlib.import_module("functions_workflow_execution").DurableWorkflowExecution(
+        store, lease, {"id": WORKFLOW_ID, "user_id": OWNER}, WORKFLOW_RUN,
+        save_result=results.save, load_result=results.load,
+    )
+    if polls is not None:
+        original_check = execution.check
+
+        def counting_check():
+            current = original_check()
+            polls["ok"] += 1
+            return current
+
+        execution.check = counting_check
+    return execution
+
+
+def _durable_replay(replay, harness, workflow, task, **overrides):
+    """Run the replay as the runner does: one replay-safe unit numbered by its durable attempt."""
+    durable = importlib.import_module("functions_workflow_execution")
+    execution = durable.current_workflow_execution()
+
+    def operation():
+        kwargs = {"check_cancelled": None, **overrides, "attempt": execution.unit(UNIT_KEY)["attempt"]}
+        return _run(replay, harness, workflow, task, **kwargs)
+
+    return durable.workflow_unit(UNIT_KEY, operation, inputs={"task": task}, replay_safe=True)
+
+
+def _renew_past_the_ttl(store, clock, polls):
+    """Advance the store clock past one lease TTL while the heartbeat and the join keep up."""
+    store_module = importlib.import_module("functions_workflow_runtime_store")
+
+    def expires_at():
+        return store_module._parse_timestamp(store.read()["lease"]["expires_at"])
+
+    for _ in range(3):
+        clock.now += timedelta(seconds=20)
+        target = clock.now + timedelta(seconds=store_module.DEFAULT_LEASE_SECONDS)
+        _wait_for(lambda: expires_at() >= target, "The heartbeat must renew the workflow lease.")
+        seen = polls["ok"]
+        _wait_for(lambda: polls["ok"] > seen, "The join must confirm ownership after each renewal.")
+
+
+def _replay_runs(harness):
+    return {
+        record["id"]: record for record in _partition(harness.runs, WORKFLOW_CONVERSATION).values()
+        if (record.get("workflow_replay") or {}).get("workflow_run_id") == WORKFLOW_RUN
+    }
 
 
 def test_version_includes_plan_replay():
@@ -539,29 +631,13 @@ def test_a_lost_workflow_lease_cancels_and_fences_the_replay(harness, replay):
     store_module = importlib.import_module("functions_workflow_runtime_store")
     durable = importlib.import_module("functions_workflow_execution")
     clock = RuntimeClock()
-    store = store_module.WorkflowRuntimeStore(
-        RuntimeContainer(), {"id": WORKFLOW_ID, "user_id": OWNER, "durable_execution": True}, WORKFLOW_RUN,
-        clock=clock,
-    )
-    store.initialize(
-        snapshot_ref={"storage": "cosmos", "schema_version": 1, "sha256": "a" * 64, "size_bytes": 100,
-                      "chunk_count": 1},
-        definition_revision="b" * 64, actor_user_id=OWNER, request_id="request-one",
-    )
+    store = _runtime_store(clock)
     gate, fenced, problems, polls, joined = BlockingReply(), [], [], {"ok": 0}, []
     renewed = threading.Event()
 
-    def expires_at():
-        return store_module._parse_timestamp(store.read()["lease"]["expires_at"])
-
     def renewing_reply():
         try:
-            for _ in range(3):
-                clock.now += timedelta(seconds=20)
-                target = clock.now + timedelta(seconds=store_module.DEFAULT_LEASE_SECONDS)
-                _wait_for(lambda: expires_at() >= target, "The heartbeat must renew the workflow lease.")
-                seen = polls["ok"]
-                _wait_for(lambda: polls["ok"] > seen, "The join must confirm ownership after each renewal.")
+            _renew_past_the_ttl(store, clock, polls)
             renewed.set()
             clock.now += timedelta(minutes=5)
         except BaseException as exc:
@@ -571,22 +647,10 @@ def test_a_lost_workflow_lease_cancels_and_fences_the_replay(harness, replay):
     harness.replies = [renewing_reply]
     with pytest.raises(store_module.WorkflowRuntimeConflict):
         with store_module.WorkflowRuntimeLease(store, owner_id="replay-worker", heartbeat_seconds=0.02) as lease:
-            execution = durable.DurableWorkflowExecution(
-                store, lease, {"id": WORKFLOW_ID, "user_id": OWNER}, WORKFLOW_RUN,
-                save_result=lambda *args, **kwargs: None, load_result=lambda *args, **kwargs: None,
-            )
-            original_check = execution.check
-
-            def counting_check():
-                current = original_check()
-                polls["ok"] += 1
-                return current
-
-            execution.check = counting_check
+            execution = _durable_execution(store, lease, SavedResults(), polls)
             with durable.workflow_execution_scope(execution):
                 try:
-                    _run(replay, harness, _workflow(task), task, check_cancelled=None,
-                         fence=_releasing_fence(gate, fenced))
+                    _durable_replay(replay, harness, _workflow(task), task, fence=_releasing_fence(gate, fenced))
                 except store_module.WorkflowRuntimeConflict as exc:
                     joined.append(exc)
                     raise
@@ -594,9 +658,11 @@ def test_a_lost_workflow_lease_cancels_and_fences_the_replay(harness, replay):
     require(problems == [], f"The renewal phase failed: {problems}")
     require(renewed.is_set(), "The lease outlived its first expiry because the heartbeat renewed it.")
     require(joined and joined[0].code == "ownership_lost", f"The join stops on a lost lease: {joined}")
-    run_id = _replay_run_id(replay)
+    run_id = _replay_run_id(replay, 1)
     require(fenced == [run_id], f"A lost lease fences the replay's publication: {fenced}")
     _require_cancelled_and_fenced(harness, run_id)
+    unit = store.read()["units"][UNIT_KEY]
+    require(unit.get("state") == "running" and unit.get("attempt") == 1, f"The lost unit stays claimable: {unit}")
 
 
 def test_executor_failures_map_to_fixed_codes(harness, replay):
@@ -621,6 +687,147 @@ def test_executor_failures_map_to_fixed_codes(harness, replay):
     calls_before = len(harness.model_calls)
     _refused(replay, lambda: _run(replay, harness, workflow, task), "replay_execution_failed")
     require(len(harness.model_calls) == calls_before, "A re-entered attempt never runs a second time.")
+
+
+def test_a_durable_replay_unit_keeps_its_lease_past_the_ttl_and_completes(harness, replay):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    store_module = importlib.import_module("functions_workflow_runtime_store")
+    durable = importlib.import_module("functions_workflow_execution")
+    clock, results, problems, polls = RuntimeClock(), SavedResults(), [], {"ok": 0}
+    store = _runtime_store(clock)
+
+    def renewing_reply():
+        try:
+            _renew_past_the_ttl(store, clock, polls)
+        except BaseException as exc:
+            problems.append(exc)
+        return "The replayed content."
+
+    harness.replies = [renewing_reply]
+    with store_module.WorkflowRuntimeLease(store, owner_id="replay-worker", heartbeat_seconds=0.02) as lease:
+        with durable.workflow_execution_scope(_durable_execution(store, lease, results, polls)):
+            result = _durable_replay(replay, harness, _workflow(task), task)
+
+    require(problems == [], f"The renewal phase failed: {problems}")
+    require(clock.now - NOW >= timedelta(seconds=store_module.DEFAULT_LEASE_SECONDS), "The unit outlived one TTL.")
+    unit = store.read()["units"][UNIT_KEY]
+    require(
+        unit.get("state") == "completed" and unit.get("attempt") == 1 and unit.get("replay_safe") is True,
+        f"The replay unit completes once and is replay-safe: {unit}",
+    )
+    run_id = _replay_run_id(replay, 1)
+    require(result["authoritative_result"]["value"]["orchestration_run_id"] == run_id, "Attempt 1 names its run.")
+    require(harness.runs.read_item(run_id, WORKFLOW_CONVERSATION).get("status") == "completed", "The run completes.")
+    require(results.load(None, None, None, unit["result_ref"])["value"] == result, "The unit saves the typed result.")
+
+
+def test_a_durable_restart_settles_the_dead_attempt_and_replays_once(harness, replay):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    workflow = _workflow(task)
+    store_module = importlib.import_module("functions_workflow_runtime_store")
+    durable = importlib.import_module("functions_workflow_execution")
+    clock, results = RuntimeClock(), SavedResults()
+    store = _runtime_store(clock)
+    run_one, run_two = _replay_run_id(replay, 1), _replay_run_id(replay, 2)
+
+    dead = store_module.WorkflowRuntimeLease(store, owner_id="worker-one", heartbeat_seconds=0)
+    dead.__enter__()
+    with pytest.raises(ProcessDied):
+        with durable.workflow_execution_scope(_durable_execution(store, dead, results)):
+            _durable_replay(replay, harness, workflow, task, claim_run=_dying_claim)
+    unit = store.read()["units"][UNIT_KEY]
+    require(unit.get("state") == "running" and unit.get("attempt") == 1, f"The dead worker left its unit: {unit}")
+    left = harness.runs.read_item(run_one, WORKFLOW_CONVERSATION)
+    require(left.get("status") == "running" and left.get("execution_lease"), "The dead worker left its run open.")
+
+    left["execution_lease"]["expires_at"] = "2000-01-01T00:00:00+00:00"
+    harness.runs.upsert_item(left)
+    clock.now += timedelta(minutes=5)
+    harness.replies = ["The replayed content."]
+    with store_module.WorkflowRuntimeLease(store, owner_id="worker-two", heartbeat_seconds=0.02) as lease:
+        with durable.workflow_execution_scope(_durable_execution(store, lease, results)):
+            result = _durable_replay(replay, harness, workflow, task)
+
+    require(result["authoritative_result"]["value"]["orchestration_run_id"] == run_two, "The restart replays once.")
+    unit = store.read()["units"][UNIT_KEY]
+    require(unit.get("state") == "completed" and unit.get("attempt") == 2, f"The restart completes the unit: {unit}")
+    settled = harness.runs.read_item(run_one, WORKFLOW_CONVERSATION)
+    require(settled.get("status") == "failed", "The dead attempt's run is settled, not left running.")
+    require((settled.get("failure") or {}).get("code") == "ownership_lost", f"Settled as lost: {settled.get('failure')}")
+    require(settled.get("execution_lease") is None, "The dead attempt's lease is cleared.")
+    _require_fenced(harness, run_one)
+    statuses = {run_id: record.get("status") for run_id, record in _replay_runs(harness).items()}
+    require(statuses == {run_one: "failed", run_two: "completed"}, f"Never two live runs: {statuses}")
+    require((WORKFLOW_CONVERSATION, _answer_id(run_two)) in harness.messages.items, "The restart publishes once.")
+
+
+def test_a_completed_prior_attempt_is_adopted_not_repeated(harness, replay):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    workflow = _workflow(task)
+    harness.replies = ["The replayed content."]
+    first = _run(replay, harness, workflow, task, attempt=1)
+    calls_before = len(harness.model_calls)
+    second = _run(replay, harness, workflow, task, attempt=2)
+
+    require(second == first, "A restart after completion returns the completed attempt's result.")
+    require(set(_replay_runs(harness)) == {_replay_run_id(replay, 1)}, "Adoption creates no second run.")
+    require(len(harness.model_calls) == calls_before, "Adoption never calls the model again.")
+
+
+def test_a_completed_prior_attempt_of_another_plan_is_refused(harness, replay):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    workflow = _workflow(task)
+    harness.replies = ["The replayed content."]
+    _run(replay, harness, workflow, task, attempt=1)
+    run_one = _replay_run_id(replay, 1)
+    record = harness.runs.read_item(run_one, WORKFLOW_CONVERSATION)
+    record["workflow_replay"]["plan_sha256"] = "f" * 64
+    harness.runs.upsert_item(record)
+
+    _refused(replay, lambda: _run(replay, harness, workflow, task, attempt=2), "replay_execution_failed")
+    require(set(_replay_runs(harness)) == {run_one}, "A prior run of another plan is never adopted or repeated.")
+
+
+def test_a_live_prior_attempt_is_stopped_and_fenced_but_never_taken_over(harness, replay):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    workflow = _workflow(task)
+    with pytest.raises(ProcessDied):
+        _run(replay, harness, workflow, task, attempt=1, claim_run=_dying_claim)
+    run_one = _replay_run_id(replay, 1)
+    token = harness.runs.read_item(run_one, WORKFLOW_CONVERSATION)["execution_lease"]["token"]
+
+    _refused(replay, lambda: _run(
+        replay, harness, workflow, task, attempt=2, reconcile_seconds=0.2,
+    ), "replay_execution_failed")
+    record = harness.runs.read_item(run_one, WORKFLOW_CONVERSATION)
+    require(record.get("cancellation_requested_at"), "The live prior attempt is asked to stop.")
+    require(record.get("cancellation_requested_by") == OWNER, "Only the creator asks it to stop.")
+    require(record.get("status") == "running", "A live lease is never settled by another attempt.")
+    require((record.get("execution_lease") or {}).get("token") == token, "A live lease is never taken over.")
+    _require_fenced(harness, run_one)
+    require(set(_replay_runs(harness)) == {run_one}, "No second run starts while the first is live.")
+
+
+def test_an_interrupted_attempt_settles_its_own_run(harness, replay):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+
+    def interrupted(claimed, **kwargs):
+        raise RuntimeError("The worker stopped.")
+
+    _refused(replay, lambda: _run(
+        replay, harness, _workflow(task), task, attempt=1, prepare_execution=interrupted,
+    ), "replay_execution_failed")
+    record = harness.runs.read_item(_replay_run_id(replay, 1), WORKFLOW_CONVERSATION)
+    require(record.get("status") == "failed", "A stopped attempt never leaves its run running.")
+    require((record.get("failure") or {}).get("code") == "execution_interrupted", f"{record.get('failure')}")
+    require(record.get("execution_lease") is None, "The stopped attempt releases its own lease.")
+    _require_fenced(harness, _replay_run_id(replay, 1))
 
 
 if __name__ == "__main__":
