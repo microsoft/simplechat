@@ -252,6 +252,9 @@ function describeType(type: string, category: string | undefined): Omit<Notifica
     if (type.startsWith('safety_violation_')) {
         return { kind: 'safety', label: 'Content safety' };
     }
+    if (type === 'feedback_response') {
+        return { kind: 'reply', label: 'Feedback response' };
+    }
     if (type === 'key_vault_secret_expiring') {
         return { kind: 'security', label: 'Secret expiring' };
     }

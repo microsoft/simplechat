@@ -2,7 +2,7 @@
 # test_safety_escalate_removal.py
 """
 Functional test for removing Escalate as a safety action.
-Version: 0.261.297
+Version: 0.261.298
 Implemented in: 0.261.297
 
 This test ensures that Escalate can no longer be chosen in either interface or set through
@@ -102,15 +102,23 @@ def _actions_constant(source):
 
 
 def test_v2_pages_no_longer_offer_escalate():
-    admin_page = (V2_SRC / "pages" / "AdminSafetyViolationsPage.tsx").read_text(encoding="utf-8")
+    # The V2 safety review lives in the Review center now: its choices and labels in
+    # lib/reviewCenter.ts, its editor and dashboard under pages/review.
+    review_logic = (V2_SRC / "lib" / "reviewCenter.ts").read_text(encoding="utf-8")
+    editor = (V2_SRC / "pages" / "review" / "SafetyEditorPage.tsx").read_text(encoding="utf-8")
+    dashboard = (V2_SRC / "pages" / "review" / "SafetyDashboard.tsx").read_text(encoding="utf-8")
     violations = (V2_SRC / "components" / "settings" / "ViolationsTab.tsx").read_text(encoding="utf-8")
-    for source in (admin_page, violations):
+    for source in (review_logic, violations):
         assert "Escalate" not in _actions_constant(source)
         assert LEGACY_LABEL in source
     # Only a record that already carries Escalate offers it again, as its legacy label.
-    assert "selected.action === LEGACY_ESCALATE_ACTION ? [...ACTIONS, LEGACY_ESCALATE_ACTION] : ACTIONS" in admin_page
-    assert "Escalated or blocked" not in admin_page
-    assert "label={(stats?.escalate_count ?? 0) > 0" in admin_page
+    assert "record.action === LEGACY_ESCALATE_ACTION ? [...ACTIONS, LEGACY_ESCALATE_ACTION] : [...ACTIONS]" in review_logic
+    assert "selectableSafetyActions(record).map((action) => (" in editor
+    for source in (review_logic, editor, dashboard):
+        assert "Escalated or blocked" not in source
+    # Records that still carry it are counted, and only shown when there are any.
+    assert "const legacyEscalations = stats?.escalate_count ?? 0;" in dashboard
+    assert "{legacyEscalations > 0 ? (" in dashboard
 
 
 def test_classic_pages_no_longer_offer_escalate():

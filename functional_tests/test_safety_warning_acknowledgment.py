@@ -2,7 +2,7 @@
 # test_safety_warning_acknowledgment.py
 """
 Functional test for immediate, must-acknowledge safety warnings.
-Version: 0.261.297
+Version: 0.261.298
 Implemented in: 0.261.297
 
 This test ensures that a safety reviewer's warning is sent as the review is saved, without
@@ -344,10 +344,13 @@ def test_v2_warning_dialog_and_settings_are_wired():
     assert "SAFETY_WARNING_REPLACED_CODE" in store and "fetchPendingSafetyWarnings()" in store
     violations = (v2 / "components" / "settings" / "ViolationsTab.tsx").read_text(encoding="utf-8")
     assert "warning_acknowledgment_status" in violations
-    admin_page = (v2 / "pages" / "AdminSafetyViolationsPage.tsx").read_text(encoding="utf-8")
-    assert "Warning acknowledged" in admin_page and "Not yet acknowledged" in admin_page
-    assert "The warning is sent to the user as soon as you save" in admin_page
-    assert "otherwise it becomes a pending request" not in admin_page
+    # The V2 safety review lives in the Review center: its wording in lib/reviewCenter.ts,
+    # its remediation copy in the violation editor.
+    admin_logic = (v2 / "lib" / "reviewCenter.ts").read_text(encoding="utf-8")
+    admin_editor = (v2 / "pages" / "review" / "SafetyEditorPage.tsx").read_text(encoding="utf-8")
+    assert "Warning acknowledged" in admin_logic and "Not yet acknowledged" in admin_logic
+    assert "The warning is sent to the user as soon as you save" in admin_editor
+    assert "otherwise it becomes a pending request" not in admin_editor
 
 
 def test_version():

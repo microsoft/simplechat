@@ -16,6 +16,9 @@
     // Escalate is no longer an action. A record that already carries it keeps it, labelled
     // as legacy, and only that record's editor offers it again.
     const LEGACY_ESCALATE_ACTION = 'Escalate';
+    // Every value the action select can hold. The select is read through this list, so only
+    // these constant strings, never text taken from the page, reach data attributes or a save.
+    const ACTION_VALUES = ['None', 'WarnUser', 'SuspendUser', 'BlockUser', LEGACY_ESCALATE_ACTION];
     const ACTION_LABELS = {
         None: 'None',
         WarnUser: 'Warn user',
@@ -480,6 +483,50 @@
             && String(logItem.action_request_status || '').toLowerCase() === 'executed';
     }
 
+    function isRestrictionAction(action) {
+        return action === 'SuspendUser' || action === 'BlockUser';
+    }
+
+    // The action chosen in the review, as the matching entry of ACTION_VALUES. An empty or
+    // unknown value reads as None, as an empty one always has.
+    function readSelectedAction() {
+        const selectedValue = document.getElementById('editAction')?.value || '';
+        return ACTION_VALUES.find(function (value) {
+            return value === selectedValue;
+        }) || 'None';
+    }
+
+    // A suspension or block the violation already records is requested again only on purpose,
+    // whatever became of the last request, and never while one is waiting or a warning is sent.
+    function offersReissue(logItem, action) {
+        const requestStatus = String(logItem.action_request_status || '').toLowerCase();
+        return isRestrictionAction(action)
+            && logItem.action === action
+            && requestStatus !== 'pending'
+            && requestStatus !== 'sending';
+    }
+
+    function describeExistingRestriction(logItem, action) {
+        const noun = action === 'BlockUser' ? 'block' : 'suspension';
+        const requestStatus = String(logItem.action_request_status || '').toLowerCase();
+        if (requestStatus === 'pending') {
+            return `This ${noun} is waiting for another eligible reviewer to approve it. The violation can't be changed until the request is decided.`;
+        }
+        const states = {
+            executed: `This ${noun} was approved and applied.`,
+            denied: `This ${noun} request was denied.`,
+            expired: `This ${noun} request expired without a decision.`,
+            failed: `This ${noun} was approved but could not be applied.`,
+        };
+        const where = states[requestStatus] || `This violation already records a ${noun}.`;
+        return `${where} Saving updates the review only and requests nothing new. To ask another eligible reviewer to approve it again, select "Request this ${noun} again".`;
+    }
+
+    function isFutureDate(isoValue) {
+        const parsedDate = isoValue ? new Date(isoValue) : null;
+        return Boolean(parsedDate) && !Number.isNaN(parsedDate.getTime()) && parsedDate.getTime() > Date.now();
+    }
+
     function syncLegacyEscalateOption(selectElement, logItem) {
         if (!selectElement) {
             return;
@@ -520,7 +567,7 @@
     }
 
     function updateRemediationFields(logItem, forcePopulate) {
-        const action = document.getElementById('editAction')?.value || 'None';
+        const action = readSelectedAction();
         const remediationFields = document.getElementById('safetyRemediationFields');
         const remediationHelp = document.getElementById('safetyRemediationHelp');
         const notificationGroup = document.getElementById('safetyNotificationGroup');
@@ -534,28 +581,55 @@
 
         const shouldShow = SAFETY_REMEDIATION_ACTIONS.has(action);
         setElementHidden(remediationFields, !shouldShow);
+        const reissueGroup = document.getElementById('safetyReissueGroup');
+        const reissueInput = document.getElementById('editReissue');
+        const reissueOffered = shouldShow && offersReissue(logItem, action);
+        if (reissueGroup && reissueInput) {
+            setElementHidden(reissueGroup, !reissueOffered);
+            if (forcePopulate || !reissueOffered) {
+                reissueInput.checked = false;
+            }
+            const noun = action === 'BlockUser' ? 'block' : 'suspension';
+            document.getElementById('editReissueLabel').textContent = `Request this ${noun} again`;
+            document.getElementById('editReissueHelp').textContent = action === 'SuspendUser'
+                ? 'Creates a new approval request with the notification and restore date below. It applies only after another eligible reviewer approves it.'
+                : 'Creates a new approval request with the notification below. It applies only after another eligible reviewer approves it.';
+        }
+        // Saving the same suspension or block again, without asking for it again, requests
+        // nothing, so the notification and restore date would not be used. Nor would they for
+        // one still waiting for approval, which can't be changed until it is decided.
+        const awaitingApproval = isRestrictionAction(action)
+            && logItem.action === action
+            && String(logItem.action_request_status || '').toLowerCase() === 'pending';
+        const requestsNothing = awaitingApproval || (reissueOffered && !(reissueInput && reissueInput.checked));
+
         if (!shouldShow) {
             remediationHelp.textContent = '';
             notificationMessage.value = '';
             notificationMessage.dataset.generatedMessage = '';
             notificationMessage.dataset.action = action;
             suspendInput.value = '';
+            suspendInput.dataset.action = action;
             setElementHidden(suspendGroup, true);
             return;
         }
 
         // A warning already sent is not sent again, so saving this record again only updates it.
         const warningAlreadySent = action === 'WarnUser' && isExecutedWarning(logItem);
-        setElementHidden(notificationGroup, warningAlreadySent);
+        setElementHidden(notificationGroup, warningAlreadySent || requestsNothing);
 
         const helpTextMap = {
             WarnUser: 'Warn user sends the warning to the affected user as soon as you save, without a second reviewer. The user must acknowledge it the next time they use SimpleChat.',
             SuspendUser: 'Suspend user restricts access until the restore date. Because it restricts access, saving creates an approval request, and the suspension applies only after another eligible reviewer approves it.',
             BlockUser: 'Block user restricts access with no automatic restore date. Saving creates an approval request, and the block applies only after another eligible reviewer approves it.',
         };
-        remediationHelp.textContent = warningAlreadySent
-            ? 'This warning was already sent. Saving updates the review without sending the warning again.'
-            : (helpTextMap[action] || '');
+        if (warningAlreadySent) {
+            remediationHelp.textContent = 'This warning was already sent. Saving updates the review without sending the warning again.';
+        } else if (requestsNothing) {
+            remediationHelp.textContent = describeExistingRestriction(logItem, action);
+        } else {
+            remediationHelp.textContent = helpTextMap[action] || '';
+        }
 
         const generatedMessage = buildDefaultNotificationMessage(logItem, action);
         const savedMessage = logItem.action === action ? logItem.action_notification_message : '';
@@ -568,14 +642,16 @@
         notificationMessage.dataset.generatedMessage = nextMessage;
         notificationMessage.dataset.action = action;
 
-        const showSuspendUntil = action === 'SuspendUser';
+        const showSuspendUntil = action === 'SuspendUser' && !requestsNothing;
         setElementHidden(suspendGroup, !showSuspendUntil);
-        if (showSuspendUntil) {
-            const restoreDate = logItem.action === action ? logItem.action_datetime_to_allow : '';
-            suspendInput.value = toLocalDateTimeInputValue(restoreDate);
-        } else {
-            suspendInput.value = '';
+        if (forcePopulate || suspendInput.dataset.action !== action) {
+            // The last restore time is offered again only while it is still ahead.
+            const restoreDate = logItem.action === action && isFutureDate(logItem.action_datetime_to_allow)
+                ? logItem.action_datetime_to_allow
+                : '';
+            suspendInput.value = action === 'SuspendUser' ? toLocalDateTimeInputValue(restoreDate) : '';
         }
+        suspendInput.dataset.action = action;
     }
 
     function createTextCell(text, className, title) {
@@ -845,14 +921,18 @@
             return;
         }
 
-        const action = document.getElementById('editAction')?.value || 'None';
+        const action = readSelectedAction();
         const payload = {
             status: document.getElementById('editStatus')?.value || 'New',
             action: action,
             notes: document.getElementById('editNotes')?.value || '',
         };
 
-        if (SAFETY_REMEDIATION_ACTIONS.has(action)) {
+        // A suspension or block is requested when it is newly chosen, or asked for again.
+        const activeItem = state.activeItem || {};
+        const reissue = offersReissue(activeItem, action) && Boolean(document.getElementById('editReissue')?.checked);
+        const requestsRestriction = isRestrictionAction(action) && (activeItem.action !== action || reissue);
+        if (action === 'WarnUser' || requestsRestriction) {
             payload.notification_message = document.getElementById('editNotificationMessage')?.value || '';
 
             if (action === 'SuspendUser') {
@@ -861,7 +941,13 @@
                 if (!payload.datetime_to_allow) {
                     throw new Error('Restore access date is required for a suspension.');
                 }
+                if (!isFutureDate(payload.datetime_to_allow)) {
+                    throw new Error('Choose a restore date and time in the future.');
+                }
             }
+        }
+        if (reissue) {
+            payload.reissue = true;
         }
 
         if (statusElement) {
@@ -1075,6 +1161,15 @@
                 }
 
                 updateRemediationFields(state.activeItem, false);
+            });
+        }
+
+        const reissueInput = document.getElementById('editReissue');
+        if (reissueInput) {
+            reissueInput.addEventListener('change', function () {
+                if (state.activeItem) {
+                    updateRemediationFields(state.activeItem, false);
+                }
             });
         }
 

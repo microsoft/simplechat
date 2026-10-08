@@ -54,12 +54,24 @@ User Feedback is enabled under Chat.
 Assign the role in the Enterprise App before enabling the requirement. Enabling it first locks
 out every administrator, including you.
 
+**Enable AI Assist in the Review Center** gives whoever can open those reports AI-suggested reviews
+in the V2 Review center: an analysis of one record in its editor, and a triage of many records whose
+suggestions wait in an **AI suggestions** queue for a person to approve or dismiss. It sits here
+because it extends what those reviewers can do, and it is off by default because it sends the
+records' text, without names, email addresses or ids, to the instruction-drafting model that
+**Draft with AI** uses, one user's records at a time. The model never saves or acts: a warning is sent, or a suspension or block
+requested, only when a reviewer applies a suggestion, and a suspension or block still needs a
+second reviewer's approval. Turning it off stops suggestions being made, applied or dismissed;
+stored ones stay on their records.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Require SafetyViolationAdmin App Role | Narrows the Safety Violations report, including the flagged message text, to holders of the `SafetyViolationAdmin` role. Left off, any account with `Admin` can open it. | Off | `require_member_of_safety_violation_admin` |
 | Require FeedbackAdmin App Role | Narrows the User Feedback report to holders of the `FeedbackAdmin` role. Has no effect until User Feedback is enabled under Chat. | Off | `require_member_of_feedback_admin` |
+| Enable AI Assist in the Review Center | Lets feedback and safety reviewers ask AI to analyze one record or triage many, and lists its suggested reviews for a person to approve or dismiss. Each reviewer can send 60 assist requests per 10 minutes. | Off | `enable_admin_review_ai_assistant` |
+| Review Guidance for the AI Assistant | Your organization's review policy in plain language, such as when a first violation only gets a warning. The assistant follows it where it fits, but it can't override the built-in safeguards, such as never restricting a user over an AI-generated response. Sent to the model with each request, never to the Review center. | Empty | `admin_review_ai_guidance`; up to 2,000 characters |
 
 ### App Role Requirements {#app-role-requirements-section}
 
@@ -303,6 +315,8 @@ The message is Markdown, so it can carry a link to an internal runbook or reques
 | Chat fails for everyone right after enabling Content Safety | The endpoint or credential is wrong, so every message fails the safety check. | Run Test Content Safety connection and correct the connection details. |
 | A saved secret appears to have been cleared | The field was opened for replacement, a value was typed and then deleted, and the empty value was saved. | Re-enter the credential. Leaving the field blank without typing keeps the stored value untouched. |
 | Throttled users still see the built-in rate limit wording | The custom message toggle is off, or the message was saved empty. | Turn on the custom message and save non-empty Markdown. |
+| Reviewers don't see **Ask AI** or **Triage with AI** in the Review center | AI assist is off, or the reviewer can't open that section. | Turn on **Enable AI Assist in the Review Center**, and check the section's role requirement above. |
+| A triage stops with "too many requests" | A reviewer can send 60 assist requests, of up to ten records each, per 10 minutes. | Wait, then select **Triage with AI** again: the records that didn't get a suggestion stay checked. |
 
 ## Related
 

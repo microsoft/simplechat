@@ -8,7 +8,7 @@
 // content screening items point at Content Review, the same as the classic page.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Check, ExternalLink, Loader2, X } from 'lucide-react';
 import {
     CONTENT_SCREENING_TYPE,
@@ -25,6 +25,7 @@ import {
     type ApprovalRequest,
     type ApprovalStatusFilter,
 } from '../../lib/approvalsApi';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { GlassButton, Skeleton } from '../ui/primitives';
 import {
@@ -53,6 +54,32 @@ const STATUS_OPTIONS: Array<[ApprovalStatusFilter, string]> = [
     ['denied', 'Denied'],
     ['executed', 'Executed'],
 ];
+
+type ShowFilter = 'all' | 'mine' | 'requested';
+
+const SHOW_OPTIONS: Array<[ShowFilter, string]> = [
+    ['all', 'Everything I can see'],
+    ['mine', 'Waiting on me'],
+    ['requested', 'My requests'],
+];
+
+/** The list filters a link can carry, so a dashboard figure opens the requests it counted. */
+const FILTER_PARAMS = ['status', 'type', 'show', 'expiring'] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function readStatus(value: string | null): ApprovalStatusFilter {
+    return STATUS_OPTIONS.some(([option]) => option === value) ? (value as ApprovalStatusFilter) : 'pending';
+}
+
+function readShow(value: string | null): ShowFilter {
+    return SHOW_OPTIONS.some(([option]) => option === value) ? (value as ShowFilter) : 'all';
+}
+
+function expiresWithinADay(approval: ApprovalRequest): boolean {
+    if (approval.status !== 'pending' || !approval.expires_at) return false;
+    const expires = new Date(approval.expires_at).getTime();
+    return Number.isFinite(expires) && expires - Date.now() <= DAY_MS;
+}
 
 function statusLabel(approval: ApprovalRequest): string {
     if (approval.status === 'denied' && approval.auto_denied) return 'Auto-denied';
@@ -100,8 +127,12 @@ export function GenericApprovalsPanel({
     onCountChange?: (count: number) => void;
 }) {
     const navigate = useNavigate();
-    const [status, setStatus] = useState<ApprovalStatusFilter>('pending');
-    const [typeFilter, setTypeFilter] = useState('all');
+    const [searchParams, setSearchParams] = useSearchParams();
+    const userId = useBootstrapStore((state) => state.data?.user?.id);
+    const status = readStatus(searchParams.get('status'));
+    const typeFilter = searchParams.get('type') || 'all';
+    const show = readShow(searchParams.get('show'));
+    const expiring = searchParams.get('expiring') === '1';
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
     const [items, setItems] = useState<ApprovalRequest[]>([]);
@@ -110,9 +141,27 @@ export function GenericApprovalsPanel({
     const [localReload, setLocalReload] = useState(0);
 
     useEffect(() => {
-        setTypeFilter('all');
         setPage(1);
     }, [category]);
+
+    /** The list filters in the address, without the selected request's group. */
+    const filterQuery = (extra?: Record<string, string>) => {
+        const params = new URLSearchParams(extra);
+        for (const key of FILTER_PARAMS) {
+            const value = searchParams.get(key);
+            if (value) params.set(key, value);
+        }
+        const query = params.toString();
+        return query ? `?${query}` : '';
+    };
+
+    const updateFilter = (key: (typeof FILTER_PARAMS)[number], value: string, defaultValue: string) => {
+        const next = new URLSearchParams(searchParams);
+        if (value === defaultValue) next.delete(key);
+        else next.set(key, value);
+        setSearchParams(next, { replace: true });
+        setPage(1);
+    };
 
     useEffect(() => {
         const controller = new AbortController();
@@ -150,23 +199,28 @@ export function GenericApprovalsPanel({
     const filtered = useMemo(() => {
         const query = search.trim().toLowerCase();
         return inCategory.filter(
-            (item) => (typeFilter === 'all' || item.request_type === typeFilter) && (!query || searchText(item).includes(query)),
+            (item) => (typeFilter === 'all' || item.request_type === typeFilter)
+                && (show === 'all'
+                    || (show === 'mine' ? item.status === 'pending' && item.can_approve === true : item.requester_id === userId))
+                && (!expiring || expiresWithinADay(item))
+                && (!query || searchText(item).includes(query)),
         );
-    }, [inCategory, search, typeFilter]);
+    }, [expiring, inCategory, search, show, typeFilter, userId]);
 
     const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const safePage = Math.min(page, pageCount);
     const visible = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
     const select = (approval: ApprovalRequest) => {
-        const query = approval.group_id && !isM365RequestType(approval.request_type)
-            ? `?${new URLSearchParams({ group_id: approval.group_id }).toString()}`
-            : '';
-        navigate(`/approvals/${category}/${encodeURIComponent(approval.id)}${query}`);
+        const group = approval.group_id && !isM365RequestType(approval.request_type)
+            ? { group_id: approval.group_id }
+            : undefined;
+        navigate(`/approvals/${category}/${encodeURIComponent(approval.id)}${filterQuery(group)}`);
     };
 
     const selectedSummary = selectedId ? items.find((item) => item.id === selectedId) : undefined;
     const refreshList = useCallback(() => setLocalReload((value) => value + 1), []);
+    const filtersApplied = typeFilter !== 'all' || show !== 'all' || expiring;
 
     const list = (
         <>
@@ -175,19 +229,34 @@ export function GenericApprovalsPanel({
                     label="Status"
                     value={status}
                     testId="v2-approvals-status-filter"
-                    onChange={(value) => { setStatus(value as ApprovalStatusFilter); setPage(1); }}
+                    onChange={(value) => updateFilter('status', value, 'pending')}
                     options={STATUS_OPTIONS}
+                />
+                <ListSelect
+                    label="Show"
+                    value={show}
+                    testId="v2-approvals-show-filter"
+                    onChange={(value) => updateFilter('show', value, 'all')}
+                    options={SHOW_OPTIONS}
                 />
                 {typeOptions.length > 2 ? (
                     <ListSelect
                         label="Request type"
                         value={typeFilter}
                         testId="v2-approvals-type-filter"
-                        onChange={(value) => { setTypeFilter(value); setPage(1); }}
+                        onChange={(value) => updateFilter('type', value, 'all')}
                         options={typeOptions}
                     />
                 ) : null}
             </ListToolbar>
+            {expiring ? (
+                <div className="flex items-center justify-between gap-2 border-b border-edge bg-warn-soft px-4 py-2 text-xs text-text-1" data-testid="v2-approvals-expiring-filter">
+                    <span>Only pending requests that expire within 24 hours.</span>
+                    <button type="button" className="font-semibold text-accent underline" onClick={() => updateFilter('expiring', '', '')}>
+                        Show all
+                    </button>
+                </div>
+            ) : null}
             {loading ? (
                 <div className="space-y-2 p-4" aria-busy="true">
                     <Skeleton className="h-12 w-full" />
@@ -218,7 +287,7 @@ export function GenericApprovalsPanel({
                     <ListPager page={safePage} pageCount={pageCount} total={filtered.length} onPage={setPage} />
                 </>
             ) : (
-                <ListMessage>{search || typeFilter !== 'all' ? 'No requests match these filters.' : emptyTitle}</ListMessage>
+                <ListMessage>{search || filtersApplied ? 'No requests match these filters.' : emptyTitle}</ListMessage>
             )}
         </>
     );
@@ -243,7 +312,7 @@ export function GenericApprovalsPanel({
         <ApprovalSplit
             listLabel="Approval requests"
             hasSelection={Boolean(selectedId)}
-            onBack={() => navigate(`/approvals/${category}`)}
+            onBack={() => navigate(`/approvals/${category}${filterQuery()}`)}
             list={list}
             detail={detail}
         />

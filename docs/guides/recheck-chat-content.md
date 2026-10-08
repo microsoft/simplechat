@@ -4,7 +4,7 @@ title: "Recheck chat content"
 description: "Find chat messages that could not be checked, retry the configured scanners, and remove AI replies with confirmed findings."
 section: "Guides"
 audience: admin
-version: "0.261.127"
+version: "0.261.298"
 ---
 
 ## What this does
@@ -31,7 +31,7 @@ Workspace upload checks keep their document-review workflow. For chat-only PII c
 
 ## Find unchecked messages
 
-Select **Review unchecked chat content** from either feature's settings, or open the administrator **Safety Violations** page. The queue requires the same reviewer permission as that report; deployments requiring `SafetyViolationAdmin` do not grant it merely because someone has the general Admin role.
+Select **Review unchecked chat content** from either feature's settings, open **Unchecked chat content** in the Safety section of the V2 [Review center]({{ '/guides/admin-review-center/' | relative_url }}), or open the classic **Safety Violations** page. The safety dashboard also shows how many messages are waiting. The queue requires the same reviewer permission as that report; deployments requiring `SafetyViolationAdmin` do not grant it merely because someone has the general Admin role.
 
 Filter by message type or incomplete scanner. **All sources** includes ordinary chat and canonical AI messages, followed by shared user messages. Use **Load more** to page through the metadata. The list does not copy full message text or matched sensitive values.
 
@@ -40,6 +40,8 @@ Read the failure code before retrying. A missing policy needs configured checks;
 ## Recheck a message
 
 Select **Recheck**, then confirm **Recheck and apply rules**. The operation uses current saved rules and the current stored message revision, not a text copy from the browser.
+
+From **0.261.298**, the V2 queue can also recheck several messages: check them, or check every loaded message from the header, and select **Recheck selected**. After you confirm, they are rechecked one after another rather than all at once, with progress, and a report says what happened to each one. Messages that still could not be checked stay selected so you can try again once the cause is fixed.
 
 | Result | What happens |
 | --- | --- |

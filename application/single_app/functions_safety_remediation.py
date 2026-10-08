@@ -2,15 +2,16 @@
 
 """Helpers for safety violation remediation actions and notifications."""
 
+import copy
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from azure.core import MatchConditions
 from azure.cosmos import exceptions as cosmos_exceptions
 
-from config import cosmos_safety_container
+from config import cosmos_approvals_container, cosmos_safety_container
 from functions_access_restriction import (
     ACCESS_RESTRICTION_KIND_BLOCKED,
     ACCESS_RESTRICTION_KIND_SUSPENDED,
@@ -61,19 +62,320 @@ SAFETY_WARNING_SEND_INTERRUPTED_MESSAGE = (
     'warning reached the user. Saving the warning again sends it again.'
 )
 
+# What a remediation request leaves on its violation. Pending locks the violation until the
+# request is decided; every other state is settled and leaves the violation editable.
+SAFETY_REQUEST_PENDING = 'pending'
+SAFETY_REQUEST_EXECUTED = 'executed'
+SAFETY_REQUEST_FAILED = 'failed'
+SAFETY_REQUEST_DENIED = 'denied'
+SAFETY_REQUEST_EXPIRED = 'expired'
+SAFETY_REQUEST_STATUSES = (
+    SAFETY_REQUEST_PENDING,
+    SAFETY_REQUEST_EXECUTED,
+    SAFETY_REQUEST_FAILED,
+    SAFETY_REQUEST_DENIED,
+    SAFETY_REQUEST_EXPIRED,
+)
+# A pending approval request is removed by Cosmos TTL this long after it was created
+# (functions_approvals.TTL_AUTO_DENY_SECONDS, which cannot be imported here without a
+# cycle). A violation whose request can no longer be found is settled as expired only once
+# the request could no longer exist, so a request that is slow to appear in a query never
+# unlocks its violation.
+SAFETY_APPROVAL_LIFETIME = timedelta(days=3)
+SAFETY_LOG_WRITE_ATTEMPTS = 3
+SAFETY_REQUEST_LOOKUP_BATCH = 100
+SAFETY_REQUEST_FAILED_MESSAGE = (
+    'The approved action could not be completed. Open the approval request for details.'
+)
+SAFETY_REQUEST_NOT_CURRENT_MESSAGE = (
+    'The safety violation is no longer waiting on this request, so nothing was changed. '
+    'Open the violation to decide what to do now.'
+)
+# What a remediation decision rests on: the request the violation waits on, a warning being
+# sent, and the warning last recorded. A reviewer's save is written only while these are as
+# the save read them, so it never lands on another save's warning or request.
+SAFETY_REMEDIATION_STATE_FIELDS = (
+    'action_request_status',
+    'action_request_id',
+    'warning_send_claim_id',
+    'warning_notification_id',
+    'warning_issued_at',
+)
+
+
+class SafetyLogConflict(Exception):
+    """A violation kept changing while it was being written."""
+
 
 def get_safety_log_item(log_id: str) -> Dict[str, Any]:
     """Return a safety log item by its document id."""
     return cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
 
 
+def write_safety_log_updates(
+    log_id: str,
+    updates: Dict[str, Any],
+    *,
+    base_item: Optional[Dict[str, Any]] = None,
+    guard: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    attempts: int = SAFETY_LOG_WRITE_ATTEMPTS,
+) -> Optional[Dict[str, Any]]:
+    """Merge ``updates`` onto the stored violation with an ETag-conditional replace.
+
+    The first attempt applies them to ``base_item``, the copy the caller already read, when
+    there is one; after a conflict, to a fresh read. Only the named fields are written, so a
+    concurrent write to any other field, such as the user acknowledging a warning, survives.
+    ``guard(current)`` can refuse a fresh read, for example one that has since moved on to
+    another request; nothing is written then and None is returned. Raises
+    ``SafetyLogConflict`` when every attempt conflicts, and lets a missing record's
+    ``CosmosResourceNotFoundError`` through.
+    """
+    current = base_item
+    for _attempt in range(max(1, attempts)):
+        if current is None:
+            current = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+            if guard is not None and not guard(current):
+                return None
+        merged = copy.deepcopy(current)
+        merged.update(copy.deepcopy(updates or {}))
+        etag = current.get('_etag')
+        try:
+            if etag:
+                stored = cosmos_safety_container.replace_item(
+                    item=log_id,
+                    body=merged,
+                    etag=etag,
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            else:
+                stored = cosmos_safety_container.upsert_item(merged)
+        except cosmos_exceptions.CosmosAccessConditionFailedError:
+            current = None
+            continue
+        return stored if isinstance(stored, dict) else merged
+    raise SafetyLogConflict(f'Safety violation {log_id} changed while it was being written.')
+
+
 def update_safety_log_action_state(log_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Persist remediation state changes onto a safety log item."""
-    item = get_safety_log_item(log_id)
-    item.update(updates or {})
-    item['last_updated'] = datetime.utcnow().isoformat()
-    cosmos_safety_container.upsert_item(item)
-    return item
+    """Persist remediation state changes onto a safety log item.
+
+    Only the named fields are written, conditionally on the stored version and again on a
+    fresh copy after a conflict, so a concurrent write is never overwritten.
+    """
+    fields = dict(updates or {})
+    fields['last_updated'] = datetime.utcnow().isoformat()
+    return write_safety_log_updates(log_id, fields)
+
+
+def _safety_request_status(log_item: Dict[str, Any]) -> str:
+    return str((log_item or {}).get('action_request_status') or '').strip().lower()
+
+
+def _safety_request_still_pending(log_item: Dict[str, Any], approval_id: Optional[str]) -> bool:
+    """True while a violation is still waiting on this very remediation request."""
+    return (
+        bool(approval_id)
+        and _safety_request_status(log_item) == SAFETY_REQUEST_PENDING
+        and log_item.get('action_request_id') == approval_id
+    )
+
+
+def safety_log_awaits_request(log_item: Optional[Dict[str, Any]], approval_id: Optional[str]) -> bool:
+    """True while a violation is waiting on exactly this remediation request.
+
+    An approved request is carried out only then. One its violation has moved on from --
+    withdrawn, replaced by a newer request, or settled -- must not change the user's access.
+    """
+    return _safety_request_still_pending(log_item or {}, approval_id)
+
+
+def safety_remediation_state(log_item: Optional[Dict[str, Any]]) -> Tuple[Any, ...]:
+    """The parts of a violation a remediation decision rests on, to compare a later read with."""
+    log_item = log_item or {}
+    return tuple(log_item.get(field) for field in SAFETY_REMEDIATION_STATE_FIELDS)
+
+
+def release_safety_log_after_approval_decision(
+    approval: Dict[str, Any],
+    outcome: str,
+) -> Optional[Dict[str, Any]]:
+    """Record that a violation's remediation request was denied or expired, unlocking it.
+
+    Called whenever a warn, suspend or block request is denied by a reviewer or by the
+    expiry sweep. Only a violation still waiting on this very request changes: one that
+    has since moved on to a newer request, or was already settled, is left as it is.
+    Returns the stored violation, or None when nothing changed.
+    """
+    if outcome not in (SAFETY_REQUEST_DENIED, SAFETY_REQUEST_EXPIRED):
+        raise ValueError(f'Unsupported remediation request outcome: {outcome}')
+    approval = approval if isinstance(approval, dict) else {}
+    metadata = approval.get('metadata') if isinstance(approval.get('metadata'), dict) else {}
+    log_id = str(metadata.get('safety_log_id') or '').strip()
+    approval_id = approval.get('id')
+    if not log_id or not approval_id:
+        return None
+
+    now_text = datetime.utcnow().isoformat()
+    updates = {
+        'action_request_status': outcome,
+        'action_request_decided_at': approval.get('approved_at') or now_text,
+        'action_execution_error': None,
+        'last_updated': now_text,
+    }
+    try:
+        stored = write_safety_log_updates(
+            log_id,
+            updates,
+            guard=lambda current: _safety_request_still_pending(current, approval_id),
+        )
+    except cosmos_exceptions.CosmosResourceNotFoundError:
+        return None
+    if stored is not None:
+        log_event(
+            '[SAFETY_REMEDIATION] A violation was released after its remediation request was decided.',
+            extra={
+                'safety_log_id': log_id,
+                'approval_id': approval_id,
+                'request_type': approval.get('request_type'),
+                'outcome': outcome,
+            },
+        )
+    return stored
+
+
+def _settled_request_outcome(
+    log_item: Dict[str, Any],
+    approval: Optional[Dict[str, Any]],
+    now: datetime,
+) -> Optional[str]:
+    """What a pending violation's request has become, or None while it may still be decided."""
+    if approval is None:
+        requested_at = parse_access_restore_time(log_item.get('action_requested_at'))
+        if requested_at is None or now - requested_at >= SAFETY_APPROVAL_LIFETIME:
+            return SAFETY_REQUEST_EXPIRED
+        return None
+    return {
+        'denied': SAFETY_REQUEST_DENIED,
+        'auto_denied': SAFETY_REQUEST_EXPIRED,
+        'expired': SAFETY_REQUEST_EXPIRED,
+        'executed': SAFETY_REQUEST_EXECUTED,
+        'failed': SAFETY_REQUEST_FAILED,
+    }.get(str(approval.get('status') or '').strip().lower())
+
+
+def _settled_request_updates(outcome: str, approval: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    approval = approval or {}
+    now_text = datetime.utcnow().isoformat()
+    updates = {'action_request_status': outcome, 'last_updated': now_text}
+    if outcome in (SAFETY_REQUEST_DENIED, SAFETY_REQUEST_EXPIRED):
+        updates['action_request_decided_at'] = approval.get('approved_at') or now_text
+        updates['action_execution_error'] = None
+    elif outcome == SAFETY_REQUEST_EXECUTED:
+        # Recorded as executed only: whatever the request sent was sent by the approval
+        # path, so no warning is raised for acknowledgment here.
+        updates['action_approved_at'] = approval.get('approved_at')
+        updates['action_executed_at'] = approval.get('executed_at') or now_text
+        updates['action_execution_error'] = None
+    elif outcome == SAFETY_REQUEST_FAILED:
+        updates['action_approved_at'] = approval.get('approved_at')
+        updates['action_execution_error'] = SAFETY_REQUEST_FAILED_MESSAGE
+    return updates
+
+
+def _lookup_remediation_requests(approval_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """Return ``{approval_id: request}`` for the remediation requests that still exist."""
+    ids = [value for value in dict.fromkeys(approval_ids or []) if isinstance(value, str) and value]
+    found: Dict[str, Dict[str, Any]] = {}
+    for start in range(0, len(ids), SAFETY_REQUEST_LOOKUP_BATCH):
+        batch = ids[start:start + SAFETY_REQUEST_LOOKUP_BATCH]
+        rows = cosmos_approvals_container.query_items(
+            query=(
+                "SELECT c.id, c.status, c.request_type, c.approved_at, c.executed_at, "
+                "c.metadata.safety_log_id AS safety_log_id FROM c WHERE ARRAY_CONTAINS(@ids, c.id)"
+            ),
+            parameters=[{'name': '@ids', 'value': batch}],
+            enable_cross_partition_query=True,
+        )
+        for row in rows:
+            if isinstance(row, dict) and row.get('id') in batch:
+                found[row['id']] = row
+    return found
+
+
+def reconcile_pending_safety_logs(
+    logs: Iterable[Dict[str, Any]],
+    now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """Settle violations still marked pending whose remediation request was decided or is gone.
+
+    One lookup covers every pending request in ``logs``. A request that was denied or has
+    expired unlocks its violation; one that executed or failed is recorded as such. A request
+    that is still pending, or approved and still running, keeps its violation locked, and so
+    does a lookup that fails. Returns the list with each settled violation replaced by its
+    stored copy.
+    """
+    logs = list(logs or [])
+    pending = [
+        (index, log_item) for index, log_item in enumerate(logs)
+        if isinstance(log_item, dict)
+        and _safety_request_status(log_item) == SAFETY_REQUEST_PENDING
+        and log_item.get('action_request_id')
+    ]
+    if not pending:
+        return logs
+    try:
+        requests = _lookup_remediation_requests(log_item['action_request_id'] for _index, log_item in pending)
+    except Exception as exc:
+        log_event(
+            '[SAFETY_REMEDIATION] Pending remediation requests could not be looked up.',
+            extra={'request_count': len(pending), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return logs
+
+    current_time = now or datetime.now(timezone.utc)
+    for index, log_item in pending:
+        approval_id = log_item['action_request_id']
+        approval = requests.get(approval_id)
+        if approval is not None and approval.get('safety_log_id') not in (None, log_item.get('id')):
+            # A request that names another violation is never used to settle this one.
+            continue
+        outcome = _settled_request_outcome(log_item, approval, current_time)
+        if outcome is None:
+            continue
+        try:
+            stored = write_safety_log_updates(
+                log_item['id'],
+                _settled_request_updates(outcome, approval),
+                base_item=log_item,
+                guard=lambda current, request_id=approval_id: _safety_request_still_pending(current, request_id),
+            )
+        except (SafetyLogConflict, cosmos_exceptions.CosmosResourceNotFoundError):
+            continue
+        except Exception as exc:
+            log_event(
+                '[SAFETY_REMEDIATION] A pending violation could not be settled.',
+                extra={'safety_log_id': log_item.get('id'), 'error_type': type(exc).__name__},
+                level=logging.WARNING,
+            )
+            continue
+        if stored is not None:
+            logs[index] = stored
+            log_event(
+                '[SAFETY_REMEDIATION] A pending violation was settled from its remediation request.',
+                extra={
+                    'safety_log_id': log_item.get('id'),
+                    'approval_id': approval_id,
+                    'outcome': outcome,
+                    'request_found': approval is not None,
+                },
+            )
+    return logs
+
+
+def reconcile_pending_safety_log(log_item: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Settle one violation, as ``reconcile_pending_safety_logs`` does for a list."""
+    return reconcile_pending_safety_logs([log_item], now=now)[0]
 
 
 def resolve_safety_target_user(user_id: str) -> Dict[str, str]:

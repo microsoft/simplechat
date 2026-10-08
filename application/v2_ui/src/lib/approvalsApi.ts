@@ -53,10 +53,10 @@ export const GROUP_REQUEST_TYPES = [
     'delete_documents',
     'delete_group',
     'delete_user_documents',
-    'warn_user',
-    'suspend_user',
-    'block_user',
 ] as const;
+
+/** Warn, suspend and block requests raised from safety violation reviews. */
+export const SAFETY_REMEDIATION_TYPES = ['warn_user', 'suspend_user', 'block_user'] as const;
 
 export const M365_REQUEST_TYPES = ['m365_source_sharing', 'm365_extended_analysis', 'm365_workflow_run_as'] as const;
 export type M365RequestType = (typeof M365_REQUEST_TYPES)[number];
@@ -138,6 +138,29 @@ export function approveApprovalRequest(id: string, groupId: string | undefined, 
         group_id: groupId,
         comment: comment.trim() || null,
     });
+}
+
+export interface ApprovalStats {
+    window?: { days: number };
+    waiting_on_me?: number;
+    my_pending_requests?: number;
+    expiring_within_24h?: number;
+    pending_visible?: number;
+    decided_in_window?: Partial<Record<'approved' | 'denied' | 'executed' | 'failed' | 'expired', number>>;
+    pending_by_type?: { request_type: string; count: number }[];
+    oldest_actionable?: {
+        id: string;
+        group_id?: string;
+        request_type: string;
+        group_name?: string;
+        created_at?: string;
+        expires_at?: string;
+    }[];
+}
+
+/** What the Approvals dashboard counts: only requests the caller can see, over the last `days`. */
+export function fetchApprovalStats(days: string, signal?: AbortSignal) {
+    return api.get<ApprovalStats>(`/api/approvals/stats?${new URLSearchParams({ days }).toString()}`, signal);
 }
 
 export function denyApprovalRequest(id: string, groupId: string | undefined, comment: string) {

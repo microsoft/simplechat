@@ -582,6 +582,26 @@ content-screening:
       url: /explanation/features/CONTENT_SCREENING_FRAMEWORK/
     - title: "Chat content checks"
       url: /explanation/features/CHAT_CONTENT_CHECKS/
+admin-review-ai-assistant:
+  name: "AI assist in the Review center"
+  area: "Governance and safety"
+  audience: "Admins"
+  summary: "Suggests reviews for user feedback and safety violations in the V2 Review center: an analysis of one record in its editor, or a triage of many whose suggestions wait in an AI suggestions queue for a reviewer to approve, edit or dismiss."
+  why: "Use this when reviewers face more feedback or flagged content than they can read closely, so routine records such as praise, false positives and first minor breaches are cleared quickly and attention goes to the rest. The model never saves or acts: a warning is sent, or a suspension or block requested, only when a reviewer approves a suggestion, a suspension or block still needs a second reviewer, and records reach the model without names, email addresses or ids."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_admin_review_ai_assistant
+  guides:
+    - title: "Use the Review center"
+      url: /guides/admin-review-center/
+    - title: "Review user feedback"
+      url: /guides/admin-review-feedback/
+    - title: "Review safety violations"
+      url: /guides/admin-review-safety-violations/
+  reference:
+    - title: "Security settings"
+      url: /admin/security/
 notices-and-terms:
   name: "Notices and terms of use"
   area: "Governance and safety"

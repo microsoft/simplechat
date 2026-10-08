@@ -214,6 +214,11 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-shield-lock',
         'color': 'danger'
     },
+    # A reviewer's response to feedback the user sent, sent only when the reviewer chooses to.
+    'feedback_response': {
+        'icon': 'bi-chat-heart',
+        'color': 'info'
+    },
     'agent_template_pending_admin': {
         'icon': 'bi-layers',
         'color': 'warning'

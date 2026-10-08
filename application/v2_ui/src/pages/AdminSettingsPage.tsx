@@ -25,7 +25,7 @@
 // saving per keystroke would mint a version per character.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBlocker } from 'react-router-dom';
+import { Link, useBlocker } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Loader2, PanelLeftClose, PanelLeftOpen, Search, ShieldAlert, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
@@ -1460,10 +1460,10 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             <ScreeningPolicyEditor scope={{ scope_type: 'global', scope_id: 'global' }}
                                 configurationVersion={screeningConfigurationVersion} disabled={saving} />
                             <ScreeningWorkspaceControls scope={{ scope_type: 'global', scope_id: 'global' }} />
-                            <a href="/admin/safety_violations#unchecked-chat-content"
+                            <Link to="/admin/review/safety/unchecked"
                                 className="inline-block text-sm text-accent hover:underline">
                                 Review unchecked chat content
-                            </a>
+                            </Link>
                         </div>
                     );
                 case 'custom-pages-table':

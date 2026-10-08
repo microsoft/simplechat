@@ -480,6 +480,11 @@
         <div class="alert alert-secondary py-2 d-none" id="safetyWarningAcknowledgment" role="status"></div>
         <div class="mb-3 d-none" id="safetyRemediationFields">
           <div class="alert alert-info py-2" id="safetyRemediationHelp"></div>
+          <div class="form-check mb-3 d-none" id="safetyReissueGroup">
+            <input class="form-check-input" type="checkbox" id="editReissue" aria-describedby="editReissueHelp" />
+            <label class="form-check-label fw-bold" for="editReissue" id="editReissueLabel">Request this suspension again</label>
+            <div class="form-text" id="editReissueHelp"></div>
+          </div>
           <div class="mb-3" id="safetyNotificationGroup">
             <label class="form-label fw-bold" for="editNotificationMessage">Notification</label>
             <textarea class="form-control" id="editNotificationMessage" rows="5"></textarea>

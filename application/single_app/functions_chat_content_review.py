@@ -28,6 +28,15 @@ from functions_chat_content_checks import (
 )
 
 
+# The messages the unchecked queue holds: allowed through while a required check could not
+# finish. Shared by the queue's list and the Review center dashboard's count.
+UNCHECKED_CHAT_CONTENT_WHERE = (
+    "c.metadata.chat_content_checks.status = 'not_checked' "
+    "AND c.metadata.chat_content_checks.decision = 'allow_unchecked' "
+    "AND c.role IN ('user', 'assistant')"
+)
+
+
 class ChatContentReviewError(ScreeningError):
     code = "chat_content_check_unavailable"
     public_message = "The chat content check could not be completed. Reload and try again."
@@ -226,11 +235,7 @@ def list_unchecked_chat_content(
     next_cursor = None
     while index < len(sources) and len(items) < page_size:
         current_source = sources[index]
-        query = (
-            "SELECT * FROM c WHERE c.metadata.chat_content_checks.status = 'not_checked' "
-            "AND c.metadata.chat_content_checks.decision = 'allow_unchecked' "
-            "AND c.role IN ('user', 'assistant')"
-        )
+        query = f"SELECT * FROM c WHERE {UNCHECKED_CHAT_CONTENT_WHERE}"
         parameters = []
         if current_source == "shared":
             query += " AND NOT IS_DEFINED(c.metadata.source_message_id)"
@@ -260,6 +265,28 @@ def list_unchecked_chat_content(
         cursor = {"source": sources[index], "page": None} if index < len(sources) else None
         next_cursor = cursor
     return {"items": items, "continuation": _encode_cursor(next_cursor, signature)}
+
+
+def count_unchecked_chat_content(*, stores=None):
+    """How many messages the unchecked queue holds across chat and shared conversations.
+
+    Counts what ``list_unchecked_chat_content`` lists with no filters, with one count query
+    per conversation source, for the Review center dashboard.
+    """
+    stores = stores or get_chat_review_stores()
+    total = 0
+    for current_source in ("chat", "shared"):
+        query = f"SELECT VALUE COUNT(1) FROM c WHERE {UNCHECKED_CHAT_CONTENT_WHERE}"
+        if current_source == "shared":
+            query += " AND NOT IS_DEFINED(c.metadata.source_message_id)"
+        values = stores.message_container(current_source).query_items(
+            query=query, parameters=[], enable_cross_partition_query=True,
+        )
+        total += sum(
+            int(value) for value in values
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        )
+    return total
 
 
 def _recheck_text(message, conversation, summary):

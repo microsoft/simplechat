@@ -144,6 +144,7 @@ from functions_settings import (
     get_settings,
     get_user_settings,
     is_action_assistant_enabled,
+    is_admin_review_assistant_enabled,
     is_admin_settings_redacted_secret,
     is_agent_assistant_enabled,
     is_chat_file_upload_enabled_for_user,
@@ -977,6 +978,10 @@ def register_route_backend_v2(bp):
                 # Only hides Ask AI; each assist route re-checks the scope permission.
                 "enable_agent_ai_assistant": is_agent_assistant_enabled(settings),
                 "enable_action_ai_assistant": is_action_assistant_enabled(settings),
+                # Only shows the Review center's AI entry points; every assist and suggestion
+                # route re-checks the toggle and the caller's reviewer role. The guidance text
+                # itself is never sent.
+                "enable_admin_review_ai_assistant": is_admin_review_assistant_enabled(settings),
                 # Only hides the chip and entry points; the server re-checks every read.
                 "enable_chat_workflow_results": is_chat_workflow_results_enabled_for_user(
                     settings, user_roles=current_user_roles

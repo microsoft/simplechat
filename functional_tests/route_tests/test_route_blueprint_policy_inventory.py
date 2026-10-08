@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.297
+Version: 0.261.299
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -18,6 +18,8 @@ Global agent and action editor policy coverage: 0.261.271
 Control Center dashboard route policy coverage: 0.261.279
 V2 Support menu Latest Features route policy coverage: 0.261.296
 Access restricted screen and safety warning policy coverage: 0.261.297
+Review center ids, bulk, detail and approvals summary policy coverage: 0.261.298
+Review center AI assist policy coverage: 0.261.299
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -353,6 +355,29 @@ SENSITIVE_ROUTE_POLICIES = {
     # content checks report, so a warning already sent stays acknowledgeable.
     ("route_backend_safety.py", "get_pending_safety_warnings"): ("login_required", "user_required"),
     ("route_backend_safety.py", "acknowledge_pending_safety_warning"): ("login_required", "user_required"),
+    # The Review center: each section's reviewer role and its feature gate, like the
+    # single-record review routes they sit beside.
+    ("route_backend_safety.py", "get_safety_log_ids"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    ("route_backend_safety.py", "get_safety_log"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    ("route_backend_safety.py", "bulk_update_safety_logs"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    ("route_backend_feedback.py", "feedback_review_ids"): ("login_required", "feedback_admin_required", "enabled_required"),
+    ("route_backend_feedback.py", "feedback_review_bulk"): ("login_required", "feedback_admin_required", "enabled_required"),
+    # The Review center's AI assist: the same reviewer role and feature gate as the records it
+    # reads; the assistant's own Admin Settings toggle is checked in the route body.
+    ("route_backend_feedback.py", "feedback_review_assist"): (
+        "login_required", "feedback_admin_required", "enabled_required",
+    ),
+    ("route_backend_safety.py", "safety_review_assist"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    # The Approvals dashboard: any signed-in user, counting only the requests GET /api/approvals shows them.
+    ("route_backend_control_center.py", "api_get_approval_stats"): ("login_required",),
     # The Access restricted screen: login-only, see REGISTERED_BLUEPRINT_POLICIES.
     ("route_access_restriction.py", "v2_access_restricted"): ("login_required",),
     ("route_access_restriction.py", "v2_access_restriction"): ("login_required",),
@@ -693,6 +718,41 @@ def test_access_restricted_routes_are_login_only() -> None:
         raise AssertionError("The Access restricted Blueprint must be registered with login_required_blueprint.")
 
 
+def test_review_center_routes_keep_their_reviewer_policy() -> None:
+    """The Review center's ids, detail, bulk, AI assist and summary routes keep their exact guards.
+
+    Each feedback and safety route needs its section's reviewer role and feature gate, after
+    the swagger and login decorators. The approvals summary only needs a session: it counts
+    what GET /api/approvals already shows the caller. Explicit raises keep this under -O.
+    """
+    safety = ("bp.route", "swagger_route", "login_required", "safety_violation_admin_required", "content_checks_report_enabled")
+    feedback = ("bp.route", "swagger_route", "login_required", "feedback_admin_required", "enabled_required")
+    expected = {
+        ("route_backend_safety.py", "/api/safety/logs/ids"): ("get_safety_log_ids", safety),
+        ("route_backend_safety.py", "/api/safety/logs/bulk"): ("bulk_update_safety_logs", safety),
+        ("route_backend_feedback.py", "/feedback/review/ids"): ("feedback_review_ids", feedback),
+        ("route_backend_feedback.py", "/feedback/review/bulk"): ("feedback_review_bulk", feedback),
+        ("route_backend_feedback.py", "/api/admin/review/feedback/assist"): ("feedback_review_assist", feedback),
+        ("route_backend_safety.py", "/api/admin/review/safety/assist"): ("safety_review_assist", safety),
+        ("route_backend_control_center.py", "/api/approvals/stats"): (
+            "api_get_approval_stats", ("bp.route", "swagger_route", "login_required"),
+        ),
+    }
+    routes = {(route.file_name, route.path): route for route in iter_route_functions()}
+    for key, (function_name, decorators) in expected.items():
+        route = routes.get(key)
+        if route is None or route.function_name != function_name or route.route_target != "bp":
+            raise AssertionError(f"Review center route {key} moved or was renamed.")
+        if route.decorator_names != decorators:
+            raise AssertionError(f"{function_name} decorators changed: {route.decorator_names}.")
+    detail = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_safety.py" and route.function_name == "get_safety_log"
+    ]
+    if len(detail) != 1 or detail[0].decorator_names != safety or detail[0].path != "/api/safety/logs/<string:log_id>":
+        raise AssertionError(f"The violation detail route changed: {detail}.")
+
+
 if __name__ == "__main__":
     tests = [
         test_route_policy_inventory_assets_and_version_are_current,
@@ -708,6 +768,7 @@ if __name__ == "__main__":
         test_workflow_handoff_routes_keep_the_personal_workflow_security_policy,
         test_content_screening_routes_keep_authenticated_blueprint_guards,
         test_access_restricted_routes_are_login_only,
+        test_review_center_routes_keep_their_reviewer_policy,
     ]
     results = []
     for test in tests:
