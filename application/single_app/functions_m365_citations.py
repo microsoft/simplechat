@@ -1,14 +1,15 @@
 # functions_m365_citations.py
 """Microsoft 365 emails, calendar events and files as first-class answer citations.
 
-Version: 0.261.303
+Version: 0.261.305
 Implemented in: 0.261.303
+Direct-answer guidance refined in: 0.261.305
 
 An item an answer draws on is normalized into a small citation record with a deterministic id.
 Tool results carry a model-facing citation value in SimpleChat's inline marker grammar,
 ``(Source: <title>, Location: <where>) [#<id>]``, so the model cites an email, event or file the
 same way it cites a workspace document. The records travel with the assistant message and the
-conversation, so the browser draws citation chips, source cards and "Open online" links without
+conversation, so the browser draws citation chips, source cards and online links without
 calling Microsoft 365 again.
 
 Rules every record follows:
@@ -60,7 +61,16 @@ MAX_ITEM_MESSAGE_IDS = 20
 MAX_MARKER_TITLE_CHARS = 120
 MAX_SOURCES_NOTE_ITEMS = 50
 
+M365_ANSWER_STYLE_INSTRUCTIONS = (
+    "For Microsoft 365 items, answer the user's question directly without routine source-provenance "
+    'introductions such as "Confirmed from the SharePoint document". Citations already identify the '
+    'sources. Name a source or platform when the user asks about provenance or when needed to '
+    'distinguish conflicting evidence. Preserve uncertainty, missing evidence and partial-coverage '
+    'disclosures.'
+)
+
 M365_CITATION_INSTRUCTIONS = (
+    f"{M365_ANSWER_STYLE_INSTRUCTIONS} "
     'Cite each email, event or file you mention by copying its "citation" value verbatim right '
     'after the line or sentence about it. Do not invent, shorten, reformat or renumber citation '
     'values, and do not cite an item you did not use.'
@@ -972,7 +982,8 @@ def build_m365_sources_note(records):
         return ""
     return (
         "Microsoft 365 sources (copy each citation value verbatim right after the claim or list line it "
-        "supports; never invent or alter one):\n" + "\n".join(lines)
+        "supports; never invent or alter one):\n"
+        f"{M365_ANSWER_STYLE_INSTRUCTIONS}\n\n" + "\n".join(lines)
     )
 
 

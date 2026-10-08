@@ -275,8 +275,8 @@ function SourcesSection({ sources }: { sources: MessageSources }) {
                                     </span>
                                     <M365OpenLink
                                         record={record}
-                                        label="Open online"
-                                        className="inline-flex shrink-0 items-center gap-1 text-accent hover:underline"
+                                        label={record.kind === 'file' ? 'Open online' : undefined}
+                                        className="inline-flex shrink-0 items-center gap-1 text-accent-hover hover:underline dark:text-accent"
                                     />
                                 </li>
                             );

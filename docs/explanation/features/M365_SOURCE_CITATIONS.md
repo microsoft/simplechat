@@ -1,11 +1,12 @@
-# Microsoft 365 Source Citations (v0.261.303)
+# Microsoft 365 Source Citations (v0.261.305)
 
 ## Overview
 
 An answer that uses SharePoint or OneDrive files, emails or calendar events now cites them the
 way it cites workspace documents. Each item the answer mentions gets an inline citation chip,
 and every cited item, plus every file whose content was read, is listed in the conversation's
-**Documents** pane with an **Open online** link. Before this release an orchestrated SharePoint
+**Documents** pane with **Open online** for files and **Open in Outlook** for emails and events.
+Before source citations, an orchestrated SharePoint
 answer ended with plain text such as "Source: *EVA Swab Tool…* (SharePoint file
 **20170010188.pdf**)" with no chip and nothing in the Documents pane, and an email list changed
 its layout from one answer to the next.
@@ -16,19 +17,28 @@ What changes for the reader:
   subject, with an icon for the kind of item. Clicking a chip opens a source card with the
   item's details and an **Open in SharePoint**, **Open in OneDrive** or **Open in Outlook**
   link. The link opens the item where it lives, so the reader's own sign-in decides what they
-  can see; nothing is downloaded or copied.
+  can see; nothing is downloaded or copied. The source card stays readable in light and dark
+  themes, keeps keyboard focus inside, and returns focus to the chip when closed.
+- **Direct answers.** Model guidance avoids routine introductions such as "Confirmed from the
+  SharePoint document". Citations already identify the sources. Source names remain appropriate
+  when the question is about provenance or conflicting evidence, and uncertainty or incomplete
+  coverage must still be disclosed.
 - **One email and event layout.** Email and event lists always use the same layout: a header
   line such as "10 most recent emails, all unread, newest first:", then one numbered line per
   item with the subject in bold, the sender or time span, and the citation chip. Times are
   shown in the reader's browser time zone.
 - **Documents pane.** New **SharePoint & OneDrive**, **Email** and **Calendar** sections list the
-  conversation's Microsoft 365 items with an **Open online** link. The workspace document list
-  is unchanged.
+  conversation's Microsoft 365 items. Email and calendar rows offer **Open in Outlook**, which
+  opens the specific recalled item in a new browser tab. File rows keep **Open online**, and the
+  workspace document list is unchanged.
 
 The layout is a fixed text format that the model writes and the application cites, not a card
 the application draws, so it reads the same in copied text, exports and both chat interfaces.
 
 Implemented in version: **0.261.303**, tracked in `application/single_app/config.py`.
+Source-card readability, Outlook metadata and answer guidance refined in version:
+**0.261.305**, tracked by the same configuration version. See the
+[citation modal and Outlook links fix]({{ '/explanation/fixes/M365_CITATION_MODAL_AND_OUTLOOK_LINKS_FIX/' | relative_url }}).
 
 Dependencies:
 
@@ -80,6 +90,14 @@ plugin logger, the citation tracker and the routes can all use it.
      `prepare_file`, `read_file`, `read_file_chunk` and `analyze_file` results. This happens at
      the tool boundary, so captures saved before this release are cited too.
 
+   A custom `select_fields` value does not remove baseline source-card fields. Mail always
+   requests `id`, `subject`, `from`, `receivedDateTime`, `isRead`, `importance` and `webLink`;
+   calendar always requests `id`, `subject`, `start`, `end`, `location`, `organizer`,
+   `isAllDay` and `webLink`. Other requested fields remain available. Calendar fields added
+   only for keyword matching are removed before annotation, but baseline citation metadata
+   and explicitly requested fields are retained. This requires no additional Graph call
+   or permission.
+
    The `presentation` value states the fixed layout:
 
    | Item | Line |
@@ -120,6 +138,11 @@ plugin logger, the citation tracker and the routes can all use it.
    action and agent step's retained tool citations, and the message and the `orchestration_done`
    event carry `m365_citations`. When a run republishes its answer into a shared conversation,
    the shared copy takes the new records, and loses them if the republished answer is blocked.
+
+   Shared Microsoft 365 answer-style guidance travels with direct tool results, sources notes,
+   the trusted compose policy and mixed-source handoffs. It asks for direct answers without
+   routine provenance introductions while preserving source distinctions, missing evidence
+   and partial-coverage disclosures. Existing answer text is not post-processed or rewritten.
 
 6. **Conversation aggregate.** `used_m365_items` on the conversation lists every cited item and
    every file whose content was read, most recent first, with the message ids that used each
@@ -176,7 +199,8 @@ agent, or let orchestration use one, and its answers are cited.
 2. Click a chip. The source card shows From, Received, Read or Unread, importance and a preview,
    with **Open in Outlook**.
 3. Open **Documents** in the conversation drawer. The **Email** section lists each cited email
-   with the sender, received time and **Open online**.
+   with the sender, received time and **Open in Outlook**. Recalled events have the same action
+   under **Calendar**.
 4. Ask a question about a SharePoint document. The answer cites the file after each claim, and
    the **SharePoint & OneDrive** section lists it with its location and modified date.
 
@@ -184,6 +208,12 @@ A chip whose record is no longer on the message opens a card saying the source i
 available in this conversation. Neither interface calls the workspace citation endpoint for a
 Microsoft 365 id. The classic chat shows the citation's title as a link to the item, or as text
 when no `https` link was recorded.
+
+An existing record without a safe online URL still shows its saved details. Its V2 source card
+explains that an online link is unavailable and suggests recalling the item again to refresh
+the details. Old messages and citation records are not migrated or rewritten; only new recalls
+can capture a missing Graph-provided URL. The per-message **Sources** panel uses the same
+**Open in Outlook** label for email and calendar items.
 
 ## Testing and validation
 
@@ -195,11 +225,16 @@ when no `https` link was recorded.
   flags, the per-message limit keeping cited and read items, persistence sites and final events,
   workflow answers and their mirrored copies, the orchestration sources note, final message,
   done event and shared-copy refresh, the compose instruction, aggregate merge, cap, rebuild and
-  owner filter, history-sharing detection, and collaboration and export carry.
+  owner filter, history-sharing detection, and collaboration and export carry. Custom Graph
+  selections, keyword scans, mail pagination/continuation and shared direct-answer guidance
+  have regressions in **0.261.305**.
 - `ui_tests/test_v2_m365_source_citations.py`: V2 chips from a streamed answer, source cards
   and their links, the missing-record card, the request's time zone, the Documents pane sections
   at desktop and phone widths, and the classic chat's links, with no request to
-  `/api/get_citation`.
+  `/api/get_citation`. Production CSS checks enforce at least **4.5:1** source text/action
+  contrast in both themes, a dialog outside the Markdown subtree, contained/restored keyboard
+  focus, wrapping metadata, honest unavailable-link states and exact new-tab Outlook targets
+  from source cards, Documents and Sources.
 
 ### Known limitations
 
@@ -208,6 +243,8 @@ when no `https` link was recorded.
   Orchestrated answers use UTC unless workflow proposals or results are configured.
 - An "Open in Outlook" link opens the owner's mailbox, so it only works for the owner. File links
   follow SharePoint and OneDrive permissions.
+- A historic record without a Graph URL cannot reconstruct one from its hashed citation id.
+  Recall the item again; a link is shown only if Microsoft Graph supplies a safe URL.
 - Shared conversations show chips on messages but no Microsoft 365 items in the Documents pane.
 - Follow-up questions about a saved workflow result are answered from the stored result rather
   than from Microsoft 365, so those answers carry no Microsoft 365 records of their own.
