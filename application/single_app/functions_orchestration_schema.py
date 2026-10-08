@@ -1769,8 +1769,8 @@ FAILURE_MESSAGES = {
     ),
     'm365_model_limits_required': (
         "This step's model has no verified token limits, so SharePoint and OneDrive file content "
-        "couldn't be used safely. Choose a model with published token limits, or ask an admin to "
-        'set them in Model Endpoints, then retry.'
+        "couldn't be used safely. Ask an admin to set this model's token limits in Model Endpoints, "
+        'then ask again.'
     ),
     'm365_evidence_unavailable': (
         "SharePoint or OneDrive file evidence couldn't be saved or read for this conversation, so "

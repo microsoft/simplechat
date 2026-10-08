@@ -17,7 +17,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   (Ref: `functions_m365_agent_continuation.py` `get_m365_analysis_model`, `m365_step_model_binder`, `functions_m365_analysis_runtime.py`)
 
 *   **File Steps Fail Clearly Instead of Reporting Missing Documents**
-    *   A SharePoint or OneDrive step whose model has no verified token limits now stops before reading anything, with the new `m365_model_limits_required` failure. Its message says to choose a model with published limits or set them in Model Endpoints.
+    *   A SharePoint or OneDrive step whose model has no verified token limits now stops before reading anything, with the new `m365_model_limits_required` failure. Its message says to have an admin set the model's limits in Model Endpoints, then ask again.
     *   File evidence that can't be saved or read for the conversation now stops the step with the new `m365_evidence_unavailable` failure. Previously both reached the model as findings, so the step completed with a misleading answer.
     *   Bounded-coverage outcomes, such as a full context window or a request's file limits, are still reported as findings.
     *   (Ref: `functions_orchestration_m365.py` `result_refusal`, `failure_code`, `functions_orchestration_schema.py` `FAILURE_MESSAGES`, `M365_STEP_FAILURE_CODES`)

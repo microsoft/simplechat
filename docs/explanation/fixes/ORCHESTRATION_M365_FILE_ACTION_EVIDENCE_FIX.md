@@ -129,8 +129,9 @@ Bounded-coverage outcomes stay findings that the model reports. These include
 Both failures are in `M365_STEP_FAILURE_CODES`, so a step's failure keeps its file
 source in `m365_sources`. Their messages name the next step:
 
-- `m365_model_limits_required`: choose a model with published token limits, or ask
-  an admin to set them in Model Endpoints.
+- `m365_model_limits_required`: ask an admin to set the model's token limits in Model
+  Endpoints, then ask again. A retry runs the plan's approved model, and an Auto plan
+  whose model limits changed asks for a new plan.
 - `m365_evidence_unavailable`: retry, then ask an admin to check the app's chat
   storage.
 
