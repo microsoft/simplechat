@@ -149,6 +149,15 @@ class FakeApprovalsContainer:
     def add(self, approval):
         self.items[approval["id"]] = copy.deepcopy(approval)
 
+    def read_item(self, item, partition_key, **kwargs):
+        if item not in self.items:
+            raise cosmos_exceptions.CosmosResourceNotFoundError(status_code=404, message="Not found")
+        return copy.deepcopy(self.items[item])
+
+    def upsert_item(self, body, **kwargs):
+        self.add(body)
+        return copy.deepcopy(body)
+
     def query_items(self, query, parameters=None, **kwargs):
         self.queries.append(query)
         if self.fail:
@@ -157,6 +166,8 @@ class FakeApprovalsContainer:
         rows = []
         for item in self.items.values():
             if "@ids" in values and item["id"] not in values["@ids"]:
+                continue
+            if "@status" in values and item.get("status") != values["@status"]:
                 continue
             row = copy.deepcopy(item)
             row["safety_log_id"] = (item.get("metadata") or {}).get("safety_log_id")
@@ -323,6 +334,28 @@ def build_safety_app(stack):
     # Another browser: a second reviewer, or the warned user, with a session of their own.
     state.new_client = lambda: _test_client(app)
     return state
+
+
+def patch_approval_decisions(stack, state):
+    """Let the real ``functions_approvals.deny_request`` run against the harness's approvals.
+
+    The denial is stored in ``state.approvals_container``; the requester's notification is
+    recorded in ``state.decision_notifications``. Returns the real module.
+    """
+    import functions_approvals as approvals
+
+    state.decision_notifications = []
+
+    def create_notification(**kwargs):
+        state.decision_notifications.append(kwargs)
+        return {"id": f"decision-{len(state.decision_notifications)}"}
+
+    stack.enter_context(patch.object(approvals, "cosmos_approvals_container", state.approvals_container))
+    stack.enter_context(patch.object(approvals, "create_notification", create_notification))
+    stack.enter_context(patch.object(approvals, "delete_notifications_by_metadata", lambda **kwargs: 0))
+    stack.enter_context(patch.object(approvals, "log_event", _quiet))
+    stack.enter_context(patch.object(approvals, "debug_print", _quiet))
+    return approvals
 
 
 def build_feedback_app(stack):
