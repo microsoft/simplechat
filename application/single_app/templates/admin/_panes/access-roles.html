@@ -59,7 +59,7 @@
                     </p>
                     <div class="mb-0">
                         <label for="admin_review_ai_guidance" class="form-label">Review Guidance for the AI Assistant</label>
-                        <small class="text-muted d-block mb-1">Your organization's review policy in plain language, such as when a first violation only gets a warning. Used only while AI assist is on, and never sent to browsers. Up to 2,000 characters.</small>
+                        <small class="text-muted d-block mb-1">Your organization's review policy in plain language, such as when a first violation only gets a warning. Used only while AI assist is on, and sent to the model with each request, never to the Review center. Up to 2,000 characters.</small>
                         <textarea class="form-control" id="admin_review_ai_guidance" name="admin_review_ai_guidance"
                             rows="4" maxlength="2000">{{ settings.admin_review_ai_guidance }}</textarea>
                     </div>

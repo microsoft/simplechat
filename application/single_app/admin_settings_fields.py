@@ -3781,8 +3781,8 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Your organization's review policy in plain language, such as when a "
                 "first violation only gets a warning. The assistant follows it where it "
-                "fits, but it can't override the built-in safeguards. Only the model "
-                "reads it; it is never sent to browsers."
+                "fits, but it can't override the built-in safeguards. It is sent to the "
+                "model with each request, never to the Review center."
             ),
             "default": "",
             "rows": 5,
