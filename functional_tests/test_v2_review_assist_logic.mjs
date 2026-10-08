@@ -6,7 +6,9 @@
 // strictly, so a malformed or mismatched answer is never shown; that a suggestion's effect is
 // described the way the queue shows it; that "Approve all" leaves out suspensions, blocks, stale
 // suggestions and locked violations, while an individual tick still approves a suspension or block;
-// that an approval's confirmation counts the warnings it sends and the requests it creates; that
+// that an approval's confirmation counts the warnings it sends and the requests it creates, and that
+// a suspension or block the violation already records is never requested again from the queue; that
+// a refused approval reads in the reviewer's terms; that
 // the save applying a suggestion carries the reviewer's notification edits and a suspension's
 // restore time; and that a triage runs ten records at a time, waits out the rate limit, fails only
 // an unusable chunk, and stops or cancels with the rest reported unprocessed.
@@ -130,6 +132,36 @@ assert.match(confirm.description, /1 user is sent a warning straight away\./);
 assert.match(confirm.description, /3 suggestions are left in the queue\./);
 assert.match(ai.approvalConfirmation(ticked, { singular: 'violation', plural: 'violations' }).description,
     /1 suspension or block is requested; each applies only after another eligible reviewer approves it\./);
+
+/* A suspension or block the violation already records is never requested again from the queue. */
+const suspended = { ...violation, id: 'log-6', action: 'SuspendUser', action_request_status: 'executed', etag: 'e6' };
+assert.equal(ai.repeatsRestriction(suspended, suspend.payload), true);
+assert.equal(ai.repeatsRestriction(violation, suspend.payload), false);
+assert.equal(ai.repeatsRestriction(suspended, warn.payload), false);
+const repeatEntries = [...entries, entry('log-6', 'safety', suspended, suspend)];
+assert.ok(!ai.approveAllIds(repeatEntries).includes('log-6'), 'Approve all still leaves a repeated suspension out');
+const repeatPlan = ai.planApproval(repeatEntries, ['log-6'], 'selected');
+assert.deepEqual([repeatPlan.ids, repeatPlan.restrictions, repeatPlan.repeats], [['log-6'], 0, 1]);
+const repeatConfirm = ai.approvalConfirmation(repeatPlan, { singular: 'violation', plural: 'violations' }).description;
+assert.match(repeatConfirm, /1 suspension or block is already on its violation, so nothing new is requested for it\./);
+assert.doesNotMatch(repeatConfirm, /each applies only after/);
+const repeatOp = ai.buildSuggestionOperation(repeatEntries[5], undefined, new Date('2026-10-01T00:00:00Z'));
+assert.equal(repeatOp.changes.reissue, undefined, 'the queue never asks for a restriction again');
+assert.equal(repeatOp.etag, 'e6', 'an approval is written on the version the reviewer saw');
+assert.match(ai.repeatedRestrictionText(suspended, 'SuspendUser'),
+    /^This suspension was approved and applied\. Approving updates the review only and requests nothing new\./);
+assert.match(ai.repeatedRestrictionText({ ...suspended, action: 'BlockUser', action_request_status: 'denied' }, 'BlockUser'),
+    /^This block request was denied\..*"Request this block again"\.$/);
+assert.match(ai.repeatedRestrictionText({ ...suspended, action_request_status: '' }, 'SuspendUser'),
+    /^This violation already records a suspension\./);
+
+/* A refused approval or dismissal reads in the reviewer's terms. */
+assert.match(ai.suggestionFailureText('record_changed', 'Fallback.'),
+    /^The record changed since this suggestion was shown, so nothing was saved\..*triage the record again/);
+assert.match(ai.suggestionFailureText('suggestion_stale', 'Fallback.'), /no longer fits/);
+assert.match(ai.suggestionFailureText('suggestion_not_pending', 'Fallback.'), /already applied, dismissed or replaced/);
+assert.equal(ai.suggestionFailureText('not_found', 'Fallback.'), 'Fallback.');
+assert.equal(ai.suggestionFailureText(undefined, 'Fallback.'), 'Fallback.');
 
 /* The save that applies a suggestion. */
 const now = new Date('2026-10-01T00:00:00Z');

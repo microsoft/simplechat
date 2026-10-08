@@ -378,6 +378,45 @@ export function isRestrictiveSuggestion(payload: SafetySuggestionPayload): boole
     return APPROVAL_REQUIRED_ACTIONS.has(payload.action);
 }
 
+/**
+ * Whether a suspension or block suggestion repeats the one the violation already records. Applying
+ * it updates the review only: a restriction is requested again only when a reviewer asks for that
+ * explicitly in the violation's editor, never by applying a suggestion.
+ */
+export function repeatsRestriction(record: SafetyRecord, payload: SafetySuggestionPayload): boolean {
+    return APPROVAL_REQUIRED_ACTIONS.has(payload.action) && payload.action === (record.action || 'None');
+}
+
+const RESTRICTION_STANDING: Readonly<Record<string, string>> = {
+    executed: 'was approved and applied',
+    denied: 'request was denied',
+    expired: 'request expired without a decision',
+    failed: 'was approved but could not be applied',
+};
+
+/**
+ * What approving a suggestion that repeats the violation's suspension or block does, by where
+ * its last request stands. The queue never asks for it again; only the violation's editor can.
+ */
+export function repeatedRestrictionText(record: SafetyRecord, action: string): string {
+    const noun = action === 'BlockUser' ? 'block' : 'suspension';
+    const standing = RESTRICTION_STANDING[safetyRequestState(record)];
+    const lead = standing ? `This ${noun} ${standing}.` : `This violation already records a ${noun}.`;
+    return `${lead} Approving updates the review only and requests nothing new. To ask another eligible reviewer to approve it again, open the violation and select "Request this ${noun} again".`;
+}
+
+/** What a refused approval or dismissal means for its row, in the reviewer's terms. */
+export function suggestionFailureText(code: string | null | undefined, fallback: string): string {
+    if (code === 'record_changed') {
+        return 'The record changed since this suggestion was shown, so nothing was saved. Reload the queue, or triage the record again for a current suggestion.';
+    }
+    if (code === 'suggestion_stale') {
+        return 'The record changed after the suggestion was made, so it no longer fits. Dismiss it, or triage the record again.';
+    }
+    if (code === 'suggestion_not_pending') return 'This suggestion was already applied, dismissed or replaced.';
+    return fallback;
+}
+
 function actionChangeLabel(payload: SafetySuggestionPayload): string {
     if (payload.action === 'SuspendUser' && payload.suspendDuration) {
         return `Suspend user for ${SUSPEND_DURATION_LABELS[payload.suspendDuration]}`;
@@ -466,6 +505,8 @@ export interface ApprovalPlan {
     warnings: number;
     /** Suspension and block requests created, each waiting for a second reviewer. */
     restrictions: number;
+    /** Suspensions and blocks the violation already records: applying updates the review only. */
+    repeats: number;
     archives: number;
 }
 
@@ -476,7 +517,7 @@ export interface ApprovalPlan {
  */
 export function planApproval(entries: readonly QueueEntry[], ids: readonly string[], mode: 'all' | 'selected'): ApprovalPlan {
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    const plan: ApprovalPlan = { ids: [], skipped: [], warnings: 0, restrictions: 0, archives: 0 };
+    const plan: ApprovalPlan = { ids: [], skipped: [], warnings: 0, restrictions: 0, repeats: 0, archives: 0 };
     for (const id of ids) {
         const entry = byId.get(id);
         if (!entry) {
@@ -501,6 +542,7 @@ export function planApproval(entries: readonly QueueEntry[], ids: readonly strin
             const payload = (entry.suggestion as SafetySuggestion).payload;
             if (sendsWarning(record, payload)) plan.warnings += 1;
             if (requestsRestriction(record, payload)) plan.restrictions += 1;
+            if (repeatsRestriction(record, payload)) plan.repeats += 1;
             if (payload.archive && !record.isArchived) plan.archives += 1;
         } else {
             const payload = (entry.suggestion as FeedbackSuggestion).payload;
@@ -524,6 +566,9 @@ export function approvalConfirmation(
     if (plan.warnings) parts.push(`${plural(plan.warnings, 'user is', 'users are')} sent a warning straight away.`);
     if (plan.restrictions) {
         parts.push(`${plural(plan.restrictions, 'suspension or block is', 'suspensions or blocks are')} requested; each applies only after another eligible reviewer approves it.`);
+    }
+    if (plan.repeats) {
+        parts.push(`${plural(plan.repeats, 'suspension or block is', 'suspensions or blocks are')} already on ${plan.repeats === 1 ? 'its violation' : 'their violations'}, so nothing new is requested for ${plan.repeats === 1 ? 'it' : 'them'}.`);
     }
     if (plan.archives) parts.push(`${plural(plan.archives, noun.singular, noun.plural)} will be archived.`);
     if (plan.skipped.length) parts.push(`${plural(plan.skipped.length, 'suggestion is', 'suggestions are')} left in the queue.`);

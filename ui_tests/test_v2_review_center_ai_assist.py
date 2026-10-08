@@ -8,8 +8,9 @@ Serve the real built SPA through Playwright request interception with a closed A
 Check that the AI suggestions queue lists what each suggestion would change and why, flags stale
 and locked rows, lets the reviewer edit a warning before approving it, leaves suspensions and
 blocks out of "Approve all" and out of "select all", says how many users an approval warns and how
-many requests it creates before it runs, applies each suggestion through the bulk save with its
-suggestion id, and reports a refused record on its own row; that Triage with AI sends the checked
+many requests it creates before it runs, never asks again for a suspension the violation already
+records, applies each suggestion through the bulk save with its suggestion id, and reports a
+refused record on its own row in the reviewer's terms; that Triage with AI sends the checked
 records ten at a time and reports every record's outcome with a link to the queue; that the
 editors' Ask AI panel fills the unsaved draft, marks what it changed, undoes it, and saves a
 stored triage suggestion through that suggestion; that the Feedback dashboard's themes open the
@@ -163,11 +164,16 @@ class ReviewAssistFixture:
             record["ai_suggestion"] = {**suggestion, "status": "applied"}
         changes = operation["changes"]
         if section == "safety":
+            previous_action = record.get("action") or "None"
             record.update({key: changes[key] for key in ("status", "action", "notes") if key in changes})
             body = {"message": "Warning sent to the user.", "approval_required": False}
             if changes.get("action") in ("SuspendUser", "BlockUser"):
-                record["action_request_status"] = "pending"
-                body = {"message": "Safety log updated and remediation approval request created.", "approval_required": True}
+                if changes["action"] == previous_action and changes.get("reissue") is not True:
+                    body = {"message": "Safety log updated. The suspension was already applied, so it was not requested again.",
+                            "approval_required": False, "remediation_already_applied": True}
+                else:
+                    record["action_request_status"] = "pending"
+                    body = {"message": "Safety log updated and remediation approval request created.", "approval_required": True}
         else:
             record["adminReview"].update({key: value for key, value in changes.items() if key not in ("etag", "notify_user")})
             body = {"success": True, "notified": False}
@@ -379,10 +385,45 @@ def test_the_queue_flags_rows_and_approves_with_counted_confirmation(assist_ui):
     # A stale suggestion is dismissed; a record that changed underneath is reported on its row.
     assist_ui.fail_bulk = {"log-3": {"code": "record_changed", "error": "This violation changed after you opened it."}}
     page.get_by_test_id("v2-safety-suggestion-log-3-dismiss").click()
-    expect(page.get_by_test_id("v2-safety-suggestion-log-3-result")).to_contain_text("This violation changed after you opened it.")
+    expect(page.get_by_test_id("v2-safety-suggestion-log-3-result")).to_contain_text(
+        "The record changed since this suggestion was shown, so nothing was saved.",
+    )
+    expect(page.get_by_test_id("v2-safety-suggestions-bulk-report")).to_contain_text("triage the record again")
     assert assist_ui.bulk_calls[-1][1] == [
         {"id": "log-3", "op": "dismiss_suggestion", "suggestion_id": "c" * 32, "etag": "etag-log-3"},
     ], assist_ui.bulk_calls[-1]
+
+
+def test_a_suspension_already_on_its_violation_is_not_requested_again(assist_ui):
+    assist_ui.safety.append(_violation(
+        "log-7", status="Resolved", action="SuspendUser", action_request_status="executed",
+        ai_suggestion=_suggestion("7", SUSPEND),
+    ))
+    assist_ui.open("/v2/admin/review/safety/suggestions")
+    page = assist_ui.page
+    row = page.get_by_test_id("v2-safety-suggestion-log-7")
+    expect(row).to_contain_text("Already on this violation")
+    expect(row).not_to_contain_text("Needs a second reviewer")
+    expect(page.get_by_test_id("v2-safety-suggestion-log-7-repeat")).to_contain_text(
+        "This suspension was approved and applied. Approving updates the review only and requests nothing new.",
+    )
+    # Approve all and select-all still leave it out; only its own tick approves it.
+    expect(page.get_by_test_id("v2-safety-suggestions-approve-all")).to_have_text("Approve all ready (2)")
+    page.get_by_test_id("v2-safety-suggestions-select-page").check()
+    expect(page.get_by_test_id("v2-safety-suggestion-log-7-check")).not_to_be_checked()
+    page.get_by_test_id("v2-safety-suggestions-select-page").uncheck()
+
+    page.get_by_test_id("v2-safety-suggestion-log-7-approve").click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text("1 suspension or block is already on its violation, so nothing new is requested for it.")
+    expect(dialog).not_to_contain_text("each applies only after another eligible reviewer approves it")
+    dialog.get_by_role("button", name="Apply 1 suggestion").click()
+    expect(page.get_by_test_id("v2-safety-suggestions-bulk-report")).to_contain_text(
+        "1 suspension or block already on its violation was not requested again.",
+    )
+    _section, operations = assist_ui.bulk_calls[-1]
+    assert operations[0]["id"] == "log-7" and operations[0]["suggestion_id"] == "7" * 32, operations
+    assert "reissue" not in operations[0]["changes"], "the queue asked for the suspension again"
 
 
 def test_the_queue_reads_well_on_a_phone(assist_ui):

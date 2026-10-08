@@ -41,10 +41,13 @@ import {
     parseSuggestion,
     planApproval,
     queueEntryRestrictive,
+    repeatedRestrictionText,
+    repeatsRestriction,
     requestsRestriction,
     safetySuggestionChanges,
     sendsWarning,
     SUGGESTION_LIMITS,
+    suggestionFailureText,
     suggestionRowState,
     suggestionSummary,
     type ApprovalPlan,
@@ -91,8 +94,22 @@ function notifies(entry: QueueEntry): boolean {
 }
 
 function resultMessage(result: ReviewBulkResult): string {
-    if (!result.ok) return result.error || result.message || 'The suggestion could not be applied.';
+    if (!result.ok) {
+        return suggestionFailureText(result.code, result.error || result.message || 'The suggestion could not be applied.');
+    }
     return (typeof result.message === 'string' && result.message) || 'Review saved.';
+}
+
+/** Report each refused record in the reviewer's terms rather than the bare server code. */
+function withFailureText(report: BulkRunReport, results: readonly ReviewBulkResult[]): BulkRunReport {
+    const byId = new Map(results.map((result) => [result.id, result]));
+    return {
+        ...report,
+        failures: report.failures.map((failure) => {
+            const result = byId.get(failure.id);
+            return result && !result.ok ? { ...failure, message: resultMessage(result) } : failure;
+        }),
+    };
 }
 
 function SuggestionRow({
@@ -123,6 +140,7 @@ function SuggestionRow({
     const restrictive = queueEntryRestrictive(entry);
     const safety = section === 'safety' ? (suggestion as SafetySuggestion).payload : null;
     const warns = safety ? sendsWarning(entry.record as SafetyRecord, safety) : false;
+    const repeats = safety ? repeatsRestriction(entry.record as SafetyRecord, safety) : false;
     const testId = `v2-${section}-suggestion-${id}`;
     return (
         <li data-testid={testId} data-state={state}
@@ -145,7 +163,8 @@ function SuggestionRow({
                         </Link>
                         {state === 'stale' ? <ToneBadge tone="warn">Out of date</ToneBadge> : null}
                         {state === 'locked' ? <ToneBadge tone="info">Held by a request</ToneBadge> : null}
-                        {restrictive ? <ToneBadge tone="danger">Needs a second reviewer</ToneBadge> : null}
+                        {restrictive && !repeats ? <ToneBadge tone="danger">Needs a second reviewer</ToneBadge> : null}
+                        {repeats ? <ToneBadge tone="neutral">Already on this violation</ToneBadge> : null}
                         {warns ? <ToneBadge tone="warn">Sends a warning</ToneBadge> : null}
                         {suggestion.confidence ? <ToneBadge tone="neutral">{CONFIDENCE_LABELS[suggestion.confidence]}</ToneBadge> : null}
                     </div>
@@ -169,6 +188,11 @@ function SuggestionRow({
                         <p className="text-xs text-text-2">
                             A remediation request waiting for approval, or a warning being sent, holds this violation.
                             Approve this suggestion once that settles, or dismiss it.
+                        </p>
+                    ) : null}
+                    {repeats && safety && state === 'ready' ? (
+                        <p className="text-xs text-text-2" data-testid={`${testId}-repeat`}>
+                            {repeatedRestrictionText(entry.record as SafetyRecord, safety.action)}
                         </p>
                     ) : null}
                     {safety && notifies(entry) && state === 'ready' ? (
@@ -328,7 +352,7 @@ export function SuggestionsQueue({
             const follow = archiveFollowUps(entries, applied);
             const archived = follow.length ? await bulk(follow) : [];
             const built = buildBulkReport(results, 'Applied', SUGGESTION_NOUN, describe);
-            const failures = [...built.failures];
+            const failures = [...withFailureText({ summary: built.summary, failures: built.failures }, results).failures];
             const outcomes: Record<string, RowResult> = {};
             for (const result of results) {
                 if (!result.ok) outcomes[result.id] = { tone: 'danger', message: resultMessage(result) };
@@ -352,9 +376,12 @@ export function SuggestionsQueue({
                     && sendsWarning(entry.record as SafetyRecord, (entry.suggestion as SafetySuggestion).payload);
             }).length;
             const requested = results.filter((result) => result.ok && result.approval_required === true).length;
+            const repeated = results.filter((result) => result.ok
+                && (result.remediation_already_applied === true || result.remediation_unchanged === true)).length;
             const extra = [
                 warned ? `${countLabel(warned, 'warning was', 'warnings were')} sent.` : '',
                 requested ? `${countLabel(requested, 'suspension or block request waits', 'suspension or block requests wait')} for another reviewer.` : '',
+                repeated ? `${countLabel(repeated, 'suspension or block already on its violation was', 'suspensions or blocks already on their violations were')} not requested again.` : '',
                 plan.skipped.length ? `${countLabel(plan.skipped.length, 'suggestion was', 'suggestions were')} left in the queue.` : '',
             ].filter(Boolean).join(' ');
             setReport({ summary: [built.summary, extra].filter(Boolean).join(' '), failures, tone: failures.length ? 'warn' : 'ok' });
@@ -387,7 +414,7 @@ export function SuggestionsQueue({
             for (const result of results) {
                 if (!result.ok) outcomes[result.id] = { tone: 'danger', message: resultMessage(result) };
             }
-            setReport({ summary: built.summary, failures: built.failures });
+            setReport(withFailureText({ summary: built.summary, failures: built.failures }, results));
             setRowResults(outcomes);
             setChecked(new Set(Object.keys(outcomes)));
         } catch (cause) {
