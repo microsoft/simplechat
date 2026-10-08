@@ -43,11 +43,11 @@ For a suspension, choose 24 hours, 7 days or 30 days from when you save, or a cu
 
 Suspensions and blocks need a second reviewer because they take away a person's access; requiring two people for that decision protects users from a single mistaken or malicious reviewer. A record with a pending approval can't be changed or deleted until the request is decided. When the request is denied, or expires after three days without a decision, the violation is unlocked again and shows the outcome, so you can choose another action or request it again.
 
-Saving a violation whose suspension or block was already requested or applied, for example to resolve it, doesn't request it again. To ask for it again, such as to change when access returns, tick **Request this suspension again** (or block) before saving.
+Saving a violation whose suspension or block was already requested or applied, for example to resolve it, doesn't request it again. To ask for it again -- after a request was denied, expired or couldn't be applied, or to change when access returns -- tick **Request this suspension again** (or block) before saving. Both the classic review and the Review center offer it whenever the violation already records that action and no request is waiting. Until you tick it, the review says where the last request stands and doesn't send the notification or restore time.
 
 Saving a warned record again, for example to resolve it, doesn't send the warning a second time. Neither do two saves that overlap, such as a double-click or two reviewers saving the same violation at once: only the first sends it, and the other is refused and asks you to reload. While a warning is being sent, the violation shows **Sending** and can't be changed or deleted. If you change the action away from **Warn user**, save, and later choose **Warn user** again, a new warning is sent. It replaces the earlier one on the record, and the user has to acknowledge the new warning even if they acknowledged the earlier one.
 
-If someone else changes a violation after you open it, including the user acknowledging a warning, your save is refused instead of overwriting their change. Reload the violation and make your change again.
+If someone else changes a violation after you open it, including the user acknowledging a warning, your save is refused instead of overwriting their change. Reload the violation and make your change again. A suspension or block saved while another reviewer sends a warning or requests another restriction on the same violation is refused the same way, and the request it created is withdrawn, so only one request is ever left for the violation.
 
 ### Warning acknowledgment
 

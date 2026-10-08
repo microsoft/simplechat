@@ -28,10 +28,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **An Applied Suspension Or Block Is Not Requested Twice**
     *   Saving a violation whose suspension or block was already applied or requested, for example to change only its status or notes, created another approval request. A new request is now created only when the action changes or the reviewer asks to request it again (`reissue`); otherwise the save reports `remediation_already_applied` or `remediation_unchanged`.
-    *   (Ref: `route_backend_safety.py` `update_safety_log`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+    *   Both the classic **Safety Violations** review and the V2 violation editor offer **Request this suspension again** (or block) whenever the violation already records that action and no request is waiting, including after a request was denied, expired or failed. Until it is ticked they say where the last request stands and send no notification or restore time; ticking it sends the new ones with the request. The classic dialog no longer offers a restore time that has passed.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `admin-safety-violations.js`, `admin_safety_violations.html`, `SafetyEditorPage.tsx`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **Overlapping Safety Saves Leave One Consistent Request**
+    *   A suspension or block saved while another reviewer's warning was being sent, or while another suspension or block was saved, could be recorded over the other save: the violation could read as applied while its request still waited for approval, a warning could go untracked, or a request could stay approvable with nothing linked to it. The request is now recorded only on the violation as the save read it. Otherwise the save is refused with `409 record_changed`, and its request is withdrawn with its notices removed.
+    *   An approved warn, suspend or block request is carried out only while its violation waits on it, so a request that couldn't be withdrawn still changes nothing.
+    *   (Ref: `route_backend_safety.py`, `functions_approvals.py` `withdraw_approval_request`, `functions_safety_remediation.py` `safety_remediation_state`, `safety_log_awaits_request`, `route_backend_control_center.py` `_execute_safety_violation_request`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
 
 *   **Review Saves No Longer Overwrite Concurrent Changes**
-    *   Safety and feedback review saves replaced the whole record, so a warning acknowledged while a reviewer was saving could be lost. Saves, archives and deletes are now conditional on the stored version and merge only their own fields; a save made against an older version is refused with `409 record_changed`, which the V2 editors offer to reload.
+    *   Safety and feedback review saves replaced the whole record, so a warning acknowledged while a reviewer was saving could be lost. Saves, archives and deletes are now conditional on the stored version and write only their own fields.
+    *   A save that names the version it read (`etag`), as the V2 editors do and bulk operations can, is written on that version or not at all. A conflict is refused with `409 record_changed` rather than merged onto the newer version, which the V2 editors offer to reload. This covers PATCH, archive and the bulk `update` and `archive` operations.
     *   (Ref: `functions_safety_remediation.py` `write_safety_log_updates`, `functions_review_center.py` `replace_review_record`, `route_backend_feedback.py`, [Safety Remediation Approval State Fix](fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
 
 ### **(v0.261.297)**
