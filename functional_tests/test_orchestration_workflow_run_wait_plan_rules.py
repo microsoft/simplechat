@@ -8,8 +8,9 @@ Implemented in: 0.261.307
 This test ensures that ``compute_workflow_run_waits`` marks a plan's one workflow_run step as
 waiting only when the server-side planning context says the wait is configured, the workflow's
 catalog entry was found quick, every enabled capability is still available without the user's
-sign-in, nothing in the plan needs the user's session, the plan starts exactly one workflow, and
-only answer steps read the run, through a required input. It also ensures a stored marker is kept
+sign-in, nothing in the plan needs the user's session, the plan starts exactly one workflow, only
+compose steps read the run, and the final response reaches the run's result through required
+compose inputs only. It also ensures a stored marker is kept
 only while it still fits the plan exactly, that model-written fields are never read, and that the
 headless check uses the caller's own request context with roles, email and the native bridge
 emptied, failing closed when the check itself fails.
@@ -147,7 +148,7 @@ def test_headless_rules():
 
 
 def test_consumer_rules():
-    """Only compose may read the run, through a required input; the answer can't select the run."""
+    """Only compose may read the run; the answer must need its result and can't select the run."""
     final = {'step_id': 'answer', 'output_name': 'answer'}
     cases = [
         ('the final response selects the run', [_run(), _compose()], {'step_id': 'run_digest', 'output_name': 'run'}),
@@ -168,6 +169,17 @@ def test_consumer_rules():
             **_search(step_id='leak', capability_id='document_analyze'), 'depends_on': ['run_digest'],
         }], final),
         ('the run step is optional', [_run(optional=True), _compose()], final),
+        ('a reader whose text never reaches the answer', [
+            _run(), _compose(step_id='notes'), _search(), _compose(producer='q3', output='sources'),
+        ], final),
+        ('the answer reaches the reader only through an optional input', [
+            _run(), _compose(), _compose(step_id='polish', producer='answer', output='answer', optional=True),
+        ], {'step_id': 'polish', 'output_name': 'answer'}),
+        ('the final response selects a disabled step', [
+            _run(), _compose(), _compose(step_id='polish', producer='answer', output='answer', enabled=False),
+        ], {'step_id': 'polish', 'output_name': 'answer'}),
+        ('no final response', [_run(), _compose()], None),
+        ('a final response without a step', [_run(), _compose()], {'output_name': 'answer'}),
     ]
     for label, steps, final_response in cases:
         _require(compute_workflow_run_waits(steps, final_response, _planning()) == {}, f'{label}: should not wait.')
@@ -175,6 +187,10 @@ def test_consumer_rules():
     chained = [_run(), _compose(), _compose(step_id='polish', producer='answer', output='answer')]
     _require(compute_workflow_run_waits(chained, {'step_id': 'polish', 'output_name': 'answer'}, _planning())
              == MARKER, 'A compose that reads a compose that reads the run is still only the answer.')
+    extra_reader = [_run(), _compose(step_id='notes'), _compose()]
+    _require(compute_workflow_run_waits(extra_reader, final, _planning()) == MARKER,
+             'A second reader is harmless while the answer itself needs the result.')
+    _require(stored_workflow_run_waits(MARKER, extra_reader, final) == MARKER, 'The stored marker should fit too.')
     _require(waited_run_consumers_valid([_run(), _compose()], final, None) is False, 'No run step id is invalid.')
 
 

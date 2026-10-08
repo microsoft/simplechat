@@ -339,25 +339,23 @@ def waited_run_consumers_valid(steps, final_response, run_step_id):
 
     The same masking rule as ``workflow_results``: a step that names the run step, or names a step
     that does, is tainted, and only ``compose`` may name a tainted step, so no export, analysis,
-    agent or action can copy the run's result out of the answer. At least one enabled ``compose``
-    must bind the run's ``run`` output through a required input, which keeps the run step required
-    work, and the final response must not select the run step itself.
+    agent or action can copy the run's result out of the answer. The answer must also really need
+    the result: the final response selects an enabled ``compose`` step that binds the run's ``run``
+    output through a required input, or that reaches such a step through required inputs of
+    enabled ``compose`` steps only. A reader whose text never reaches the answer, or reaches it
+    only through an optional input, could let the plan finish without the result while the
+    post-back is held for the plan, so such a plan does not wait. The final response never selects
+    the run step itself.
     """
     steps = [step for step in steps or () if isinstance(step, dict)]
     if not isinstance(run_step_id, str) or not run_step_id:
         return False
-    if isinstance(final_response, dict) and final_response.get('step_id') == run_step_id:
+    final_step_id = final_response.get('step_id') if isinstance(final_response, dict) else None
+    if not isinstance(final_step_id, str) or final_step_id == run_step_id:
         return False
-    named = {}
-    required_reader = False
+    named, bound = {}, {}
     for step in steps:
-        names, bindings = _named_and_bound(step)
-        named[id(step)] = names
-        if step.get('capability_id') == 'compose' and _enabled(step) and any(
-            producer == run_step_id and output == 'run' and not optional
-            for producer, output, optional in bindings
-        ):
-            required_reader = True
+        named[id(step)], bound[id(step)] = _named_and_bound(step)
     tainted = {run_step_id}
     changed = True
     while changed:
@@ -369,7 +367,24 @@ def waited_run_consumers_valid(steps, final_response, run_step_id):
                     return False
                 tainted.add(step_id)
                 changed = True
-    return required_reader
+    readers = set()
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            step_id = step.get('step_id')
+            if (
+                step_id in readers or not isinstance(step_id, str) or not _enabled(step)
+                or step.get('capability_id') != 'compose'
+            ):
+                continue
+            if any(
+                not optional and ((producer == run_step_id and output == 'run') or producer in readers)
+                for producer, output, optional in bound[id(step)]
+            ):
+                readers.add(step_id)
+                changed = True
+    return final_step_id in readers
 
 
 def _single_run_step(steps):
