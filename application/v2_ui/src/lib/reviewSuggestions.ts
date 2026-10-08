@@ -825,13 +825,29 @@ function failed(ids: readonly string[], failure: ReviewAssistFailure): ReviewAss
     return ids.map((id) => ({ id, outcome: 'failed', suggestion: null, message: failure.message, code: failure.code || null }));
 }
 
+/** How many times a triage waits out the assistant for one chunk before it stops. */
+export const REVIEW_TRIAGE_MAX_WAITS = 3;
+
+/**
+ * The seconds to wait before sending a chunk again, or null when its answer is not worth waiting
+ * out: it succeeded, was cancelled, failed for good, or asks for a longer wait than the triage
+ * accepts. Only a rate limit, or a brief outage other than the limiter's own, is waited out.
+ */
+export function triageRetryWait(answer: TriagePostResult, maxWaitSeconds: number): number | null {
+    if (answer.ok || ('aborted' in answer && answer.aborted)) return null;
+    const { failure } = answer as { failure: ReviewAssistFailure };
+    const transient = failure.status === 429 || (failure.status === 503 && failure.code !== 'assistant_limit_unavailable');
+    const wait = failure.retryAfterSeconds;
+    return transient && wait !== null && wait <= maxWaitSeconds ? wait : null;
+}
+
 /**
  * Triage `ids` ten at a time, one request after another, each user's records kept together (see
  * `planTriageChunks`). A rate-limited or briefly unavailable assistant is waited for, up to
- * `maxWaitSeconds` at a time; an answer that can't be used fails only its own chunk. Records the
- * server answers `deferred`, because it ran out of time before it reached them, are sent again
- * next. Anything else stops the run, and so does the signal: the records not yet sent are
- * returned as unprocessed.
+ * `maxWaitSeconds` and `REVIEW_TRIAGE_MAX_WAITS` times per chunk; an answer that can't be used
+ * fails only its own chunk. Records the server answers `deferred`, because it ran out of time
+ * before it reached them, are sent again next. Anything else stops the run, and so does the
+ * signal: the records not yet sent are returned as unprocessed.
  */
 export async function runTriage({
     ids,
@@ -856,67 +872,58 @@ export async function runTriage({
     const queue = planTriageChunks(ids, ownerOf, chunkSize);
     const run: TriageRun = { results: [], cancelled: false, stopped: null, unprocessed: [] };
     const total = queue.reduce((count, chunk) => count + chunk.length, 0);
-    onProgress?.({ done: 0, total, waitingSeconds: null });
+    const report = (waitingSeconds: number | null) => onProgress?.({ done: run.results.length, total, waitingSeconds });
+
+    /** Send one chunk, waiting out a rate limit or a brief outage as `triageRetryWait` allows. */
+    const send = async (chunk: string[]): Promise<TriagePostResult> => {
+        let answer = await post(chunk, signal);
+        let wait = triageRetryWait(answer, maxWaitSeconds);
+        for (let waits = 0; wait !== null && waits < REVIEW_TRIAGE_MAX_WAITS; waits += 1) {
+            const waited = await waitSeconds(wait, signal, report, sleep);
+            report(null);
+            if (!waited) return { ok: false, aborted: true };
+            answer = await post(chunk, signal);
+            wait = triageRetryWait(answer, maxWaitSeconds);
+        }
+        return answer;
+    };
+
+    report(null);
     while (queue.length) {
-        const chunk = queue[0];
-        let waits = 0;
-        let settled = false;
-        while (!settled) {
-            if (signal.aborted) {
-                run.cancelled = true;
-                break;
-            }
-            const answer = await post(chunk, signal);
-            if (answer.ok) {
-                const deferred = answer.results.filter((result) => result.outcome === 'deferred');
-                const answered = answer.results.filter((result) => result.outcome !== 'deferred');
-                if (deferred.length && !answered.length) {
-                    // The server always answers at least one record; never send the same chunk forever.
-                    run.results.push(...deferred.map((result) => ({ ...result, outcome: 'failed' as const, message: TRIAGE_NOT_REACHED })));
-                } else {
-                    run.results.push(...answered);
-                    if (deferred.length) queue.splice(1, 0, deferred.map((result) => result.id));
-                }
-                settled = true;
-                break;
-            }
-            if ('aborted' in answer && answer.aborted) {
-                run.cancelled = true;
-                break;
-            }
-            const failure = (answer as { failure: ReviewAssistFailure }).failure;
-            const wait = failure.retryAfterSeconds;
-            const transient = failure.status === 429 || (failure.status === 503 && failure.code !== 'assistant_limit_unavailable');
-            if (transient && wait !== null && wait <= maxWaitSeconds && waits < 3) {
-                waits += 1;
-                const waited = await waitSeconds(
-                    wait,
-                    signal,
-                    (left) => onProgress?.({ done: run.results.length, total, waitingSeconds: left }),
-                    sleep,
-                );
-                onProgress?.({ done: run.results.length, total, waitingSeconds: null });
-                if (!waited) {
-                    run.cancelled = true;
-                    break;
-                }
-                continue;
-            }
-            if (failure.status === 502) {
-                run.results.push(...failed(chunk, failure));
-                settled = true;
-                break;
-            }
-            run.stopped = failure;
+        if (signal.aborted) {
+            run.cancelled = true;
             break;
         }
-        if (!settled) {
-            run.unprocessed = queue.flat();
+        const chunk = queue[0];
+        const answer = await send(chunk);
+        if (answer.ok) {
+            const deferred = answer.results.filter((result) => result.outcome === 'deferred');
+            const answered = answer.results.filter((result) => result.outcome !== 'deferred');
+            if (deferred.length && !answered.length) {
+                // The server always answers at least one record; never send the same chunk forever.
+                run.results.push(...deferred.map((result) => ({ ...result, outcome: 'failed' as const, message: TRIAGE_NOT_REACHED })));
+            } else {
+                run.results.push(...answered);
+                if (deferred.length) queue.splice(1, 0, deferred.map((result) => result.id));
+            }
+        } else if ('aborted' in answer && answer.aborted) {
+            run.cancelled = true;
             break;
+        } else {
+            const { failure } = answer as { failure: ReviewAssistFailure };
+            if (failure.status !== 502) {
+                // Anything but an unusable answer -- a refusal, an outage, a wait too long or
+                // waited out too often -- stops the run.
+                run.stopped = failure;
+                break;
+            }
+            run.results.push(...failed(chunk, failure));
         }
         queue.shift();
-        onProgress?.({ done: run.results.length, total, waitingSeconds: null });
+        report(null);
     }
+    // Empty after a full run; after a cancel or stop, the chunk in hand and every one after it.
+    run.unprocessed = queue.flat();
     return run;
 }
 

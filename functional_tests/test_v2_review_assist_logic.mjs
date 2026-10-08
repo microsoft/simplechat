@@ -231,6 +231,7 @@ assert.equal(run.results.length, 23);
 assert.deepEqual(run.results.slice(-3).map((result) => result.outcome), ['failed', 'failed', 'failed']);
 assert.equal(run.cancelled, false);
 assert.equal(run.stopped, null);
+assert.deepEqual(run.unprocessed, [], 'a run that reaches the end leaves nothing unprocessed');
 const report = ai.buildTriageReport(run, { singular: 'violation', plural: 'violations' }, (id) => `Violation ${id}`);
 assert.equal(report.summary, 'AI suggested reviews for 20 of 23 violations. Nothing changes until you approve them in the AI suggestions queue.');
 assert.equal(report.failures.length, 3);
@@ -275,6 +276,83 @@ assert.equal(run.stopped.code, 'assistant_rate_limited', 'a wait longer than the
 const waits = [];
 await ai.waitSeconds(3, new AbortController().signal, (left) => waits.push(left), instant);
 assert.deepEqual(waits, [3, 2, 1]);
+
+/* Waiting out the assistant: only a rate limit or a brief outage, at most three times a chunk. */
+const failing = (status, code, retryAfterSeconds) => ({ ok: false, failure: { status, code, message: 'Wait.', retryAfterSeconds } });
+assert.equal(ai.triageRetryWait({ ok: true, results: [] }, 90), null);
+assert.equal(ai.triageRetryWait({ ok: false, aborted: true }, 90), null);
+assert.equal(ai.triageRetryWait(failing(429, 'assistant_rate_limited', 5), 90), 5);
+assert.equal(ai.triageRetryWait(failing(429, 'assistant_busy', 1), 90), 1);
+assert.equal(ai.triageRetryWait(failing(503, 'assistant_unavailable', 7), 90), 7);
+assert.equal(ai.triageRetryWait(failing(503, 'assistant_limit_unavailable', 7), 90), null, 'the limiter being down is not waited out');
+assert.equal(ai.triageRetryWait(failing(429, 'assistant_rate_limited', 91), 90), null, 'nor a wait longer than the limit');
+assert.equal(ai.triageRetryWait(failing(429, 'assistant_rate_limited', null), 90), null);
+assert.equal(ai.triageRetryWait(failing(502, 'assistant_output_invalid', 5), 90), null, 'an unusable answer is not sent again');
+assert.equal(ai.REVIEW_TRIAGE_MAX_WAITS, 3);
+
+calls = [];
+let slept = 0;
+const progress = [];
+run = await ai.runTriage({
+    ids: ['log-1', 'log-2'], chunkSize: 1, signal: new AbortController().signal,
+    sleep: async () => { slept += 1; },
+    onProgress: (step) => progress.push(step.waitingSeconds),
+    post: async (chunk) => {
+        calls.push(chunk[0]);
+        return failing(429, 'assistant_rate_limited', 2);
+    },
+});
+assert.deepEqual(calls, ['log-1', 'log-1', 'log-1', 'log-1'], 'one try and three waits, then the run stops');
+assert.equal(slept, 6, 'three waits of two seconds');
+assert.deepEqual(progress.filter((left) => left !== null), [2, 1, 2, 1, 2, 1], 'each wait is counted down');
+assert.equal(run.stopped.code, 'assistant_rate_limited');
+assert.deepEqual([run.cancelled, run.unprocessed], [false, ['log-1', 'log-2']]);
+
+calls = [];
+run = await ai.runTriage({
+    ids: ['log-1'], signal: new AbortController().signal, sleep: instant,
+    post: async (chunk) => {
+        calls.push(chunk[0]);
+        return calls.length === 1 ? failing(503, 'assistant_unavailable', 1) : suggested(chunk);
+    },
+});
+assert.deepEqual([calls.length, run.results[0].outcome, run.stopped, run.unprocessed], [2, 'suggested', null, []],
+    'a brief outage is waited out');
+
+calls = [];
+run = await ai.runTriage({
+    ids: ['log-1'], signal: new AbortController().signal, sleep: instant,
+    post: async (chunk) => {
+        calls.push(chunk[0]);
+        return failing(503, 'assistant_limit_unavailable', 1);
+    },
+});
+assert.deepEqual([calls.length, run.stopped.code, run.unprocessed], [1, 'assistant_limit_unavailable', ['log-1']]);
+
+const cancelInWait = new AbortController();
+calls = [];
+run = await ai.runTriage({
+    ids: ['log-1', 'log-2'], chunkSize: 1, signal: cancelInWait.signal,
+    sleep: async () => cancelInWait.abort(),
+    post: async (chunk) => {
+        calls.push(chunk[0]);
+        return failing(429, 'assistant_rate_limited', 3);
+    },
+});
+assert.deepEqual(calls, ['log-1'], 'nothing is sent after Cancel during a wait');
+assert.deepEqual([run.cancelled, run.stopped, run.unprocessed], [true, null, ['log-1', 'log-2']]);
+
+const cancelledFirst = new AbortController();
+cancelledFirst.abort();
+calls = [];
+run = await ai.runTriage({
+    ids: ['log-1'], signal: cancelledFirst.signal, sleep: instant,
+    post: async (chunk) => {
+        calls.push(chunk[0]);
+        return suggested(chunk);
+    },
+});
+assert.deepEqual([calls, run.cancelled, run.unprocessed], [[], true, ['log-1']]);
 
 /* Each user's records travel together; records the server didn't reach are sent again. */
 const owners = { a1: 'A', b1: 'B', a2: 'A', c1: 'C', a3: 'A', b2: 'B' };
