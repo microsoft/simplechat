@@ -25,6 +25,8 @@ import {
     type DetailGroup,
     type MessageSources,
 } from '../../lib/messageDetails';
+import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
+import { openOrchestrationRecovery } from '../../lib/orchestrationController';
 import type { ChatMessage, Json, PersistedThought } from '../../lib/types';
 import { buildToolResultView, type RowMode } from '../../lib/agentCitationRows';
 import { GlassButton } from '../ui/primitives';
@@ -58,6 +60,36 @@ function Failed({ message }: { message: string }) {
             <TriangleAlert size={14} className="mt-0.5 shrink-0" />
             {message}
         </p>
+    );
+}
+
+/**
+ * Where a retried plan's answer came from.
+ *
+ * The thread shows only the latest attempt of a retried plan, and its answer carries no
+ * retry notice. The saved attempts stay reachable here, for anyone who wants the history.
+ */
+function AttemptDetails({ message }: { message: ChatMessage }) {
+    const attempt = normalizeOrchestrationAttempt(message);
+    const conversationId = String(message.conversation_id ?? '').trim();
+    const previousRunId = attempt.retry_of_run_id;
+    if (!attempt.run_id || !previousRunId || !conversationId) return null;
+    const runId = attempt.run_id;
+    return (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-surface-sunken px-2.5 py-2 text-xs">
+            <span className="text-text-2">
+                {attempt.attempt_index ? `Attempt ${attempt.attempt_index}. ` : ''}
+                This answer came from retrying a plan that stopped earlier.
+            </span>
+            <GlassButton size="sm" variant="subtle"
+                onClick={() => openOrchestrationRecovery(conversationId, previousRunId)}>
+                View previous attempt
+            </GlassButton>
+            <GlassButton size="sm" variant="ghost"
+                onClick={() => openOrchestrationRecovery(conversationId, runId)}>
+                Review saved attempt
+            </GlassButton>
+        </div>
     );
 }
 
@@ -404,7 +436,12 @@ export function MessageInspector({
             </div>
 
             <div className="max-h-96 overflow-y-auto px-3 py-2">
-                {active === 'details' && <DetailsSection message={message} />}
+                {active === 'details' && (
+                    <>
+                        <AttemptDetails message={message} />
+                        <DetailsSection message={message} />
+                    </>
+                )}
                 {active === 'sources' && upload && (
                     conversationId && fileId ? (
                         <ChatUploadExtractionLoader

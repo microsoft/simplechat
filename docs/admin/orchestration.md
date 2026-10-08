@@ -447,10 +447,18 @@ limits:
   Each request and source is recorded as a `shared_by_request` audit event. Workflow Run
   as approvals, and approvals to share earlier answers' Microsoft 365 history, still ask.
   Earlier versions stopped the step before it read anything.
-- **Approvals don't resume plans.** A step that needs an approval, such as deeper file
-  analysis, stops and links to Approvals. The user decides there and then selects **Retry
-  from failed step**. A retried step reuses its request, so the decision applies while
-  the action is unchanged.
+- **Approvals are decided in the conversation.** A step that needs an approval, such as
+  deeper file analysis, stops. Since **0.261.302**, the stopped message in the V2 chat
+  shows the approval itself: why the step stopped (for example, about 18,000 tokens of
+  file content, more than a quick read covers) and **Allow this time**, **Always allow
+  for SharePoint** (or OneDrive) or **Quick read only**. Choosing one saves the decision
+  through the same approvals API as the Approvals page and continues the plan at once.
+  An approval already decided in Approvals offers **Continue**. Earlier versions only
+  linked to Approvals and asked the user to come back and select **Retry from failed
+  step**, which still works. A retried step reuses its request, so the decision applies
+  while the action is unchanged. Each user can preset deeper analysis per source under
+  **Settings > Preferences > Connected accounts > Microsoft 365 sharing > Extended
+  analysis**, which avoids the prompt entirely.
 - **SharePoint and OneDrive use the step's own model.** File searches and reads limit
   the excerpts and content they return to what the model can take. Chat measures that
   against the selected agent's model. Since **0.261.300**, a plan step measures it
@@ -687,6 +695,20 @@ retry never starts the workflow a second time. Each run the plan starts gets an
 identifier derived from the plan's first attempt and the step, so the retry finds the run
 that attempt started and links it. Stopping a plan does not stop a workflow it already
 started; the user cancels that run in Workflows.
+
+From **0.261.302**, a **Use an action** step that stopped for Microsoft 365 sign-in,
+approval or policy retries without that confirmation. It ran only its one Microsoft 365
+action, and a plan step can only read Microsoft 365 data, so a retry repeats no change.
+The server decides this when it prepares the retry, so a browser can't skip a confirmation
+another step still needs. **Ask an agent** steps keep the confirmation: an agent can load
+actions that send or change data.
+
+Also from **0.261.302**, the confirmation closes as soon as the retry starts instead of
+staying open until the whole retry finishes. The retry's answer then replaces the stopped
+attempt in the V2 thread. The stopped attempt stays saved for the record, but it is hidden,
+it is left out of the history the model reads on later turns and out of conversation
+exports, and a successful retry shows no attempt notice. **Message details** on the
+retried answer offers **View previous attempt** and **Review saved attempt**.
 
 A live execution cannot be retried. Missing, incompatible, or unauthorized
 checkpoints block recovery rather than causing completed actions to run again.

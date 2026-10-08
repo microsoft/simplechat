@@ -59,6 +59,7 @@ agent_runtime = import_app_module("agent_delegation_runtime")
 result_storage = import_app_module("functions_workflow_result_store")
 tabular = import_app_module("functions_tabular_orchestration")
 deletion = import_app_module("functions_message_deletion")
+attempts = import_app_module("functions_orchestration_attempts")
 
 
 def load_m365_runtime():
@@ -483,6 +484,7 @@ def chat(saved_chat, monkeypatch):
         "extract_chat_completion_response_text": lambda value: value.choices[0].message.content,
         "filter_assistant_artifact_items": lambda values: list(values),
         "exclude_soft_deleted_messages": deletion.exclude_soft_deleted_messages,
+        "exclude_superseded_orchestration_attempts": attempts.exclude_superseded_orchestration_attempts,
         "build_message_artifact_payload_map": lambda values: {},
         "hydrate_agent_citations_from_artifacts": lambda values, payloads: values,
         "sort_messages_by_thread": lambda values: values,

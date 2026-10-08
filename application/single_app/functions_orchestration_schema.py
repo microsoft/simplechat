@@ -33,9 +33,10 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.238
+Version: 0.261.302
 Missing signed-in session reported as its own step failure in: 0.261.209
 Microsoft 365 step failures, with their sources, added in: 0.261.238
+Microsoft 365 approval stops carry their pending approval id in: 0.261.302
 """
 
 import hashlib
@@ -1881,8 +1882,23 @@ EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {'external_session_required'
 INTEGRATION_CAPABILITIES = frozenset({'action_invoke', 'agent_invoke'})
 
 
+_M365_APPROVAL_ID_PREFIX = 'm365-'
+_M365_APPROVAL_ID_DIGITS = frozenset('0123456789abcdef')
+
+
+def _m365_approval_id(value):
+    """An application-minted Microsoft 365 approval id (``m365-`` and a SHA-256 hex digest), or None."""
+    if type(value) is not str or len(value) != len(_M365_APPROVAL_ID_PREFIX) + 64:
+        return None
+    if not value.startswith(_M365_APPROVAL_ID_PREFIX):
+        return None
+    digest = value[len(_M365_APPROVAL_ID_PREFIX):]
+    return value if set(digest) <= _M365_APPROVAL_ID_DIGITS else None
+
+
 def build_failure(
     code='step_failed', *, step_id=None, capability_id=None, provider_status=None, m365_sources=None,
+    approval_id=None,
 ):
     """Only application-owned text may cross a failure boundary."""
     code = code if code in FAILURE_MESSAGES else 'step_failed'
@@ -1900,6 +1916,12 @@ def build_failure(
         sources = sorted({source for source in m365_sources if source in M365_SOURCES})
         if sources:
             result['m365_sources'] = sources
+    if code == 'm365_approval_required':
+        # The chat offers this pending approval inline. The approvals API still checks that
+        # the signed-in user is its subject before showing or deciding it.
+        approval = _m365_approval_id(approval_id)
+        if approval:
+            result['approval_id'] = approval
     return result
 
 
@@ -1910,6 +1932,7 @@ def safe_failure(value, *, step_id=None, capability_id=None):
         capability_id=capability_id or value.get('capability_id'),
         provider_status=value.get('provider_status'),
         m365_sources=value.get('m365_sources'),
+        approval_id=value.get('approval_id'),
     )
 
 
@@ -1917,7 +1940,10 @@ def failure_from_exception(exc, *, answering=False, _depth=0):
     """Use types and structured status, never diagnostic prose or model content."""
     code = getattr(exc, 'orchestration_failure_code', None)
     if type(code) is str and code in EXCEPTION_FAILURE_CODES:
-        return build_failure(code, m365_sources=getattr(exc, 'm365_sources', None))
+        return build_failure(
+            code, m365_sources=getattr(exc, 'm365_sources', None),
+            approval_id=getattr(exc, 'approval_id', None),
+        )
     if isinstance(exc, ModelCatalogError):
         return build_failure('model_routing_changed')
     status = getattr(exc, 'status_code', None)

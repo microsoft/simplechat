@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.302)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Approvals In A Plan Are Decided In The Chat**
+    *   With Orchestrate on, a SharePoint or OneDrive step that had to read more of a file than a quick read covers stopped for the user's extended-analysis approval and only linked to **Approvals**. The user had to decide there, come back and retry. The stop wasn't about access: a quick read covers 3 downloads, a 25 MB file and 12,000 tokens of file content, and the per-source preference defaults to **Ask**.
+    *   The stopped message now shows the approval itself. It says why the step stopped, from the approval's recorded counts, and offers **Allow this time**, **Always allow for SharePoint** (or OneDrive) and **Quick read only**. A choice is saved through the approvals API, and the plan continues straight away. An approval already decided in Approvals offers **Continue**. Other approvals still link to Approvals.
+    *   The step's failure now carries its pending approval's id. Only an id in the shape the application mints is kept, and the approvals API still checks the signed-in user.
+    *   (Ref: `M365ApprovalInlineCard.tsx`, `OrchestrationRecoveryNotice.tsx`, `functions_orchestration_schema.py` `build_failure`, `lib/orchestration.ts`, [Orchestration M365 Approval and Retry Flow Fix](fixes/ORCHESTRATION_M365_APPROVAL_RETRY_FLOW_FIX.md))
+
+*   **Retrying A Microsoft 365 Stop Needs No Confirmation, And A Confirmation Closes When The Retry Starts**
+    *   A **Use an action** step that stopped for Microsoft 365 sign-in, approval or policy is retried without "Retry this failed step?". It ran only its one Microsoft 365 action, and a plan step can only read Microsoft 365 data. The server decides this when it prepares the retry. Agent steps, and action steps that failed for other reasons, still ask.
+    *   A confirmation that is still needed now closes as soon as the retry is admitted. Before, it stayed open and busy until the whole retry finished.
+    *   (Ref: `functions_orchestration_recovery.py` `_stopped_without_effects`, `orchestrationController.ts` `launchSavedPlan`)
+
+*   **A Retry's Answer Replaces The Stopped Attempt**
+    *   After a successful retry, the stopped attempt's "The request could not be completed." message stayed in the thread, the answer carried a "Saved execution attempt - Attempt 2" box, and the stopped attempt was sent to the model on every later turn.
+    *   The retry's answer now replaces the attempt it retried in the thread, including after a reload. The stopped attempt is left out of the model's history and of conversation exports, but stays stored. A completed retry shows no attempt notice, and **Message details** offers **View previous attempt** and **Review saved attempt**.
+    *   (Ref: `functions_orchestration_attempts.py`, `functions_orchestration_context.py`, `route_backend_chats.py` `build_conversation_history_segments`, `route_backend_conversation_export.py`, `MessageList.tsx`, `MessageInspector.tsx`)
+
 ### **(v0.261.301)**
 
 #### New Features

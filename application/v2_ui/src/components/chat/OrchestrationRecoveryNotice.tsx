@@ -17,6 +17,7 @@ import {
     type OrchestrationPlan, type PlanStatus,
 } from '../../lib/orchestration';
 import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
+import { M365ApprovalInlineCard } from './M365ApprovalInlineCard';
 import { OrchestrationM365Notice } from './OrchestrationM365Notice';
 
 function RecoveryConfirmation({
@@ -89,8 +90,12 @@ export function OrchestrationRecoveryNotice({
     const failed = !waiting && (outcome === 'failed' || outcome === 'partial' || outcome === 'cancelled');
     const newer = attempt.recovery?.current_run_id || attempt.latest_attempt_run_id;
     const previousRunId = attempt.retry_of_run_id;
+    // A retry that finished needs no notice: its answer is the reply, and the attempt it
+    // replaced is hidden from the thread. Its saved attempts stay reachable from the message's
+    // details. A prepared retry that has not run yet still offers to run it.
+    const preparedRetry = Boolean(attempt.retry_of_run_id) && (outcome === 'awaiting_approval' || outcome === 'approved');
     const relevant = failed || waiting || saved?.transportUnknown || saved?.error
-        || Boolean(newer && newer !== runId) || Boolean(attempt.retry_of_run_id);
+        || Boolean(newer && newer !== runId) || preparedRetry;
     const currentPlan = saved?.plan ?? plan;
     const recovery = attempt.recovery;
     const fileOutputs = Boolean(attempt.outputs?.length);
@@ -120,6 +125,56 @@ export function OrchestrationRecoveryNotice({
         setConfirmationVersion(result.confirmationRequired && result.version ? result.version : null);
     };
     const titleFor = (stepId: string) => currentPlan?.steps.find((step) => step.step_id === stepId)?.title || stepId;
+    const allFailures = [...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])];
+    const replaced = Boolean(newer && newer !== runId);
+    const approvalFailure = allFailures.find(
+        (failure) => failure.code === 'm365_approval_required' && Boolean(failure.approval_id),
+    );
+    const inlineApproval = failed && !replaced && !fileOutputs && !saved?.transportUnknown && !legacy
+        ? approvalFailure : undefined;
+    const confirmation = confirmationVersion ? (
+        <RecoveryConfirmation
+            busy={saved?.busy}
+            onConfirm={() => void retry(confirmationVersion)}
+            onClose={() => setConfirmationVersion(null)}
+        />
+    ) : null;
+
+    if (replaced && !waiting && !saved?.transportUnknown && !saved?.error) {
+        // The newer attempt carries the outcome now; its message replaces this one once saved.
+        return (
+            <section aria-label="Orchestration recovery" className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-3">
+                <p role="status">A newer attempt of this plan exists.</p>
+                <GlassButton size="sm" variant="ghost"
+                    onClick={() => openOrchestrationRecovery(conversationId, newer as string)}>
+                    View current attempt
+                </GlassButton>
+            </section>
+        );
+    }
+
+    if (inlineApproval?.approval_id) {
+        const stepTitle = inlineApproval.step_id
+            ? currentPlan?.steps.find((step) => step.step_id === inlineApproval.step_id)?.title
+            : undefined;
+        return (
+            <section aria-label="Orchestration recovery" className="mt-3 space-y-2 text-xs text-text-2">
+                <M365ApprovalInlineCard
+                    approvalId={inlineApproval.approval_id}
+                    stepTitle={stepTitle}
+                    canContinue={Boolean(retryAllowed)}
+                    continuing={Boolean(saved?.busy || streaming || active)}
+                    onContinue={() => retry()}
+                />
+                {saved?.error ? <p role="alert">{saved.error}</p> : null}
+                <GlassButton size="sm" variant="ghost"
+                    onClick={() => openOrchestrationRecovery(conversationId, runId)}>
+                    Review saved attempt
+                </GlassButton>
+                {confirmation}
+            </section>
+        );
+    }
 
     return (
         <section
@@ -136,10 +191,8 @@ export function OrchestrationRecoveryNotice({
             </p>
             {attempt.failure?.message ? <p>{attempt.failure.message}</p> : null}
             {saved?.error ? <p role="alert">{saved.error}</p> : null}
-            {failed && !saved?.transportUnknown && !legacy && (!newer || newer === runId) ? (
-                <OrchestrationM365Notice
-                    failures={[...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])]}
-                />
+            {failed && !saved?.transportUnknown && !legacy && !replaced ? (
+                <OrchestrationM365Notice failures={allFailures} />
             ) : null}
             {waiting ? (
                 <p>
@@ -162,7 +215,7 @@ export function OrchestrationRecoveryNotice({
                 <p><strong>Execute on retry:</strong> {recovery.retry_step_ids.map(titleFor).join(', ')}.</p>
             ) : null}
             <div className="flex flex-wrap gap-2">
-                {!fileOutputs && attempt.retry_of_run_id && (outcome === 'awaiting_approval' || outcome === 'approved') ? (
+                {!fileOutputs && preparedRetry ? (
                     <GlassButton size="sm" disabled={Boolean(saved?.busy || streaming || active)}
                         onClick={() => void runPreparedOrchestrationRetry(conversationId, runId)}>
                         Run prepared retry
@@ -205,13 +258,7 @@ export function OrchestrationRecoveryNotice({
                     </GlassButton>
                 ) : null}
             </div>
-            {confirmationVersion ? (
-                <RecoveryConfirmation
-                    busy={saved?.busy}
-                    onConfirm={() => void retry(confirmationVersion)}
-                    onClose={() => setConfirmationVersion(null)}
-                />
-            ) : null}
+            {confirmation}
         </section>
     );
 }

@@ -951,6 +951,24 @@ const recoverySubmissions = new Map<string, { id: string; version: string; confi
 const recoveryLocks = new Set<string>();
 
 /**
+ * Start a prepared retry without waiting for it to finish.
+ *
+ * `executeSavedPlan` claims the run and enters the streaming state before its first await, so
+ * the conversation stays busy, and no second retry can start, while the run streams into the
+ * thread. The retry's confirmation and its button are released as soon as the run is admitted
+ * instead of staying open until the whole run finishes.
+ */
+function launchSavedPlan(conversationId: string, plan: OrchestrationPlan): void {
+    void executeSavedPlan(conversationId, plan.turn_id, plan).catch(() => {
+        useOrchestrationStore.getState().updateRunRecovery(plan.run_id, {
+            transportUnknown: true,
+            error: 'The retry started, but its progress could not be followed here. Checking saved status; no retry will start again.',
+        });
+        void reconcileOrchestrationRun(conversationId, plan.run_id);
+    });
+}
+
+/**
  * Stop tracking a run the server refuses as an earlier orchestration version.
  *
  * Nothing else would settle it. The server leaves those runs out of the run history and refuses
@@ -1093,7 +1111,7 @@ export async function retryOrchestrationRun(
     conversationId: string,
     runId: string,
     confirmedVersion?: string,
-): Promise<{ confirmationRequired?: boolean; version?: string }> {
+): Promise<{ confirmationRequired?: boolean; version?: string; started?: boolean }> {
     const key = scopeKey(conversationId, runId);
     const store = useOrchestrationStore.getState();
     if (recoveryLocks.has(key)) return {};
@@ -1168,8 +1186,8 @@ export async function retryOrchestrationRun(
         current.setActiveTurn(conversationId, plan.turn_id);
         current.pinRun(null);
         useOrchestrationStore.setState({ recoveryTarget: null });
-        await executeSavedPlan(conversationId, plan.turn_id, plan);
-        return {};
+        launchSavedPlan(conversationId, plan);
+        return { started: true };
     } catch (error) {
         const legacyMessage = legacyPlanErrorMessage(error);
         if (legacyMessage) {
@@ -1228,7 +1246,7 @@ export async function runPreparedOrchestrationRetry(conversationId: string, runI
         current.setPlan(conversationId, plan.turn_id, plan);
         current.setActiveTurn(conversationId, plan.turn_id);
         useOrchestrationStore.setState({ recoveryTarget: null });
-        await executeSavedPlan(conversationId, plan.turn_id, plan);
+        launchSavedPlan(conversationId, plan);
     } catch (error) {
         const legacyMessage = legacyPlanErrorMessage(error);
         if (legacyMessage) {

@@ -352,6 +352,7 @@ from functions_message_deletion import (
     exclude_soft_deleted_messages,
     is_soft_deleted_message,
 )
+from functions_orchestration_attempts import exclude_superseded_orchestration_attempts
 from functions_message_visual_styles import (
     UNSET as VISUAL_STYLE_HEIGHT_UNSET,
     VisualStyleError,
@@ -28379,6 +28380,9 @@ def build_conversation_history_segments(
     # them. A deleted message must not reach the summary or the recent window, nor take a slot
     # in the history limit; its mask is only a fail-safe, not what keeps it out.
     ordered_messages = exclude_soft_deleted_messages(ordered_messages)
+    # An orchestration attempt a later retry replaced is history, not the conversation: its
+    # failure text would otherwise reach the model on every later turn.
+    ordered_messages = exclude_superseded_orchestration_attempts(ordered_messages)
 
     total_messages = len(ordered_messages)
     num_recent_messages = min(total_messages, conversation_history_limit)

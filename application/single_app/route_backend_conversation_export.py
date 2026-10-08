@@ -40,6 +40,7 @@ from functions_export_visuals import (
 )
 from functions_mermaid_export import extract_mermaid_sources
 from functions_message_block_revisions import resolve_block_sources_in_content
+from functions_orchestration_attempts import exclude_superseded_orchestration_attempts
 from functions_mermaid_server_render import (
     is_mermaid_server_rendering_available,
     render_mermaid_visual_assets,
@@ -673,6 +674,8 @@ def _build_export_entry(
     filtered_messages = sanitize_saved_analysis_messages(filtered_messages, user_id)
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     filtered_messages = public_history_messages(filtered_messages, user_id)
+    # The thread shows only the latest attempt of a retried plan; the export matches it.
+    filtered_messages = exclude_superseded_orchestration_attempts(filtered_messages)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
     raw_thoughts = [] if is_collaboration_conversation(conversation) else get_thoughts_for_conversation(conversation.get('id'), user_id)
