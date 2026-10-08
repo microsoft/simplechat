@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.302)**
+### **(v0.261.304)**
 
 #### Bug Fixes
 
@@ -21,6 +21,10 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   After a successful retry, the stopped attempt's "The request could not be completed." message stayed in the thread, the answer carried a "Saved execution attempt - Attempt 2" box, and the stopped attempt was sent to the model on every later turn.
     *   The retry's answer now replaces the attempt it retried in the thread, including after a reload. The stopped attempt is left out of the model's history and of conversation exports, but stays stored. A completed retry shows no attempt notice, and **Message details** offers **View previous attempt** and **Review saved attempt**.
     *   (Ref: `functions_orchestration_attempts.py`, `functions_orchestration_context.py`, `route_backend_chats.py` `build_conversation_history_segments`, `route_backend_conversation_export.py`, `MessageList.tsx`, `MessageInspector.tsx`)
+
+### **(v0.261.302)**
+
+#### Bug Fixes
 
 *   **Microsoft 365 Sign-In No Longer Fails With `m365_auth_state_invalid`**
     *   Reconnecting Microsoft 365 for chat could fail seconds after the user signed in, leaving raw JSON in the popup. The session store wrote the whole session back at the end of every request, so the request that finished last won. In V2, the startup-data refresh that runs when the window regains focus took about five seconds, loaded the session before the connect call saved the pending sign-in, and wrote its stale copy back afterwards.

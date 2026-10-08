@@ -1,8 +1,8 @@
 # test_v2_orchestration_m365_inline_approval.py
 """
 Real-component browser coverage for deciding a Microsoft 365 approval inside the chat.
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.304
+Implemented in: 0.261.304
 
 A plan step that had to read more of a SharePoint file than a quick read covers stopped for
 the user's extended-analysis approval. The stopped attempt's message now offers that decision

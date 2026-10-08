@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the orchestration Microsoft 365 approval and retry flow.
-Version: 0.261.302
-Implemented in: 0.261.302
+Version: 0.261.304
+Implemented in: 0.261.304
 
 A plan step that had to read more of a SharePoint or OneDrive file than a quick read covers
 stops for the user's extended-analysis approval. These tests cover the server half of letting
@@ -42,7 +42,7 @@ APPROVAL_ID = "m365-" + "0123456789abcdef" * 4
 
 
 def test_application_version():
-    assert_app_version_at_least("0.261.302")
+    assert_app_version_at_least("0.261.304")
 
 
 # --------------------------------------------------------------------------------------

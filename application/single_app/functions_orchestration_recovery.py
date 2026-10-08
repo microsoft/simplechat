@@ -1,7 +1,7 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.302
+Version: 0.261.304
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
@@ -12,7 +12,7 @@ file admissions, because preparing the retry supersedes the parent's files.
 A retry runs again a step that finished without the chart or diagram the plan asked of it,
 and asks for confirmation when that step can have external effects (0.261.293).
 An action step that stopped for Microsoft 365 sign-in, approval or policy is retried without
-that confirmation: a plan step only reads Microsoft 365 data (0.261.302).
+that confirmation: a plan step only reads Microsoft 365 data (0.261.304).
 A retry that could only resend requests a service declined is not offered.
 A run from the removed legacy contract is never retried, resumed or continued; only
 conversation deletion still reads it, to remove its saved data.

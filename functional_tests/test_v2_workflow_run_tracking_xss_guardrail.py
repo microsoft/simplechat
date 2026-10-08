@@ -2,8 +2,9 @@
 # test_v2_workflow_run_tracking_xss_guardrail.py
 """
 Functional test for the V2 chat workflow run tracking passing the XSS sink guardrail.
-Version: 0.261.302
+Version: 0.261.304
 Implemented in: 0.261.251
+Microsoft 365 sharing preferences link pinned in: 0.261.304
 
 This test ensures that the files behind a chat-started workflow run in V2 pass
 scripts/check_xss_sinks.py in full: the run card under a plan's answer, the

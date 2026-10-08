@@ -1,8 +1,8 @@
 # Orchestration Microsoft 365 Approval and Retry Flow Fix
 
-**Version: 0.261.302**
+**Version: 0.261.304**
 
-Fixed in version: **0.261.302**, recorded in
+Fixed in version: **0.261.304**, recorded in
 `application/single_app/config.py`.
 
 This affects the React V2 branch (`paullizer-react-v2-ui`) and deployments built
@@ -98,8 +98,8 @@ The stopped message's recovery notice renders `M365ApprovalInlineCard` for an
   plan continues only after the decision is saved.
 - For an approval already decided, for example on the Approvals page, offers
   **Continue**.
-- Links to the Settings preference.
-- Falls back to the Approvals link, and **Retry from failed step**, for any other
+- Links to the Settings card that holds the Extended analysis preference, and falls
+  back to the V2 Approvals link, with **Retry from failed step**, for any other
   approval type or an approval it can't open.
 
 The card replaces the notice's generic failure text, recovery lines and retry button,
@@ -156,7 +156,8 @@ retry whose progress can't be followed is reconciled with the saved run.
 | `v2_ui/src/components/chat/MessageInspector.tsx` | Attempt links in **Message details**. |
 | `v2_ui/src/lib/orchestration.ts` | `approval_id` on failures, and the replaced-attempt helpers. |
 | `v2_ui/src/lib/orchestrationController.ts` | `launchSavedPlan()`; retries resolve when admitted. |
-| `config.py` | Version `0.261.302`. |
+| `v2_ui/src/lib/m365Links.ts` | `M365_SHARING_PREFERENCES_HREF`, the card's in-app link to the Microsoft 365 sharing card in Settings. |
+| `config.py` | Version `0.261.304`. |
 
 ## Validation
 
@@ -184,6 +185,9 @@ retry whose progress can't be followed is reconciled with the saved run.
   reload, the thread shows only the retry's answer.
 - Hand-built test namespaces for `_build_export_entry()` and
   `build_conversation_history_segments()` gained the new helper.
+- `functional_tests/test_v2_workflow_run_tracking_xss_guardrail.py` pins
+  `M365_SHARING_PREFERENCES_HREF` with the other Microsoft 365 links, which the XSS
+  checker trusts by name.
 
 ### Before and after
 

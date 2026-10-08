@@ -1,11 +1,11 @@
 # test_v2_orchestration_recovery_backend.py
 """
 Browser-to-Flask checkpoint recovery regressions.
-Version: 0.261.302
+Version: 0.261.304
 Implemented in: 0.261.105
 Single orchestration contract updated in: 0.261.139
 Cosmos SDK response coverage added in: 0.261.140
-A reloaded thread shows only the retry's answer, not the attempt it replaced, in: 0.261.302
+A reloaded thread shows only the retry's answer, not the attempt it replaced, in: 0.261.304
 
 Real orchestration routes, executor, durable checkpoint codec, conditional attempts,
 and message persistence run in the shared backend fixture. Only Azure/model/service
