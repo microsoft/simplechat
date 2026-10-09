@@ -775,6 +775,7 @@ chat-orchestration:
     - enable_chat_orchestration_workflow_runs
     - enable_chat_orchestration_workflow_run_wait
     - enable_chat_orchestration_workflow_handoff
+    - enable_workflow_plan_replay
   reference:
     - title: "Orchestration settings"
       url: /admin/orchestration/

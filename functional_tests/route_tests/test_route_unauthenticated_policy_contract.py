@@ -343,6 +343,31 @@ def test_workflow_handoff_routes_require_a_signed_in_user_session() -> None:
             raise AssertionError(f"{route.function_name} must not accept bearer tokens.")
 
 
+def test_plan_replay_routes_require_a_signed_in_user_session() -> None:
+    """Previewing or saving a chat plan as a repeating workflow is never public or bearer-only.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    path = "/api/v2/orchestration/runs/<run_id>/plan-replay"
+    expected = {
+        "orchestration_plan_replay_preview": path,
+        "orchestration_create_plan_replay": path,
+    }
+    matches = [route for route in iter_route_functions() if route.path.startswith(path)]
+    found = {route.function_name: route.path for route in matches}
+    if len(matches) != len(expected) or found != expected:
+        raise AssertionError(f"Unexpected plan replay routes: {sorted(found.items())}.")
+    required = {"login_required", "user_required", "enabled_required", "workflow_user_required"}
+    for route in matches:
+        if expected_policy(route.path) != "session_user_401_or_redirect":
+            raise AssertionError(f"{route.function_name} policy changed: {expected_policy(route.path)}.")
+        if not required <= set(route.decorator_names):
+            missing = sorted(required - set(route.decorator_names))
+            raise AssertionError(f"{route.function_name} is missing guards: {missing}.")
+        if "accesstoken_required" in route.decorator_names:
+            raise AssertionError(f"{route.function_name} must not accept bearer tokens.")
+
+
 def test_access_restricted_routes_require_a_session_but_not_an_unrestricted_account() -> None:
     """The Access restricted screen answers a signed-in user, never an anonymous one.
 
@@ -409,6 +434,7 @@ if __name__ == "__main__":
         test_workflow_result_context_requires_a_signed_in_user_session,
         test_workflow_run_status_requires_a_signed_in_user_session,
         test_workflow_handoff_routes_require_a_signed_in_user_session,
+        test_plan_replay_routes_require_a_signed_in_user_session,
         test_access_restricted_routes_require_a_session_but_not_an_unrestricted_account,
         test_review_center_routes_are_never_public_or_bearer_only,
     ]

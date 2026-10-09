@@ -10775,6 +10775,7 @@ def _save_workflow_task_run_item(
     context_budget=None,
     consumed_inputs=None,
     workflow_validation=None,
+    plan_replay=None,
 ):
     task = task if isinstance(task, dict) else {}
     task_id = str(task.get('id') or '').strip()
@@ -10842,6 +10843,9 @@ def _save_workflow_task_run_item(
         item['started_at'] = created_at or now_iso
     if status in {'succeeded', 'failed', 'skipped', 'cancelled', 'invalid', 'incomplete'}:
         item['completed_at'] = now_iso
+    if isinstance(plan_replay, dict):
+        # Only a saved chat plan's task carries this typed projection; other items are unchanged.
+        item['plan_replay'] = dict(plan_replay)
     return _save_workflow_run_item_record(workflow, item)
 
 
@@ -11277,6 +11281,32 @@ def _execute_workflow_task_sequence(
                     runner_audit = {'requested_mode': 'publication', 'resolved_type': 'publication'}
                     task_error = ''
                     break
+                if task.get('type') == 'plan_replay':
+                    # A frozen chat plan replays as the workflow's creator, never through a runner.
+                    # Imported here so workflows without a replay task keep the runner's import graph.
+                    from functions_workflow_plan_replay import PLAN_REPLAY_TASK_TYPE, execute_plan_replay_task
+
+                    task_stage = 'execution'
+                    task_result = workflow_unit(
+                        task_unit_key,
+                        lambda: execute_plan_replay_task(
+                            workflow, task, settings, conversation_id=conversation_id, run_id=run_id,
+                            actor_user_id=actor_id,
+                            # A durable run numbers attempts across worker restarts, so a resumed
+                            # attempt never reuses the identity a dead worker left behind.
+                            attempt=(durable.unit(task_unit_key)['attempt'] if durable is not None
+                                     else attempt_index),
+                            check_cancelled=lambda: _raise_if_workflow_run_cancelled(workflow, run_id),
+                        ),
+                        inputs={'task': task},
+                        # The replay has no external effects and reconciles the attempt before it,
+                        # so a run a dead worker left behind retries instead of pausing for review.
+                        replay_safe=True,
+                    )
+                    attempt_workflow = {**workflow, 'consumed_inputs': []}
+                    runner_audit = {'requested_mode': PLAN_REPLAY_TASK_TYPE, 'resolved_type': PLAN_REPLAY_TASK_TYPE}
+                    task_error = ''
+                    break
                 # Built inside the attempt so an invalid task document action fails this
                 # task through the normal retry and error strategy instead of the whole run.
                 resolved_workflow, runner_audit = _resolve_workflow_task_runner(
@@ -11668,6 +11698,7 @@ def _execute_workflow_task_sequence(
                     consumed_inputs=consumed_inputs,
                     workflow_validation=validation,
                     error=task_error,
+                    **({'plan_replay': task_result.get('plan_replay')} if task.get('type') == 'plan_replay' else {}),
                 )
             except AnalysisResultUnavailable as exc:
                 # Raised when the task's own analysis could not confirm the sources it read

@@ -150,6 +150,84 @@ connection in your profile.
 See [Chat orchestration workflow proposals](../explanation/features/CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md)
 for how proposals are checked and created.
 
+### Repeat a chat plan on a schedule
+
+Starting in **0.261.308**, you can save a plan that chat already ran as a
+personal workflow that repeats the same steps, for example every Monday. Use it
+when an orchestrated answer was worth having once and you want the same
+searches, analysis and answer again without asking each time. A workflow
+proposal, described above, writes new workflow tasks for you. A saved plan
+instead repeats the exact steps that ran in chat, so the steps you approved are
+the steps that run.
+
+**Repeat on a schedule** appears under an orchestrated answer when your
+administrator has turned on **Repeat Chat Plans On A Schedule**, you can create
+personal workflows, the conversation is private to you and the plan finished.
+It doesn't appear under a masked answer, or under a plan that proposed, started
+or handed off a workflow.
+
+Choosing it opens **Save this chat plan**. Before anything is saved, the card
+shows:
+
+- **Request**: what you asked, as each run will repeat it.
+- **Time**: dates written in the plan stay as written, so "March 3" always
+  means March 3. Each run is also told the current date and time in the time
+  zone the card names, so a request about "this week" can be read against the
+  day the run happens. That is the schedule's own time zone when it has one,
+  otherwise the time zone of the chat the plan came from, or UTC.
+- **Cadence**: the shortest repeat interval allowed.
+- **Step cap**: the most steps a saved plan can have.
+- **Runs as**: you, in the workflow's own conversation.
+- **Alerts**: If a run fails, you'll get a 'Run failed' notification in the
+  bell. You can change this in the workflow's alerts.
+- Every step, numbered, with its title and the kind of work it does.
+
+Only steps that **Search documents**, **Analyse documents**, **Compare
+documents**, **Merge documents**, **Inspect spreadsheets**, **Prepare content**
+or **Generate image** from a written prompt can be repeated. A plan that
+searches the web, researches in depth, reads linked pages, analyses or merges
+spreadsheets, uses an action, asks an agent, creates a file to download, edits a
+reference image, works with workflows, or asked you a question before it ran
+can't be saved. In that case the card lists each problem under **This plan has
+replay notes**, with the step it applies to, and offers no way to save.
+
+To save, optionally give the workflow a name and description, choose whether it
+should **Run on a schedule** and pick the schedule, then choose **Save
+workflow**. The workflow is saved paused unless you also turn on **Turn on the
+schedule now**. Without a schedule, it runs only when you start it from
+Workflows. **Open workflow** takes you to it.
+
+The saved steps can't be changed. In the workflow editor, the **Saved chat
+plan** section lists them read-only; you can still change the name,
+description, schedule, alerts and whether the workflow is on. To change the
+steps, ask again in chat and save the new plan. The Classic workflow page sends
+you to V2 to edit it.
+
+The workflow starts with one alert rule, **Run failed**. When a run fails or
+finishes with task errors, it sends a high-severity notification to your bell,
+never a pop-up; a run that succeeds sends nothing. You can rename, change or
+delete the rule under **Alerts** in the workflow editor, and saving the same
+plan again doesn't add it back.
+
+Every run:
+
+- Runs as you, the person who saved it, whether it was started by the schedule
+  or by hand, and is allowed the same steps either way.
+- Checks first that the setting is still on, every step is still allowed and
+  you can still open every document, group and public workspace the plan reads.
+- Repeats the saved steps in order. The model writes the answer again from that
+  run's results, but never adds, removes or changes a step.
+- Runs in the workflow's own conversation, not the chat you saved it from, so
+  sharing that chat later doesn't change what the workflow reads or where its
+  answer goes.
+- Stops after 15 minutes.
+
+If a check fails, the run stops without running any step and shows a fixed
+reason, such as "Repeating chat plans is turned off" or "A document, group or
+public workspace this plan reads is no longer available to you", in the run
+history and in the **Run failed** notification in your bell, unless you changed
+the workflow's alerts.
+
 ## Run on a calendar schedule
 
 From version **0.261.193**, a scheduled workflow can run at a local time rather

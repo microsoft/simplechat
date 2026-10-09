@@ -1656,6 +1656,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # user approves on the plan and again on a hand-off card. Off by default and separate from
         # proposals and runs, so an upgrade never turns it on by itself.
         'enable_chat_orchestration_workflow_handoff': False,
+        # Lets a user save a completed chat plan as a personal workflow that replays the frozen plan
+        # as that user on a schedule. Off by default; turning it off makes existing replay
+        # workflows refuse to run with a fixed reason rather than deleting them.
+        'enable_workflow_plan_replay': False,
         # Workflows that a chat plan creates for a user: how many one user may hold, and the
         # shortest interval one may run on (also never shorter than the general workflow minimum).
         'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
@@ -2500,6 +2504,12 @@ def update_settings(new_settings, *, expected_etag=None):
             'enable_chat_orchestration_workflow_handoff': (
                 new_settings['enable_chat_orchestration_workflow_handoff'] is True
             ),
+        }
+    if isinstance(new_settings, dict) and 'enable_workflow_plan_replay' in new_settings:
+        # Only a real boolean true lets chat plans be repeated on a schedule; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_workflow_plan_replay': new_settings['enable_workflow_plan_replay'] is True,
         }
     if isinstance(new_settings, dict) and 'chat_orchestration_max_workflow_handoffs_per_day' in new_settings:
         new_settings = {

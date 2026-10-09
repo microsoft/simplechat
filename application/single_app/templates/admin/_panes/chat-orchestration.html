@@ -164,6 +164,21 @@
                             Off by default, because a hand-off starts background work that keeps running with the user's access after the chat turn ends. Requires Chat Orchestration, Enable Personal Workflows, Propose Workflows From Chat, Run Workflows From Chat and Use Workflow Results In Chat. When a request is too large for a chat plan, such as reviewing hundreds of documents, a plan can hand the work to a one-time durable workflow instead. The user approves the plan, then approves a hand-off card; approving the card creates the workflow turned off, so it never runs on a schedule, and starts it once. When the run finishes, its result is posted back into the conversation.
                         </div>
                     </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_workflow_plan_replay"
+                            name="enable_workflow_plan_replay"
+                            aria-describedby="chat-orchestration-plan-replay-help"
+                            {% if settings.enable_workflow_plan_replay %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_workflow_plan_replay">
+                            Repeat Chat Plans On A Schedule
+                        </label>
+                        <div class="form-text" id="chat-orchestration-plan-replay-help">
+                            Off by default, because a saved plan keeps running with the user's access. Requires Chat Orchestration and Enable Personal Workflows. Lets a user save a completed plan from their own private conversation as a personal workflow that repeats the same steps on a schedule, such as every Monday. The user sees every step and the schedule before creating it. Each run replays the saved steps exactly, as that user, in the workflow's own conversation, and checks the user's access again first. Only steps that search, analyze, compare or merge documents, inspect tabular files, write the answer or generate images can be repeated. Web search and other steps that need a signed-in session can't be repeated. Turning it off makes existing repeat workflows stop with a clear reason instead of deleting them.
+                        </div>
+                    </div>
                     <p class="text-muted">
                         Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled. An empty selection also means every otherwise-enabled capability. Use an action still requires Enable Action Access.
                     </p>

@@ -518,6 +518,9 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
         'enable_chat_orchestration_workflow_handoff': (
             form_data.get('enable_chat_orchestration_workflow_handoff') == 'on'
         ),
+        'enable_workflow_plan_replay': (
+            form_data.get('enable_workflow_plan_replay') == 'on'
+        ),
         'chat_orchestration_default_approval_mode': approval_mode,
         'chat_orchestration_timed_approval_seconds': _clamped(
             'chat_orchestration_timed_approval_seconds', 10, 3, 120

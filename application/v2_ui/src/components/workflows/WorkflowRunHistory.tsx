@@ -22,6 +22,7 @@ import {
     type WorkflowRuntimeProjection,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
+import { readPlanReplayResult, type PlanReplayResult } from '../../lib/workflowPlanReplay';
 
 function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral' {
     const value = String(status ?? '').toLowerCase();
@@ -82,6 +83,69 @@ function validationSummary(value: unknown): string {
         ? stringify(validation.counts)
         : '';
     return [String(validation.status), ...reasonCodes, counts].filter(Boolean).join(' · ');
+}
+
+function planReplayValue(item: WorkflowRunItem): unknown {
+    // The runner stores the typed projection on the replay task's own run item.
+    return item.plan_replay;
+}
+
+function PlanReplayRunBlock({ result }: { result: PlanReplayResult }) {
+    const [expanded, setExpanded] = useState(false);
+    const text = result.final_response.text;
+    const long = text.length > 600;
+    const visibleText = long && !expanded ? `${text.slice(0, 600).trimEnd()}…` : text;
+    return (
+        <div className="space-y-2 rounded-xl border border-edge bg-surface-2 p-3 text-xs text-text-2">
+            <p className="text-sm font-medium text-text-1">Saved chat plan run</p>
+            <dl className="space-y-1">
+                <div className="min-w-0 sm:grid sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                    <dt className="font-medium text-text-2">Run</dt>
+                    <dd className="break-words text-text-1">{result.orchestration_run_id}</dd>
+                </div>
+                <div className="min-w-0 sm:grid sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+                    <dt className="font-medium text-text-2">Status</dt>
+                    <dd className="break-words text-text-1">{`${result.status} · ${result.outcome}`}</dd>
+                </div>
+            </dl>
+            <ol aria-label="Saved chat plan run steps" className="space-y-1">
+                {result.steps.map((step) => (
+                    <li key={step.step_id} className="flex flex-wrap items-center gap-2">
+                        <span className="break-words text-text-1">{step.label}</span>
+                        <Pill tone={statusTone(step.status)}>{step.status}</Pill>
+                    </li>
+                ))}
+            </ol>
+            {text ? (
+                <div className="space-y-1">
+                    <p className="font-medium text-text-2">Final response</p>
+                    <p className="whitespace-pre-wrap break-words text-text-1">{visibleText}</p>
+                    {long ? (
+                        <GlassButton type="button" size="sm" variant="ghost" onClick={() => setExpanded((current) => !current)}>
+                            {expanded ? 'Show less' : 'Show more'}
+                        </GlassButton>
+                    ) : null}
+                    {result.final_response.truncated ? (
+                        <p className="text-text-3">
+                            This is the start of the answer. The full answer is in the workflow&apos;s conversation.
+                        </p>
+                    ) : null}
+                </div>
+            ) : null}
+            {result.artifacts.length ? (
+                <div className="space-y-1">
+                    <p className="font-medium text-text-2">Artifacts</p>
+                    <ul className="list-disc space-y-0.5 pl-5">
+                        {result.artifacts.map((artifact) => (
+                            <li key={`${artifact.kind}-${artifact.id}`} className="break-words">
+                                {artifact.kind}: {artifact.id}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            ) : null}
+        </div>
+    );
 }
 
 function validationTone(value: unknown): 'ok' | 'warn' | 'danger' | 'neutral' {
@@ -261,6 +325,7 @@ function RunItems({
                 const status = String(item.status ?? 'unknown');
                 const resultRef = item.workflow_result?.result_ref;
                 const outputs = item.workflow_result?.outputs;
+                const planReplayResult = readPlanReplayResult(planReplayValue(item));
                 const authoritative = item.workflow_result?.authoritative_output;
                 const consumedInputs = item.consumed_inputs ?? item.workflow_result?.consumed_inputs ?? [];
                 const producerSummary = consumedInputs
@@ -287,6 +352,7 @@ function RunItems({
                             {outputs ? <p className="text-xs text-text-3">Outputs: {Object.keys(outputs).join(', ')}</p> : null}
                             {authoritative ? <p className="text-xs text-text-3">Authoritative output: {authoritative}</p> : null}
                             {audit ? <p className="text-xs text-text-3">Context budget: {audit}</p> : null}
+                            {planReplayResult ? <PlanReplayRunBlock result={planReplayResult} /> : null}
                             <ResultExcerpt scope={scope} workflowId={workflowId} runId={runId} item={item} />
                         </GlassPanel>
                     </li>

@@ -4417,6 +4417,29 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
         {
+            "key": "enable_workflow_plan_replay",
+            "type": "switch",
+            "label": "Repeat Chat Plans On A Schedule",
+            "help": (
+                "Lets a user save a completed plan from their own private conversation as a personal "
+                "workflow that repeats the same steps on a schedule, such as every Monday. The user "
+                "sees every step and the schedule before creating it. Each run replays the saved "
+                "steps exactly, as that user, in the workflow's own conversation, and checks the "
+                "user's access again first. Only steps that search, analyze, compare or merge "
+                "documents, inspect tabular files, write the answer or generate images can be "
+                "repeated. Web search and other steps that need a signed-in session can't be "
+                "repeated. Off by default, because a saved plan "
+                "keeps running with the user's access. Turning it off makes existing repeat "
+                "workflows stop with a clear reason instead of deleting them. Requires Chat "
+                "Orchestration and Enable Personal Workflows."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "allow_user_workflows", "equals": True},
+            ],
+        },
+        {
             "key": "chat_orchestration_enabled_capabilities",
             "type": "checkbox_set",
             "label": "Capabilities",
