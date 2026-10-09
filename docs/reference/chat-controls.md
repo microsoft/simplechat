@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.305"
+version: "0.261.307"
 ---
 
 ## How to use this reference
@@ -137,6 +137,14 @@ their existing tool-result receipts without a second Send button.
 For email, Send submits the reviewed content and leaves the original Outlook
 draft. **Do not send the retained draft again.** See
 [Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
+
+The React V2 chat draws the same card with the same controls, under the reply that
+saved it, including while that reply is still streaming. A saved action whose reply
+is not on screen appears in a **Microsoft 365 outgoing actions for this
+conversation** section at the foot of the thread, which also offers **Load more
+outgoing actions** and **Refresh outgoing actions**. A notification about a saved
+action opens its conversation and scrolls to the card. See
+[V2 Microsoft 365 pending-action cards]({{ '/explanation/features/V2_M365_PENDING_ACTION_CARDS/' | relative_url }}).
 
 ## Microsoft 365 citations and Open online
 

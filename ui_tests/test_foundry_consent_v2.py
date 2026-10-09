@@ -18,6 +18,7 @@ from playwright.sync_api import expect
 
 from ui_tests.fixtures.agent_delegation.harness_build import ensure_bundle
 from ui_tests.fixtures.orchestration.harness_build import start_static_server
+from ui_tests.fixtures.v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +80,8 @@ class StreamApi:
             respond({})
         elif "/api/chat/stream/status/" in path:
             respond({"pending": False})
+        elif is_pending_actions_list(route.request.method, path):
+            respond(pending_actions_payload())
         elif path == "/api/agents/foundry-auth":
             route.fulfill(
                 content_type="text/html",

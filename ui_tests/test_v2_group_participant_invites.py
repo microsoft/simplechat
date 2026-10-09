@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 import harness_build as hb  # noqa: E402
 from functions_chat_content_checks import strip_private_chat_checks  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 from test_group_collaboration_source_storage_fix import (  # noqa: E402
     COLLABORATION_FILE,
     GROUP_ID,
@@ -103,6 +104,9 @@ class ParticipantApi:
         request = route.request
         url = urlsplit(request.url)
         path = url.path
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
+            return
         self.requests.append((request.method, path))
 
         if request.method == "POST" and re.fullmatch(

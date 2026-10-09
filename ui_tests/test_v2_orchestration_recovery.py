@@ -27,6 +27,7 @@ from test_v2_orchestration_plan_editor import (  # noqa: F401
     editor_assets,
     editor_browser,
 )
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -166,6 +167,9 @@ class RecoveryApi:
     def handle(self, route):
         request = route.request
         path = urlsplit(request.url).path
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
+            return
         body = request.post_data_json if request.post_data else None
         self.requests.append({"path": path, "method": request.method, "body": body})
         if request.method == "GET" and path in self.assets:

@@ -593,6 +593,9 @@ TS_SAME_ORIGIN_URL_BUILDERS = frozenset({
     'artifactDownloadPath',
     'chatHrefForAgent',
     'chatHrefForConversation',
+    # chatHrefForConversation plus a literal '&m365_pending_action=' and an
+    # encodeURIComponent saved-action id that normalizePendingActionId has accepted.
+    'chatHrefForPendingAction',
     'chatHrefForPrompt',
     'chatUploadTabularDownloadUrl',
     'classicChatHref',

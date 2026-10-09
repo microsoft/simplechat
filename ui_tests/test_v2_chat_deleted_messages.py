@@ -36,6 +36,7 @@ from test_v2_orchestration_plan_editor import (  # noqa: F401
     editor_assets,
     editor_browser,
 )
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -97,6 +98,9 @@ class DeletedMessagesApi:
             return
         if path == "/favicon.ico":
             route.fulfill(status=204)
+            return
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
             return
         if path == "/api/get_messages":
             self.reads += 1

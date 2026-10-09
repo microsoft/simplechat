@@ -34,7 +34,7 @@ Dependencies: the existing Terms of Use feature ([TERMS_OF_USE.md](TERMS_OF_USE.
   * `ApprovalParts.tsx`: shared list/detail split, toolbar, rows, pager, and notices.
   * `GenericApprovalsPanel.tsx`: All, Group, Microsoft 365 and Content screening categories from one `/api/approvals` fetch per status, filtered on the client.
   * `M365ApprovalDetail.tsx`: Microsoft 365 approval decisions, with the CSRF retry the classic page uses.
-  * `PendingActionsPanel.tsx`: `/api/msgraph/pending-actions` send, send now, and cancel.
+  * `PendingActionsPanel.tsx`: a thin wrapper that gives the shared `PendingActionCard` a store for the one action the detail pane shows. The card sends, sends now, cancels, and reviews through `/api/msgraph/pending-actions`, and is the same card V2 chat draws (see [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md)).
   * `PausedRequestsPanel.tsx`: `/api/m365/requests` with continuation, resume, and connect-and-resume.
   * `AgentTemplatesPanel.tsx`: `/api/admin/agent-templates` approve, reject (reason required), and delete. Admin only.
 * `lib/approvalsApi.ts`: every approvals call and request-type label.
