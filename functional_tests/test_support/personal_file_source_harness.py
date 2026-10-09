@@ -1,7 +1,7 @@
 # personal_file_source_harness.py
 """
 Isolated personal File Sync routes using the existing real engine/Key Vault harness.
-Version: 0.261.310
+Version: 0.261.311
 Implemented in: 0.261.310
 """
 
@@ -13,7 +13,7 @@ import pytest
 from flask import Blueprint, Flask
 
 from test_support.agent_delegation import APP_ROOT, execute_functions, module_stub
-from test_support.group_file_source_harness import as_user, environment, smb_payload
+from test_support.group_file_source_harness import as_user, smb_payload
 
 
 LIST_PATH = "/api/file-sync/personal/sources"

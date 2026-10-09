@@ -1,7 +1,7 @@
 # test_personal_file_source_apis.py
 """
 Functional tests for native personal File Sync configuration.
-Version: 0.261.310
+Version: 0.261.311
 Implemented in: 0.261.310
 
 Real routes and the real storage/credential engine run against isolated Cosmos and
@@ -13,10 +13,16 @@ from unittest.mock import Mock
 
 import pytest
 
-from test_support.group_file_source_harness import as_user, environment, smb_payload
+from test_support import group_file_source_harness, personal_file_source_harness
+from test_support.group_file_source_harness import as_user, smb_payload
 from test_support.personal_file_source_harness import (
-    LIST_PATH, OPTIONS_PATH, create_personal_source, personal_environment,
+    LIST_PATH, OPTIONS_PATH, create_personal_source,
 )
+
+
+# Register both fixtures in this test module, including the personal fixture's dependency.
+environment = group_file_source_harness.environment
+personal_environment = personal_file_source_harness.personal_environment
 
 
 def stored(env, source):
