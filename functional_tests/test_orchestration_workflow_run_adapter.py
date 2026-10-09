@@ -1221,14 +1221,33 @@ def test_the_run_module_writes_only_through_the_queue_and_never_imports_flask():
         "functions_workflow_runtime": {
             "RUNTIME_TERMINAL_STATES", "queue_durable_workflow_run", "workflow_run_id_for_request",
         },
-        "functions_workflow_runtime_store": {"RuntimeUnavailable", "WorkflowRuntimeConflict"},
+        # A waiting step reads the run's control state through the runtime store (6c).
+        "functions_workflow_runtime_store": {"RuntimeUnavailable", "WorkflowRuntimeConflict", "workflow_runtime_store"},
         # Use Workflow Results In Chat's role-aware gate, read only when a run is about to start.
         "functions_settings": {"is_chat_workflow_results_enabled_for_user"},
+        # 6c: a waiting step's bound, its checkpoint fingerprint and the workflow results reader's
+        # outcome, all loaded only when a step waits.
+        "functions_workflow_limits": {"get_chat_orchestration_workflow_run_wait_max_seconds"},
+        "functions_orchestration_timing": {"positive_setting_int"},
+        "functions_orchestration_checkpoints": {"step_input_fingerprint"},
+        "functions_orchestration_workflow_results": {
+            "WORKFLOW_RESULTS_OUTCOME_IN_PROGRESS", "WORKFLOW_RESULTS_OUTCOME_READ",
+            "WORKFLOW_RESULTS_OUTCOME_STATUS_ONLY", "_reader_outcome",
+        },
     }
     calls = _calls_by_function(tree)
     writes = {"create_item", "upsert_item", "replace_item", "delete_item", "patch_item", "execute_item_batch"}
-    assert not writes & set(calls)
-    assert calls["read_item"] == {"_point_read"}
+    # Besides the queue, the only write is a waiting step's compare-and-set on the run's chat
+    # post-back record (6c), always with the run document's ETag.
+    assert writes & set(calls) == {"replace_item"}
+    assert calls["replace_item"] == {"_write_plan_wait"}
+    replaces = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "replace_item"
+    ]
+    assert len(replaces) == 1
+    assert {"etag", "match_condition"} <= {keyword.arg for keyword in replaces[0].keywords}
+    assert calls["read_item"] == {"_point_read", "_write_plan_wait"}
     assert calls["queue_durable_workflow_run"] == {"_queue_workflow_run"}
     assert calls["_queue_workflow_run"] == {"_start"}
     assert calls["log_event"] == {"_log"}

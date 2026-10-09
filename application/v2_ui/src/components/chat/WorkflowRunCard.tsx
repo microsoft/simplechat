@@ -32,16 +32,14 @@ import { workflowRunHref } from '../../lib/workflowRunLink';
 import {
     formatCheckedTime,
     formatWorkflowElapsed,
+    workflowFinishedResultsText,
     workflowRetryBlockedText,
     workflowRunRowControls,
     workflowRunStatusLabel,
     workflowRunStepLabel,
     workflowRunStepText,
     workflowWaitingText,
-    WORKFLOW_RESULTS_IN_HISTORY_TEXT,
-    WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT,
     WORKFLOW_RESULTS_POSTED_TEXT,
-    WORKFLOW_RESULTS_POSTING_TEXT,
     WORKFLOW_RETRY_TURNED_OFF_TEXT,
     WORKFLOW_RUN_CANCELLED_TEXT,
     WORKFLOW_RUN_STATUS_UNAVAILABLE,
@@ -119,13 +117,7 @@ function FinishedText({ row, conversationId }: { row: WorkflowRunStatusRow; conv
             </GlassButton>
         );
     }
-    let text = WORKFLOW_RESULTS_IN_HISTORY_TEXT;
-    if (status === 'delivered') {
-        text = WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT;
-    } else if (status === 'pending' || status === 'delivering') {
-        text = WORKFLOW_RESULTS_POSTING_TEXT;
-    }
-    return <p className="break-words text-text-2">{text}</p>;
+    return <p className="break-words text-text-2">{workflowFinishedResultsText(row.delivery)}</p>;
 }
 
 export function LiveRunRow({

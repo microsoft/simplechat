@@ -33,9 +33,12 @@ export const WORKFLOW_DELIVERY_ROW_STATUSES = [
 ] as const;
 export type WorkflowDeliveryRowStatus = typeof WORKFLOW_DELIVERY_ROW_STATUSES[number];
 
+// `used_in_answer` pairs only with `delivered`: a chat plan waited for the run and used its results
+// in its answer, so nothing was posted and there is no message to jump to.
 export const WORKFLOW_DELIVERY_REASONS = [
     'chat_unavailable', 'access_lost', 'workflow_deleted', 'runtime_missing', 'delivery_failed',
     'expired_before_delivery', 'content_blocked', 'results_off', 'result_unavailable', 'deadline_exceeded',
+    'used_in_answer',
 ] as const;
 export type WorkflowDeliveryReason = typeof WORKFLOW_DELIVERY_REASONS[number];
 
@@ -489,9 +492,26 @@ export const WORKFLOW_RUN_CANCELLED_TEXT = 'The run was cancelled.';
 export const WORKFLOW_RESULTS_POSTING_TEXT = 'Posting results…';
 export const WORKFLOW_RESULTS_POSTED_TEXT = 'Results posted below';
 export const WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT = 'Results were posted to this chat.';
+export const WORKFLOW_RESULTS_USED_IN_ANSWER_TEXT = 'Its results were used in a chat answer.';
 export const WORKFLOW_RESULTS_IN_HISTORY_TEXT = 'The results are in the workflow\'s run history.';
 export const WORKFLOW_STATUS_READ_ERROR_TEXT = 'Couldn\'t check the run status right now. Try again.';
 export const WORKFLOW_STATUS_HALTED_TEXT = 'Live status isn\'t available right now.';
+
+/**
+ * Where a finished run's results went, for a card with no posted message on screen to jump to.
+ * Results a chat plan used in its answer were never posted, so they never read as posted.
+ */
+export function workflowFinishedResultsText(delivery: WorkflowRunDelivery): string {
+    if (delivery.status === 'delivered') {
+        return delivery.reason === 'used_in_answer'
+            ? WORKFLOW_RESULTS_USED_IN_ANSWER_TEXT
+            : WORKFLOW_RESULTS_POSTED_ELSEWHERE_TEXT;
+    }
+    if (delivery.status === 'pending' || delivery.status === 'delivering') {
+        return WORKFLOW_RESULTS_POSTING_TEXT;
+    }
+    return WORKFLOW_RESULTS_IN_HISTORY_TEXT;
+}
 
 /** "Step 2 of 5", once the server has counted the steps; empty until then. */
 export function workflowRunStepText(row: WorkflowRunStatusRow): string {

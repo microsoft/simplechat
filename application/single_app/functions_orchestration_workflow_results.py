@@ -22,7 +22,9 @@ which saved result is read. This module
 * rebuilds the server-only sidecar for a completed step only after re-checking deployment gates,
   conversation ownership, conversation privacy and result authorization;
 * rewrites compose inputs by re-reading the result with a fresh digest check and a fresh fence
-  nonce, so the model receives untrusted notes, never instructions or evidence;
+  nonce, so the model receives untrusted notes, never instructions or evidence; a saved workflow
+  run the plan waited for (6c, ``functions_orchestration_workflow_runs``) is read the same way when
+  the plan took its result, and is otherwise an application-owned note on how the wait ended;
 * writes the reply's note, after the prepared answer, on which saved workflow results were used,
   which were not read and why.
 
@@ -1001,6 +1003,12 @@ def _is_workflow_results_reader(reader):
     )
 
 
+def _is_workflow_run_reader(reader):
+    return getattr(getattr(getattr(reader, 'reference', None), 'producer', None), 'capability_id', None) == (
+        CAPABILITY_WORKFLOW_RUN
+    )
+
+
 def _read_reader_value(reader):
     try:
         return reader.read_value()
@@ -1008,23 +1016,59 @@ def _read_reader_value(reader):
         return None
 
 
+def _waited_run_read(wait):
+    """Whether a waited run's result is read for compose, and the digest-bound context to read it by."""
+    # Imported here: the run step's module imports this one while it waits.
+    from functions_orchestration_workflow_runs import WAIT_OUTCOME_CONSUMED, WAIT_OUTCOMES
+
+    if wait.get('outcome') not in WAIT_OUTCOMES:
+        raise WorkflowResultsComposeError('workflow_result_changed')
+    return wait.get('outcome') == WAIT_OUTCOME_CONSUMED, wait.get('result_pointer')
+
+
+def _waited_run_fence(value, wait, *, nonce):
+    """An application-owned note on a waited run whose result the plan didn't use, fenced like a result."""
+    from functions_orchestration_workflow_runs import workflow_run_wait_text
+
+    lines = [_fence_start(nonce)]
+    name = clean_catalog_text(value.get('name'), NAME_MAX_LENGTH) or _DEFAULT_WORKFLOW_NAME
+    lines.append(f'Workflow: {_neutral(name)}')
+    if wait.get('run_status'):
+        lines.append(f'Run status: {_neutral(wait.get("run_status"))}')
+    lines.extend(['', _neutral(workflow_run_wait_text(wait)), _fence_end(nonce)])
+    return '\n'.join(lines)
+
+
 def workflow_results_compose_inputs(readers, inputs, *, user_id, time_zone):
-    """Replace workflow_results retained values with fenced, untrusted notes for compose."""
+    """Replace workflow_results retained values with fenced, untrusted notes for compose.
+
+    A run the plan waited for (6c) is fenced the same way: a result the plan took is read again
+    through the result reader, and any other outcome becomes an application-owned note.
+    """
     inputs = deepcopy(inputs) if isinstance(inputs, dict) else {}
     nonces = []
     unavailable_type = _reader_unavailable_type()
     for name, reader in (readers if isinstance(readers, dict) else {}).items():
-        if not _is_workflow_results_reader(reader):
+        wait = None
+        if _is_workflow_results_reader(reader):
+            value = _read_reader_value(reader)
+            if not isinstance(value, dict) or value.get('outcome') not in WORKFLOW_RESULTS_OUTCOMES:
+                raise WorkflowResultsComposeError('workflow_result_changed')
+            read, context = value.get('outcome') == WORKFLOW_RESULTS_OUTCOME_READ, value.get('context')
+        elif _is_workflow_run_reader(reader):
+            value = _read_reader_value(reader)
+            wait = value.get('wait') if isinstance(value, dict) else None
+            if not isinstance(wait, dict):
+                # Only a run the plan waited for has steps that use it.
+                continue
+            read, context = _waited_run_read(wait)
+        else:
             continue
-        value = _read_reader_value(reader)
-        if not isinstance(value, dict) or value.get('outcome') not in WORKFLOW_RESULTS_OUTCOMES:
-            raise WorkflowResultsComposeError('workflow_result_changed')
         nonce = _new_nonce()
         while nonce in nonces:
             nonce = _new_nonce()
         nonces.append(nonce)
-        if value.get('outcome') == WORKFLOW_RESULTS_OUTCOME_READ:
-            context = value.get('context')
+        if read:
             try:
                 context = _workflow_result_context(context)
                 result = _read_result(
@@ -1041,6 +1085,8 @@ def workflow_results_compose_inputs(readers, inputs, *, user_id, time_zone):
             except ValueError as exc:
                 raise WorkflowResultsComposeError('workflow_result_changed') from exc
             text = _fence_workflow_result(result, time_zone, nonce=nonce)
+        elif wait is not None:
+            text = _waited_run_fence(value, wait, nonce=nonce)
         else:
             text = _non_read_fence(value, time_zone, nonce=nonce)
         entry = inputs.get(name) if isinstance(inputs.get(name), dict) else {}
@@ -1065,31 +1111,44 @@ def _record_map(execution_steps):
 
 
 def workflow_results_lineage(user_id, plan, execution_steps, *, authorize=None):
-    """Return deduplicated workflow result contexts used by completed read steps, re-authorized."""
+    """Return deduplicated workflow result contexts used by completed read steps, re-authorized.
+
+    A completed run step the plan waited for counts when the plan took its result (6c).
+    """
     authorize = authorize or _authorize_result_context
     contexts = []
     seen = set()
     records = _record_map(execution_steps)
     unavailable_type = _reader_unavailable_type()
     for step in (plan.get('steps') if isinstance(plan, dict) and isinstance(plan.get('steps'), list) else ()):
-        if (
-            not isinstance(step, dict) or step.get('capability_id') != CAPABILITY_WORKFLOW_RESULTS
-            or not step.get('enabled', True)
-        ):
+        if not isinstance(step, dict) or not step.get('enabled', True):
+            continue
+        capability_id = step.get('capability_id')
+        if capability_id not in (CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN):
             continue
         record = records.get(step.get('step_id')) if isinstance(step.get('step_id'), str) else None
         if (
-            not isinstance(record, dict) or record.get('capability_id') != CAPABILITY_WORKFLOW_RESULTS
+            not isinstance(record, dict) or record.get('capability_id') != capability_id
             or record.get('status') != STEP_STATUS_COMPLETED
         ):
             continue
-        sidecar = record.get('workflow_results')
-        if not isinstance(sidecar, dict) or sidecar.get('outcome') not in WORKFLOW_RESULTS_OUTCOMES:
-            raise WorkflowResultsComposeError('workflow_result_changed')
-        if sidecar.get('outcome') != WORKFLOW_RESULTS_OUTCOME_READ:
-            continue
+        if capability_id == CAPABILITY_WORKFLOW_RUN:
+            sidecar = record.get('workflow_run')
+            wait = sidecar.get('wait') if isinstance(sidecar, dict) else None
+            if not isinstance(wait, dict):
+                continue
+            read, pointer = _waited_run_read(wait)
+            if not read:
+                continue
+        else:
+            sidecar = record.get('workflow_results')
+            if not isinstance(sidecar, dict) or sidecar.get('outcome') not in WORKFLOW_RESULTS_OUTCOMES:
+                raise WorkflowResultsComposeError('workflow_result_changed')
+            if sidecar.get('outcome') != WORKFLOW_RESULTS_OUTCOME_READ:
+                continue
+            pointer = sidecar.get('context')
         try:
-            context = _workflow_result_context(sidecar.get('context'))
+            context = _workflow_result_context(pointer)
             authorize(user_id, context)
         except unavailable_type as exc:
             code = getattr(exc, 'code', None)

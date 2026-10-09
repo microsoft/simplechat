@@ -1,5 +1,5 @@
 // test_v2_workflow_run_tracker.mjs
-// Version: 0.261.251
+// Version: 0.261.309
 // Implemented in: 0.261.251
 // Executes the app shell's one workflow run tracker against a fake clock, fake timers and a fake
 // status route: the visible cadence (15 s easing to every 5 minutes, one batched request per tick),
@@ -631,6 +631,19 @@ test('a posting seen later in the page session is announced once per generation,
     await h.fire();
     await h.respond(4, statusResponse([deliveredRow('run-a', 6, at(420))], { checked_at: at(430) }));
     assert.deepEqual(h.delivered(), ['run-a:4', 'run-a:6']);
+});
+
+test('results a chat plan waited for and used in its answer are never announced or reported closed', async () => {
+    const h = createHarness();
+    h.tracker.start();
+    await h.respond(0, statusResponse([statusRow('run-a')]));
+    await h.fire();
+    const used = deliveredRow('run-a', 1, at(310), { delivery: { message_id: null, reason: 'used_in_answer' } });
+    await h.respond(1, statusResponse([used], { checked_at: at(320) }));
+    assert.deepEqual(h.events.delivered, [], 'nothing was posted, so there is nothing to announce');
+    assert.deepEqual(h.events.closed, [], 'and it is not a result that could not be posted');
+    assert.equal(h.tracker.getSnapshot().runs['run-a'].row.delivery.reason, 'used_in_answer');
+    assert.equal(h.nextDelay(), null, 'nothing is left in flight, so the checks stop');
 });
 
 test('a posting in the same second as the first read, but missing from it, is announced', async () => {

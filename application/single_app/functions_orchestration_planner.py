@@ -81,6 +81,11 @@ from functions_orchestration_visuals import (
     image_requested_by_user,
     planner_visual_outputs,
 )
+from functions_orchestration_workflow_run_wait import (
+    projection_offers_wait,
+    waitable_projection,
+    with_headless_capability_ids,
+)
 
 PLANNER_MAX_TOKENS = 4000
 PLANNER_TEMPERATURE = 0.1
@@ -358,6 +363,22 @@ select that answer as final_response. The plan always waits for the user to appr
 server adds to the reply whether each workflow started. Never say that a workflow started, ran or
 finished, and never promise its results in this conversation: they appear on the workflow's run
 page, in its own conversation and in its alerts.
+"""
+
+# Appended after the run instructions only when the planner's catalog marks a workflow "waitable":
+# an administrator turned on Wait For Quick Workflows In Chat and the server found that saved
+# workflow quick. Without such an entry the prompt is exactly what it was.
+WORKFLOW_RUN_WAIT_INSTRUCTIONS = """Waiting for quick saved workflows. A catalog.workflows entry whose "waitable" is true is a quick
+workflow. When the user asks to run one AND to use what it produces in this same answer, a compose
+step may read its workflow_run step, as the only exception to the rule above: bind the workflow_run
+step's "run" output to a required input of a compose step, and select a compose step, never the
+workflow_run step, as final_response. Only compose steps may read it, directly or through another
+compose step. Such a plan starts exactly one workflow and uses no web_search, url_fetch,
+deep_research, agent_invoke, action_invoke, workflow_propose or workflow_handoff step. The server
+alone decides whether the plan waits, and for how long; if the run hasn't finished by then, the
+answer says its result will be posted to this chat later. Never say that the workflow finished and
+never invent its results: the compose step receives them. When the user only asks to start a
+workflow, or its "waitable" is not true, follow the rule above and let no step read it.
 """
 
 # Appended to the system prompt only when the request offers the workflow_results capability, so a
@@ -703,6 +724,8 @@ def build_planner_messages(
             workflow_instructions += '\n\n' + WORKFLOW_PROPOSAL_INSTRUCTIONS
         if CAPABILITY_WORKFLOW_RUN in offered:
             workflow_instructions += '\n\n' + WORKFLOW_RUN_INSTRUCTIONS
+            if projection_offers_wait(payload['workflow_planning']):
+                workflow_instructions += '\n\n' + WORKFLOW_RUN_WAIT_INSTRUCTIONS
         if CAPABILITY_WORKFLOW_RESULTS in offered:
             workflow_instructions += '\n\n' + WORKFLOW_RESULTS_INSTRUCTIONS
         if CAPABILITY_WORKFLOW_HANDOFF in offered:
@@ -1330,8 +1353,11 @@ def plan_request(
         CAPABILITY_WORKFLOW_HANDOFF,
     )):
         workflow_planning, projection = _workflow_planning_for(request_context, available_ids)
+        workflow_planning = with_headless_capability_ids(
+            workflow_planning, settings, request_context, available_ids, export_catalog=export_catalog,
+        )
         if projection is not None:
-            context['workflow_planning'] = projection
+            context['workflow_planning'] = waitable_projection(projection, workflow_planning)
     # Hand-off is offered only with its own projection; a request without it plans exactly as before.
     handoff_offered = (
         CAPABILITY_WORKFLOW_HANDOFF in available_ids
@@ -1451,10 +1477,12 @@ def plan_request(
         parsed = extract_planner_json(reply)
         if not parsed:
             return _failure('unparseable_plan')
-        # Only the server reports why a workflow was not started or read; a model cannot write that report.
+        # Only the server reports why a workflow was not started or read, and only the server
+        # decides that a plan waits for a workflow run; a model cannot write either.
         parsed.pop('workflow_run_notes', None)
         parsed.pop('workflow_results_notes', None)
         parsed.pop('workflow_handoff_notes', None)
+        parsed.pop('workflow_run_waits', None)
 
         kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
         if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):

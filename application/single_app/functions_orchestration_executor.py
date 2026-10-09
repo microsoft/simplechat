@@ -109,6 +109,7 @@ from functions_orchestration_checkpoints import (
 from functions_orchestration_timing import (
     initial_execution_deadline, positive_setting_int as _setting_int,
 )
+from functions_orchestration_workflow_run_wait import SAVED_WORKFLOW_RUN_WAIT_KIND, plan_runs_headless
 
 _LOG_PREFIX = '[ORCHESTRATION_EXECUTOR]'
 
@@ -1236,6 +1237,13 @@ def resume_waiting_dependency_step(
             step, context, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
             saved_result=saved_result,
         )
+    if wait.get('kind') == SAVED_WORKFLOW_RUN_WAIT_KIND:
+        from functions_orchestration_workflow_runs import resume_workflow_run_wait
+
+        return resume_workflow_run_wait(
+            step, context, settings=settings, user_id=user_id, input_fingerprint=input_fingerprint,
+            cancel_requested=cancel_requested, saved_result=saved_result,
+        )
     if (
         context.plan_contract_version != 2 or user_id != context.user_id
         or step.get('role') not in ('gather', 'reason') or step.get('enabled') is not True
@@ -1299,6 +1307,12 @@ def _execute_dependency_plan(
         seeds=getattr(context, 'seeds', None),
     )
     steps = plan['steps']
+    # The server-computed run-step waits, and what a waited run step re-checks when it starts.
+    context.workflow_run_waits = deepcopy(plan.get('workflow_run_waits') or {})
+    context.plan_steps = deepcopy(steps) if context.workflow_run_waits else []
+    context.workflow_run_headless = bool(context.workflow_run_waits) and plan_runs_headless(
+        steps, settings, _dependency_request_context(context), export_catalog=context.export_catalog,
+    )
     resolver = get_adapter or _dependency_adapter
     cancel_probe = _make_cancel_probe(cancel_requested)
     planned_ids = _collect_plan_document_ids([step for step in steps if step['enabled']])

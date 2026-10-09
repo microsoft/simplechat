@@ -1261,6 +1261,10 @@ class HarnessExecution:
             for step in self.record["plan"].get("steps") or []
         )
 
+    def _waits_on_workflow_runs(self):
+        # Only a plan made with the 6c wait setting on carries this marker.
+        return bool(self.record["plan"].get("workflow_run_waits"))
+
     def _mentions_workflow_handoff(self):
         plan = self.record["plan"]
         return bool(plan.get("workflow_handoff_notes")) or any(
@@ -1269,7 +1273,7 @@ class HarnessExecution:
 
     def _workflow_result_lineage(self, record_state):
         """The workflow result contexts the answer read, re-authorized now; [] when it read none."""
-        if not self._reads_workflow_results():
+        if not self._reads_workflow_results() and not self._waits_on_workflow_runs():
             return []
         # Imported here, like every caller of the results step's module.
         from functions_orchestration_workflow_results import (
@@ -1403,12 +1407,18 @@ class HarnessExecution:
             )
             if notes:
                 content.append(notes)
+        # Only a reply that carries the composed answer names the results it read; any other reply
+        # keeps just the fixed lines about results that were not read. The same flag tells a waited
+        # run step's note whether its result reached this answer, so "used in this answer" is never
+        # said when the reply itself was not written from the plan's steps.
+        workflow_result_reads = error is None and bool(prepared)
         # Imported here, like every caller of the run step's module. Deterministic, model-free:
         # the saved workflows the plan started, even when it stopped, failed or waits afterwards.
         from functions_orchestration_workflow_runs import workflow_run_note
 
         workflow_runs = workflow_run_note(
             self.record["plan"], current.get("execution_steps") or [], stopped=status == "cancelled",
+            composed=workflow_result_reads,
         )
         if workflow_runs:
             content.append(workflow_runs)
@@ -1421,9 +1431,6 @@ class HarnessExecution:
             workflow_handoff = workflow_handoff_note(self.record["plan"], current.get("execution_steps") or [])
             if workflow_handoff:
                 content.append(workflow_handoff)
-        # Only a reply that carries the composed answer names the results it read; any other reply
-        # keeps just the fixed lines about results that were not read.
-        workflow_result_reads = error is None and bool(prepared)
         if (
             (self._reads_workflow_results() or self.record["plan"].get("workflow_results_notes"))
             and (status not in {"waiting", "cancelled"} or workflow_result_reads)

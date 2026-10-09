@@ -34,6 +34,13 @@ CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT = 5
 CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN = 1
 CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX = 100
 CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_SETTING = "chat_orchestration_max_workflow_handoffs_per_day"
+# How long a chat plan may wait for a quick saved workflow before the answer moves on and the run's
+# result is posted to the chat instead. Five minutes covers a short personal workflow; the ceiling
+# stays under the 7,200-second plan budget, which bounds any single wait anyway.
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT = 300
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN = 60
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX = 1800
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_SETTING = "chat_orchestration_workflow_run_wait_max_seconds"
 
 
 class WorkflowLoopInputError(ValueError):
@@ -242,6 +249,42 @@ def get_chat_orchestration_max_workflow_handoffs_per_day(settings=None):
     return validate_chat_orchestration_max_workflow_handoffs_per_day(
         settings.get(
             CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_SETTING, CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+        )
+    )
+
+
+def validate_chat_orchestration_workflow_run_wait_max_seconds(value):
+    """Validate the longest a chat plan may wait for a saved workflow run to finish."""
+    candidate = _whole_number(value)
+    if (
+        candidate is None
+        or not CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN
+        <= candidate
+        <= CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Wait For A Workflow From Chat must be a whole number of seconds from 60 to 1,800.",
+            code="chat_orchestration_workflow_run_wait_limit_invalid",
+        )
+    return candidate
+
+
+def get_chat_orchestration_workflow_run_wait_max_seconds(settings=None):
+    """Read the cap on one in-plan workflow wait; a corrupt stored value fails closed."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The limit on waiting for a workflow from chat is temporarily unavailable.",
+            code="chat_orchestration_workflow_run_wait_limit_unavailable",
+        )
+    return validate_chat_orchestration_workflow_run_wait_max_seconds(
+        settings.get(
+            CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_SETTING,
+            CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
         )
     )
 

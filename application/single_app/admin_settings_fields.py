@@ -211,6 +211,9 @@ from functions_workflow_limits import (
     CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
     CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
     CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
+    CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
+    CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX,
+    CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN,
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_LOOP_ITEMS_MAX,
     WORKFLOW_LOOP_ITEMS_MIN,
@@ -224,6 +227,7 @@ from functions_workflow_limits import (
     validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
     validate_chat_orchestration_min_workflow_interval_seconds,
+    validate_chat_orchestration_workflow_run_wait_max_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
     validate_workflow_min_schedule_interval_seconds,
@@ -4360,6 +4364,36 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
         {
+            "key": "enable_chat_orchestration_workflow_run_wait",
+            "type": "switch",
+            "label": "Wait For Quick Workflows In Chat",
+            "help": (
+                "When a user asks to run a saved workflow and then use what it found, such as "
+                "\"run my sales digest, then compare its totals with the Q3 report\", the plan "
+                "waits for the run and uses its result in the same answer. Only quick workflows "
+                "qualify: a personal workflow with durable execution on, at most 5 tasks, not a "
+                "structured workflow (so no For each or Repeat until loops), not a one-time "
+                "hand-off, no Microsoft 365 run-as user, no file sync, and nothing that waits for "
+                "a person, a review or indexing. A "
+                "waiting plan finishes in the background without the user's sign-in, so no plan "
+                "waits while Require WorkflowUser App Role is on, or when the plan also searches "
+                "the web, reads URLs, runs Deep Research, invokes an agent or action, or starts, "
+                "hands off or proposes another workflow. The wait is capped by Wait For A "
+                "Workflow From Chat under Limits and by the plan's own time limit; if the run is "
+                "still going when the wait ends, the answer says so and the result is posted to "
+                "the chat when it finishes. Off by default, so a plan never holds a chat turn "
+                "open for a workflow unless an administrator chooses to. Requires Chat "
+                "Orchestration, Enable Personal Workflows, Run Workflows From Chat and Use "
+                "Workflow Results In Chat."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "allow_user_workflows", "equals": True},
+                {"key": "enable_chat_orchestration_workflow_runs", "equals": True},
+            ],
+        },
+        {
             "key": "enable_chat_orchestration_workflow_handoff",
             "type": "switch",
             "label": "Hand Off Large Work From Chat",
@@ -4582,6 +4616,30 @@ ADMIN_SETTINGS_FIELDS = {
                 {"key": "enable_chat_orchestration", "equals": True},
                 {"key": "allow_user_workflows", "equals": True},
                 {"key": "enable_chat_orchestration_workflow_handoff", "equals": True},
+            ],
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_workflow_run_wait_max_seconds",
+            "type": "number",
+            "label": "Wait For A Workflow From Chat (seconds)",
+            "help": (
+                "The longest a chat plan may wait for a quick saved workflow before the answer "
+                "moves on. The plan's own Run timeout also caps every wait, so a plan always "
+                "leaves time to write its answer. When a wait runs out, the answer says the run "
+                "is still going and its result is posted to the chat when it finishes. Applies "
+                "only when Wait For Quick Workflows In Chat is on. Default is 300 (five "
+                "minutes); supported range is 60 to 1,800."
+            ),
+            "default": CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
+            "min": CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN,
+            "max": CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX,
+            "step": 1,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "allow_user_workflows", "equals": True},
+                {"key": "enable_chat_orchestration_workflow_runs", "equals": True},
+                {"key": "enable_chat_orchestration_workflow_run_wait", "equals": True},
             ],
             "group": {"id": "limits", "label": "Limits", "variant": "limits"},
         },
@@ -9809,6 +9867,12 @@ def _normalize_field_value(key, value, field):
     if key == "chat_orchestration_max_workflow_handoffs_per_day":
         try:
             return validate_chat_orchestration_max_workflow_handoffs_per_day(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
+
+    if key == "chat_orchestration_workflow_run_wait_max_seconds":
+        try:
+            return validate_chat_orchestration_workflow_run_wait_max_seconds(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
 

@@ -104,6 +104,7 @@ from functions_workflow_chat_delivery import (
     notice_title,
     parse_delivery_timestamp,
     phase_at_least,
+    plan_wait_hold_until,
     reconcile_chat_delivery,
     token_usage_idempotency_key,
     undeliverable_notification_key,
@@ -583,6 +584,17 @@ def _claim(services, user_id, run_id):
             return _postpone_unclaimed(services, user_id, run, exc.reason)
         updated, changed, ready = reconcile_chat_delivery(record, summary, now)
         due = parse_delivery_timestamp(updated.get('next_attempt_at'))
+        hold_until = plan_wait_hold_until(updated, now) if ready else None
+        if hold_until is not None and (due is None or due < hold_until):
+            # A chat plan is waiting to use this result in its answer. The post waits for the plan
+            # to finish or let go, and the hold lapses on its own at ``hold_until``.
+            updated = {
+                **updated,
+                'next_attempt_at': format_delivery_timestamp(hold_until),
+                'updated_at': format_delivery_timestamp(now),
+            }
+            changed = True
+            due = hold_until
         if ready and (due is None or due <= now):
             attempts = _count(updated.get('attempts'))
             lease_id = uuid.uuid4().hex

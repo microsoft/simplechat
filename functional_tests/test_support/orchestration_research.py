@@ -2,9 +2,10 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.242
+Version: 0.261.309
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
+Workflow run wait rules seeded in: 0.261.309
 
 Only production definitions are executed, never their application imports. In particular,
 config.py, the source-review browser stack, and Azure clients must not be imported here.
@@ -23,7 +24,7 @@ import types
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Iterable, List, Optional
 from unittest.mock import patch
@@ -146,8 +147,14 @@ def _definitions(filename, seed=None, names=None):
         }
     elif filename == "functions_orchestration_schema.py":
         contracts = _definitions(RESULT_CONTRACTS_FILE)
+        # Every plan validation asks the real, import-light wait rules whether a workflow run waits.
+        run_wait = _definitions(
+            "functions_orchestration_workflow_run_wait.py", seed={"datetime": datetime, "timedelta": timedelta},
+        )
         seed = {
             **contracts,
+            "compute_workflow_run_waits": run_wait["compute_workflow_run_waits"],
+            "stored_workflow_run_waits": run_wait["stored_workflow_run_waits"],
             "Draft202012Validator": _OfflineDraftValidator,
             "SchemaError": ValueError,
             "ServiceRequestError": RuntimeError,

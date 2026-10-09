@@ -88,7 +88,23 @@ REASON_CONTENT_BLOCKED = 'content_blocked'
 REASON_RESULTS_OFF = 'results_off'
 REASON_RESULT_UNAVAILABLE = 'result_unavailable'
 REASON_DEADLINE_EXCEEDED = 'deadline_exceeded'
+REASON_USED_IN_ANSWER = 'used_in_answer'
 SILENT_REASONS = frozenset({REASON_WORKFLOW_DELETED, REASON_RUNTIME_MISSING})
+
+# A chat plan that waits for this run holds the post-back while it waits. The hold, and whether
+# the plan used the result in its answer, lives on this record so one ETag decides who delivers.
+PLAN_WAIT_KEY = 'plan_wait'
+PLAN_WAIT_VERSION = 1
+PLAN_WAIT_HOLDING = 'holding'
+PLAN_WAIT_CONSUMED = 'consumed'
+PLAN_WAIT_RELEASED = 'released'
+PLAN_WAIT_STATES = frozenset({PLAN_WAIT_HOLDING, PLAN_WAIT_CONSUMED, PLAN_WAIT_RELEASED})
+PLAN_WAIT_HELD = 'held'
+PLAN_WAIT_POSTED = 'posted'
+PLAN_WAIT_ENDED = 'ended'
+PLAN_WAIT_DECISIONS = frozenset({
+    PLAN_WAIT_HELD, PLAN_WAIT_CONSUMED, PLAN_WAIT_RELEASED, PLAN_WAIT_POSTED, PLAN_WAIT_ENDED,
+})
 
 RUNTIME_TERMINAL_STATES = frozenset({
     'completed',
@@ -660,6 +676,174 @@ def phase_at_least(phase, wanted):
     return PHASES.index(phase) >= PHASES.index(wanted)
 
 
+def _plan_wait(record):
+    hold = record.get(PLAN_WAIT_KEY) if isinstance(record, Mapping) else None
+    return hold if isinstance(hold, Mapping) else None
+
+
+def _plan_wait_unposted(record):
+    """Whether no post of this generation has begun, so a waiting plan may still hold or use it.
+
+    ``_retry_later`` and ``_defer`` put a record back to ``ready`` but keep its later phase, so a
+    ready record counts only before publishing began.
+    """
+    status = record.get('status') if isinstance(record, Mapping) else None
+    if status == STATUS_PENDING:
+        return True
+    return status == STATUS_READY and record.get('phase') in {None, PHASE_CLAIMED}
+
+
+def _plan_wait_record_valid(record):
+    return (
+        isinstance(record, Mapping) and record.get('version') == CHAT_DELIVERY_VERSION
+        and record.get('status') in STATUSES
+    )
+
+
+def _plan_wait_ours(hold, orchestration_run_id, step_id):
+    return (
+        isinstance(orchestration_run_id, str) and orchestration_run_id
+        and isinstance(step_id, str) and step_id
+        and hold.get('orchestration_run_id') == orchestration_run_id and hold.get('step_id') == step_id
+    )
+
+
+def _plan_wait_fallback(record):
+    """What a plan reports when the post-back, not the plan, owns this run's outcome."""
+    if not _plan_wait_record_valid(record) or record.get('status') in {STATUS_UNDELIVERABLE, STATUS_EXPIRED}:
+        return PLAN_WAIT_ENDED
+    return PLAN_WAIT_POSTED
+
+
+def plan_wait_hold_until(record, now=None):
+    """When a waiting plan's hold on this record's post ends, or None when nothing holds it.
+
+    A hold covers only a generation whose post hasn't begun, and lapses on its own at ``until``
+    so a plan that never comes back can't keep the result from the chat.
+    """
+    hold = _plan_wait(record)
+    if hold is None or hold.get('state') != PLAN_WAIT_HOLDING or not _plan_wait_unposted(record):
+        return None
+    until = parse_delivery_timestamp(hold.get('until'))
+    moment = now if isinstance(now, datetime) else utc_now()
+    if until is None or until <= moment:
+        return None
+    return until
+
+
+def apply_plan_wait_hold(record, *, orchestration_run_id, step_id, until, now=None):
+    """Hold this run's post-back for the plan step that waits on it.
+
+    Returns ``(updated, decision)``: the record to write, or None when nothing changes, and
+    ``held`` when the plan holds the post. Otherwise the post-back already owns the outcome
+    (``posted``, or ``ended`` when it can no longer post), or this step already used it
+    (``consumed``). A record whose post has begun is never held.
+    """
+    moment = now if isinstance(now, datetime) else utc_now()
+    until_at = parse_delivery_timestamp(until)
+    if not _plan_wait_record_valid(record) or until_at is None or until_at <= moment:
+        return None, _plan_wait_fallback(record)
+    if not isinstance(orchestration_run_id, str) or not orchestration_run_id or not isinstance(step_id, str) or not step_id:
+        return None, _plan_wait_fallback(record)
+    hold = _plan_wait(record)
+    if hold is not None:
+        if not _plan_wait_ours(hold, orchestration_run_id, step_id):
+            return None, _plan_wait_fallback(record)
+        if hold.get('state') == PLAN_WAIT_CONSUMED:
+            return None, PLAN_WAIT_CONSUMED
+        if plan_wait_hold_until(record, moment) is not None:
+            return None, PLAN_WAIT_HELD
+        return None, _plan_wait_fallback(record)
+    if not _plan_wait_unposted(record):
+        return None, _plan_wait_fallback(record)
+    stamp = format_delivery_timestamp(moment)
+    updated = deepcopy(dict(record))
+    updated[PLAN_WAIT_KEY] = {
+        'version': PLAN_WAIT_VERSION,
+        'state': PLAN_WAIT_HOLDING,
+        'orchestration_run_id': orchestration_run_id,
+        'step_id': step_id,
+        'until': format_delivery_timestamp(until_at),
+        'held_at': stamp,
+        'updated_at': stamp,
+    }
+    updated['updated_at'] = stamp
+    return updated, PLAN_WAIT_HELD
+
+
+def apply_plan_wait_consume(record, summary, *, orchestration_run_id, step_id, now=None):
+    """Record that the waiting plan step used this run's outcome, so the post-back never posts it.
+
+    ``summary`` is the run's ``control_summary`` the plan decided from. The record is reconciled
+    with it first, so the write keeps the generation the plan used and a later run of the same
+    workflow run reopens the post-back as usual. Only this step's live hold on an unposted, now
+    finished generation is consumed. Returns ``(updated, decision)``: ``consumed``, ``held``
+    while the run hasn't finished, or the post-back's ``posted`` / ``ended``.
+    """
+    moment = now if isinstance(now, datetime) else utc_now()
+    if not _plan_wait_record_valid(record):
+        return None, PLAN_WAIT_ENDED
+    hold = _plan_wait(record)
+    if hold is None or not _plan_wait_ours(hold, orchestration_run_id, step_id):
+        return None, _plan_wait_fallback(record)
+    if hold.get('state') == PLAN_WAIT_CONSUMED:
+        return None, PLAN_WAIT_CONSUMED
+    if plan_wait_hold_until(record, moment) is None:
+        return None, _plan_wait_fallback(record)
+    if not isinstance(summary, Mapping) or summary.get('state') not in RUNTIME_TERMINAL_STATES:
+        return None, PLAN_WAIT_HELD
+    reconciled, _changed, ready = reconcile_chat_delivery(record, summary, moment)
+    if not ready or not _plan_wait_unposted(reconciled) or reconciled.get('kind') != KIND_BY_TERMINAL_STATE.get(
+        summary.get('state')
+    ):
+        return None, _plan_wait_fallback(reconciled)
+    stamp = format_delivery_timestamp(moment)
+    updated = deepcopy(dict(reconciled))
+    updated.update({
+        'status': STATUS_DELIVERED,
+        'notice_kind': NOTICE_NONE,
+        'outcome_reason': REASON_USED_IN_ANSWER,
+        'delivered_at': stamp,
+        'message_id': None,
+        'lease_id': None,
+        'lease_expires_at': None,
+        'next_attempt_at': None,
+        'updated_at': stamp,
+    })
+    updated[PLAN_WAIT_KEY] = {**dict(hold), 'state': PLAN_WAIT_CONSUMED, 'consumed_at': stamp, 'updated_at': stamp}
+    return updated, PLAN_WAIT_CONSUMED
+
+
+def apply_plan_wait_release(record, *, orchestration_run_id, step_id, now=None):
+    """Hand this run's post back to the post-back worker when the plan stops waiting.
+
+    Returns ``(updated, decision)``: ``released`` when the post-back now owns an unposted
+    outcome, ``consumed`` when this step already used it, otherwise ``posted`` or ``ended``.
+    A retry wait the worker scheduled for itself is kept; only the hold's own wait is cleared.
+    """
+    moment = now if isinstance(now, datetime) else utc_now()
+    if not _plan_wait_record_valid(record):
+        return None, PLAN_WAIT_ENDED
+    hold = _plan_wait(record)
+    if hold is None or not _plan_wait_ours(hold, orchestration_run_id, step_id):
+        return None, _plan_wait_fallback(record)
+    state = hold.get('state')
+    if state == PLAN_WAIT_CONSUMED:
+        return None, PLAN_WAIT_CONSUMED
+    if not _plan_wait_unposted(record):
+        return None, _plan_wait_fallback(record)
+    if state == PLAN_WAIT_RELEASED:
+        return None, PLAN_WAIT_RELEASED
+    stamp = format_delivery_timestamp(moment)
+    updated = deepcopy(dict(record))
+    until = parse_delivery_timestamp(hold.get('until'))
+    if until is not None and parse_delivery_timestamp(updated.get('next_attempt_at')) == until:
+        updated['next_attempt_at'] = None
+    updated[PLAN_WAIT_KEY] = {**dict(hold), 'state': PLAN_WAIT_RELEASED, 'released_at': stamp, 'updated_at': stamp}
+    updated['updated_at'] = stamp
+    return updated, PLAN_WAIT_RELEASED
+
+
 def delivery_label(workflow_name, asked_when):
     label = f'Results from {display_workflow_name(workflow_name)}'
     if isinstance(asked_when, str) and asked_when:
@@ -897,7 +1081,18 @@ __all__ = (
     'REASON_RESULTS_OFF',
     'REASON_RESULT_UNAVAILABLE',
     'REASON_DEADLINE_EXCEEDED',
+    'REASON_USED_IN_ANSWER',
     'SILENT_REASONS',
+    'PLAN_WAIT_KEY',
+    'PLAN_WAIT_VERSION',
+    'PLAN_WAIT_HOLDING',
+    'PLAN_WAIT_CONSUMED',
+    'PLAN_WAIT_RELEASED',
+    'PLAN_WAIT_STATES',
+    'PLAN_WAIT_HELD',
+    'PLAN_WAIT_POSTED',
+    'PLAN_WAIT_ENDED',
+    'PLAN_WAIT_DECISIONS',
     'RUNTIME_TERMINAL_STATES',
     'RESULT_RUN_STATES',
     'FAILED_RUN_STATES',
@@ -968,6 +1163,10 @@ __all__ = (
     'merge_stored_run_fields',
     'reconcile_chat_delivery',
     'phase_at_least',
+    'plan_wait_hold_until',
+    'apply_plan_wait_hold',
+    'apply_plan_wait_consume',
+    'apply_plan_wait_release',
     'delivery_label',
     'assemble_delivery_content',
     'delivery_note_text',
