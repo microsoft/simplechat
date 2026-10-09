@@ -77,7 +77,8 @@ const LANE_RULES: LaneRule[] = [
     {
         key: 'tabular',
         title: 'Tabular analysis',
-        showsCard: true,
+        // Tool details stay under the reasoning toggle; durable export status has its own card.
+        showsCard: false,
         currentStepPrefix: 'Current tabular step',
         initialStatus: 'Gathering workbook evidence',
         completedStatus: 'Workbook evidence ready',
@@ -133,7 +134,8 @@ const LANE_RULES: LaneRule[] = [
     {
         key: 'agent',
         title: 'Agent progress',
-        showsCard: true,
+        // The reasoning toggle already exposes the agent's activity without a duplicate summary.
+        showsCard: false,
         currentStepPrefix: 'Current tool',
         initialStatus: 'Connecting to the selected agent',
         completedStatus: 'Response ready',

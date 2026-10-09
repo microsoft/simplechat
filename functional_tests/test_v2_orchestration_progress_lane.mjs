@@ -1,10 +1,11 @@
 // test_v2_orchestration_progress_lane.mjs
-// Version: 0.261.204
+// Version: 0.261.318
 // Implemented in: 0.261.204
+// Agent and tabular cards removed in: 0.261.318
 // Executes the real activity-lane fold (lib/activityLanes.ts) over the reasoning steps an
 // orchestrated turn produces. The orchestration lane still claims those steps, so they are never
 // counted as agent or tabular work, but it draws no progress card: the plan card and the reasoning
-// toggle already show that progress. Tabular and agent work keep their cards.
+// toggle already show that progress. Agent and tabular details also stay under the toggle.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -93,24 +94,24 @@ test('an agent hand-off inside an orchestrated turn does not bring back a card',
     assert.equal(progress.lane.showsCard, false);
 });
 
-test('tabular and agent work keep their progress cards', () => {
+test('tabular and agent work keep their lanes without progress cards', () => {
     const tabular = buildLaneProgress([tabularThought()], { live: true });
     assert.equal(tabular?.lane.key, 'tabular');
-    assert.equal(tabular.lane.showsCard, true);
+    assert.equal(tabular.lane.showsCard, false);
 
     const handedOff = buildLaneProgress([
         { step_type: 'agent_tool_call', content: 'Sending to agent analyst' },
         tabularThought('completed'),
     ]);
     assert.equal(handedOff?.lane.key, 'tabular');
-    assert.equal(handedOff.lane.showsCard, true);
+    assert.equal(handedOff.lane.showsCard, false);
 
     const agent = buildLaneProgress(
         [{ step_type: 'agent_tool_call', content: 'Sending to agent researcher' }],
         { live: true },
     );
     assert.equal(agent?.lane.key, 'agent');
-    assert.equal(agent.lane.showsCard, true);
+    assert.equal(agent.lane.showsCard, false);
 });
 
 test('ordinary reasoning still forms no lane at all', () => {

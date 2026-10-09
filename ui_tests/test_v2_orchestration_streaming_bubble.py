@@ -1,8 +1,9 @@
 # test_v2_orchestration_streaming_bubble.py
 """
 Browser regression for the V2 orchestration streaming bubble.
-Version: 0.261.256
+Version: 0.261.318
 Implemented in: 0.261.204
+Agent and tabular cards removed in: 0.261.318
 
 An orchestrated turn shows one progress indicator at a time.
 
@@ -16,7 +17,9 @@ show "Thinking", and its run notices, beside the card's own progress line (0.261
 status line now says what the run is doing: "Starting", the running step's kind of work and title,
 and "Preparing the answer" once every step has settled. The run's notices stay with the finished
 answer's reasoning steps. Any stream that is not the run's own, such as a chat reply sent while a
-run waits, still shows "Thinking". Tabular analysis keeps its progress card.
+run waits, still shows "Thinking". Agent and tabular activity now also shows only the reasoning
+toggle and lightweight Thinking indicator, without a thought-summary progress card. Their details
+remain readable during streaming and in finished/remounted responses, including failed tools.
 
 The production controller, stores, SSE reader, MessageList and plan card run in Chromium with
 production CSS. Only HTTP is deterministic: the plan and run streams are held open and fed one
@@ -451,25 +454,109 @@ def test_a_stream_that_is_not_the_run_still_shows_thinking_beside_its_card(bubbl
     expect(thinking).to_have_count(0)
 
 
-def test_tabular_streaming_bubble_keeps_its_progress_card(bubble_ui):
+@pytest.mark.parametrize("lane", ["agent", "tabular"])
+@pytest.mark.parametrize("viewport", [
+    {"width": 1280, "height": 900},
+    {"width": 390, "height": 844},
+], ids=["desktop", "mobile"])
+def test_agent_and_tabular_reasoning_stays_accessible_without_progress_cards(bubble_ui, lane, viewport):
     page, api = bubble_ui
-    page.evaluate("""() => window.OrchHarness.stores.chat.useChatStore.setState({
-        streaming: true,
-        thoughts: [{
-            id: '0',
-            title: 'tabular_analysis',
-            content: 'Reading the quarterly workbook.',
-            stepType: 'tabular_analysis',
-            activity: {
-                activity_key: 'call-1', kind: 'tabular_tool_invocation',
-                title: 'describe_tabular_file', status: 'running', state: 'running',
-                lane_key: 'tabular', lane_label: 'Tabular',
-                plugin_name: 'TabularProcessingPlugin', function_name: 'describe_tabular_file',
+    page.set_viewport_size(viewport)
+    step_type = "agent_tool_call" if lane == "agent" else "tabular_analysis"
+    content = "Reading the quarterly workbook." if lane == "tabular" else "Searching the quarterly reports."
+    hand_off = "Sending to agent analyst"
+    thoughts = [
+        {"id": "hand-off", "title": "agent_tool_call", "stepType": "agent_tool_call", "content": hand_off},
+        {
+            "id": "tool", "title": step_type, "stepType": step_type, "content": content,
+            "activity": {
+                "activity_key": "call-1",
+                "kind": "tabular_tool_invocation" if lane == "tabular" else "agent_tool_invocation",
+                "title": "describe_tabular_file" if lane == "tabular" else "Search",
+                "status": "running", "state": "running", "lane_key": lane,
             },
-        }],
-    })""")
-    expect(page.get_by_role("progressbar", name="Tabular analysis progress")).to_be_visible()
-    expect(page.get_by_text("Tabular analysis", exact=True)).to_be_visible()
-    expect(page.get_by_text("Current tabular step: describe_tabular_file", exact=True)).to_be_visible()
-    expect(toggle(page, 1)).to_be_visible()
+        },
+    ]
+    page.evaluate(
+        """(thoughts) => window.OrchHarness.stores.chat.useChatStore.setState({
+            streaming: true, thoughts,
+        })""",
+        thoughts,
+    )
+    steps = toggle(page, 2)
+    expect(steps).to_be_visible()
+    expect(steps).to_have_attribute("aria-expanded", "false")
     expect(page.get_by_text("Thinking", exact=True)).to_be_visible()
+    expect_no_agent_or_tabular_progress_card(page)
+    expect(page.get_by_text(content, exact=True)).to_have_count(0)
+    expect_toggle_first(steps)
+
+    steps.focus()
+    steps.press("Enter")
+    expect(steps).to_have_attribute("aria-expanded", "true")
+    expect(page.get_by_text(hand_off, exact=True)).to_be_visible()
+    expect(page.get_by_text(content, exact=True)).to_be_visible()
+    expect_no_agent_or_tabular_progress_card(page)
+    steps.press("Space")
+    expect(steps).to_have_attribute("aria-expanded", "false")
+    expect(page.get_by_text(content, exact=True)).to_have_count(0)
+
+    failure = "The tool could not finish. Its failure details remain in the reasoning steps."
+    thoughts[1]["activity"].update({"status": "failed", "state": "failed"})
+    thoughts[1]["content"] = failure
+    page.evaluate(
+        "(thoughts) => window.OrchHarness.stores.chat.useChatStore.setState({thoughts})",
+        thoughts,
+    )
+    expect_no_agent_or_tabular_progress_card(page)
+    expect(page.get_by_text(failure, exact=True)).to_have_count(0)
+    steps.click()
+    expect(page.get_by_text(failure, exact=True)).to_be_visible()
+    expect_no_agent_or_tabular_progress_card(page)
+
+    saved = {
+        "id": "agent-tabular-answer", "conversation_id": CONVERSATION,
+        "role": "assistant", "content": ANSWER,
+        "thoughts": [
+            *thoughts,
+            {"id": "answer", "title": "generation", "stepType": "generation",
+             "content": "Agent responded with the available evidence."},
+        ],
+    }
+    page.evaluate(
+        """(message) => window.OrchHarness.stores.chat.useChatStore.setState({
+            streaming: false, thoughts: [], messages: [message],
+        })""",
+        saved,
+    )
+    expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
+    expect(page.get_by_text("Thinking", exact=True)).to_have_count(0)
+    saved_steps = toggle(page, 3)
+    expect(saved_steps).to_have_attribute("aria-expanded", "false")
+    saved_steps.click()
+    expect(page.get_by_text(failure, exact=True)).to_be_visible()
+    expect_no_agent_or_tabular_progress_card(page)
+
+    page.evaluate("""() => {
+        const H = window.OrchHarness;
+        H.unmount('mount-a');
+        H.mount('mount-a', 'MessageList');
+    }""")
+    reopened_steps = toggle(page, 3)
+    expect(reopened_steps).to_have_attribute("aria-expanded", "false")
+    expect(page.get_by_text(failure, exact=True)).to_have_count(0)
+    reopened_steps.click()
+    expect(page.get_by_text(failure, exact=True)).to_be_visible()
+    expect(page.get_by_text(ANSWER, exact=True)).to_be_visible()
+    expect_no_agent_or_tabular_progress_card(page)
+
+
+def expect_no_agent_or_tabular_progress_card(page):
+    """No part of either thought-summary card appears, even when reasoning is expanded."""
+    expect(page.get_by_role("progressbar")).to_have_count(0)
+    expect(page.get_by_text(re.compile(r"^(Agent progress|Tabular analysis)( complete)?$"))).to_have_count(0)
+    expect(page.get_by_text(re.compile(r"^Current (tool|tabular step): "))).to_have_count(0)
+    expect(page.get_by_text(re.compile(r"^\d{1,3}%$"))).to_have_count(0)
+    expect(page.get_by_text(re.compile(r"^\d+/\d+ (tools?|steps?|tool calls?)\b"))).to_have_count(0)
+    expect(page.get_by_text(re.compile(r"^(Agent progress|Tabular analysis) captured for this response$"))).to_have_count(0)
+    expect(page.get_by_text("Completed with issues", exact=True)).to_have_count(0)
