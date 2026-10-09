@@ -128,7 +128,8 @@ def test_stale_edit_keeps_draft_and_explicitly_rebases(personal_identities_ui):
     expect(dialog.locator('input[type="password"]')).to_have_value("fixture-rotated-secret")
     dialog.get_by_role("button", name="Save changes", exact=True).click()
     expect(dialog).to_have_count(0)
-    assert write(ui, "PATCH").body["expected_etag"] == '"concurrent-etag"'
+    patch_body = write(ui, "PATCH").body
+    assert patch_body["expected_etag"] == '"concurrent-etag"'
     assert ui.identities[SAVED_ID]["description"] == "Other tab's description"
 
 
@@ -241,7 +242,8 @@ def test_in_use_delete_restores_row_and_names_references(personal_identities_ui)
     resource.get_by_role("button", name="Delete", exact=True).click()
     expect(resource).to_be_visible()
     expect(ui.page.get_by_role("alert")).to_contain_text("Personal connector")
-    assert write(ui, "DELETE").body == {"expected_etag": '"etag-1"'}
+    delete_body = write(ui, "DELETE").body
+    assert delete_body == {"expected_etag": '"etag-1"'}
 
 
 def test_created_identity_can_bind_to_an_action_without_copying_secrets(personal_identities_ui):

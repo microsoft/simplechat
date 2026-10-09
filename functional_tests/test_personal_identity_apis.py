@@ -13,11 +13,14 @@ from copy import deepcopy
 
 import pytest
 
-from test_support.group_identity_harness import as_user
-from test_support.personal_identity_harness import (
-    LIST_PATH, create_identity, group_environment, personal_environment,  # noqa: F401
-)
+from test_support.personal_identity_test_helpers import LIST_PATH, as_user, create_identity
 from test_support.versioning import assert_app_version_at_least
+
+
+pytest_plugins = (
+    "test_support.group_identity_harness",
+    "test_support.personal_identity_harness",
+)
 
 
 def test_version():

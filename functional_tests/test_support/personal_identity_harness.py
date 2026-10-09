@@ -13,18 +13,12 @@ import pytest
 from flask import Blueprint
 
 from test_support.agent_delegation import module_stub
-from test_support.group_identity_harness import (
-    APP_ROOT, IdentityContainer, as_user,
-    environment as group_environment,  # noqa: F401
-)
-
-
-LIST_PATH = "/api/user/identities"
+from test_support.group_identity_harness import APP_ROOT, IdentityContainer
 
 
 @pytest.fixture
-def personal_environment(group_environment, monkeypatch):
-    env = group_environment
+def personal_environment(environment, monkeypatch):
+    env = environment
     env.settings["enable_user_workspace"] = True
     env.state.personal_actions = []
     container = IdentityContainer("user_id")
@@ -63,15 +57,3 @@ def personal_environment(group_environment, monkeypatch):
     return SimpleNamespace(
         **vars(env), personal_container=container, personal_access=access,
     )
-
-
-def create_identity(env, *, user_id="owner", credentials=None, **fields):
-    as_user(env, user_id)
-    response = env.client.post(LIST_PATH, json={
-        "name": "Personal credential", "usage_contexts": ["action"],
-        "credentials": credentials or {"auth_type": "api_key", "secret": "fixture-only-secret"},
-        **fields,
-    })
-    if response.status_code != 201:
-        raise AssertionError(response.get_data(as_text=True))
-    return response.get_json()["identity"]

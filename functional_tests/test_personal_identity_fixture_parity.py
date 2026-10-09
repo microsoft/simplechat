@@ -22,10 +22,14 @@ from test_public_identity_fixture_parity import (
     CREDENTIALS_UI_KEYS, _FakePage, assert_error_code, assert_nested_parity,
     assert_no_invented_keys, drive_fixture,
 )
-from test_support.personal_identity_harness import (
-    LIST_PATH, create_identity, group_environment, personal_environment,  # noqa: F401
-)
+from test_support.personal_identity_test_helpers import LIST_PATH, create_identity
 from ui_tests.fixtures.personal_identities import PersonalIdentitiesFixture, SAVED_ID
+
+
+pytest_plugins = (
+    "test_support.group_identity_harness",
+    "test_support.personal_identity_harness",
+)
 
 
 ITEM_KEYS = {
