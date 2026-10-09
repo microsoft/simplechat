@@ -28,6 +28,7 @@ from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup
 from functions_model_capabilities import ModelTokenBudgetError
 from functions_model_endpoint_app_identity import check_application_identity_request, check_application_identity_save
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
@@ -1169,7 +1170,8 @@ def register_route_backend_models(bp):
         user_settings = get_user_settings(user_id)
         endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         return jsonify({
-            "endpoints": sanitize_model_endpoints_for_frontend(endpoints)
+            "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
+            "custom_api_types": get_model_endpoint_provider_ui_options(),
         })
 
 

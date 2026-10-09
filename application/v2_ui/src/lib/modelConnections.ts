@@ -24,6 +24,8 @@ import {
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
 import type { RebaseField } from './rebaseDraft';
+import { capacityErrors, capacityPayload, tokenCapacity, validModelIcon, type ConnectionCapacity } from './connectionMetadata';
+import type { ResourceIcon } from './resourceIcons';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                       */
@@ -97,7 +99,7 @@ export interface ConnectionMigrationNotice {
     imported_connections?: number;
 }
 
-export interface ConnectionModel {
+export interface ConnectionModel extends ConnectionCapacity {
     catalogProfileId?: string;
     id?: string;
     deploymentName?: string;
@@ -106,7 +108,8 @@ export interface ConnectionModel {
     description?: string;
     enabled?: boolean;
     isDiscovered?: boolean;
-    responseLength?: number | string;
+    responseLength?: number | string | null;
+    icon?: ResourceIcon | Record<string, never>;
     supportsChat?: boolean;
     supportsImageGeneration?: boolean;
     supportsEmbeddings?: boolean;
@@ -151,7 +154,7 @@ export interface ConnectionIdentityHeader {
     value_type?: string;
 }
 
-export interface ModelConnection {
+export interface ModelConnection extends ConnectionCapacity {
     id: string;
     name?: string;
     provider?: string;
@@ -795,6 +798,49 @@ export function buildConnectionPayload(connection: ModelConnection): Record<stri
     return payload;
 }
 
+export function validateAdvancedConnection(connection: ModelConnection): Record<string, string> {
+    const errors = capacityErrors(connection);
+    (connection.models ?? []).forEach((model, index) => {
+        const modelErrors = capacityErrors(model, true);
+        try { tokenCapacity(model.responseLength, 'Response length'); } catch (cause) {
+            if (!(cause instanceof Error)) throw cause;
+            modelErrors.responseLength = cause.message;
+        }
+        if (model.icon !== undefined && !validModelIcon(model.icon)) {
+            modelErrors.icon = 'Choose a local Bootstrap icon or a bounded PNG/JPEG image.';
+        }
+        for (const [key, value] of Object.entries(modelErrors)) errors[`model_${index}_${key}`] = value;
+    });
+    return errors;
+}
+
+export function buildPersonalConnectionPayload(connection: ModelConnection): Record<string, unknown> {
+    const errors = validateAdvancedConnection(connection);
+    if (Object.keys(errors).length) throw new Error(Object.values(errors)[0]);
+    const payload = buildConnectionPayload(connection);
+    return {
+        ...payload,
+        ...capacityPayload(connection),
+        models: (connection.models ?? []).map((model) => ({
+            ...model,
+            ...capacityPayload(model, true),
+            ...(connection.provider !== 'custom' ? { deploymentName: String(model.deploymentName ?? '').trim() } : {}),
+            ...('responseLength' in model ? { responseLength: tokenCapacity(model.responseLength, 'Response length') } : {}),
+            displayName: String(model.displayName || connectionRequestModel(connection, model)).trim(),
+            enabled: model.enabled !== false,
+        })),
+    };
+}
+
+export function personalTestBlockedReason(draft: ModelConnection, saved: ModelConnection): string | null {
+    if (!saved.id) return null;
+    if (Object.keys(validateAdvancedConnection(draft)).length || Object.keys(validateAdvancedConnection(saved)).length
+        || JSON.stringify(buildPersonalConnectionPayload(draft)) !== JSON.stringify(buildPersonalConnectionPayload(toEditableConnection(saved)))) {
+        return 'Save changes before discovering or testing models. These operations use the saved endpoint and enabled models.';
+    }
+    return null;
+}
+
 /**
  * Merge discovered deployments into the model list already on the connection.
  *
@@ -1146,6 +1192,7 @@ export const saveDefaultModel = (selection: DefaultModelSelection) =>
 
 export type ModelConnectionsScope =
     | { kind: 'admin' }
+    | { kind: 'personal' }
     | { kind: 'group'; id: string; name: string };
 
 export const ENDPOINT_OPERATIONS = ['create', 'edit', 'delete', 'enable', 'test'] as const;
@@ -1193,6 +1240,8 @@ export class EndpointInUseError extends Error {
 
 export interface ModelConnectionsAdapter {
     scope: ModelConnectionsScope;
+    advancedEditing?: boolean;
+    requiresSavedConfigurationTests?: boolean;
     /** Whether the "Test connection" affordance renders (/api/models/test-connection, admin only). */
     canTestConnection: boolean;
     /** Whether the image and embedding capability tests render (admin-settings route, admin only). */
@@ -1278,6 +1327,9 @@ export function endpointOperationAllowed(
     if (scope.kind === 'admin') {
         return true;
     }
+    if (scope.kind === 'personal') {
+        return supported.has(operation);
+    }
     if (!supported.has(operation)) {
         return false;
     }
@@ -1285,6 +1337,121 @@ export function endpointOperationAllowed(
         return true;
     }
     return Array.isArray(connection?.endpoint_actions) && connection.endpoint_actions.includes(operation);
+}
+
+function hasOptionalStrings(value: Record<string, unknown>, keys: string[]): boolean {
+    return keys.every((key) => value[key] === undefined || value[key] === null || typeof value[key] === 'string');
+}
+
+function personalModel(value: unknown): value is ConnectionModel {
+    return isRecord(value)
+        && hasOptionalStrings(value, ['id', 'deploymentName', 'modelName', 'displayName', 'description', 'catalogProfileId'])
+        && ['enabled', 'supportsChat', 'supportsImageGeneration', 'supportsEmbeddings', 'supportsVision']
+            .every((key) => value[key] === undefined || typeof value[key] === 'boolean')
+        && ['embedding_config', 'embedding_policy', 'capability_status']
+            .every((key) => value[key] === undefined || isRecord(value[key]))
+        && (value.enabled_capabilities === undefined
+            || (Array.isArray(value.enabled_capabilities) && value.enabled_capabilities.every((entry) => typeof entry === 'string')));
+}
+
+function personalEndpoint(value: unknown): ModelConnection {
+    if (!isRecord(value) || typeof value.id !== 'string' || !value.id.trim()
+        || !hasOptionalStrings(value, ['name', 'provider', 'api_type'])
+        || ['connection', 'auth', 'management', 'identity_header'].some((key) =>
+            value[key] !== undefined && !isRecord(value[key]))
+        || ['enabled', 'has_api_key', 'has_client_secret', 'has_bearer_token'].some((key) =>
+            value[key] !== undefined && typeof value[key] !== 'boolean')
+        || (value.models !== undefined && (!Array.isArray(value.models) || !value.models.every(personalModel)))) {
+        throw new Error('A personal model endpoint response was malformed. Refresh and try again.');
+    }
+    requireWorkspaceId(value.id);
+    const textFields = {
+        connection: ['endpoint', 'openai_api_version', 'api_version', 'anthropic_version', 'url_mode',
+            'client_cert_path', 'client_key_path', 'project_api_version', 'project_name'],
+        auth: ['type', 'managed_identity_type', 'managed_identity_client_id', 'tenant_id', 'client_id',
+            'api_key', 'client_secret', 'bearer_token', 'token_url', 'scope', 'api_key_header',
+            'api_key_prefix', 'management_cloud', 'custom_authority', 'foundry_scope'],
+        management: ['subscription_id', 'resource_group'],
+        identity_header: ['mode', 'header_name', 'value_type'],
+    };
+    for (const [key, fields] of Object.entries(textFields)) {
+        const block = value[key];
+        if (isRecord(block) && !hasOptionalStrings(block, fields)) {
+            throw new Error('A personal model endpoint response was malformed. Refresh and try again.');
+        }
+    }
+    return value as ModelConnection;
+}
+
+function isCustomApiDescriptor(value: unknown): value is CustomApiTypeDescriptor {
+    return isRecord(value) && typeof value.value === 'string'
+        && ['openai', 'azure_openai', 'anthropic', 'gemini'].includes(value.value)
+        && ['label', 'protocol', 'urlPolicy', 'versionField', 'defaultVersion',
+            'defaultApiKeyHeader', 'defaultApiKeyPrefix', 'description'].every((key) => typeof value[key] === 'string')
+        && typeof value.usesModelName === 'boolean' && typeof value.requiresApiVersion === 'boolean'
+        && Array.isArray(value.authTypes) && value.authTypes.every((entry) => typeof entry === 'string');
+}
+
+export function createPersonalModelConnectionsAdapter(): ModelConnectionsAdapter {
+    const base = '/api/user/model-endpoints';
+    const endpointUrl = (id: string) => `${base}/${encodeURIComponent(requireWorkspaceId(id))}`;
+    const readEndpoint = (response: unknown) => {
+        if (!isRecord(response)) throw new Error('The personal model endpoint response was malformed.');
+        return { endpoint: personalEndpoint(response.endpoint) };
+    };
+    return {
+        scope: { kind: 'personal' },
+        advancedEditing: true,
+        requiresSavedConfigurationTests: true,
+        canTestConnection: false,
+        canTestCapabilities: false,
+        canEditNetworkPolicy: false,
+        showMigrationNotices: false,
+        canCreate: true,
+        supported: new Set(ENDPOINT_OPERATIONS),
+        allows: () => true,
+        list: async (signal) => {
+            const response = await api.get<unknown>(base, signal);
+            if (!isRecord(response) || !Array.isArray(response.endpoints)
+                || !Array.isArray(response.custom_api_types) || !response.custom_api_types.every(isCustomApiDescriptor)) {
+                throw new Error('The personal model endpoint list was malformed. Refresh and try again.');
+            }
+            const endpoints = response.endpoints.map(personalEndpoint);
+            if (new Set(endpoints.map((endpoint) => endpoint.id)).size !== endpoints.length) {
+                throw new Error('The personal model endpoint list contained duplicate IDs. Refresh and try again.');
+            }
+            return { endpoints, custom_api_types: response.custom_api_types };
+        },
+        create: async (payload) => readEndpoint(await api.post<unknown>(base, payload)),
+        update: async (connection, payload) => readEndpoint(await api.patch<unknown>(endpointUrl(connection.id), payload)),
+        remove: async (connection) => {
+            const response = await api.delete<unknown>(endpointUrl(connection.id));
+            if (!isRecord(response) || response.success !== true) {
+                throw new Error('The endpoint deletion could not be confirmed. Refresh before trying again.');
+            }
+            return { success: true };
+        },
+        discover: async (payload) => {
+            const response = await api.post<unknown>('/api/user/models/fetch', payload);
+            if (!isRecord(response) || !Array.isArray(response.models) || !response.models.every((model) =>
+                personalModel(model) && ['deploymentName', 'deployment'].some((key) =>
+                    typeof model[key] === 'string' && model[key].trim()))) {
+                throw new Error('The model discovery response was malformed. Try again.');
+            }
+            return { models: response.models };
+        },
+        testConnection: () => { throw new Error('Connection testing is not available for personal endpoints.'); },
+        testConnectionModel: async (payload, model) => {
+            const response = await api.post<unknown>('/api/user/models/test-model', {
+                ...payload, model: typeof model === 'string' ? { deploymentName: model } : model,
+            });
+            if (!isRecord(response) || response.success !== true) {
+                throw new Error('The model did not confirm a successful chat response.');
+            }
+            return { success: true };
+        },
+        onChanged: () => {},
+    };
 }
 
 function groupEndpointsUrl(groupId: string, endpointId?: string): string {

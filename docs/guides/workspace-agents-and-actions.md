@@ -71,6 +71,9 @@ which behavior remains managed in Foundry.
 Give the agent a recognizable display name and a description of its responsibility.
 Select a permitted model connection. Custom connection details and additional
 configuration are available without making them necessary for an ordinary agent.
+To maintain a resource you own, use the native
+[personal Endpoints editor]({{ '/guides/personal-model-endpoints/' | relative_url }})
+for its provider, authentication, model list, and verified capacity metadata.
 
 For a policy-bound assistant, use assigned knowledge to choose the source
 workspaces and then narrow that pool with tags or specific documents. Review
