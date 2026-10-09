@@ -46,6 +46,19 @@ same one. Choosing a workspace also makes it your active public workspace for
 chat, but the page itself never depends on that selection: every request names
 the workspace it is for.
 
+From version **0.261.310**, the overview shows counts for available resource
+cards, including Documents, Prompts, File sources, Identities, and Members.
+Counts cover the complete collection visible to you in the selected workspace,
+not the first page of results. Members counts the workspace's Owner, Admins,
+and DocumentManagers, not everyone who can read its published content or pending
+requests.
+Readers who are not on that roster do not get a Members count.
+
+A zero means the collection is empty. Counts remain blank while loading; a small
+red circled X means that particular count could not load. Other counts and
+navigation keep working. Returning to Overview or refreshing workspace access
+reloads them. Locked cards and Settings, Activity, and Statistics stay uncounted.
+
 - **Browse.** Search, filter, sort, and page through the workspace's documents,
   and inspect a document's details and version history. Every member can do
   this.
