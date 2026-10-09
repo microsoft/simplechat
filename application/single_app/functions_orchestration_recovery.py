@@ -80,6 +80,35 @@ def _retained_statuses(record):
     return {'completed', 'partial'}
 
 
+def _partial_dependency_recovery(record):
+    """Complete-only consumers must recover their partial producer, not replay it unchanged."""
+    saved_steps = {step['step_id']: step for step in _execution_steps(record)}
+    rerun, blocked = set(), set()
+    for step in record['plan'].get('steps') or []:
+        if not step.get('enabled', True):
+            continue
+        for spec in step_input_specs(step):
+            producer_id = spec.binding.step_id
+            saved = saved_steps.get(producer_id) or {}
+            if spec.allow_partial or saved.get('status') != 'partial':
+                continue
+            task = TaskResult.from_dict(saved['task_result']) if saved.get('task_result') is not None else None
+            if task is None:
+                raise CheckpointError('checkpoint_invalid')
+            completeness = task.output(spec.binding.output_name).completeness
+            if completeness.status != 'partial':
+                continue
+            if (
+                task.producer.capability_id == 'document_analyze'
+                and 'analysis_response_schema:passed' in completeness.checks
+                and completeness.coverage.expected == completeness.coverage.completed
+            ):
+                blocked.add(producer_id)
+            else:
+                rerun.add(producer_id)
+    return rerun, blocked
+
+
 def _stopped_without_effects(step):
     """Whether a failed step is known to have changed nothing outside the plan.
 
@@ -124,7 +153,7 @@ def _retained_producer_steps(record):
     ]
 
 
-def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
+def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True, partial_producers=None):
     """Retained dependency steps that a resume must run again.
 
     In a new attempt a render step always runs again. Its file belongs to the attempt
@@ -169,7 +198,11 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
         step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
         for step in steps if step['step_id'] in retained
     }
-    invalidated = renders | reads | redraws
+    if not new_attempt:
+        partial_producers = set()
+    elif partial_producers is None:
+        partial_producers, _ = _partial_dependency_recovery(record)
+    invalidated = renders | reads | redraws | partial_producers
     while True:
         added = {
             step_id for step_id, producers in consumed.items()
@@ -483,9 +516,10 @@ def recovery_projection(record):
         step['step_id'] for step in steps if step.get('status') in _retained_statuses(record)
     ]
     try:
+        partial_producers, blocked_partial_producers = _partial_dependency_recovery(record)
         stale = _reuse_invalidated_by_rerun(record, reused)
-    except (PlanValidationError, ResultContractError):
-        stale, invalid = set(), True
+    except (CheckpointError, PlanValidationError, ResultContractError):
+        stale, partial_producers, blocked_partial_producers, invalid = set(), set(), set(), True
     reused = [step_id for step_id in reused if step_id not in stale]
     retry = [
         step['step_id'] for step in record.get('plan', {}).get('steps') or []
@@ -529,6 +563,12 @@ def recovery_projection(record):
         reason, message = 'checkpoint_unavailable', build_failure('checkpoint_unavailable')['message']
     elif repeats_refusal:
         reason, message = 'retry_would_repeat', build_failure('retry_would_repeat')['message']
+    elif blocked_partial_producers and not any(
+        step.get('status') == 'failed'
+        and (step.get('failure') or {}).get('code') != 'input_partial_not_accepted'
+        for step in steps
+    ):
+        reason, message = 'input_partial_not_recoverable', build_failure('input_partial_not_recoverable')['message']
     return {
         'eligible': reason is None, 'reason_code': reason, 'message': message,
         'expected_version': record.get('recovery_version'),
@@ -1145,7 +1185,9 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
     # it renders its own files instead of reusing the superseded attempt's.
     stale = set() if allow_waiting else _reuse_invalidated_by_rerun(record, {
         step_id for step_id, saved in source_steps.items() if saved.get('status') in _retained_statuses(source)
-    }, new_attempt=source_run_id is not None or bool(record.get('retry_of_run_id')))
+    }, new_attempt=source_run_id is not None or bool(record.get('retry_of_run_id')),
+        partial_producers=_partial_dependency_recovery(source)[0],
+    )
     payloads = {}
     state_fields = STATE_FIELDS + OPTIONAL_STATE_FIELDS + DEPENDENCY_STATE_FIELDS
     initial_state = {key: deepcopy(getattr(context, key, None)) for key in state_fields}

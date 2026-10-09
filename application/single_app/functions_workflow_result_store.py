@@ -1142,6 +1142,15 @@ class WorkflowResultStore:
             self._write_analysis_lifecycle(row)
         except CosmosResourceExistsError:
             guard = self._analysis_guard(identity, required=True, writable=True, token=token)
+            if (
+                identity["scope_type"] == "orchestration" and self._orchestration_execution is not None
+                and resume_from is not None and guard.get("resume_from") is None
+                and guard.get("prepared") and guard.get("request_registered") is False
+                and guard.get("request_digest") is None
+            ):
+                # Bootstrap prepared this producer's generic fence before Analyze bound its lineage.
+                self._write_analysis_lifecycle(row, previous=guard)
+                guard = self._analysis_guard(identity, required=True, writable=True, token=token)
             _require_fields(guard, {"resume_from": resume_from})
         return {"binding": dict(identity)}
 

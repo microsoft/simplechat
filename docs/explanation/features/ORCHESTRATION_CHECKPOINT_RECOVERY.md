@@ -1,9 +1,17 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.303**
+**Version: 0.261.309**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
+
+Partial-producer recovery implemented in version: **0.261.309**. A manual retry
+revisits malformed Analyze outputs required by complete-only consumers, repairing
+affected saved windows without repeating completed extraction work. Genuine
+unresolved findings with complete coverage do not offer an unchanged retry that
+would simply fail drafting again. Same-attempt continuation preserves its existing
+immutable receipts. See the
+[document derivation reliability fix](../fixes/ORCHESTRATION_DOCUMENT_DERIVATION_RELIABILITY_FIX.md).
 
 Since **0.261.303**, a settings save made by a background task no longer
 invalidates saved progress, and an attempt that ended while a step was waiting

@@ -8,6 +8,7 @@ No source is reconstructed from a preview, report paragraph, or document name.
 from copy import deepcopy
 
 from functions_analysis_access import analysis_source_snapshot
+from functions_document_analysis_results import ANALYSIS_RESPONSE_SHAPE_CODES
 from functions_orchestration_result_contracts import (
     Completeness,
     Coverage,
@@ -58,6 +59,12 @@ def _native_completeness(reader):
         if type(check) is not dict or type(check.get("name")) is not str or type(check.get("status")) is not str:
             raise ResultContractError("result_analysis_validation_invalid")
         checks.append(f'{check["name"]}:{check["status"]}')
+    checks.append('analysis_response_schema:' + (
+        'repairable' if any(
+            issue.get('code') in ANALYSIS_RESPONSE_SHAPE_CODES for issue in validation.get('issues') or []
+            if isinstance(issue, dict)
+        ) else 'passed'
+    ))
     limitations = list(validation.get("limitations") or [])
     if status == "partial":
         limitations.append("Only accepted native findings are retained; unresolved or unfinished work is not complete.")
