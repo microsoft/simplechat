@@ -2,8 +2,9 @@
 # test_orchestration_workflow_proposal_editor_round_trip.py
 """
 Functional test for editing a workflow proposal in the V2 workflow editor before accepting it.
-Version: 0.261.315
+Version: 0.261.317
 Implemented in: 0.261.207
+Shared schedule policy coverage implemented in: 0.261.317
 
 The proposal card's Edit opens the draft route's workflow in the V2 workflow editor, and Save
 accepts the proposal with the editor's payload. The accept route records the workflow as edited
@@ -30,6 +31,7 @@ from test_orchestration_workflow_proposal_routes import (  # noqa: F401
     BLUEPRINT,
     ZONE,
     accept,
+    decision,
     draft,
     h,
     login,
@@ -139,6 +141,48 @@ def test_a_renamed_proposal_is_recorded_as_edited_and_stored_as_typed(h):
     assert stored["name"] == "Weekly inbox triage"
     assert stored["origin"]["edited"] is True
     assert stored["origin"]["source"] == "orchestration"
+
+
+@pytest.mark.parametrize("minimum", [1, 60])
+@pytest.mark.parametrize("legacy", [3600, 86400, "invalid"])
+def test_hourly_proposal_can_be_edited_to_every_minute_and_persisted(h, minimum, legacy):
+    h.settings["workflow_min_schedule_interval_seconds"] = minimum
+    h.settings["chat_orchestration_min_workflow_interval_seconds"] = legacy
+    seed_run(h, blueprint=blueprint_with({"type": "interval", "unit": "hours", "value": 1}))
+    login(h)
+    workflow = draft_workflow(h)
+    [payload] = run_probe([{"workflow": workflow, "schedule": {"unit": "minutes", "value": 1}}])
+    response = accept(h, workflow=payload)
+    assert response.status_code == 201, response.get_data(as_text=True)
+    stored = stored_workflow(h)
+    assert stored["schedule"] == {"unit": "minutes", "value": 1}
+    assert stored["origin"]["edited"] is True
+    assert stored["is_enabled"] is False
+
+
+def test_minute_schedule_below_policy_releases_claim_and_allows_corrected_retry(h):
+    h.settings["workflow_min_schedule_interval_seconds"] = 61
+    seed_run(h, blueprint=blueprint_with({"type": "interval", "unit": "hours", "value": 1}))
+    login(h)
+    workflow = draft_workflow(h)
+    [payload] = run_probe([{"workflow": workflow, "schedule": {"unit": "minutes", "value": 1}}])
+    response = accept(h, workflow=payload)
+    assert response.status_code == 400, response.get_data(as_text=True)
+    body = response.get_json()
+    assert body["code"] == "invalid_workflow_settings"
+    assert body["error"] == (
+        "This schedule runs more often than the administrator allows. Choose an interval of at least 61 seconds."
+    )
+    current_decision = decision(h)
+    assert current_decision is None
+    assert not h.workflows.items
+    payload["schedule"] = {"unit": "minutes", "value": 2}
+    response = accept(h, workflow=payload)
+    assert response.status_code == 201, response.get_data(as_text=True)
+    assert stored_workflow(h)["schedule"] == {"unit": "minutes", "value": 2}
+    repeated = accept(h, workflow=payload)
+    assert repeated.status_code == 200
+    assert len(h.workflows.items) == 1
 
 
 @pytest.mark.parametrize("edit", [False, True])

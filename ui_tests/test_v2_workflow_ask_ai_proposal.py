@@ -1,9 +1,10 @@
 # test_v2_workflow_ask_ai_proposal.py
 """
 Real-component browser test for Ask AI on a workflow proposal's draft (Phase 3c).
-Version: 0.261.271
+Version: 0.261.317
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 Implemented in: 0.261.213
+Shared schedule policy and save-error coverage implemented in: 0.261.317
 Refs: microsoft/simplechat#1548
 
 Phase 4's proposal card opens the workflow editor on the proposal's draft through Edit. Ask AI
@@ -81,7 +82,8 @@ def ask_card_ui(card_ui):
 
     # A proposal draft has no saved workflow to read, and these tests send no # references.
     stub = AssistStub(
-        user_id="proposal-tester", record_error=record_error, options=editor_options, read_base=None, resolve=None,
+        user_id="proposal-tester", record_error=record_error,
+        options=lambda: editor_options(api.minimum_interval_seconds), read_base=None, resolve=None,
     )
     # Registered after the harness's catch-all route, so it answers the assist route first.
     page.route(ASSIST_ROUTE, stub.handle)
@@ -177,6 +179,102 @@ def test_a_proposal_draft_sends_no_base_and_saves_through_review(ask_card_ui):
     assert not [call for call in api.requests if call["path"].startswith("/api/user/workflows")
                 and call["method"] == "POST"], "The editor saved a workflow directly."
     expect(card(page).get_by_role("status")).to_have_text("Created, paused")
+
+
+@pytest.mark.parametrize("minimum", [1, 60])
+def test_ask_ai_preserves_every_minute_through_review_and_proposal_save(ask_card_ui, minimum):
+    page, api, stub = ask_card_ui
+    api.minimum_interval_seconds = minimum
+    api.draft["schedule"] = {"unit": "hours", "value": 1}
+    api.draft["trigger_type"] = "interval"
+    stub.queue(stub.changed(
+        {"op": "set_schedule_interval", "unit": "minutes", "value": 1},
+        text="The workflow now runs every minute.",
+    ))
+    mount(page, api)
+    enable_ask_ai(page)
+    dialog, _ = open_editor(page, card(page))
+    dialog.get_by_role("button", name="Ask AI", exact=True).click()
+    panel = side_panel(dialog)
+    box = panel.get_by_role("textbox", name="Message Ask AI", exact=True)
+    box.fill("Run every minute.")
+    box.press("Enter")
+    stub.wait_for_requests(page, 1)
+    expect(panel.locator("[data-workflow-assist-card]")).to_have_attribute("data-state", "applied")
+    dialog.get_by_role("button", name="Save workflow", exact=True).click()
+    review = panel.get_by_role("region", name="Review before saving", exact=True)
+    expect(review).to_be_visible()
+    assert not api.writes()
+    review.get_by_role("button", name="Confirm and save", exact=True).click()
+    expect(dialog).to_have_count(0)
+    writes = api.writes()
+    assert len(writes) == 1
+    assert writes[0]["body"]["workflow"]["schedule"] == {"unit": "minutes", "value": 1}
+    expect(card(page).get_by_role("status")).to_have_text("Created, paused")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_repeated_save_errors_reveal_and_focus_message_without_losing_ai_edits(ask_card_ui, width):
+    page, api, stub = ask_card_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.minimum_interval_seconds = 1
+    api.draft["schedule"] = {"unit": "hours", "value": 1}
+    api.draft["trigger_type"] = "interval"
+    message = "This schedule runs more often than the administrator allows. Choose an interval of at least 2 minutes."
+    api.accept_errors.extend([(400, message, "invalid_workflow_settings")] * 2)
+    stub.queue(stub.changed({"op": "set_schedule_interval", "unit": "minutes", "value": 1}))
+    mount(page, api)
+    enable_ask_ai(page)
+    dialog, name = open_editor(page, card(page))
+    dialog.get_by_role("button", name="Ask AI", exact=True).click()
+    panel = side_panel(dialog)
+    box = panel.get_by_role("textbox", name="Message Ask AI", exact=True)
+    box.fill("Run every minute.")
+    box.press("Enter")
+    stub.wait_for_requests(page, 1)
+    expect(panel.locator("[data-workflow-assist-card]")).to_have_attribute("data-state", "applied")
+    dialog.get_by_role("button", name="Save workflow", exact=True).click()
+    review = panel.get_by_role("region", name="Review before saving", exact=True)
+    review.get_by_role("button", name="Confirm and save", exact=True).click()
+    error = dialog.get_by_role("alert").filter(has_text=message)
+    expect(error).to_be_focused()
+    expect(error).to_be_in_viewport(ratio=1)
+    expect(name).to_have_value(NAME)
+    assert api.writes()[0]["body"]["workflow"]["schedule"] == {"unit": "minutes", "value": 1}
+
+    dialog.get_by_role("button", name="Ask AI", exact=True).click()
+    box = panel.get_by_role("textbox", name="Message Ask AI", exact=True)
+    expect(box).to_be_focused()
+    dialog.get_by_role("button", name="Save workflow", exact=True).click()
+    review.get_by_role("button", name="Confirm and save", exact=True).click()
+    expect(error).to_be_focused()
+    expect(error).to_be_in_viewport(ratio=1)
+    assert len(api.writes()) == 2
+    dialog.get_by_role("button", name="Save workflow", exact=True).click()
+    review.get_by_role("button", name="Confirm and save", exact=True).click()
+    expect(dialog).to_have_count(0)
+    assert api.writes()[-1]["body"]["workflow"]["schedule"] == {"unit": "minutes", "value": 1}
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_below_minimum_is_explained_on_save_and_repeated_validation_reveals_it(card_ui, width):
+    page, api = card_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.minimum_interval_seconds = 61
+    api.draft["trigger_type"] = "interval"
+    api.draft["schedule"] = {"unit": "minutes", "value": 1}
+    mount(page, api)
+    dialog, name = open_editor(page, card(page))
+    message = "This schedule runs more often than the administrator allows. Choose an interval of at least 61 seconds."
+    error = dialog.get_by_role("alert").filter(has_text=message)
+    expect(error).to_have_count(0)
+    for _ in range(2):
+        dialog.get_by_role("heading", name="Alerts", exact=True).scroll_into_view_if_needed()
+        dialog.get_by_role("button", name="Save workflow", exact=True).click()
+        expect(error).to_be_focused()
+        expect(error).to_be_in_viewport(ratio=1)
+        expect(name).to_have_value(NAME)
+    assert not api.writes()
 
 
 def test_ask_ai_is_hidden_in_a_proposal_draft_when_the_assistant_is_off(ask_card_ui):

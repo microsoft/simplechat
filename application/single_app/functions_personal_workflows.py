@@ -62,12 +62,10 @@ from functions_workflow_definitions import (
     normalize_workflow_definition, workflow_definition_for_editor,
 )
 from functions_workflow_limits import (
-    get_orchestration_workflow_min_interval_seconds,
     get_workflow_min_schedule_interval_seconds,
 )
 from functions_workflow_runtime_store import workflow_runtime_store
 from functions_workflow_schedules import (
-    enforce_orchestration_workflow_cadence,
     enforce_workflow_schedule_minimum,
     is_calendar_workflow_schedule,
     next_workflow_schedule_run,
@@ -167,16 +165,13 @@ def _normalize_personal_workflow_conversation_id(user_id, workflow_data, existin
     return conversation_id
 
 
-def _normalize_schedule(schedule_payload, existing_workflow=None, settings=None, orchestration=False):
+def _normalize_schedule(schedule_payload, existing_workflow=None, settings=None):
     """Normalize an interval or calendar schedule for saving.
 
     The administrator's minimum interval governs only a new or changed interval schedule, so a
-    raised minimum never blocks re-saving a workflow on the interval it already runs on. A workflow
-    that chat orchestration is creating must also meet the higher minimum for such workflows.
+    raised minimum never blocks re-saving a workflow on the interval it already runs on.
     """
     schedule = normalize_workflow_schedule(schedule_payload)
-    if orchestration:
-        enforce_orchestration_workflow_cadence(schedule, get_orchestration_workflow_min_interval_seconds(settings))
     if workflow_schedule_minimum_applies(schedule, existing_workflow):
         enforce_workflow_schedule_minimum(schedule, get_workflow_min_schedule_interval_seconds(settings))
     return schedule
@@ -1103,8 +1098,6 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
             workflow_data.get('schedule'),
             existing_workflow=existing_workflow,
             settings=settings,
-            # A saved chat plan keeps the chat-workflow floor whenever its schedule is saved.
-            **({'orchestration': True} if origin is not None or existing_plan_replay_task is not None else {}),
         )
 
     workflow = {

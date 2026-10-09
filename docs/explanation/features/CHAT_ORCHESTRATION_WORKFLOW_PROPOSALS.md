@@ -6,6 +6,8 @@ Application version tracking: `application\single_app\config.py`.
 
 Native alert authoring implemented in version: **0.261.315**.
 
+Shared schedule policy and save-error visibility implemented in version: **0.261.317**.
+
 Related issue: #1547, part of #1543. Builds on the
 [Workflow draft service](WORKFLOW_DRAFT_SERVICE.md) (#1545) and
 [Workflow calendar schedules](WORKFLOW_CALENDAR_SCHEDULES.md) (#1544). The
@@ -43,6 +45,13 @@ Other requests retain quieter defaults. Email is a separate task requiring the a
 agent and account connection, not a prerequisite for native alerts. These proposals remain
 personal workflows and alert their owner, not arbitrary recipients or everyone in a group.
 Missing monitoring cadence should be clarified rather than invented.
+
+For any recurring request without timing, planner guidance asks how often with
+relevant allowed choices instead of assuming hourly. An explicitly requested
+allowed cadence, including every minute, should be preserved. A below-policy
+request is explained with the general administrator minimum and alternatives;
+valid timing needs no warning. These instructions guide model behavior, not a
+deterministic guarantee of a live model's response.
 
 The closed blueprint accepts `alerts: {mode: "rules", rules: [...]}` with up to 20 rules.
 Rules use native severities, conditions and pop-up options; a task scope uses its 1-based
@@ -324,10 +333,13 @@ unavailable agents, documents or sources, and 400 otherwise.
 - One proposal per plan, and at most five tasks.
 - **Workflows Created From Chat Per User** (`chat_orchestration_max_workflows_per_user`,
   default 20). At the cap, proposals aren't offered, and an accept checks again.
-- **Minimum Schedule Interval For Workflows Created From Chat (seconds)**
-  (`chat_orchestration_min_workflow_interval_seconds`, default 3,600). The larger
-  of it and **Workflow Minimum Schedule Interval** applies. Calendar schedules
-  always pass.
+- **Workflow Minimum Schedule Interval** (`workflow_min_schedule_interval_seconds`,
+  default 1 second) applies to new or changed interval schedules regardless of
+  origin. Calendar schedules always pass. The former chat-only setting is retired
+  without changing the general minimum.
+- Save failures reveal and focus their message on desktop and mobile, including
+  repeated identical failures. The editor retains the draft and AI changes for
+  correction and retry; creation still requires approval.
 
 ### Microsoft 365
 

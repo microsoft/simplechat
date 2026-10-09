@@ -208,9 +208,6 @@ from functions_workflow_limits import (
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
     CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
     CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX,
     CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN,
@@ -226,7 +223,6 @@ from functions_workflow_limits import (
     WorkflowLoopLimitError,
     validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
-    validate_chat_orchestration_min_workflow_interval_seconds,
     validate_chat_orchestration_workflow_run_wait_max_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
@@ -4581,23 +4577,6 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "limits", "label": "Limits", "variant": "limits"},
         },
         {
-            "key": "chat_orchestration_min_workflow_interval_seconds",
-            "type": "number",
-            "label": "Minimum Schedule Interval For Workflows Created From Chat (seconds)",
-            "help": (
-                "The shortest repeat interval a chat plan may give a workflow it creates. The "
-                "general Workflow Minimum Schedule Interval still applies when it is longer. "
-                "Daily, weekly and monthly schedules always pass. Default is 3,600 (hourly); "
-                "supported range is 60-86,400."
-            ),
-            "default": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
-            "min": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
-            "max": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
-            "step": 1,
-            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
-            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
-        },
-        {
             "key": "chat_orchestration_max_workflow_handoffs_per_day",
             "type": "number",
             "label": "Hand-Offs From Chat Per User Per Day",
@@ -4893,7 +4872,7 @@ ADMIN_SETTINGS_FIELDS = {
             "label": "Workflow Minimum Schedule Interval (seconds)",
             "help": (
                 "Shortest repeat interval, in seconds, allowed when a personal or group "
-                "workflow interval schedule is created or changed. Workflows already saved "
+                "workflow interval schedule is created or changed, including workflows from chat. Workflows already saved "
                 "keep their schedule and keep running when this is raised. Calendar "
                 "schedules are not affected. Default is 1; supported range is 1-86,400."
             ),
@@ -9873,12 +9852,6 @@ def _normalize_field_value(key, value, field):
     if key == "chat_orchestration_workflow_run_wait_max_seconds":
         try:
             return validate_chat_orchestration_workflow_run_wait_max_seconds(value), None, None
-        except WorkflowLoopLimitError as error:
-            return None, error.public_message, None
-
-    if key == "chat_orchestration_min_workflow_interval_seconds":
-        try:
-            return validate_chat_orchestration_min_workflow_interval_seconds(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
 

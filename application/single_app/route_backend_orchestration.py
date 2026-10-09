@@ -3240,7 +3240,7 @@ def register_route_backend_orchestration(bp):
             body, code = replay.plan_replay_error_response(exc.code, exc.public_message, exc.refusals)
             return jsonify(body), code
         except replay.WorkflowPublicValidationError as exc:
-            # A reviewed, data-free settings error, such as a schedule faster than the chat minimum.
+            # A reviewed, data-free settings error, such as a schedule below the shared minimum.
             return jsonify({'error': exc.public_message, 'code': exc.code}), 422
         except ValueError as exc:
             log_event(

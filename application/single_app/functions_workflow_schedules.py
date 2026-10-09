@@ -228,7 +228,7 @@ def enforce_workflow_schedule_minimum(schedule, min_interval_seconds):
 
 
 def enforce_orchestration_workflow_cadence(schedule, min_interval_seconds):
-    """Refuse an interval that runs a workflow created from chat more often than its own floor.
+    """Report a blueprint interval below the shared policy with its repairable cadence code.
 
     Calendar schedules repeat at most daily, so they always pass.
     """
@@ -236,9 +236,8 @@ def enforce_orchestration_workflow_cadence(schedule, min_interval_seconds):
     if seconds is not None and seconds < min_interval_seconds:
         # The minimum is administrator policy, not caller text, so naming it is safe.
         raise WorkflowCadenceError(
-            'Workflows created from chat cannot run this often. '
-            f'Choose an interval of at least {format_workflow_schedule_duration(min_interval_seconds)}, '
-            'or a daily, weekly or monthly schedule.'
+            'This schedule runs more often than the administrator allows. '
+            f'Choose an interval of at least {format_workflow_schedule_duration(min_interval_seconds)}.'
         )
     return schedule
 
