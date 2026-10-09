@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.308)**
+
+#### New Features
+
+*   **Repeat a Chat Plan on a Schedule**
+    *   With **Repeat Chat Plans On A Schedule** on (`enable_workflow_plan_replay`, off by default; it needs Chat Orchestration and personal workflows), a finished orchestrated answer offers **Repeat on a schedule**. The card freezes the plan that just ran and shows the request, how dates are handled, the shortest allowed interval, the step cap and every step with its capability before anything is saved. Saving creates a paused personal workflow unless the user turns the schedule on.
+    *   Each run replays the frozen plan as the person who saved it, in the workflow's own conversation, never the chat it came from. The plan is SHA-256 hashed when it's saved and checked again before every run, and the model never adds, removes or rewrites a step. Each run also checks again that the setting, Chat Orchestration, every step's capability, and every document, group and public workspace the plan reads are still available to that person. A refused run fails with a fixed reason before any step runs.
+    *   Only steps that are safe to repeat are allowed: Search documents, Analyse documents, Compare documents, Merge documents, Inspect spreadsheets, Prepare content and Generate image. Web search, page fetches, deep research, actions, agents, workflow steps, steps that wait for a file or result, and plans that asked the user a question are refused, with a reason for each step. A run is limited to 8 steps and 15 minutes, and the schedule follows the chat-created workflow minimum interval and quota.
+    *   The run inspector shows a typed result for each run: the orchestration run, each step's status, the final response and its image or file artifacts. The V2 workflow editor shows the frozen steps read-only; the name, schedule and alerts stay editable. The Classic workflow page sends these workflows to V2.
+    *   A saved workflow starts with one **Run failed** alert rule, so a refused or failed scheduled run isn't missed: it sends a high-severity notification to the bell, never a pop-up, with the fixed reason. The card says so before saving, and the rule stays editable under **Alerts**.
+    *   Part of #1550, refs #1543.
+    *   (Ref: `functions_workflow_plan_replay.py`, `functions_workflow_runner.py`, `route_backend_orchestration.py` `/api/v2/orchestration/runs/<run_id>/plan-replay`, `PlanReplaySaveCard.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowRunHistory.tsx`, [Workflow plan replay](features/WORKFLOW_PLAN_REPLAY.md))
+
 ### **(v0.261.306)**
 
 #### Bug Fixes

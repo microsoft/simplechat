@@ -11,7 +11,7 @@ import {
     Fragment, useCallback, useEffect, useId, useMemo, useRef, useState,
     type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type SetStateAction,
 } from 'react';
-import { AlertTriangle, ArrowLeft, GitBranch, Lock, Plus, Redo2, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, CalendarClock, GitBranch, Lock, Plus, Redo2, Undo2 } from 'lucide-react';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Modal } from '../ui/Modal';
 import { SectionCard } from '../ui/SectionCard';
@@ -76,6 +76,7 @@ import {
     workflowForFlowPreview,
     workflowForSave,
     workflowMonitorFileSyncConfig,
+    workflowPlanReplayTask,
     workflowScheduleTimezones,
     workflowScopeKey,
     workflowValidationErrors,
@@ -86,6 +87,7 @@ import {
     type WorkflowScope,
     type WorkflowTask,
 } from '../../lib/workflowEditor';
+import { describePlanReplayTimeHandling, planReplayRunTimeZone, planReplaySummary } from '../../lib/workflowPlanReplay';
 import {
     workflowEditorSections,
     workflowRunnerSummary,
@@ -228,6 +230,8 @@ export function WorkflowEditorDialog({
     const unsupportedFlow = flowUnsupportedReason(draft, options);
     const unsupported = !(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version) || Boolean(unsupportedFlow);
     const readOnly = unsupported || !options.can_manage || Boolean(draft.active_run_id) || accessLost;
+    const replayTask = workflowPlanReplayTask(draft);
+    const replaySummary = planReplaySummary(replayTask);
     const localRunner = draft.definition_version === 3 && draft.tasks.some((task) =>
         task.runner.type === 'inherit' && !task.publication &&
         (task.input_processing === 'saved_record_report' || enclosingFlowLoopControls(draft, flowTaskNodeId(draft, task.id)).length > 0));
@@ -646,8 +650,12 @@ export function WorkflowEditorDialog({
         groupFileSyncEnabled: groupScope && fileSyncSources.status === 'ready' ? fileSyncSources.fileSyncEnabled : null,
         structuredSurface: surface,
         scheduleTimezones: workflowScheduleTimezones(options),
-    }).filter((section) => section.id !== 'limits' || !unsupported),
-    [draft, options, scope.type, groupScope, fileSyncSources.status, fileSyncSources.fileSyncEnabled, surface, unsupported]);
+    }).filter((section) => {
+        if (section.id === 'limits' && unsupported) return false;
+        if (replayTask && ['file-sync', 'execution', 'references', 'limits', 'tasks'].includes(section.id)) return false;
+        return true;
+    }),
+    [draft, options, scope.type, groupScope, fileSyncSources.status, fileSyncSources.fileSyncEnabled, surface, unsupported, replayTask]);
     const sectionFor = (id: WorkflowEditorSectionId) => sections.find((section) => section.id === id);
     const cardFrame = (id: WorkflowEditorSectionId): WorkflowCardFrame => ({
         id: cardId(id),
@@ -886,8 +894,8 @@ export function WorkflowEditorDialog({
                             />
                         </WorkflowField>
                     </WorkflowChangedField>
-                    <div className="min-w-0">{runnerFields}</div>
-                    <WorkflowChangedField changeKey="m365_run_as_user_id">
+                    {!replayTask ? <div className="min-w-0">{runnerFields}</div> : null}
+                    {!replayTask ? <WorkflowChangedField changeKey="m365_run_as_user_id">
                         <WorkflowMicrosoft365RunAs
                             scope={scope}
                             value={draft.m365_run_as_user_id ?? ''}
@@ -895,9 +903,50 @@ export function WorkflowEditorDialog({
                             canListAccounts={options.can_manage}
                             onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
                         />
-                    </WorkflowChangedField>
+                    </WorkflowChangedField> : null}
                 </WorkflowFieldList>
             </SectionCard>
+
+            {replaySummary ? (
+                <SectionCard id={`${cardIdPrefix}-saved-plan`} headingLevel={3}
+                    title="Saved chat plan" icon={CalendarClock}
+                    meta="Frozen steps are read-only and replay exactly as saved.">
+                    <div className="space-y-3">
+                        <p className="rounded-xl border border-edge bg-surface-2 p-3 text-sm text-text-2">
+                            The saved plan can&apos;t be edited. To change the steps, run the request again in chat and save the new plan.
+                        </p>
+                        <dl className="space-y-1.5 text-sm">
+                            <div className="min-w-0 sm:grid sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+                                <dt className="font-medium text-text-2">Request</dt>
+                                <dd className="break-words text-text-1">{replaySummary.request}</dd>
+                            </div>
+                            <div className="min-w-0 sm:grid sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+                                <dt className="font-medium text-text-2">Frozen at</dt>
+                                <dd className="break-words text-text-1">{replaySummary.frozen_at || 'Recorded with the workflow'}</dd>
+                            </div>
+                            <div className="min-w-0 sm:grid sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+                                <dt className="font-medium text-text-2">Rules</dt>
+                                <dd className="break-words text-text-1">{replaySummary.allowlist_version || 'Saved plan rules'}</dd>
+                            </div>
+                            <div className="min-w-0 sm:grid sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+                                <dt className="font-medium text-text-2">Time</dt>
+                                <dd className="break-words text-text-1">
+                                    {describePlanReplayTimeHandling(planReplayRunTimeZone(draft.schedule, replaySummary.time_zone))}
+                                </dd>
+                            </div>
+                        </dl>
+                        <ol aria-label="Saved chat plan steps" className="space-y-2">
+                            {replaySummary.steps.map((step) => (
+                                <li key={`${step.number}-${step.capability_id}-${step.title}`}
+                                    className="rounded-lg border border-edge bg-surface-2 p-2">
+                                    <p className="break-words font-medium text-text-1">{`${step.number}. ${step.title}`}</p>
+                                    <p className="break-words text-text-2">{step.label}</p>
+                                </li>
+                            ))}
+                        </ol>
+                    </div>
+                </SectionCard>
+            ) : null}
 
             <SectionCard id={cardId('trigger')} headingLevel={3}
                 title={WORKFLOW_EDITOR_SECTION_LABELS.trigger} icon={sectionIcon('trigger')}
@@ -942,7 +991,7 @@ export function WorkflowEditorDialog({
                 />
             </SectionCard>
 
-            <WorkflowFileSyncFields
+            {!replayTask ? <WorkflowFileSyncFields
                 scope={scope}
                 workflow={draft}
                 sourceList={fileSyncSources}
@@ -952,9 +1001,9 @@ export function WorkflowEditorDialog({
                     ...current,
                     file_sync: update(workflowFileSyncConfig(current.file_sync)),
                 }))}
-            />
+            /> : null}
 
-            <SectionCard id={cardId('execution')} headingLevel={3}
+            {!replayTask ? <SectionCard id={cardId('execution')} headingLevel={3}
                 title={WORKFLOW_EDITOR_SECTION_LABELS.execution} icon={sectionIcon('execution')}
                 status={sectionFor('execution')?.status} meta={sectionFor('execution')?.meta}>
                 <WorkflowChangedField changeKey="error_handling">
@@ -1021,9 +1070,9 @@ export function WorkflowEditorDialog({
                         </WorkflowChangedField>
                     </WorkflowSwitchGrid>
                 </div>
-            </SectionCard>
+            </SectionCard> : null}
 
-            <SectionCard id={cardId('references')} ariaLabel="Workflow shared references" headingLevel={3}
+            {!replayTask ? <SectionCard id={cardId('references')} ariaLabel="Workflow shared references" headingLevel={3}
                 title={WORKFLOW_EDITOR_SECTION_LABELS.references} icon={sectionIcon('references')}
                 status={sectionFor('references')?.status} meta={sectionFor('references')?.meta}>
                 <WorkflowDocumentPicker
@@ -1034,9 +1083,9 @@ export function WorkflowEditorDialog({
                     onChange={(referenceInputs) => setWorkflow((current) => ({ ...current, reference_inputs: referenceInputs }))}
                 />
                 <WorkflowReferenceChanges className="mt-3" />
-            </SectionCard>
+            </SectionCard> : null}
 
-            {draft.definition_version === 3 && !unsupported ? (
+            {!replayTask && draft.definition_version === 3 && !unsupported ? (
                 <SectionCard id={cardId('limits')} headingLevel={3}
                     title={WORKFLOW_EDITOR_SECTION_LABELS.limits} icon={sectionIcon('limits')}
                     status={sectionFor('limits')?.status} meta={sectionFor('limits')?.meta}>
@@ -1046,7 +1095,7 @@ export function WorkflowEditorDialog({
                 </SectionCard>
             ) : null}
 
-            <SectionCard id={cardId('tasks')} ariaLabel="Workflow tasks" headingLevel={3}
+            {!replayTask ? <SectionCard id={cardId('tasks')} ariaLabel="Workflow tasks" headingLevel={3}
                 // Converting to structured control flow swaps this card's whole body, title and
                 // icon while Limits appears above it. Chromium can leave a card updated that way
                 // with its contents unrendered, so a conversion mounts the card afresh instead.
@@ -1125,7 +1174,7 @@ export function WorkflowEditorDialog({
                     <WorkflowRemovedItemRows list="task"
                         placement={{ at: 'end', siblings: draft.tasks.map((task) => task.id), root: true }} />
                 </div>}
-            </SectionCard>
+            </SectionCard> : null}
 
             {/* Rules watch tasks by ID, so alerts follow the tasks they can refer to. */}
             {options.can_manage && !readOnly ? (

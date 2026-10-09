@@ -129,6 +129,10 @@ WORKFLOW_RESULTS_SETTING = 'enable_chat_workflow_results'
 # workflow. Hand-off also needs proposals, runs and results turned on, because it creates a
 # workflow, starts its one run and posts that run's result back into the chat.
 WORKFLOW_HANDOFF_SETTING = 'enable_chat_orchestration_workflow_handoff'
+# The settings key that must be exactly True before a completed plan can be saved as a personal
+# workflow that replays it on a schedule, and before an existing replay workflow may run. It is not a
+# capability: a replay is never a step the planner can choose, only a user's explicit save.
+WORKFLOW_PLAN_REPLAY_SETTING = 'enable_workflow_plan_replay'
 # The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
 # The workflow planning context and the deliverables import these, so each has one definition.
 # The draft service's own task limit (functions_workflow_drafts.BLUEPRINT_MAX_TASKS) stays a

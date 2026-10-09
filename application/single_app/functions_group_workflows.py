@@ -483,6 +483,14 @@ def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_i
     and ``origin`` belong to a server create path, never to a save payload.
     """
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
+    if workflow_data.get('plan_replay') is not None or any(
+        isinstance(task, dict) and task.get('type') == 'plan_replay'
+        for task in (workflow_data.get('tasks') if isinstance(workflow_data.get('tasks'), list) else [])
+    ):
+        # Plan replay is personal-only; importing here avoids a workflow-store import cycle.
+        from functions_workflow_plan_replay import PlanReplaySaveError
+
+        raise PlanReplaySaveError('group_not_supported')
     settings_options = {'settings': settings} if settings is not None else {}
     settings = get_settings() if settings is None else settings
     now_iso = _utc_now_iso()

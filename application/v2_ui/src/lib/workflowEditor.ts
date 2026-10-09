@@ -430,7 +430,7 @@ export function isWorkflowPublicationStatus(value: unknown): value is WorkflowPu
 
 export interface WorkflowTask {
     id: string;
-    type: 'instructions';
+    type: 'instructions' | 'plan_replay';
     name: string;
     instructions: string;
     order: number;
@@ -1101,10 +1101,11 @@ function normalizeTask(value: unknown, index: number, structured = false): Workf
         : undefined;
     const outputContract = normalizeOutputContract(record.output_contract);
     const approval = Object.hasOwn(record, 'approval') ? normalizeApproval(record.approval) : undefined;
+    const replayTask = record.type === 'plan_replay' && isRecord(record.plan_replay);
     return {
         ...record,
         id: text(record.id) || taskIdFallback(),
-        type: 'instructions',
+        type: replayTask ? 'plan_replay' : 'instructions',
         name: text(record.name) || `Task ${index + 1}`,
         instructions: text(record.instructions),
         order: index + 1,
@@ -1118,6 +1119,10 @@ function normalizeTask(value: unknown, index: number, structured = false): Workf
             ? { ...record.output_contract, ...outputContract } : outputContract } : {}),
         ...(approval ? { approval } : {}),
     };
+}
+
+export function workflowPlanReplayTask(definition: Pick<WorkflowDefinition, 'tasks'> | null | undefined): WorkflowTask | null {
+    return definition?.tasks.find((task) => task.type === 'plan_replay' && isRecord(task.plan_replay)) ?? null;
 }
 
 function legacyWorkflowTask(record: Record<string, unknown>): WorkflowTask | null {
@@ -2063,6 +2068,7 @@ export function workflowValidationErrors(
     fileSyncListing: WorkflowFileSyncSourceListing | null = null,
 ): string[] {
     const errors: string[] = [];
+    const replayTask = workflowPlanReplayTask(draft);
     if (!draft.name.trim()) {
         errors.push('Workflow name is required.');
     }
@@ -2120,6 +2126,9 @@ export function workflowValidationErrors(
     const unsupported = flowUnsupportedReason(draft, options);
     if (unsupported) errors.push(unsupported);
     errors.push(...workflowSettingsDraftErrors(draft, options, original ?? null, fileSyncListing));
+    if (replayTask) {
+        return errors;
+    }
     if (draft.runner_type === 'agent' && !draft.selected_agent) {
         errors.push('Choose an agent or switch the workflow runner to model.');
     }

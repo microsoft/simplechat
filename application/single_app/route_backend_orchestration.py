@@ -627,6 +627,36 @@ def _authorize_context_conversation(conversation_id, user_id):
     return conversation
 
 
+WORKFLOW_REPLAY_RUN_MANAGED_CODE = 'workflow_replay_run_managed'
+
+
+def _plan_replay():
+    """The saved-plan replay module, imported on first use like the proposal decisions module."""
+    import functions_workflow_plan_replay
+
+    return functions_workflow_plan_replay
+
+
+def _is_workflow_replay_run(record):
+    """A saved-workflow plan replay is started, retried and cancelled only by its workflow run."""
+    return isinstance(record, dict) and bool(record.get('workflow_replay'))
+
+
+def _workflow_replay_run_message():
+    return _plan_replay().REFUSAL_MESSAGES[WORKFLOW_REPLAY_RUN_MANAGED_CODE]
+
+
+def _workflow_replay_run_payload():
+    return {'error': _workflow_replay_run_message(), 'code': WORKFLOW_REPLAY_RUN_MANAGED_CODE}
+
+
+def _refuse_workflow_replay_revision(record):
+    if _is_workflow_replay_run(record):
+        raise PlanRevisionError(
+            _workflow_replay_run_message(), code=WORKFLOW_REPLAY_RUN_MANAGED_CODE, status_code=409,
+        )
+
+
 def _load_conversation_snapshot(
     conversation_id, user_id, settings, *, turn_id=None, before_message_id=None
 ):
@@ -2381,6 +2411,7 @@ def register_route_backend_orchestration(bp):
             if set(data) - {'conversation_id', 'plan_id', 'edits', 'expected_version'}:
                 raise PlanRevisionError('Invalid edit request fields.', code='invalid_request', status_code=400)
             record = read_revision_run(run_id, user_id, conversation_id)
+            _refuse_workflow_replay_revision(record)
             _conversation_context_for_run(record, user_id, settings)
             record = begin_plan_edit(
                 run_id, user_id, conversation_id, plan_id=data.get('plan_id'),
@@ -2409,6 +2440,7 @@ def register_route_backend_orchestration(bp):
             except SubmissionIdError as exc:
                 raise PlanRevisionError(str(exc), code='invalid_request', status_code=400) from exc
             record = read_revision_run(run_id, user_id, conversation_id)
+            _refuse_workflow_replay_revision(record)
             snapshot = _conversation_context_for_run(record, user_id, settings)
             claim = claim_plan_revision(run_id, user_id, conversation_id, data)
             identity = _request_identity(user_id, seeded_agent=(record.get('seeds') or {}).get('agent'))
@@ -2484,11 +2516,20 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'User not authenticated'}), 401
         data = request.get_json(silent=True)
         conversation_id = data.get('conversation_id') if isinstance(data, dict) else None
+
+        def validate_retry(record):
+            if _is_workflow_replay_run(record):
+                raise RecoveryError(
+                    _workflow_replay_run_message(),
+                    code=WORKFLOW_REPLAY_RUN_MANAGED_CODE, status_code=409,
+                )
+            return _validate_retry_context(record, user_id, settings, preparing=True)
+
         try:
             child = prepare_retry(
                 run_id, user_id, data,
                 authorize=lambda: _authorize_context_conversation(conversation_id, user_id),
-                validate=lambda record: _validate_retry_context(record, user_id, settings, preparing=True),
+                validate=validate_retry,
                 message_container=cosmos_messages_container,
             )
             return jsonify({'run': _run_detail_row(child)}), 200
@@ -2542,6 +2583,9 @@ def register_route_backend_orchestration(bp):
             # Ownership is enforced inside the store, so a run belonging to somebody else is
             # indistinguishable from one that does not exist. That is the intent.
             return jsonify({'error': 'Run not found.'}), 404
+        if _is_workflow_replay_run(record):
+            # Never run a frozen replay with this session's roles; its workflow run drives it.
+            return jsonify(_workflow_replay_run_payload()), 409
 
         plan = record.get('plan') or {}
         try:
@@ -2710,6 +2754,8 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'Run not found.'}), 404
         if is_legacy_plan(record.get('plan')):
             return _legacy_plan_response()
+        if _is_workflow_replay_run(record):
+            return jsonify(_workflow_replay_run_payload()), 409
 
         try:
             conversation_id = conversation_id or record.get('conversation_id')
@@ -3140,6 +3186,108 @@ def register_route_backend_orchestration(bp):
             )
 
         return _workflow_handoff_response(run_id, _text(request.args.get('conversation_id')), draft)
+
+    def _plan_replay_response(run_id, conversation_id, decide):
+        """Authorize a saved-plan request's settings, conversation and run, then answer it with ``decide``.
+
+        A conversation or run the requester cannot open is indistinguishable from a missing one.
+        Every error text is fixed server text. Logs carry hashed ids and the error type only.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        replay = _plan_replay()
+        if not conversation_id:
+            body, code = replay.plan_replay_error_response('invalid_request')
+            return jsonify(body), code
+        settings = get_settings()
+        try:
+            replay.authorize_plan_replay_settings(settings)
+            conversation = _authorize_context_conversation(conversation_id, user_id)
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('conversation_id') != conversation_id:
+                body, code = replay.plan_replay_error_response('run_not_found')
+                return jsonify(body), code
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
+            status, payload = decide(replay, user_id, record, conversation, settings)
+        except ConversationContextError:
+            body, code = replay.plan_replay_error_response('run_not_found')
+            return jsonify(body), code
+        except (replay.PlanReplayRefused, replay.PlanReplaySaveError) as exc:
+            body, code = replay.plan_replay_error_response(exc.code, exc.public_message, exc.refusals)
+            return jsonify(body), code
+        except replay.WorkflowPublicValidationError as exc:
+            # A reviewed, data-free settings error, such as a schedule faster than the chat minimum.
+            return jsonify({'error': exc.public_message, 'code': exc.code}), 422
+        except ValueError as exc:
+            log_event(
+                '[ORCHESTRATION] A saved-plan workflow request was not valid.', level=logging.WARNING,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_plan_replay', 'error_type': type(exc).__name__,
+                },
+            )
+            body, code = replay.plan_replay_error_response('invalid_request')
+            return jsonify(body), code
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION] A saved-plan workflow request could not be completed.', level=logging.ERROR,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_plan_replay', 'error_type': type(exc).__name__,
+                },
+            )
+            body, code = replay.plan_replay_error_response('service_unavailable')
+            return jsonify(body), code
+        return jsonify(payload), status
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/plan-replay", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_plan_replay_preview(run_id):
+        """Every step a completed plan would repeat as a saved workflow, with any refusals. Writes nothing."""
+        def preview(replay, user_id, record, conversation, settings):
+            freeze = replay.freeze_source_run(record, conversation, user_id, settings)
+            return 200, replay.build_plan_replay_preview(freeze, settings)
+
+        return _plan_replay_response(run_id, _text(request.args.get('conversation_id')), preview)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/plan-replay", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_create_plan_replay(run_id):
+        """Save a completed plan, frozen as previewed, as a personal workflow that repeats it.
+
+        The workflow is created paused unless the requester turned it on in the dialog.
+        """
+        body = _proposal_body()
+
+        def create(replay, user_id, record, conversation, settings):
+            result = replay.create_plan_replay_workflow(
+                user_id, run_id, body, settings,
+                read_run=lambda *_args: record,
+                read_conversation=lambda _conversation_id: conversation,
+            )
+            workflow = result.get('workflow') or {}
+            if result.get('created'):
+                log_workflow_creation(
+                    user_id=user_id,
+                    workflow_id=workflow.get('id', ''),
+                    workflow_name=workflow.get('name', ''),
+                    runner_type=workflow.get('runner_type'),
+                    trigger_type=workflow.get('trigger_type'),
+                )
+            return (201 if result.get('created') else 200), result
+
+        conversation_id = _text(body.get('conversation_id')) if body is not None else ''
+        return _plan_replay_response(run_id, conversation_id, create)
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-runs", methods=["GET"])
     @swagger_route(security=get_auth_security())

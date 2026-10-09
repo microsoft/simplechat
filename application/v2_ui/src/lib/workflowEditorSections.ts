@@ -23,6 +23,7 @@ import { isRecord } from './workspaceAuthoring';
 import {
     workflowAgentKey,
     workflowFileSyncConfig,
+    workflowPlanReplayTask,
     workflowScheduleLabel,
     WORKFLOW_TASK_INSTRUCTIONS_LIMIT,
     type WorkflowDefinition,
@@ -141,6 +142,7 @@ export function workflowTasksNeedingAttention(workflow: WorkflowDefinition): num
 
 function basicsStatus(workflow: WorkflowDefinition, context: WorkflowEditorSectionContext): SectionStatus {
     if (!workflow.name.trim()) return 'incomplete';
+    if (workflowPlanReplayTask(workflow)) return 'ready';
     if (workflow.runner_type === 'agent') return workflow.selected_agent ? 'ready' : 'incomplete';
     const explicitModel = Boolean(workflow.model_endpoint_id || workflow.model_id);
     return !explicitModel && context.options.default_model?.valid === false ? 'incomplete' : 'ready';

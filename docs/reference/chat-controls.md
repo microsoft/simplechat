@@ -736,6 +736,27 @@ An answer whose plan handed work off shows the hand-off card instead of the
 off and propose or start a workflow, so nothing is hidden, and the run shows only
 once.
 
+## Saved chat plans (V2 interface)
+
+Implemented in **0.261.308** (Refs: microsoft/simplechat#1550). A finished
+orchestrated answer can be saved as a personal workflow that repeats the same
+steps on a schedule. The steps are frozen when you save them, and each run
+repeats them as you, in the workflow's own conversation. See
+[Repeat a chat plan on a schedule]({{ '/guides/create-a-workflow/' | relative_url }}#repeat-a-chat-plan-on-a-schedule).
+
+{% include media.html src="reference/chat-controls-saved-chat-plan-card.png" alt="Save this chat plan card under an orchestrated answer, showing the request, time handling, cadence, step cap, the numbered steps and the Save workflow button." title="Save this chat plan card" capture="Capture an expanded Save this chat plan card under a finished orchestrated answer, showing the Request, Time, Cadence, Step cap, Runs as and Alerts lines, the numbered steps with their kind of work, the schedule fields and the Save workflow button. Redact the conversation title, the request and the step titles." %}
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Repeat on a schedule | Opens the **Save this chat plan** card and loads what would be saved: the request, how dates are handled, the shortest schedule allowed, the step cap, who the runs act as, the **Run failed** bell alert the workflow starts with, and every step with its title and kind of work. If a step can't be repeated, the card lists why under **This plan has replay notes** and offers no way to save. | See exactly what a saved workflow would repeat before anything is created. | `enable_workflow_plan_replay`, `enable_chat_orchestration` and `allow_user_workflows`, under a finished answer in a conversation that's private to you. Not shown on a masked answer, or under a plan that proposed, started or handed off a workflow |
+| Collapse | Hides the card again. | Put the card away without saving. | The card is open |
+| Reload plan | Loads the plan again after the server reports it changed since the card loaded. | Review the current plan instead of saving one you haven't seen. | Saving was refused because the plan changed |
+| Workflow name and Description | Name and describe the workflow. Leave the name empty and SimpleChat picks one. | Find the workflow later in Workflows. | The plan can be saved |
+| Run on a schedule | Shows the schedule fields. When it's off, the workflow runs only when you start it from Workflows. | Choose between a recurring and a manual workflow. | The plan can be saved |
+| Turn on the schedule now | Saves the workflow turned on. It's off by default, so the workflow is saved paused. | Start the schedule straight away once the card matches what you want. | **Run on a schedule** is on |
+| Save workflow | Creates the workflow with the frozen steps and the schedule shown. The card then says **Saved and scheduled.**, **Saved as a paused workflow.** or, when this plan was already saved, **This plan is already saved as a workflow.** | Create the workflow. Nothing is created until you choose it. | The plan can be saved |
+| Open workflow | Opens the saved workflow in Workflows, where the **Saved chat plan** section lists its steps read-only. | Change its name, description, schedule or alerts, turn it on, or run it. | The workflow was saved |
+
 ## Workflow runs (V2 interface)
 
 Implemented in **0.261.212** (Refs: microsoft/simplechat#1551). When you ask chat

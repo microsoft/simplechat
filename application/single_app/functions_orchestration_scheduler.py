@@ -70,6 +70,8 @@ def enumerate_due_runs(container, *, now=None, limit=64):
         "AND (NOT IS_DEFINED(c.checkpoints_deleted) OR c.checkpoints_deleted != true) "
         "AND (NOT IS_DEFINED(c.outputs_deleted) OR c.outputs_deleted != true) "
         "AND (NOT IS_DEFINED(c.superseded_by_run_id) OR IS_NULL(c.superseded_by_run_id)) "
+        # A saved-workflow plan replay is driven by its workflow run, never by this scheduler.
+        "AND (NOT IS_DEFINED(c.workflow_replay) OR IS_NULL(c.workflow_replay)) "
         "AND (NOT IS_DEFINED(c.latest_attempt_run_id) OR IS_NULL(c.latest_attempt_run_id) "
         'OR c.latest_attempt_run_id = "") '
         "AND (NOT IS_DEFINED(c.execution_lease) OR IS_NULL(c.execution_lease) "
@@ -454,6 +456,10 @@ class _Tick:
         lease = None
         try:
             record = self.read_run(selector)
+            if record.get("workflow_replay"):
+                # The owning workflow run drives, cancels and fences its plan replay.
+                self.result["runs"].append({**selector, "action": "deferred", "state": "workflow_replay"})
+                return
             states = {row["step_id"]: row["status"] for row in record.get("execution_steps") or []}
             execution_work = any(
                 step.get("enabled", True) and step["role"] != "render"
