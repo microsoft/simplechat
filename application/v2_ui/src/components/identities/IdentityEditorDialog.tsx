@@ -1,5 +1,5 @@
 // IdentityEditorDialog.tsx
-// Writing a group identity: a modal for a saved credential.
+// Writing a workspace identity: a modal for a saved credential.
 //
 // This mirrors the classic identity editor's fields and rules so a group identity authored here is
 // interchangeable with one authored in classic: the "Used For" capabilities decide which auth
@@ -36,6 +36,8 @@ export function IdentityEditorDialog({
     onCancel,
     onRefresh,
     capabilities = GROUP_IDENTITY_CAPABILITIES,
+    scopeDescription = 'this group',
+    saveDisabled = false,
 }: {
     draft: IdentityDraft;
     saving: boolean;
@@ -54,6 +56,8 @@ export function IdentityEditorDialog({
      * the file-sync capability because it has no actions surface, keeping the picker honest.
      */
     capabilities?: readonly (typeof GROUP_IDENTITY_CAPABILITIES)[number][];
+    scopeDescription?: string;
+    saveDisabled?: boolean;
 }) {
     const nameRef = useRef<HTMLInputElement>(null);
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -61,7 +65,7 @@ export function IdentityEditorDialog({
     const dirty = JSON.stringify(draft) !== original;
 
     const authTypes = useMemo(() => allowedAuthTypes(draft.capabilities), [draft.capabilities]);
-    const canSave = draft.name.trim().length > 0;
+    const canSave = draft.name.trim().length > 0 && !saveDisabled;
 
     useEffect(() => {
         nameRef.current?.focus();
@@ -78,6 +82,7 @@ export function IdentityEditorDialog({
     }, [authTypes]);
 
     const requestClose = () => {
+        if (saving) return;
         if (dirty && !confirmingDiscard) {
             setConfirmingDiscard(true);
             return;
@@ -102,7 +107,7 @@ export function IdentityEditorDialog({
     return (
         <Modal
             title={draft.id ? 'Edit identity' : 'New identity'}
-            description="A reusable credential for the systems this group connects to. Secrets are held server-side and never shown here."
+            description={`A reusable credential for the systems ${scopeDescription} connects to. Secrets are held server-side and never shown here.`}
             onClose={requestClose}
             size="lg"
             footer={
@@ -118,7 +123,7 @@ export function IdentityEditorDialog({
                     </>
                 ) : (
                     <>
-                        {error ? <span className="mr-auto text-xs text-danger">{error}</span> : null}
+                        {error ? <span className="mr-auto text-xs text-danger" role="alert">{error}</span> : null}
                         <GlassButton size="sm" onClick={requestClose} disabled={saving}>
                             Cancel
                         </GlassButton>
@@ -134,13 +139,14 @@ export function IdentityEditorDialog({
                 )
             }
         >
-            <div className="space-y-5">
+            <fieldset disabled={saving} className="min-w-0 space-y-5">
                 <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block">
                         <span className="mb-1 block text-xs font-medium text-text-2">Name</span>
                         <input
                             ref={nameRef}
                             type="text"
+                            maxLength={120}
                             value={draft.name}
                             onChange={(event) => onChange({ ...draft, name: event.target.value })}
                             placeholder="Reporting service account"
@@ -270,7 +276,7 @@ export function IdentityEditorDialog({
                         </label>
                     ) : null}
                 </div>
-            </div>
+            </fieldset>
         </Modal>
     );
 }

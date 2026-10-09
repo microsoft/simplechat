@@ -53,7 +53,11 @@ When a save is refused:
 - **Still in use:** a delete refused because a File Sync source or action still
   uses the identity lists what uses it, so you can rebind those first.
 
-My Workspace's personal Identities section is unchanged.
+From version **0.261.315**, tracked in `application/single_app/config.py`,
+personal/group/public sections share the authoring component. Personal
+creation and editing are now native too; group routes and manager permissions
+are unchanged. The shared editor retains its opening ETag until an explicit
+conflict refresh. See [V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md).
 
 ## Choosing an identity for a group action
 
@@ -89,7 +93,7 @@ closed fixture that enforces the server's rules, with 21 cases:
 - the group action editor lists only the group's action identities;
 - a member's unresolvable list stays silent;
 - a malformed list is treated as a load error rather than an empty one;
-- personal identities are unchanged.
+- group pages make no personal identity requests.
 
 `functional_tests/test_group_identity_fixture_parity.py` holds that fixture to
 the real identity routes, route by route. For each response it checks that the

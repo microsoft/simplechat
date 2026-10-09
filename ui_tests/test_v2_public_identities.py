@@ -1,7 +1,7 @@
 # test_v2_public_identities.py
 """
 Production-SPA coverage for the native V2 public workspace identities section (M10B).
-Version: 0.261.188
+Version: 0.261.315
 Implemented in: 0.261.182
 The overview says a public workspace's identities serve file sources only: 0.261.188
 A failed read offers a retry and never the empty state: 0.261.188
@@ -118,7 +118,7 @@ def test_the_overview_says_identities_serve_file_sources_only(public_identities_
     Identities entry says so and never offers sign-ins for actions."""
     ui = public_identities_ui
     ui.open("/public/pub-a")
-    entry = ui.page.get_by_role("main").get_by_role("link", name=re.compile(r"^Identities\s+Saved sign-ins"))
+    entry = ui.page.get_by_role("main").get_by_role("link", name=re.compile(r"^Identities\b")).filter(has_text="Saved sign-ins")
     expect(entry).to_contain_text("Saved sign-ins for this workspace's file sources.")
     expect(entry).not_to_contain_text("actions")
 

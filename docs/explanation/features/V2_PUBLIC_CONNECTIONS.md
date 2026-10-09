@@ -37,7 +37,11 @@ the classic routes never had.
 
 ## Identities
 
-The Identities section is the group section:
+From version **0.261.315**, recorded in `application/single_app/config.py`,
+the Identities section shares its authoring component with personal and group
+workspaces. Its public routes, permissions and File-Sync-only restriction
+remain unchanged; see [V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md).
+
 - **Create** appears only when the workspace context's `identity_management`
   hint includes `create`, and **Edit** and **Delete** only when an identity's
   own `identity_actions` include them.
@@ -45,6 +49,8 @@ The Identities section is the group section:
   workspace uses an identity.
 - Stored secrets are never shown. A stored password or secret appears as kept,
   and a new value replaces it.
+- Conditional saves retain the opening ETag until an explicit conflict refresh;
+  rebasing keeps edited fields and newly typed secrets.
 - An identity a File Sync source still uses can't be deleted. The refusal names
   the sources.
 

@@ -5,6 +5,8 @@ Initial foundation: **0.241.091**
 Action binding implemented in: **0.241.095**
 Azure Files File Sync identity support implemented in: **0.241.127**
 Global cloud drive File Sync identities implemented in: **0.241.129**
+Native personal V2 authoring implemented in: **0.261.315**, recorded in
+`application/single_app/config.py`.
 
 ## Overview
 
@@ -39,6 +41,12 @@ The route layer exposes generic identity APIs:
 - `/api/admin/workspace-identities/global/identities`
 - `/api/admin/workspace-identities/<scope_type>/<scope_id>/identities`
 
+V2 personal authoring uses the additive `/api/user/identities` family, with
+ETags required for edits/deletes. The classic personal family remains
+compatible. Group/public authoring uses immutable workspace IDs in its routes.
+See [V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md) for native workflows,
+permissions, credential preservation and conflict recovery.
+
 Each identity carries usage metadata behind the scenes, but the UI presents it as simple **Used For** checkboxes. Personal and group identities can be used for File Sync and Actions. Public workspace identities are constrained to File Sync. Global identities can be used for Actions and admin-approved cloud drive File Sync connectors.
 
 Supported identity auth types in the catalog include username/password, anonymous, API key, bearer token, client secret, connection string, and managed identity. File Sync consumes SMB-compatible username/password and anonymous identities for SMB sources, managed identity, client secret, or connection string identities for Azure Files sources, and global client-secret identities for OneDrive cloud-drive sync. Actions consume API key, bearer token, client secret, connection string, managed identity, and username/password identities. Username/password identities show the domain as optional with helper text because not every account requires a domain. Managed identity selection can carry an optional managed identity client ID through the API for service integrations that need a user-assigned identity.
@@ -46,6 +54,10 @@ Supported identity auth types in the catalog include username/password, anonymou
 ## Usage Instructions
 
 Users manage identities from the **Identities** tab in personal, group, and public workspace pages. SimpleChat admins manage global identities from the **Global Identities** tab in Admin Settings. Add, view, and edit flows open in a Bootstrap modal with grouped cards for identity details, used-for checkbox selection, and authentication. File Sync source setup uses the **Identity and Authentication** card to choose a reusable workspace identity or source-local credentials for workspace-owned connectors. OneDrive uses an admin-managed global File Sync identity and does not ask personal users to manage tenant app credentials.
+
+In V2, **Identities** opens the native shared credential dialog instead of a
+Bootstrap classic-page modal. Personal users and authorized shared-workspace
+managers can create identities without opening a classic workspace.
 
 Action setup now uses the same identity catalog. Personal actions can use personal identities, group actions can use identities from the active group, and global actions can use global identities. Public workspace identities are not exposed to actions. Action manifests store only `identity_id` and `auth.type = "identity"`; runtime code resolves secrets through `functions_workspace_identities.py` so credentials are not copied into action records.
 

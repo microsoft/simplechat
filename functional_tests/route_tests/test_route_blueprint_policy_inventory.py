@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.310
+Version: 0.261.315
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -21,6 +21,7 @@ Access restricted screen and safety warning policy coverage: 0.261.297
 Review center ids, bulk, detail and approvals summary policy coverage: 0.261.298
 Review center AI assist policy coverage: 0.261.299
 V2 Agents catalogue policy coverage: 0.261.305
+Native personal identity policy coverage: 0.261.315
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -72,6 +73,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_group_actions_scoped": ("login_required", "user_required"),
     "backend_group_agents_scoped": ("login_required", "user_required"),
     "backend_group_identities_scoped": ("login_required", "user_required"),
+    "backend_personal_identities_scoped": ("login_required", "user_required"),
     "backend_group_endpoints_scoped": ("login_required", "user_required"),
     "backend_group_file_sources_scoped": ("login_required", "user_required"),
     "backend_group_directory": ("login_required", "user_required"),
@@ -220,6 +222,11 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_read"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identities_list"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_read"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_create"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_update"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_delete"): ("login_required", "user_required"),
     ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoints_list"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoints_create"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoint_read"): ("login_required", "user_required", "enabled_required"),

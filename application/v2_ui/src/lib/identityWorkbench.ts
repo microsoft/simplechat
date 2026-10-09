@@ -1,12 +1,8 @@
 // identityWorkbench.ts
 // Scope-aware identity reads and writes for the workspace identities section.
 //
-// The identities section shipped personal-only: it called the /api/workspace-identities/personal
-// functions in workspaceApi.ts directly. This module is the seam that lets the section serve a
-// group workspace natively, the way promptWorkbench.ts and actionWorkbench.ts became scope-aware,
-// and from M10B a public workspace too. An IdentityScope selects which URLs are used and which
-// per-operation gates apply. The personal adapter is a thin pass-through so its behaviour stays
-// byte-identical in effect: same list URL, same delete URL, same classic hand-off for creating one.
+// Personal authoring uses the strict /api/user/identities family. No operation falls back to a
+// classic or unversioned route. Every scope uses conditional edits and deletes.
 //
 // The group and public paths never fall back to personal behaviour. An absent or unrecognised
 // identity_management hint yields an empty operation set, which leaves every write gate refusing --
@@ -24,14 +20,10 @@
 import { ApiError, api, requestWithStatus } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
-import {
-    deleteIdentity as deletePersonalIdentity,
-    fetchIdentities as fetchPersonalIdentities,
-} from './workspaceApi';
 import type { WorkspaceIdentity } from './types';
 
 export type IdentityScope =
-    | { kind: 'personal' }
+    | { kind: 'personal'; id?: string }
     | { kind: 'group'; id: string; name: string }
     | { kind: 'public'; id: string; name: string };
 
@@ -93,8 +85,6 @@ export interface IdentityWorkbenchAdapter {
     create: (write: IdentityWrite) => Promise<WorkspaceIdentity>;
     update: (identity: WorkspaceIdentity, write: IdentityWrite) => Promise<WorkspaceIdentity>;
     remove: (identity: WorkspaceIdentity) => Promise<void>;
-    /** Where "adding one is still done in the classic workspace" points, for personal scope. */
-    classicPath: string;
 }
 
 /**
@@ -116,8 +106,7 @@ export function advertisedIdentityOperations(value: unknown): ReadonlySet<Identi
 /**
  * Whether an operation is allowed in a scope.
  *
- * Personal scope allows everything the personal section can do, which is delete; there is no
- * personal create or edit in this surface. A group or public scope requires the workspace-level
+ * Personal operations use the strict session-owned API. A group or public scope requires the workspace-level
  * `identity_management` hint to offer the operation, and edit/delete additionally require the
  * specific identity to belong to this workspace (its `group_id` for a group, its
  * `public_workspace_id` for a public workspace) and to carry the operation in its own
@@ -130,9 +119,6 @@ export function identityOperationAllowed(
     operation: IdentityOperation,
     identity?: WorkspaceIdentity,
 ): boolean {
-    if (scope.kind === 'personal') {
-        return true;
-    }
     if (!supported.has(operation)) {
         return false;
     }
@@ -142,30 +128,74 @@ export function identityOperationAllowed(
     if (!identity) {
         return false;
     }
-    const ownerId = scope.kind === 'public' ? identity.public_workspace_id : identity.group_id;
-    if (ownerId !== scope.id) {
+    const ownerId = scope.kind === 'personal' ? identity.user_id
+        : scope.kind === 'public' ? identity.public_workspace_id : identity.group_id;
+    if (scope.kind === 'personal' && identity.scope_type !== 'personal') {
+        return false;
+    }
+    if (scope.id !== undefined && ownerId !== scope.id) {
         return false;
     }
     return Array.isArray(identity.identity_actions) && identity.identity_actions.includes(operation);
 }
 
-export const PERSONAL_IDENTITY_WORKBENCH: IdentityWorkbenchAdapter = {
-    scope: { kind: 'personal' },
-    manageable: false,
-    supported: new Set(),
-    allows: () => true,
-    list: (signal) => fetchPersonalIdentities(signal),
-    create: () => {
-        throw new Error('Creating identities is done in the classic workspace.');
-    },
-    update: () => {
-        throw new Error('Editing identities is done in the classic workspace.');
-    },
-    remove: async (identity) => {
-        await deletePersonalIdentity(identity.id);
-    },
-    classicPath: '/workspace',
-};
+function personalIdentitiesUrl(identityId?: string): string {
+    const base = '/api/user/identities';
+    return identityId ? `${base}/${encodeURIComponent(requireWorkspaceId(identityId))}` : base;
+}
+
+function assertPersonalIdentityScope(identity: WorkspaceIdentity, ownerId?: string, id?: string): void {
+    if (!isRecord(identity) || typeof identity.id !== 'string' || !identity.id
+        || identity.scope_type !== 'personal' || typeof identity.user_id !== 'string' || !identity.user_id
+        || (ownerId !== undefined && identity.user_id !== ownerId)
+        || (id !== undefined && identity.id !== id)) {
+        throw new Error('The identity response does not match your workspace. Refresh and try again.');
+    }
+    requiredEtag(identity);
+}
+
+export function createPersonalIdentityWorkbench(ownerId?: string): IdentityWorkbenchAdapter {
+    const scope: IdentityScope = { kind: 'personal', id: ownerId };
+    const supported = new Set<IdentityOperation>(IDENTITY_OPERATIONS);
+    const allows = (operation: IdentityOperation, identity?: WorkspaceIdentity) =>
+        identityOperationAllowed(scope, supported, operation, identity);
+    return {
+        scope, supported, manageable: true, allows,
+        list: async (signal) => {
+            const response = await api.get<unknown>(personalIdentitiesUrl(), signal);
+            const identities = identitiesFromResponse(response);
+            identities.forEach((identity) => assertPersonalIdentityScope(identity, ownerId));
+            return identities;
+        },
+        create: async (write) => {
+            const response = await api.post<unknown>(personalIdentitiesUrl(), identityWriteBody(write));
+            const created = identityFromResponse(response);
+            assertPersonalIdentityScope(created, ownerId);
+            return created;
+        },
+        update: async (identity, write) => {
+            if (!allows('edit', identity)) {
+                throw new Error('Editing this identity is not available.');
+            }
+            const response = await conditionalIdentityWrite('PATCH', personalIdentitiesUrl(identity.id), {
+                ...identityWriteBody(write), expected_etag: requiredEtag(identity),
+            });
+            const updated = identityFromResponse(response);
+            assertPersonalIdentityScope(updated, ownerId, identity.id);
+            return updated;
+        },
+        remove: async (identity) => {
+            if (!allows('delete', identity)) {
+                throw new Error('Deleting this identity is not available.');
+            }
+            await conditionalIdentityWrite('DELETE', personalIdentitiesUrl(identity.id), {
+                expected_etag: requiredEtag(identity),
+            });
+        },
+    };
+}
+
+export const PERSONAL_IDENTITY_WORKBENCH = createPersonalIdentityWorkbench();
 
 function groupIdentitiesUrl(groupId: string, identityId?: string): string {
     const base = `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/identities`;
@@ -209,7 +239,7 @@ function requiredEtag(identity: WorkspaceIdentity): string {
 }
 
 /** Strip anything the strict native routes reject; send only the documented write fields. */
-function groupWriteBody(write: IdentityWrite): Record<string, unknown> {
+function identityWriteBody(write: IdentityWrite): Record<string, unknown> {
     const body: Record<string, unknown> = {};
     if (write.name !== undefined) body.name = write.name;
     if (write.description !== undefined) body.description = write.description;
@@ -233,7 +263,7 @@ function identityReferences(value: unknown): IdentityReference[] {
     }));
 }
 
-async function conditionalGroupWrite(
+async function conditionalIdentityWrite(
     method: 'PATCH' | 'DELETE', url: string, body: Record<string, unknown>,
 ): Promise<unknown> {
     try {
@@ -280,7 +310,7 @@ export function createGroupIdentityWorkbench(
             if (!allows('create')) {
                 throw new Error('Creating identities is not available in this group.');
             }
-            const response = await api.post<unknown>(groupIdentitiesUrl(groupId), groupWriteBody(write));
+            const response = await api.post<unknown>(groupIdentitiesUrl(groupId), identityWriteBody(write));
             const created = identityFromResponse(response);
             assertGroupIdentityScope(created, groupId);
             return created;
@@ -289,8 +319,8 @@ export function createGroupIdentityWorkbench(
             if (!allows('edit', identity)) {
                 throw new Error('Editing this identity is not available.');
             }
-            const updated = await conditionalGroupWrite('PATCH', groupIdentitiesUrl(groupId, identity.id), {
-                ...groupWriteBody(write), expected_etag: requiredEtag(identity),
+            const updated = await conditionalIdentityWrite('PATCH', groupIdentitiesUrl(groupId, identity.id), {
+                ...identityWriteBody(write), expected_etag: requiredEtag(identity),
             });
             const record = identityFromResponse(updated);
             assertGroupIdentityScope(record, groupId, identity.id);
@@ -300,11 +330,10 @@ export function createGroupIdentityWorkbench(
             if (!allows('delete', identity)) {
                 throw new Error('Deleting this identity is not available.');
             }
-            await conditionalGroupWrite('DELETE', groupIdentitiesUrl(groupId, identity.id), {
+            await conditionalIdentityWrite('DELETE', groupIdentitiesUrl(groupId, identity.id), {
                 expected_etag: requiredEtag(identity),
             });
         },
-        classicPath: '/group_workspaces',
     };
 }
 
@@ -347,7 +376,7 @@ export function createPublicIdentityWorkbench(
             if (!allows('create')) {
                 throw new Error('Creating identities is not available in this workspace.');
             }
-            const response = await api.post<unknown>(publicIdentitiesUrl(workspaceId), groupWriteBody(write));
+            const response = await api.post<unknown>(publicIdentitiesUrl(workspaceId), identityWriteBody(write));
             const created = identityFromResponse(response);
             assertPublicIdentityScope(created, workspaceId);
             return created;
@@ -356,8 +385,8 @@ export function createPublicIdentityWorkbench(
             if (!allows('edit', identity)) {
                 throw new Error('Editing this identity is not available.');
             }
-            const updated = await conditionalGroupWrite('PATCH', publicIdentitiesUrl(workspaceId, identity.id), {
-                ...groupWriteBody(write), expected_etag: requiredEtag(identity),
+            const updated = await conditionalIdentityWrite('PATCH', publicIdentitiesUrl(workspaceId, identity.id), {
+                ...identityWriteBody(write), expected_etag: requiredEtag(identity),
             });
             const record = identityFromResponse(updated);
             assertPublicIdentityScope(record, workspaceId, identity.id);
@@ -367,10 +396,9 @@ export function createPublicIdentityWorkbench(
             if (!allows('delete', identity)) {
                 throw new Error('Deleting this identity is not available.');
             }
-            await conditionalGroupWrite('DELETE', publicIdentitiesUrl(workspaceId, identity.id), {
+            await conditionalIdentityWrite('DELETE', publicIdentitiesUrl(workspaceId, identity.id), {
                 expected_etag: requiredEtag(identity),
             });
         },
-        classicPath: '/public_workspaces',
     };
 }
