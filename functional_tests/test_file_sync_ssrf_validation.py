@@ -1,8 +1,8 @@
 # test_file_sync_ssrf_validation.py
 """
 Functional tests for File Sync SSRF endpoint and path boundaries.
-Version: 0.261.312
-Implemented in: 0.261.312
+Version: 0.261.314
+Implemented in: 0.261.314
 
 Azure Files must reject unapproved origins before token-credential/client
 construction. OneDrive browse paths must remain under the configured Graph
@@ -85,7 +85,7 @@ def file_functions(additional_globals=None):
 
 
 def test_implementation_version():
-    assert_app_version_at_least("0.261.312")
+    assert_app_version_at_least("0.261.314")
 
 
 @pytest.mark.parametrize("suffix", AZURE_STORAGE_ENDPOINT_SUFFIXES)

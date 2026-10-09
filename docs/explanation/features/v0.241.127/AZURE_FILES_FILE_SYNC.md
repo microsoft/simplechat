@@ -6,7 +6,7 @@ Azure Files File Sync adds an Azure Storage file share source type to the existi
 
 Implemented in version: **0.241.127**
 
-Endpoint validation updated in version: **0.261.312**
+Endpoint validation updated in version: **0.261.314**
 
 ## Dependencies
 
@@ -28,7 +28,7 @@ SMB sources continue to support username/password and anonymous authentication f
 
 ### Approved endpoints
 
-From version **0.261.312**, the File service URL must use a canonical Azure
+From version **0.261.314**, the File service URL must use a canonical Azure
 Files hostname: `account.file.core.windows.net`,
 `account.file.core.usgovcloudapi.net`, `account.file.core.chinacloudapi.cn`, or
 `account.file.core.cloudapi.de`. A share URL such as

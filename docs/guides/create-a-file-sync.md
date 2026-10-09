@@ -90,7 +90,7 @@ The source appears in the Sync list. Imported files later appear on the workspac
 
 ## Azure Files endpoint requirements
 
-From version **0.261.312**, use a canonical Azure Files URL such as
+From version **0.261.314**, use a canonical Azure Files URL such as
 `https://account.file.core.windows.net` or a share URL such as
 `https://account.file.core.windows.net/documents/team`. US Government, China,
 and Germany endpoints use `core.usgovcloudapi.net`, `core.chinacloudapi.cn`,

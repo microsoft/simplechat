@@ -1,6 +1,6 @@
 # File Sync SSRF Endpoint Validation Fix
 
-Fixed in version: **0.261.312**
+Fixed in version: **0.261.314**
 
 Related code-scanning alerts: [1090](https://github.com/microsoft/simplechat/security/code-scanning/1090)
 and [2098](https://github.com/microsoft/simplechat/security/code-scanning/2098), both
@@ -93,7 +93,7 @@ HTTP URL and verify the configured public/Government Graph origin and user path
 are preserved for delimiter-bearing, encoded, and attacker-like browse paths;
 invalid segments fail before HTTP.
 
-The application version in `config.py` is incremented to `0.261.312`. The new
+The application version in `config.py` is incremented to `0.261.314`. The new
 test uses a minimum-version assertion so subsequent version bumps do not break
 this regression coverage.
 
