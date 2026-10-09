@@ -1,10 +1,11 @@
 # test_document_analysis_evidence_matching.py
 """
 Functional tests for general Analyze evidence matching, caveats, notes and validation logging.
-Version: 0.261.314
+Version: 0.261.316
 Implemented in: 0.261.191
 
 Literal source matching precedes lossy normalization as of 0.261.314.
+Markdown punctuation escapes match rendered evidence as of 0.261.316.
 
 Refs #1540. A model quoting table-heavy or formatted source text must be located in its
 original chunk when the only differences are presentation: markup, table rules, entities,
@@ -29,6 +30,7 @@ import hashlib
 import importlib
 import json
 import logging
+import string
 import sys
 
 import pytest
@@ -117,6 +119,10 @@ def real_logger_extra(message, extra):
 
 def test_evidence_matching_fix_is_in_the_application_version():
     assert_app_version_at_least('0.261.191')
+
+
+def test_markdown_escape_fix_is_in_the_application_version():
+    assert_app_version_at_least('0.261.316')
 
 
 def test_literal_evidence_fix_is_in_the_application_version():
@@ -309,6 +315,105 @@ def test_empty_normalized_quotes_cannot_match_unrelated_source_text(quote):
     assert result['evidence_matching'] == match_counts(missing_quote=1)
 
 
+@pytest.mark.parametrize('source,quote', [
+    (r'6\) TELEPHONE NUMBER: ( 555 ) 123-4567', '6) TELEPHONE NUMBER: ( 555 ) 123-4567'),
+    ('\u2612\n2\\. Partnership', '\u2612\n2. Partnership'),
+    (r'Amount \(USD\): 1\,200\.50', 'Amount (USD): 1,200.50'),
+    ('Label: [draft]', r'Label: \[draft\]'),
+    (r'Literal \*important\* text', r'Literal &#42;important&#42; text'),
+    (r'Literal \_name\_ text', r'Literal &#95;name&#95; text'),
+    (r'Literal \`code\` text', r'Literal &#96;code&#96; text'),
+    (r'Example \<td\>value\</td\>', 'Example &lt;td&gt;value&lt;/td&gt;'),
+    (r'Example \&amp;', 'Example &amp;amp;'),
+    (r'Choice A \| B', 'Choice A &#124; B'),
+    (r'Folder C:\\data', r'Folder C:\data'),
+    (r'Marker \\\)', r'Marker &#92;)'),
+    ('Name: cafe&#769;.', 'Name: caf\u00e9.'),
+    ('Name: caf&#101;\u0301.', 'Name: caf\u00e9.'),
+])
+def test_markdown_escapes_match_rendered_punctuation_without_changing_source_spans(source, quote):
+    with document_analysis_runtime({}) as runtime:
+        result = collect(runtime, window_chunks(source), supported_finding({'chunk_sequence': 1, 'quote': quote}))
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'candidate', candidate['issues']
+    [passage] = result['evidence']
+    assert passage['text'] == source
+    assert passage['location']['start_char'] == 0
+    assert passage['location']['end_char'] == len(source)
+    assert passage['location']['match'] == 'normalized'
+
+
+@pytest.mark.parametrize('punctuation', string.punctuation)
+def test_all_ascii_punctuation_escapes_remain_literal(punctuation):
+    source = f'Label \\{punctuation} punctuation.'
+    quote = f'Label &#{ord(punctuation)}; punctuation.'
+    with document_analysis_runtime({}) as runtime:
+        result = collect(runtime, window_chunks(source), supported_finding({'chunk_sequence': 1, 'quote': quote}))
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'candidate', candidate['issues']
+    [passage] = result['evidence']
+    assert passage['text'] == source
+    assert (passage['location']['start_char'], passage['location']['end_char']) == (0, len(source))
+
+
+@pytest.mark.parametrize('source,quote', [
+    (r'Path C:\new\file', 'Path C:newfile'),
+    (r'Marker \\)', 'Marker )'),
+    (r'Marker \\\)', 'Marker )'),
+    (r'Pattern `6\)` ends', 'Pattern `6)` ends'),
+    (r'Escaped \`tick\` and `6\)` ends', r'Escaped \`tick\` and `6)` ends'),
+    (r'Pattern ``6\) with ` tick`` ends', 'Pattern ``6) with ` tick`` ends'),
+    ('```text\n6\\)\n```', '```text\n6)\n```'),
+    ('~~~text\n6\\)\n~~~', '~~~text\n6)\n~~~'),
+    ('```text\n6\\)', '```text\n6)'),
+    ('    6\\) code', '    6) code'),
+    (r'<code>6\)</code>', '<code>6)</code>'),
+    (r'<pre>6\)', '<pre>6)'),
+    (r'Literal \*important\* text', 'Literal important text'),
+    (r'Choice A \| B', 'Choice A B'),
+    (r'Example \<td\>value\</td\>', 'Example value'),
+    ('\u2612\n2\\. Partnership', '\u2610\n2. Partnership'),
+    (r'Amount 1\,200\.50', 'Amount 1,200.60'),
+    (r'Change \-5%', 'Change +5%'),
+])
+def test_escape_matching_preserves_literal_content_and_values(source, quote):
+    with document_analysis_runtime({}) as runtime:
+        result = collect(runtime, window_chunks(source), supported_finding({'chunk_sequence': 1, 'quote': quote}))
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'unresolved'
+    assert result['evidence'] == []
+    assert result['evidence_matching'] == match_counts(not_in_window=1)
+
+
+@pytest.mark.parametrize('selectors,reason', [
+    ({}, 'missing_location'),
+    ({'chunk_sequence': 3}, 'not_in_cited_location'),
+    ({'page_number': 1}, 'ambiguous'),
+])
+def test_escaped_quotes_keep_source_location_requirements(selectors, reason):
+    with document_analysis_runtime({}) as runtime:
+        result = collect(
+            runtime, window_chunks(r'2\. Partnership', r'2\. Partnership', pages=[1, 1]),
+            supported_finding({**selectors, 'quote': '2. Partnership'}),
+        )
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'unresolved'
+    assert result['evidence'] == []
+    assert result['evidence_matching'] == match_counts(**{reason: 1})
+
+
+def test_escaped_quote_spans_remain_relative_to_the_original_chunk():
+    source = 'Opening sentence.\n6\\) TELEPHONE NUMBER\nClosing sentence.'
+    quote = '6) TELEPHONE NUMBER'
+    with document_analysis_runtime({}) as runtime:
+        result = collect(runtime, window_chunks(source), supported_finding({'chunk_sequence': 1, 'quote': quote}))
+    [passage] = result['evidence']
+    start = source.index('6\\)')
+    end = start + len('6\\) TELEPHONE NUMBER')
+    assert (passage['location']['start_char'], passage['location']['end_char']) == (start, end)
+    assert passage['text'] == source[start:end]
+
+
 @pytest.mark.parametrize('passage,reason', [
     pytest.param({'chunk_sequence': 3, 'quote': 'Early cancellation carries a penalty.'}, 'not_in_window', id='paraphrase'),
     pytest.param({'chunk_sequence': 3, 'quote': 'An exit penalty ... cancellation.'}, 'not_in_window', id='ellipsis'),
@@ -462,6 +567,29 @@ def test_source_annotation_and_ordinary_citations_finalize_without_repair_calls(
     assert len(record['evidence_refs']) == 2
     assert {item['text'] for item in result['analysis_evidence']} == {source, annotation}
     assert all(item['location']['match'] == 'exact' for item in result['analysis_evidence'])
+
+
+@pytest.mark.parametrize('source,quote', [
+    ('\u2612\n2\\. Partnership', '\u2612\n2. Partnership'),
+    (r'6\) TELEPHONE NUMBER: ( 555 ) 123-4567', '6) TELEPHONE NUMBER: ( 555 ) 123-4567'),
+])
+def test_escaped_punctuation_finalizes_without_model_repairs(source, quote):
+    documents = {'form': original_document('form', [source])}
+
+    def response(prompt):
+        return json.dumps({'findings': [supported_finding({'chunk_sequence': 1, 'quote': quote})]})
+
+    with document_analysis_runtime(documents) as runtime:
+        result, client = run_analysis(runtime, documents, FixtureAnalysisClient(response), max_retries_per_window=1)
+    assert len(client.calls) == 1
+    assert result['coverage']['retries'] == 0
+    assert result['analysis_validation']['status'] == 'valid'
+    assert result['analysis_validation']['unresolved_candidate_count'] == 0
+    [record] = result['authoritative_result']['value']
+    assert len(record['evidence_refs']) == 1
+    [passage] = result['analysis_evidence']
+    assert passage['text'] == source
+    assert passage['location']['match'] == 'normalized'
 
 
 def test_formatted_table_quote_finalizes_with_caveats_and_notes_outside_validation(monkeypatch):

@@ -1,10 +1,11 @@
 # test_orchestration_document_derivation_reliability.py
 """Source-grounded schema correction and producer-aware document generation recovery.
 
-Version: 0.261.314
+Version: 0.261.316
 Implemented in: 0.261.309
 
 Literal source annotations reach Word publication without correction as of 0.261.314.
+Markdown-escaped source punctuation reaches publication as of 0.261.316.
 
 Real collectors, producers, checkpoints, orchestration and renderers run offline.
 Malformed metadata must not erase uncertainty or rewrite accepted source findings.
@@ -392,8 +393,10 @@ def test_recovery_revisits_malformed_producer_but_does_not_offer_pointless_uncer
 @pytest.mark.parametrize('annotation', [
     '<!-- PageFooter: Example report - Test Data Only -->',
     '<!-- This report contains test data. -->',
+    '6\\) TELEPHONE NUMBER: ( 555 ) 123-4567',
+    '\u2612\n2\\. Partnership',
 ])
-def test_literal_source_annotation_reaches_composition_and_published_word_without_repairs(
+def test_source_annotation_or_escape_reaches_composition_and_published_word_without_repairs(
     harness, narrative_io, monkeypatch, annotation,
 ):
     search = importlib.import_module('functions_search_service')
@@ -411,9 +414,14 @@ def test_literal_source_annotation_reaches_composition_and_published_word_withou
         if '<DocumentSlice>' in prompt:
             payload = json.loads(narrative_io['reply']())
             if '[Page 1, Chunk 1]' in prompt:
-                payload['findings'][0]['evidence'].append({'chunk_sequence': 1, 'quote': annotation})
+                quote = annotation.replace('\\)', ')').replace('\\.', '.')
+                payload['findings'][0]['evidence'].append({'chunk_sequence': 1, 'quote': quote})
             return json.dumps(payload)
-        return '# Source-backed report\n\nComplete finding 006. This report contains test data.'
+        report = '# Source-backed report\n\nComplete finding 006. This report contains test data.'
+        if '\\' in annotation:
+            rendered = annotation.replace('\\)', ')').replace('\\.', '.').replace('\n', ' ')
+            report += f'\n\nEvidence: {rendered}'
+        return report
 
     harness.create(
         document_steps('docx'), replies=[reply] * 3,
@@ -431,6 +439,8 @@ def test_literal_source_annotation_reaches_composition_and_published_word_withou
     assert len(outputs) == len(artifacts) == harness.blobs.file_uploads == 1
     text = '\n'.join(paragraph.text for paragraph in Document(io.BytesIO(payloads['report.docx'])).paragraphs)
     assert 'Complete finding 006.' in text and 'This report contains test data.' in text
+    if '\\' in annotation:
+        assert annotation.replace('\\)', ')').replace('\\.', '.').replace('\n', ' ') in text
     calls = harness.model_calls
     assert len(calls) == 3
     assert sum('<DocumentSlice>' in str(call['messages']) for call in calls) == 2

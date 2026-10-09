@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import re
+import string
 import unicodedata
 from copy import deepcopy
 
@@ -398,17 +399,68 @@ def _evidence_word_character(character):
     return character.isalnum() or category[0] == 'M' or category == 'Pc'
 
 
-def _evidence_markup(text):
+def _evidence_literals(text):
+    """Map Markdown escapes and code content to literal original spans, before markup removal."""
+    literals = {}
+    index = 0
+    while index + 1 < len(text):
+        if text[index] == '\\' and text[index + 1] in string.punctuation:
+            unit = (text[index + 1], index, index + 2)
+            literals[index] = literals[index + 1] = unit
+            index += 2
+        else:
+            index += 1
+
+    def protect(start, end):
+        for offset in range(start, end):
+            literals[offset] = (text[offset], offset, offset + 1)
+
+    fence = None
+    for line in _EVIDENCE_LINE.finditer(text):
+        marker = re.match(r' {0,3}(`{3,}|~{3,})(.*)$', line.group(0))
+        if fence is not None:
+            protect(line.start(), line.end())
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+        elif marker and (marker[1][0] != '`' or '`' not in marker[2]):
+            fence = marker[1]
+            protect(line.start(), line.end())
+        elif line.group(0).startswith(('    ', '\t')):
+            protect(line.start(), line.end())
+
+    runs = [match for match in re.finditer(r'`+', text) if match.start() not in literals]
+    following, closers = {}, {}
+    for index in range(len(runs) - 1, -1, -1):
+        length = len(runs[index].group(0))
+        closers[index] = following.get(length)
+        following[length] = index
+    index = 0
+    while index < len(runs):
+        closer = closers[index]
+        if closer is not None:
+            protect(runs[index].end(), runs[closer].start())
+            index = closer + 1
+        else:
+            index += 1
+    for match in re.finditer(r'<(code|pre)\b[^>]*>(.*?)(?:</\1\s*>|\Z)', text, re.DOTALL | re.IGNORECASE):
+        if match.start() not in literals:
+            protect(match.start(2), match.end(2))
+    return literals
+
+
+def _evidence_markup(text, literals):
     """Presentation markup as (start, end, separates): tags, comments and table rule lines."""
     spans = [
         (match.start(), match.end(), (match.group(1) or '').lower() not in _EVIDENCE_INLINE_TAGS)
         for match in _EVIDENCE_MARKUP.finditer(text)
+        if match.start() not in literals
     ]
     for line in _EVIDENCE_LINE.finditer(text):
         content = line.group(0).strip()
         if (
             content and '-' in content and not content.strip('|:- \t')
             and ('|' in content or content.count('-') >= 3)
+            and not any(offset in literals for offset in range(line.start(), line.end()))
         ):
             spans.append((line.start(), line.end(), True))
     merged = []
@@ -430,51 +482,54 @@ def _evidence_form(text):
     """
     units = []
 
-    def add(character, start, end):
+    def add(character, start, end, literal=False):
         character = character.translate(_EVIDENCE_FOLDS)
         if character in _EVIDENCE_INVISIBLE:
             return
         # Marks, including vowel signs with no combining class, stay with their base character.
-        if units and units[-1][0] == 'text' and unicodedata.category(character)[0] == 'M':
+        kind = 'literal' if literal else 'text'
+        if units and units[-1][0] != 'gap' and unicodedata.category(character)[0] == 'M':
             units[-1][1] += character
             units[-1][3] = end
         else:
-            units.append(['text', character, start, end])
+            units.append([kind, character, start, end])
 
+    literals = _evidence_literals(text)
     position = 0
-    for start, end, separates in [*_evidence_markup(text), (len(text), len(text), False)]:
+    for start, end, separates in [*_evidence_markup(text, literals), (len(text), len(text), False)]:
         if start > position:
             index = position
             # Entities are decoded only after markup removal, so escaped text never becomes markup.
-            for entity in _EVIDENCE_ENTITY.finditer(text, position, start):
-                for offset in range(index, entity.start()):
-                    add(text[offset], offset, offset + 1)
-                value = html.unescape(entity.group(0))
-                if value == entity.group(0):
-                    for offset in range(entity.start(), entity.end()):
-                        add(text[offset], offset, offset + 1)
+            while index < start:
+                if index in literals:
+                    character, literal_start, literal_end = literals[index]
+                    add(character, literal_start, literal_end, literal=True)
+                    index = literal_end
+                    continue
+                entity = _EVIDENCE_ENTITY.match(text, index, start)
+                if entity is not None and html.unescape(entity.group(0)) != entity.group(0):
+                    for character in html.unescape(entity.group(0)):
+                        add(character, entity.start(), entity.end(), literal=True)
+                    index = entity.end()
                 else:
-                    for character in value:
-                        add(character, entity.start(), entity.end())
-                index = entity.end()
-            for offset in range(index, start):
-                add(text[offset], offset, offset + 1)
+                    add(text[index], index, index + 1)
+                    index += 1
         if separates:
             units.append(['gap', ' ', start, end])
         position = max(position, end)
 
     items = []
     for kind, characters, start, end in units:
-        if kind == 'text' and not characters.isascii():
+        if kind != 'gap' and not characters.isascii():
             kept = any(
                 unicodedata.decomposition(character).startswith(_EVIDENCE_KEPT_FORMS)
                 for character in characters
             )
             characters = unicodedata.normalize('NFC' if kept else 'NFKC', characters).translate(_EVIDENCE_FOLDS)
         for character in characters:
-            if kind == 'gap' or character.isspace() or character == '|':
+            if kind == 'gap' or character.isspace() or (character == '|' and kind != 'literal'):
                 items.append(('gap', ' ', start, end))
-            elif character in _EVIDENCE_EMPHASIS:
+            elif character in _EVIDENCE_EMPHASIS and kind != 'literal':
                 items.append(('mark', character, start, end))
             elif character not in _EVIDENCE_INVISIBLE:
                 items.append(('char', character, start, end))
