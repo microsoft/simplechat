@@ -502,7 +502,7 @@ export interface FileSourceTypeOption {
     visible: boolean;
 }
 
-/** The server-decided options envelope for the group file source editor. */
+/** Server-decided editor options in any workspace scope. */
 export interface FileSourceOptions {
     source_types: FileSourceTypeOption[];
     /** Identity ids eligible per source type; the picker filters against this. */
@@ -510,6 +510,7 @@ export interface FileSourceOptions {
     schedule: { min_interval_minutes: number; max_interval_minutes: number };
     limits: { max_sources: number };
     recursive_allowed: boolean;
+    default_remote_delete_policy?: 'ignore' | 'hard_delete';
 }
 
 /**

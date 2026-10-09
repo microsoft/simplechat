@@ -29,11 +29,13 @@ import {
     authUsesSecret,
     authUsesUsername,
     connectionDescriptor,
+    emptyFileSourceDraft,
     eligibleIdentities,
     isPathSelected,
     normalizeFixedTag,
     parentBrowsePath,
     secretFieldLabel,
+    sourceTypeLabel,
     visibleSourceTypes,
     withFixedTag,
     withSelectedPath,
@@ -90,6 +92,7 @@ export function FileSourceEditorDialog({
     tagSuggestions = [],
     tagSuggestionsFailed = false,
     saving,
+    saveBlocked = false,
     error,
     onChange,
     onSave,
@@ -98,6 +101,7 @@ export function FileSourceEditorDialog({
     onTest,
     onBrowse,
     onIgnore,
+    returnFocusTo,
 }: {
     draft: FileSourceDraft;
     options: FileSourceOptions | null;
@@ -109,6 +113,7 @@ export function FileSourceEditorDialog({
     /** The existing tags could not be read, so none are offered; a tag can still be typed. */
     tagSuggestionsFailed?: boolean;
     saving: boolean;
+    saveBlocked?: boolean;
     error: string | null;
     onChange: (next: FileSourceDraft) => void;
     onSave: () => void;
@@ -123,8 +128,14 @@ export function FileSourceEditorDialog({
      * tracks it per path for the session.
      */
     onIgnore?: (remotePath: string, ignored: boolean) => Promise<boolean>;
+    returnFocusTo?: HTMLElement | null;
 }) {
     const nameRef = useRef<HTMLInputElement>(null);
+    const sourceTypeLabelId = useId();
+    const identityLabelId = useId();
+    const authenticationLabelId = useId();
+    const secretLabelId = useId();
+    const secretHintId = useId();
     const folderTagsId = useId();
     const deletePolicyId = useId();
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -136,6 +147,14 @@ export function FileSourceEditorDialog({
     const [tagInput, setTagInput] = useState('');
     const [tagError, setTagError] = useState<string | null>(null);
     const dirty = JSON.stringify(draft) !== original || pathInput.trim() !== '' || tagInput.trim() !== '';
+    const mounted = useRef(true);
+    const connectionKey = JSON.stringify({
+        sourceType: draft.sourceType, connection: draft.connection,
+        credentialMode: draft.credentialMode, identityId: draft.identityId,
+        credentials: draft.credentials,
+    });
+    const latestConnectionKey = useRef(connectionKey);
+    latestConnectionKey.current = connectionKey;
 
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<FileSourceConnectionResult | null>(null);
@@ -155,13 +174,18 @@ export function FileSourceEditorDialog({
         [identities, options, draft.sourceType],
     );
     const authTypes = descriptor.authTypes;
-    const canSave = draft.name.trim().length > 0
-        && (draft.credentialMode === 'inline' || draft.identityId.trim().length > 0);
     const scheduleRange = options?.schedule ?? { min_interval_minutes: 1, max_interval_minutes: 10080 };
     const recursiveAllowed = options?.recursive_allowed !== false;
+    const canSave = !saveBlocked && draft.name.trim().length > 0
+        && (draft.credentialMode === 'inline' || eligible.some((identity) => identity.id === draft.identityId))
+        && (!draft.scheduleEnabled || (Number.isInteger(draft.intervalMinutes)
+            && draft.intervalMinutes >= scheduleRange.min_interval_minutes
+            && draft.intervalMinutes <= scheduleRange.max_interval_minutes));
 
     useEffect(() => {
+        mounted.current = true;
         nameRef.current?.focus();
+        return () => { mounted.current = false; };
     }, []);
 
     // Keep the inline auth type valid for the current source type: a type change can drop the
@@ -177,9 +201,12 @@ export function FileSourceEditorDialog({
     useEffect(() => {
         setBrowseResult(null);
         setBrowseError(null);
-    }, [draft.sourceType]);
+        setTestResult(null);
+        setTestError(null);
+    }, [connectionKey]);
 
     const requestClose = () => {
+        if (saving) return;
         if (dirty && !confirmingDiscard) {
             setConfirmingDiscard(true);
             return;
@@ -206,27 +233,35 @@ export function FileSourceEditorDialog({
         onChange({ ...draft, credentials: { ...draft.credentials, ...patch } });
 
     const runTest = async () => {
+        const key = connectionKey;
         setTesting(true);
         setTestError(null);
         setTestResult(null);
         try {
-            setTestResult(await onTest());
+            const result = await onTest();
+            if (mounted.current && latestConnectionKey.current === key) setTestResult(result);
         } catch (cause) {
-            setTestError(cause instanceof Error ? cause.message : 'The connection test failed.');
+            if (mounted.current && latestConnectionKey.current === key) {
+                setTestError(cause instanceof Error ? cause.message : 'The connection test failed.');
+            }
         } finally {
-            setTesting(false);
+            if (mounted.current) setTesting(false);
         }
     };
 
     const runBrowse = async (browsePath: string) => {
+        const key = connectionKey;
         setBrowsing(true);
         setBrowseError(null);
         try {
-            setBrowseResult(await onBrowse(browsePath));
+            const result = await onBrowse(browsePath);
+            if (mounted.current && latestConnectionKey.current === key) setBrowseResult(result);
         } catch (cause) {
-            setBrowseError(cause instanceof Error ? cause.message : 'Could not browse this location.');
+            if (mounted.current && latestConnectionKey.current === key) {
+                setBrowseError(cause instanceof Error ? cause.message : 'Could not browse this location.');
+            }
         } finally {
-            setBrowsing(false);
+            if (mounted.current) setBrowsing(false);
         }
     };
 
@@ -288,6 +323,7 @@ export function FileSourceEditorDialog({
         if (!onIgnore || !remotePath) {
             return;
         }
+        const key = connectionKey;
         const next = !ignoredPaths[remotePath];
         setIgnoreError(null);
         try {
@@ -296,9 +332,13 @@ export function FileSourceEditorDialog({
             // is authoritative; browse can't reflect the change, so the per-path map is updated from
             // the response rather than by re-browsing.
             const applied = await onIgnore(remotePath, next);
-            setIgnoredPaths((current) => ({ ...current, [remotePath]: applied }));
+            if (mounted.current && latestConnectionKey.current === key) {
+                setIgnoredPaths((current) => ({ ...current, [remotePath]: applied }));
+            }
         } catch (cause) {
-            setIgnoreError(cause instanceof Error ? cause.message : 'Could not update the ignore list.');
+            if (mounted.current && latestConnectionKey.current === key) {
+                setIgnoreError(cause instanceof Error ? cause.message : 'Could not update the ignore list.');
+            }
         }
     };
 
@@ -307,8 +347,9 @@ export function FileSourceEditorDialog({
     return (
         <Modal
             title={draft.id ? 'Edit file source' : 'New file source'}
-            description="A connection this group syncs documents from. Secrets are held server-side and never shown here."
+            description={`A connection this ${scopeNoun} syncs documents from. Secrets are held server-side and never shown here.`}
             onClose={requestClose}
+            returnFocusTo={returnFocusTo}
             size="lg"
             footer={
                 confirmingDiscard ? (
@@ -323,7 +364,7 @@ export function FileSourceEditorDialog({
                     </>
                 ) : (
                     <>
-                        {error ? <span className="mr-auto text-xs text-danger">{error}</span> : null}
+                        {error ? <span role="alert" className="mr-auto text-xs text-danger">{error}</span> : null}
                         <GlassButton size="sm" onClick={requestClose} disabled={saving}>
                             Cancel
                         </GlassButton>
@@ -339,7 +380,7 @@ export function FileSourceEditorDialog({
                 )
             }
         >
-            <div className="space-y-5">
+            <fieldset disabled={saving || saveBlocked} className="space-y-5">
                 <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block">
                         <span className="mb-1 block text-xs font-medium text-text-2">Name</span>
@@ -353,13 +394,21 @@ export function FileSourceEditorDialog({
                         />
                     </label>
                     <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-text-2">Source type</span>
+                        <span id={sourceTypeLabelId} className="mb-1 block text-xs font-medium text-text-2">Source type</span>
                         {draft.id ? (
-                            <input type="text" value={draft.sourceType} disabled className={FIELD_CLASS} />
+                            <input aria-labelledby={sourceTypeLabelId} type="text" value={sourceTypeLabel(draft.sourceType)} disabled className={FIELD_CLASS} />
                         ) : (
                             <select
+                                aria-labelledby={sourceTypeLabelId}
                                 value={draft.sourceType}
-                                onChange={(event) => onChange({ ...draft, sourceType: event.target.value })}
+                                onChange={(event) => {
+                                    const next = emptyFileSourceDraft(event.target.value, scheduleRange.min_interval_minutes);
+                                    onChange({
+                                        ...draft, sourceType: next.sourceType, connection: next.connection,
+                                        selectedPaths: [], identityId: '', credentials: next.credentials,
+                                        credentialMode: next.credentialMode, secretStored: false,
+                                    });
+                                }}
                                 className={FIELD_CLASS}
                             >
                                 {typeOptions.map((type) => (
@@ -392,7 +441,11 @@ export function FileSourceEditorDialog({
 
                 <fieldset className="space-y-3">
                     <legend className="text-xs font-medium text-text-2">Authentication</legend>
-                    <div className="flex flex-wrap gap-3">
+                    {draft.sourceType === 'onedrive' ? (
+                        <p className="text-sm text-text-2">
+                            OneDrive uses the administrator-managed global connector. You choose what to sync, not tenant credentials.
+                        </p>
+                    ) : <div className="flex flex-wrap gap-3">
                         <label className="flex items-center gap-2 text-sm text-text-1">
                             <input
                                 type="radio"
@@ -407,16 +460,20 @@ export function FileSourceEditorDialog({
                                 type="radio"
                                 name="credential-mode"
                                 checked={draft.credentialMode === 'inline'}
-                                onChange={() => onChange({ ...draft, credentialMode: 'inline' })}
+                                onChange={() => onChange({
+                                    ...draft, credentialMode: 'inline',
+                                    secretStored: draft.credentialMode === 'identity' ? false : draft.secretStored,
+                                })}
                             />
                             Enter credentials directly
                         </label>
-                    </div>
+                    </div>}
 
-                    {draft.credentialMode === 'identity' ? (
+                    {draft.sourceType === 'onedrive' ? null : draft.credentialMode === 'identity' ? (
                         <label className="block sm:max-w-md">
-                            <span className="mb-1 block text-xs font-medium text-text-2">Identity</span>
+                            <span id={identityLabelId} className="mb-1 block text-xs font-medium text-text-2">Identity</span>
                             <select
+                                aria-labelledby={identityLabelId}
                                 value={draft.identityId}
                                 onChange={(event) => onChange({ ...draft, identityId: event.target.value })}
                                 className={FIELD_CLASS}
@@ -438,10 +495,14 @@ export function FileSourceEditorDialog({
                     ) : (
                         <div className="space-y-3">
                             <label className="block sm:max-w-xs">
-                                <span className="mb-1 block text-xs font-medium text-text-2">Authentication method</span>
+                                <span id={authenticationLabelId} className="mb-1 block text-xs font-medium text-text-2">Authentication method</span>
                                 <select
+                                    aria-labelledby={authenticationLabelId}
                                     value={authType}
-                                    onChange={(event) => setCredential({ authType: event.target.value })}
+                                    onChange={(event) => onChange({
+                                        ...draft, secretStored: false,
+                                        credentials: { ...draft.credentials, authType: event.target.value, secret: '' },
+                                    })}
                                     className={FIELD_CLASS}
                                 >
                                     {authTypes.map((value) => (
@@ -520,10 +581,12 @@ export function FileSourceEditorDialog({
                             {authUsesSecret(authType) ? (
                                 <label className="block sm:max-w-md">
                                     <span className="mb-1 block text-xs font-medium text-text-2">
-                                        {secretFieldLabel(authType, draft.secretStored)}
+                                        <span id={secretLabelId}>{secretFieldLabel(authType, draft.secretStored)}</span>
                                     </span>
                                     <input
                                         type="password"
+                                        aria-labelledby={secretLabelId}
+                                        aria-describedby={draft.secretStored ? secretHintId : undefined}
                                         autoComplete="new-password"
                                         value={draft.credentials.secret}
                                         onChange={(event) => setCredential({ secret: event.target.value })}
@@ -531,7 +594,7 @@ export function FileSourceEditorDialog({
                                         className={FIELD_CLASS}
                                     />
                                     {draft.secretStored ? (
-                                        <span className="mt-1 block text-xs text-text-3">
+                                        <span id={secretHintId} className="mt-1 block text-xs text-text-3">
                                             A secret is already stored. Leave this blank to keep it, or enter a new value
                                             to replace it.
                                         </span>
@@ -546,7 +609,7 @@ export function FileSourceEditorDialog({
                             {testing ? <Loader2 size={14} className="animate-spin" /> : <PlugZap size={14} />}
                             Test connection
                         </GlassButton>
-                        {testError ? <p className="mt-1 text-xs text-danger">{testError}</p> : null}
+                        {testError ? <p role="alert" className="mt-1 text-xs text-danger">{testError}</p> : null}
                         {testResult ? (
                             <p className="mt-1 text-xs text-ok">{connectionSummary(testResult)}</p>
                         ) : null}
@@ -842,7 +905,7 @@ export function FileSourceEditorDialog({
                         ) : null}
                         {suggestions.length > 0 ? (
                             <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-xs text-text-3">This group’s tags:</span>
+                                <span className="text-xs text-text-3">This {scopeNoun}’s tags:</span>
                                 {suggestions.map((name) => (
                                     <button
                                         key={name}
@@ -858,7 +921,7 @@ export function FileSourceEditorDialog({
                         ) : null}
                         {tagSuggestionsFailed ? (
                             <p className="text-xs text-text-3">
-                                This group’s existing tags couldn’t be loaded. You can still type a tag.
+                                This {scopeNoun}’s existing tags couldn’t be loaded. You can still type a tag.
                             </p>
                         ) : null}
                     </div>
@@ -902,12 +965,12 @@ export function FileSourceEditorDialog({
                                 ))}
                             </select>
                             <p id={`${deletePolicyId}-hint`} className="mt-1 text-xs text-text-3">
-                                {REMOTE_DELETE_HINTS[draft.remoteDeletePolicy]}
+                                {REMOTE_DELETE_HINTS[draft.remoteDeletePolicy]?.replace('this group', `this ${scopeNoun}`)}
                             </p>
                         </div>
                     </div>
                 </fieldset>
-            </div>
+            </fieldset>
         </Modal>
     );
 }

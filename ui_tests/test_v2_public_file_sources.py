@@ -1,7 +1,7 @@
 # test_v2_public_file_sources.py
 """
 Production-SPA coverage for the native V2 public workspace file sources section (M10B).
-Version: 0.261.188
+Version: 0.261.310
 Implemented in: 0.261.182
 A failed read offers a retry and never the empty state: 0.261.188
 
@@ -21,10 +21,8 @@ names itself on the row and the editor's picker lists the eligible one; a locked
 read-only section; and a reader's and a File-Sync-off manager's manager-only section is unavailable
 with the server's own reason.
 
-The live File Sync engine, run history, connection tests, browse and ignore are exercised
-byte-for-byte by the group M5B suite because the public routes drive the same scope-generic engine,
-so this suite does not repeat them; the public envelope, projection, credentials, conflict codes and
-management gating are what differ, and those are what it covers.
+The group suite covers the scope-generic engine. This suite additionally exercises public test,
+browse and canonical ignore/restore transport, including an unsaved source's tools.
 """
 
 import re
@@ -293,7 +291,7 @@ def test_config_conflict_reload_rebases_concurrent_scope_and_keeps_local_name(pu
     assert conflict.value.status == 409
     with page.expect_response(
         lambda response: response.request.method == "GET"
-        and urlsplit(response.url).path == "/api/public-workspaces/pub-a/file-sources"
+        and urlsplit(response.url).path == f"/api/public-workspaces/pub-a/file-sources/{EDITABLE_SOURCE_ID}"
     ):
         page.get_by_role("button", name="Reload", exact=True).click()
     expect(page.get_by_label("Include subfolders", exact=True)).not_to_be_checked()
@@ -405,6 +403,45 @@ def test_editor_offers_only_eligible_public_identities(public_file_sources_ui):
         if entry.path == "/api/public-workspaces/pub-a/identities" and entry.method == "GET"
     ]
     assert identity_reads, "The editor must list identities from the public route."
+    assert_no_personal_or_group_reads(ui)
+
+
+def test_public_test_browse_and_ignore_stay_in_the_workspace(public_file_sources_ui):
+    ui, page = public_file_sources_ui, public_file_sources_ui.page
+    open_sources(ui)
+    row(ui, EDITABLE_NAME).get_by_role("button", name=f"Edit {EDITABLE_NAME}", exact=True).click()
+    expect(page.get_by_role("button", name="Save changes", exact=True)).to_be_enabled()
+    base = f"/api/public-workspaces/pub-a/file-sources/{EDITABLE_SOURCE_ID}"
+    with page.expect_response(lambda response: urlsplit(response.url).path == base + "/test-connection"):
+        page.get_by_role("button", name="Test connection", exact=True).click()
+    with page.expect_response(lambda response: urlsplit(response.url).path == base + "/browse"):
+        page.get_by_role("button", name="Browse the source", exact=True).click()
+    expect(page.get_by_role("button", name="Ignore budget.xlsx", exact=True)).to_be_visible()
+    with page.expect_response(lambda response: urlsplit(response.url).path == base + "/ignore-path") as ignored:
+        page.get_by_role("button", name="Ignore budget.xlsx", exact=True).click()
+    assert ignored.value.request.post_data_json == {
+        "remote_path": "\\\\files.example.test\\reports\\budget.xlsx", "ignored": True,
+    }
+    expect(page.get_by_role("button", name="Restore budget.xlsx", exact=True)).to_be_visible()
+    with page.expect_response(lambda response: urlsplit(response.url).path == base + "/ignore-path") as restored:
+        page.get_by_role("button", name="Restore budget.xlsx", exact=True).click()
+    assert restored.value.request.post_data_json["ignored"] is False
+    assert_no_personal_or_group_reads(ui)
+
+
+def test_public_unsaved_source_tools_do_not_create_a_source(public_file_sources_ui):
+    ui, page = public_file_sources_ui, public_file_sources_ui.page
+    open_sources(ui)
+    page.get_by_role("button", name="New file source", exact=True).click()
+    page.get_by_role("radio", name="Enter credentials directly").check()
+    page.get_by_label("Network path", exact=True).fill("\\\\files.example.test\\draft")
+    base = "/api/public-workspaces/pub-a/file-sources"
+    with page.expect_response(lambda response: urlsplit(response.url).path == base + "/test-connection"):
+        page.get_by_role("button", name="Test connection", exact=True).click()
+    with page.expect_response(lambda response: urlsplit(response.url).path == base + "/browse"):
+        page.get_by_role("button", name="Browse the source", exact=True).click()
+    expect(page.get_by_text("File: budget.xlsx", exact=True)).to_be_visible()
+    assert not [entry for entry in ui.writes if entry.method == "POST" and entry.path == base]
     assert_no_personal_or_group_reads(ui)
 
 

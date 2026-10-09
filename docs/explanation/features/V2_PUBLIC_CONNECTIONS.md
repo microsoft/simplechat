@@ -11,6 +11,12 @@ no actions, so File Sync is what both sections are for.
 Implemented in version: **0.261.182**. The routes are in
 [Public Connection APIs](PUBLIC_CONNECTION_APIS.md).
 
+**Shared source editor expanded in version: 0.261.310**, recorded in
+`application/single_app/config.py`. Personal, group and public source editors
+share loading, connection validation and draft recovery while keeping
+scope-specific routes and permissions. See
+[V2 File Source Configuration](V2_FILE_SOURCE_CONFIGURATION.md).
+
 ## Who can do what
 
 | | Owner, Admin, DocumentManager | Reader |
