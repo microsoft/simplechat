@@ -1,7 +1,7 @@
 # test_v2_orchestration_composer.py
 """
 UI test for the V2 Composer's orchestration mode: the toggle, the manual-controls disclosure.
-Version: 0.261.137
+Version: 0.261.315
 Implemented in: 0.261.085; Image requests orchestration image proposals since 0.261.132;
 the Orchestrate model picker folds under Manual controls since 0.261.137
 
@@ -274,12 +274,49 @@ def test_orchestration_image_control_requests_image_proposals():
         return False
 
 
+def test_public_scope_stays_behind_manual_controls():
+    """Aggregate retrieval remains active while its controls are collapsed or admin-hidden."""
+    page = _PAGE
+    page.route("**/api/public_workspace_documents?**", lambda route: route.fulfill(json={"documents": []}))
+    page.route("**/api/public_workspace_documents/tags?**", lambda route: route.fulfill(json={"tags": []}))
+    page.evaluate(_SEED_COMPOSER, {
+        "features": _features(enable_public_workspaces=True),
+        "orchestration": _orchestration(),
+    })
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().setPublicWorkspaceSelection('visible')")
+    assert not _has(page, 'select'), "scope must not appear above the message editor"
+    assert not _has(page, '[title^="Documents"]')
+    page.get_by_title("Manual controls", exact=True).click()
+    documents = page.get_by_title("Documents · Visible public workspaces", exact=True)
+    documents.wait_for(state="visible")
+    assert documents.get_attribute("aria-pressed") == "true"
+    assert not _has(page, 'select'), "expanding manual tools alone must not expose the scope field"
+    documents.click()
+    scope = page.get_by_label("Search in", exact=True)
+    scope.wait_for(state="visible")
+    assert scope.input_value() == "visible"
+    page.get_by_role("button", name="Done", exact=True).click()
+    page.get_by_title("Manual controls", exact=True).click()
+    assert not _has(page, '[title^="Documents"]')
+    selection = page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().publicWorkspaceSelection")
+    assert selection == "visible", "disclosure must never change the search mode"
+    page.evaluate(_SEED_COMPOSER, {
+        "features": _features(enable_public_workspaces=True),
+        "orchestration": _orchestration(show_manual_controls=False),
+    })
+    assert not _has(page, '[title="Manual controls"]')
+    assert not _has(page, '[title^="Documents"]')
+    assert not _has(page, 'select')
+    return True
+
+
 PAGE_TESTS = [
     test_toggle_hidden_unless_feature_and_switch_are_on,
     test_toggle_is_on_by_default_with_controls_collapsed,
     test_turning_off_restores_the_classic_composer,
     test_disclosure_restores_the_manual_controls,
     test_orchestration_image_control_requests_image_proposals,
+    test_public_scope_stays_behind_manual_controls,
 ]
 
 

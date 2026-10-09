@@ -1,8 +1,10 @@
-# Native V2 Aggregate Public Chat (v0.261.310)
+# Native V2 Aggregate Public Chat (v0.261.315)
 
 Implemented in version: **0.261.310**, tracked in
 `application/single_app/config.py`. Addresses row 3 of
 [microsoft/simplechat#1722](https://github.com/microsoft/simplechat/issues/1722).
+Scope picker placement fixed in version: **0.261.315**, tracked in the same
+`application/single_app/config.py`.
 
 ## Purpose and dependencies
 
@@ -13,7 +15,12 @@ or browser dependency is introduced.
 
 ## Choosing a scope
 
-| Document search scope | Retrieval set |
+Open **Documents**, then use **Search in**. In Orchestrate, Documents stays
+under **Manual controls** when the administrator allows those controls.
+There is no separate scope row above the message editor. The Documents button
+shows an active All or Visible scope when its toolbar is visible.
+
+| Search in | Retrieval set |
 | --- | --- |
 | Current context | Existing personal/group/public active context and selected references. |
 | All public workspaces | Every existing public workspace whose status permits chat, including hidden workspaces. |
@@ -32,6 +39,13 @@ aggregate modes offer public document and tag references rather than silently
 ignoring a narrower workspace choice. Documents
 and `#` offer public sources only. Ordinary mixed-context chat, restricted editors
 and single-workspace hand-offs keep their existing behavior.
+
+Normal Manual chat uses Documents relevance search or selected document, tag
+and workspace references; it does not need an aggregate public scope.
+Orchestrate can find relevant documents within the supplied context without
+that selector. Explicit document references replace its candidate probe;
+tags constrain the probe. All and Visible are useful specifically when a
+question should retrieve across public collections, not personal or group sources.
 
 ## Continuity and refusal states
 
@@ -52,6 +66,12 @@ Conversation ownership, scope locks, action permissions, publication and content
 screening remain enforced. Public retrieval does not change personal conversation
 or fact-memory ownership. Direct image generation and saved-result questions
 require Current context.
+Conflict explanations live inside Documents and blocked sends explain how to
+recover without discarding references. Even if public workspaces are disabled,
+an existing aggregate selection can be changed back to Current context.
+If manual controls are unavailable in Orchestrate, switch to Manual mode to
+open Documents, or start a new chat. Turn off direct Image mode or remove a
+saved-result context before changing an incompatible scope.
 
 ## Contract and implementation
 
@@ -85,6 +105,8 @@ worker/delegated-request isolation, replay, picker publication policy and
 public-only request building.
 `ui_tests/test_v2_public_chat_scope.py` exercises both request dispatches,
 public-only candidates, conflicting drafts, continuity and restoration.
+It also covers picker-only scope editing, restricted-editor isolation,
+streaming restrictions, recovery paths, and desktop/mobile light/dark layouts.
 `ui_tests/test_v2_public_directory.py` exercises native directory navigation
 at desktop/mobile widths in light/dark themes.
 

@@ -105,8 +105,10 @@ workspace for chat at once, saves and reuses lists of visible workspaces, and
 opens classic chat over the visible ones.
 
 From version **0.261.310**, **Chat with visible** instead opens a fresh native
-V2 chat. Its **Document search scope** stays **Visible public workspaces** for
-follow-up questions. Select **All public workspaces** in the composer to
+V2 chat. Its public scope stays **Visible public workspaces** for
+follow-up questions. From **0.261.315**, open **Documents → Search in** to
+change it; in Orchestrate, use **Manual controls → Documents** when available.
+Select **All public workspaces** inside that picker to
 include hidden workspaces too, without changing visibility preferences.
 Both scopes retrieve only public documents from currently chat-available
 workspaces; personal and group active selections are excluded. **Current

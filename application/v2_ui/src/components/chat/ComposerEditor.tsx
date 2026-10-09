@@ -81,7 +81,7 @@ import {
 } from './ComposerHighlight';
 import { ContextChips } from './ContextChips';
 import { ContextMenu, useContextSuggestions, type ContextSearchScope } from './ContextMenu';
-import { DocumentPickerPopover } from './DocumentPickerPopover';
+import { DocumentPickerPopover, type DocumentScopeControl } from './DocumentPickerPopover';
 import type { PublicWorkspaceSelection } from '../../lib/publicChatScope';
 import { MentionMenu, useMentionSuggestions } from './MentionMenu';
 import { ComposerMentionChips } from './MentionPills';
@@ -89,6 +89,7 @@ import { PromptSlashMenu } from './PromptSlashMenu';
 
 export interface ComposerEditorProps {
     publicWorkspaceSelection?: PublicWorkspaceSelection | null;
+    documentScopeControl?: DocumentScopeControl;
     id: string;
     label: string;
     draft: ComposerDraft;
@@ -165,6 +166,7 @@ function ComposerUploadThumbnail({ upload }: { upload: ComposerUpload }) {
 
 export function ComposerEditor({
     publicWorkspaceSelection,
+    documentScopeControl,
     id,
     label,
     draft,
@@ -242,7 +244,7 @@ export function ComposerEditor({
         publicEnabled: Boolean(features.enable_public_workspaces),
         // A restricted composer's requests can use only documents and tags, so whole
         // workspaces are not offered there.
-        workspacesEnabled: !restricted,
+        workspacesEnabled: !restricted && !publicWorkspaceSelection,
         documentsOnly: restricted && contextDocumentsOnly,
     }), [bootstrap?.scope, contextDocumentsOnly, features.enable_group_workspaces, features.enable_public_workspaces, restricted, publicWorkspaceSelection, referenceUploadsOnly]);
     const { candidates, loading } = useContextSuggestions(
@@ -882,6 +884,7 @@ export function ComposerEditor({
             )}
             {pickerOpen && !disabled && (
                 <DocumentPickerPopover scope={scope} searchAll={searchAll} selectedKeys={contextKeys}
+                    scopeControl={!shared && !restricted && !referenceUploadsOnly ? documentScopeControl : undefined}
                     onToggleSearchAll={onToggleSearchAll} onToggle={toggleContextCandidate}
                     onClear={() => removeContextChips(draft.contextItems)}
                     onClose={() => setPickerOpen(false)} placement={menuPlacement}

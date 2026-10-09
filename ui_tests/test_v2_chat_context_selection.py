@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.310
+Version: 0.261.315
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
@@ -346,7 +346,7 @@ def expect_pills(page: Page, *labels):
 
 
 def open_picker(page: Page):
-    toolbar = page.get_by_title(re.compile(r"^Documents(?: · \d+)?$"))
+    toolbar = page.get_by_title(re.compile(r"^Documents(?: · .+)?$"))
     if not toolbar.is_visible():
         page.get_by_title("Manual controls", exact=True).click()
     toolbar.click()
