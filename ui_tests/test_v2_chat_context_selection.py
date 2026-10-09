@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.226
+Version: 0.261.310
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
@@ -123,6 +123,12 @@ class ContextApi:
         if request.method == "GET" and path == "/api/conversations/feed":
             # Re-read once a new conversation's first answer lands.
             route.fulfill(json={"conversations": [], "has_more": False, "next_cursor": None})
+            return
+        if request.method == "GET" and path == "/api/v2/orchestration/runs":
+            route.fulfill(json={"runs": []})
+            return
+        if request.method == "GET" and path.startswith("/api/chat/stream/status/"):
+            route.fulfill(json={"active": False, "pending": False, "reattachable": False})
             return
         if is_pending_actions_list(request.method, path):
             # The open conversation's saved outgoing actions: none here.
@@ -272,11 +278,11 @@ def context_page(page):
         yield page, api
     finally:
         page.evaluate("() => window.OrchHarness.reset()")
-        assert not errors, f"Unexpected workflow browser errors: {errors}"
+        assert not errors, f"Unexpected workflow browser errors: {errors}; unmocked requests: {api.unexpected}"
         assert not api.unexpected, f"Unmocked workflow requests: {api.unexpected}"
 
 
-def mount_workflow(page: Page, entry="/chat", *, strict_mode=False, orchestration=False):
+def mount_workflow(page: Page, entry="/chat", *, strict_mode=False, orchestration=False, native_chat=False):
     page.evaluate(
         """(spec) => {
             const H = window.OrchHarness;
@@ -317,7 +323,7 @@ def mount_workflow(page: Page, entry="/chat", *, strict_mode=False, orchestratio
             });
             H.stores.orchestration.useOrchestrationStore.getState()
                 .setVisibleConversation(spec.conversationId);
-            H.mount('mount-a', 'ContextWorkflow', {}, {
+            H.mount('mount-a', 'ContextWorkflow', {nativeChat: spec.nativeChat}, {
                 initialEntries: [spec.entry],
                 strictMode: spec.strictMode,
             });
@@ -327,6 +333,7 @@ def mount_workflow(page: Page, entry="/chat", *, strict_mode=False, orchestratio
             "strictMode": strict_mode,
             "orchestration": orchestration,
             "conversationId": CONVERSATION_ID,
+            "nativeChat": native_chat,
         },
     )
     expect(page.get_by_label("Current route", exact=True)).to_be_visible()

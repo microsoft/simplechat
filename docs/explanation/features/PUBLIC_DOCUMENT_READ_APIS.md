@@ -46,6 +46,20 @@ surface, so they follow the current rule rather than the earlier precedent.
 
 ## Queries
 
+### Aggregate chat picker reads
+
+Implemented in version: **0.261.310** (`application/single_app/config.py`).
+The existing `GET /api/public_workspace_documents` and
+`GET /api/public_workspace_documents/tags` chat endpoints accept
+`public_workspace_selection=all|visible`. All resolves every existing,
+chat-available public workspace; Visible additionally applies the canonical
+directory preference and legacy-list fallback. An explicit tags `workspace_ids`
+filter only narrows that set. An empty set returns an empty list, never an
+unrestricted query; a malformed mode is 400 and unavailable scope resolution
+is a safe error. Omitted mode retains the existing endpoint behavior.
+Pending publication and content-screening projections remain unchanged.
+These optional parameters do not retarget the immutable single-workspace APIs.
+
 The list accepts `place=all|recent|processing|errors|untagged`, `search`,
 comma-separated `tags` with AND matching, `classification`, `page`, `page_size`,
 `sort_by`, `sort_order=asc|desc`, and the existing `author`, `keywords`, and

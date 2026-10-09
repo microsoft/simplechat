@@ -57,6 +57,7 @@ export function DocumentPickerPopover({
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const holder = useRef<HTMLDivElement>(null);
     const searchRef = useRef<HTMLInputElement>(null);
     const includeWorkspaces = scope.workspacesEnabled !== false;
@@ -89,9 +90,11 @@ export function DocumentPickerPopover({
     useEffect(() => {
         const controller = new AbortController();
         setLoading(true);
+        setError(null);
 
         const timer = window.setTimeout(() => {
             searchContextCandidates({
+                publicWorkspaceSelection: scope.publicWorkspaceSelection,
                 query,
                 groups: scope.groups,
                 publicWorkspaces: scope.publicWorkspaces,
@@ -111,6 +114,7 @@ export function DocumentPickerPopover({
                 })
                 .catch(() => {
                     if (!controller.signal.aborted) {
+                        if (scope.publicWorkspaceSelection) setError('Could not load public search sources. Close and reopen Documents to retry.');
                         setCandidates([]);
                         setLoading(false);
                     }
@@ -123,7 +127,7 @@ export function DocumentPickerPopover({
         };
         // The scope arrays are rebuilt on every bootstrap read, so this keys on the flags and
         // the query rather than on array identity.
-    }, [query, scope.groupsEnabled, scope.publicEnabled, includeWorkspaces, imagesOnly, documentsOnly]);
+    }, [query, scope.groupsEnabled, scope.publicEnabled, scope.publicWorkspaceSelection, includeWorkspaces, imagesOnly, documentsOnly]);
 
     // Grouped by workspace, which is how the chip row groups them too: a reader scanning for
     // "the contract in Marketing" is looking for the workspace first.
@@ -176,6 +180,7 @@ export function DocumentPickerPopover({
                 />
             </div>
 
+            {error && <p role="alert" className="px-2 py-1.5 text-sm text-danger">{error}</p>}
             {!imagesOnly && onToggleSearchAll && <button
                 type="button"
                 onClick={onToggleSearchAll}

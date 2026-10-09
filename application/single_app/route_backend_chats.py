@@ -128,6 +128,7 @@ import asyncio, types
 import ast
 import csv
 from functools import wraps
+from public_chat_scope import public_chat_scope_required
 import io
 import inspect
 import json
@@ -148,6 +149,8 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from functions_authentication import *
 from functions_search import *
 from functions_search_service import search_relevant_tabular_candidates
+from functions_public_workspaces import resolve_public_chat_workspace_ids
+from public_chat_scope_state import aggregate_public_workspace_ids
 from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
@@ -3625,6 +3628,14 @@ def _get_authorized_chat_scope_context(
     active_public_workspace_ids=None,
 ):
     """Filter request-provided chat scopes down to the caller's current access."""
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        return {
+            'active_group_ids': [],
+            'active_group_id': None,
+            'active_public_workspace_ids': aggregate_ids,
+            'active_public_workspace_id': aggregate_ids[0] if aggregate_ids else None,
+        }
     requested_group_ids = _normalize_requested_scope_ids(active_group_ids, active_group_id)
     allowed_group_ids = []
     for group_id in requested_group_ids:
@@ -17504,6 +17515,10 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @public_chat_scope_required(
+        _authorize_personal_conversation_access, get_current_user_id, get_settings,
+        resolve_public_chat_workspace_ids, log_event,
+    )
     @_with_m365_pending_action_cards
     def chat_api():
         publish_background_event = getattr(
@@ -18583,6 +18598,7 @@ def register_route_backend_chats(bp):
                         'document_context_requested': document_context_requested,
                         'hybrid_search_preference': bool(hybrid_search_enabled),
                         'document_scope': effective_document_scope,
+                        'public_workspace_selection': data.get('public_workspace_selection'),
                         'selected_document_id': effective_selected_document_id,
                         'selected_document_ids': effective_selected_document_ids,
                         'requested_document_ids': requested_selected_document_ids,
@@ -21867,6 +21883,10 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @public_chat_scope_required(
+        _authorize_personal_conversation_access, get_current_user_id, get_settings,
+        resolve_public_chat_workspace_ids, log_event,
+    )
     def chat_stream_api():
         """
         Streaming version of chat endpoint using Server-Sent Events (SSE).
@@ -23181,6 +23201,7 @@ def register_route_backend_chats(bp):
                             'document_context_requested': document_context_requested,
                             'hybrid_search_preference': bool(hybrid_search_enabled),
                             'document_scope': effective_document_scope,
+                            'public_workspace_selection': data.get('public_workspace_selection'),
                             'selected_document_id': effective_selected_document_id,
                             'selected_document_ids': effective_selected_document_ids,
                             'requested_document_ids': requested_selected_document_ids,

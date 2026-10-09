@@ -10,6 +10,8 @@ Last inventoried: 2026-08-10
 
 ## Current tag inventory
 
+- `[PUBLIC_CHAT_SCOPE]`
+
 - `[ACTION_TEST]`
 - `[AGENT_DOCUMENT_CITATIONS]`
 - `[AUTH_CALLBACK]`

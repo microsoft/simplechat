@@ -6,6 +6,7 @@ from semantic_kernel.functions import kernel_function
 
 from content_screening.contracts import ScreeningError
 from functions_authentication import get_current_user_id
+from public_chat_scope_state import current_public_chat_scope
 from functions_agent_document_citations import annotate_document_search_payload
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,
@@ -183,7 +184,7 @@ class DocumentSearchPlugin(BasePlugin):
         return normalize_search_scope(self._get_additional_fields().get('default_doc_scope', 'all'))
 
     def _resolve_doc_scope_requests(self, requested_scope: str) -> List[str]:
-        scope = self._resolve_doc_scope(requested_scope)
+        scope = 'public' if current_public_chat_scope(self._get_user_id()) else self._resolve_doc_scope(requested_scope)
         allowed_scopes = normalize_allowed_search_scopes(self._get_additional_fields())
         scope_requests = resolve_allowed_scope_requests(scope, allowed_scopes)
         if not scope_requests:
@@ -249,6 +250,14 @@ class DocumentSearchPlugin(BasePlugin):
         )
 
     def _resolve_allowed_public_workspace_ids(self, active_public_workspace_id: Any) -> Union[List[str], str]:
+        aggregate = current_public_chat_scope(self._get_user_id())
+        if aggregate:
+            requested = normalize_search_id_list(active_public_workspace_id) or aggregate['workspace_ids']
+            resolved = intersect_allowed_search_ids(requested, self._get_additional_fields().get('allowed_public_workspace_ids'))
+            resolved = [value for value in normalize_search_id_list(resolved) if value in aggregate['workspace_ids']]
+            if not resolved:
+                raise DocumentSearchScopeError("Document search workspace is not allowed for this action.")
+            return resolved
         return intersect_allowed_search_ids(
             active_public_workspace_id,
             self._get_additional_fields().get('allowed_public_workspace_ids'),

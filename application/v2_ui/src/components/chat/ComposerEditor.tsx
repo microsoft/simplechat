@@ -82,11 +82,13 @@ import {
 import { ContextChips } from './ContextChips';
 import { ContextMenu, useContextSuggestions, type ContextSearchScope } from './ContextMenu';
 import { DocumentPickerPopover } from './DocumentPickerPopover';
+import type { PublicWorkspaceSelection } from '../../lib/publicChatScope';
 import { MentionMenu, useMentionSuggestions } from './MentionMenu';
 import { ComposerMentionChips } from './MentionPills';
 import { PromptSlashMenu } from './PromptSlashMenu';
 
 export interface ComposerEditorProps {
+    publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     id: string;
     label: string;
     draft: ComposerDraft;
@@ -162,6 +164,7 @@ function ComposerUploadThumbnail({ upload }: { upload: ComposerUpload }) {
 }
 
 export function ComposerEditor({
+    publicWorkspaceSelection,
     id,
     label,
     draft,
@@ -232,6 +235,7 @@ export function ComposerEditor({
     const pickerOpen = controlledPickerOpen ?? localPickerOpen;
     const setPickerOpen = onPickerOpenChange ?? setLocalPickerOpen;
     const scope: ContextSearchScope = useMemo(() => ({
+        publicWorkspaceSelection: referenceUploadsOnly ? null : publicWorkspaceSelection,
         groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
         publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
         groupsEnabled: Boolean(features.enable_group_workspaces),
@@ -240,7 +244,7 @@ export function ComposerEditor({
         // workspaces are not offered there.
         workspacesEnabled: !restricted,
         documentsOnly: restricted && contextDocumentsOnly,
-    }), [bootstrap?.scope, contextDocumentsOnly, features.enable_group_workspaces, features.enable_public_workspaces, restricted]);
+    }), [bootstrap?.scope, contextDocumentsOnly, features.enable_group_workspaces, features.enable_public_workspaces, restricted, publicWorkspaceSelection, referenceUploadsOnly]);
     const { candidates, loading } = useContextSuggestions(
         disabled || !contextEnabled ? null : contextQuery?.query ?? null, scope,
     );

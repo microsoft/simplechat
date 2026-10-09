@@ -87,10 +87,10 @@ export function PublicDirectoryVisibilityTools({
             <div className="space-y-2 border-t border-edge pt-4">
                 <GlassButton size="sm" disabled={disabled} onClick={onChatWithVisible}
                     aria-describedby="public-chat-actions-help">
-                    Chat with visible (classic)<ArrowUpRight size={14} />
+                    Chat with visible<ArrowUpRight size={14} />
                 </GlassButton>
                 <p id="public-chat-actions-help" className="text-xs text-text-3">
-                    Opens classic chat, searching the {lowerPlural} that are visible now. It changes nothing.
+                    Opens a new chat, searching the {lowerPlural} that are visible now. It changes nothing.
                     {' '}To chat with every {lowerSingular}, choose Show all in chat first.
                 </p>
             </div>

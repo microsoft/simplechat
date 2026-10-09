@@ -49,12 +49,6 @@ const VIEWS: { id: PublicDirectoryView; label: string }[] = [
 const VISIBILITY_KEY = 'publicDirectorySettings';
 const SAVED_LISTS_KEY = 'publicDirectorySavedLists';
 
-// The aggregate public chat lives only in the classic interface: V2 chat scopes are strictly
-// per-workspace (chatContext.ts), with no "all visible public workspaces" scope. So the two chat
-// entry points hand off to the classic aggregate route, the one place the whole visibility map is
-// consumed, rather than a V2 route that cannot express the aggregate.
-const CHAT_PUBLIC_HREF = '/chats?openSearch=1&scope=public';
-
 // A membership refusal that means the client's row is stale: the only way to learn the true state
 // is to re-read the directory. A write conflict keeps the row for a plain retry, so it is omitted.
 const RELOAD_CODES = new Set(['already_member', 'request_pending', 'no_pending_request', 'workspace_not_found']);
@@ -233,10 +227,7 @@ export function PublicDirectoryPage() {
         }
     }, [adapter, readVisibilityMap]);
 
-    // Open the classic public chat over the workspaces already visible, writing nothing. V2 chat has
-    // no all-visible public scope, so this hands off to classic (recorded exception, decision 31).
-    // Any pending debounced write is still flushed first so the chat sees the latest curation, and a
-    // failed save is surfaced rather than masked by leaving the page.
+    // Flush curation before launching a fresh native chat; launching never changes visibility.
     const chatWithVisible = useCallback(async () => {
         setBulkBusy(true);
         try {
@@ -245,11 +236,11 @@ export function PublicDirectoryPage() {
                 setNotice('Your visibility changes could not be saved, so chat was not opened. Please retry.');
                 return;
             }
-            window.location.href = CHAT_PUBLIC_HREF;
+            navigate('/chat?public_workspace_selection=visible');
         } finally {
             setBulkBusy(false);
         }
-    }, []);
+    }, [navigate]);
 
     // Snapshot the workspaces visible across the whole directory into a named list, applying the
     // empty-map fallback (no map means every workspace is visible) so the snapshot is the real set.
