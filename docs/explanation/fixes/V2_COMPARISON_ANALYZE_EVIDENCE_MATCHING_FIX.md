@@ -100,6 +100,12 @@ tier with a match:
    differences are removed.
 3. `normalized_casefold`: the same comparison, ignoring case.
 
+As of **0.261.314**, exact matching runs before any normalization. A quote that
+exists verbatim in its cited chunk remains evidence even if it consists of source
+comments, markup or an extraction annotation. Normalization is only a fallback;
+an empty normalized quote cannot match arbitrary source text. See the
+[literal evidence fix](DOCUMENT_ANALYSIS_LITERAL_EVIDENCE_FIX.md).
+
 The normalized comparison keeps every word and number separate, and drops only what
 renders as nothing:
 
