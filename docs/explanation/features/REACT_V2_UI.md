@@ -12,6 +12,7 @@ opt-in editor representation while leaving classic callers compatible.
 
 **Implemented in version:** 0.261.003
 **Personal agent/action authoring:** 0.261.096 (`application/single_app/config.py`)
+**Native Agents catalogue:** 0.261.305 (`application/single_app/config.py`)
 **Deployer version:** 1.0.26
 
 ### Dependencies
@@ -1060,11 +1061,18 @@ information to make, since the classic profile page held the settings *and* the 
 stats. With Stats rebuilt, the Profile entry has nothing left to lead to and is gone. The
 `/profile?tab=groups` and `/profile?tab=public-workspaces` links inside the Groups and Public
 tabs remain: those are the fallback for tabs V2 has not rebuilt, not profile navigation.
-### Not rebuilt yet
+## Agents catalogue
 
-The standalone agent catalogue and broader group/public workspace management are
-separate from personal authoring. Their existing fallback and focused delegation
-surfaces remain unchanged.
+The rail's **Agents** entry opens the native catalogue at `/v2/agents`. It includes
+Popular rankings and promotions, personal/group/enterprise categories, cross-scope
+search, tag filters, list/card views, details, and new-chat links. Its dedicated
+`GET /api/v2/agents/catalog` hides governance-blocked agents before applying usage
+or promotions. Latest Features shortcuts to `/agents` stay inside V2 too.
+
+Group Chat links name the selected agent's own group, and chat refreshes its
+authorized catalogue before launch. No restricted-agent discovery or
+request-access controls are added. See [V2 Agents Catalogue](V2_AGENTS_CATALOG.md)
+for configuration, behavior, and coverage.
 
 ## My Workspace agent and action editors
 
