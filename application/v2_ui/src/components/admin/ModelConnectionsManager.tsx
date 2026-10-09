@@ -42,6 +42,7 @@ import {
     PROVIDER_OPTIONS,
     authTypeLabel,
     buildConnectionPayload,
+    buildPersonalConnectionPayload,
     createAdminModelConnectionsAdapter,
     defaultOpenAiApiVersion,
     defaultEmbeddingApi,
@@ -59,10 +60,12 @@ import {
     modelSupportsCapability,
     projectNameFromEndpoint,
     providerLabel,
+    personalTestBlockedReason,
     setModelCapabilityEnabled,
     setEmbeddingOperation,
     toEditableConnection,
     validateConnection,
+    validateAdvancedConnection,
     visibleFields,
     ENDPOINT_REBASE_FIELDS,
     type ConnectionModel,
@@ -80,6 +83,7 @@ import { CatalogProfilePicker } from './ModelCatalogManager';
 import { CustomAuthenticationFields, CustomConnectionFields } from './CustomConnectionFields';
 import { CustomNetworkPolicyEditor } from './CustomNetworkPolicyEditor';
 import { GlassButton } from '../ui/primitives';
+import { ConnectionCapacityFields, ConnectionModelMetadata } from '../workspace/ConnectionMetadataFields';
 import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
 import { toast } from '../../stores/toastStore';
 
@@ -388,6 +392,7 @@ function ConnectionEditor({
     const [discovering, setDiscovering] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testingModelId, setTestingModelId] = useState<string | null>(null);
+    const [iconBusy, setIconBusy] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
     // A stale-revision conflict keeps the draft and offers a reload rather than losing the edit.
     const [needsReload, setNeedsReload] = useState(false);
@@ -416,8 +421,11 @@ function ConnectionEditor({
     const canSave = isNew ? adapter.canCreate : adapter.allows('edit', initial);
 
     const shown = useMemo(() => visibleFields(draft), [draft]);
-    const savedBinding = !isNew && JSON.stringify(buildConnectionPayload(draft)) ===
-        JSON.stringify(buildConnectionPayload(toEditableConnection(current)));
+    const testBlockedReason = adapter.requiresSavedConfigurationTests ? personalTestBlockedReason(draft, current) : null;
+    const savedBinding = !isNew && (adapter.requiresSavedConfigurationTests ? !testBlockedReason
+        : JSON.stringify(buildConnectionPayload(draft)) === JSON.stringify(buildConnectionPayload(toEditableConnection(current))));
+    const editorPayload = (value: ModelConnection) => adapter.advancedEditing
+        ? buildPersonalConnectionPayload(value) : buildConnectionPayload(value);
 
     const setField = useCallback((path: string, value: unknown) => {
         setErrors((current) => {
@@ -430,7 +438,7 @@ function ConnectionEditor({
         });
         setDraft((current) => {
             const next = { ...current };
-            if (path === 'name' || path === 'provider' || path === 'enabled' || path === 'api_type') {
+            if (!path.includes('.')) {
                 (next as Record<string, unknown>)[path] = value;
                 // Switching provider changes which API version default applies, and the
                 // previous provider's default would otherwise be silently carried over.
@@ -481,6 +489,7 @@ function ConnectionEditor({
     };
 
     const runDiscovery = async () => {
+        if (testBlockedReason) { setFormError(testBlockedReason); return; }
         const validation = validateConnection(draft, { requireDiscovery: true });
         // Discovery needs the connection and credentials, but not the model list, so a
         // missing name should not stop it.
@@ -494,7 +503,7 @@ function ConnectionEditor({
         setDiscovering(true);
         setFormError(null);
         try {
-            const response = await adapter.discover(buildConnectionPayload(draft));
+            const response = await adapter.discover(editorPayload(draft));
             const discovered = Array.isArray(response.models) ? response.models : [];
             const { models, added } = mergeDiscoveredModels(draft.models ?? [], discovered);
             setModels(models);
@@ -539,6 +548,11 @@ function ConnectionEditor({
     };
 
     const runModelTest = async (model: ConnectionModel, capability: ImplementedCapability) => {
+        if (testBlockedReason) { setFormError(testBlockedReason); return; }
+        if (adapter.requiresSavedConfigurationTests && model.enabled === false) {
+            setFormError('Enable the model and save the endpoint before testing it.');
+            return;
+        }
         if (embeddingOnly && capability !== 'embeddings') return;
         if (capability !== 'chat' && !savedBinding) {
             setFormError(`Save the connection first. ${capability === 'embeddings' ? 'Embedding' : 'Image'} tests use only the saved model and credentials.`);
@@ -574,7 +588,7 @@ function ConnectionEditor({
                     toast.success(`${deploymentName} generated an image.`);
                 }
             } else {
-                await adapter.testConnectionModel(buildConnectionPayload(draft), model);
+                await adapter.testConnectionModel(editorPayload(draft), model);
                 toast.success(`${deploymentName} answered a chat request. Image inference was not tested.`);
             }
         } catch (error) {
@@ -585,7 +599,7 @@ function ConnectionEditor({
     };
 
     const save = async () => {
-        const validation = validateConnection(draft);
+        const validation = { ...validateConnection(draft), ...(adapter.advancedEditing ? validateAdvancedConnection(draft) : {}) };
         if (Object.keys(validation).length) {
             setErrors(validation);
             setFormError('Some details still need attention.');
@@ -596,7 +610,7 @@ function ConnectionEditor({
         setFormError(null);
         setNeedsReload(false);
         try {
-            const payload = buildConnectionPayload(draft);
+            const payload = editorPayload(draft);
             const response = initial.id
                 ? await adapter.update(current, payload)
                 : await adapter.create(payload);
@@ -643,7 +657,7 @@ function ConnectionEditor({
         }
     };
 
-    const busy = saving || discovering || testing || reloading || testingModelId !== null;
+    const busy = saving || discovering || testing || reloading || testingModelId !== null || iconBusy;
     const models = draft.models ?? [];
     const projectHint = foundry ? projectNameFromEndpoint(draft.connection?.endpoint) : '';
 
@@ -700,6 +714,7 @@ function ConnectionEditor({
             ) : null}
 
             <fieldset disabled={!canSave} className="min-w-0">
+            {adapter.advancedEditing ? <link rel="stylesheet" href="/static/css/bootstrap-icons.css" /> : null}
             <SectionHeading>Identity</SectionHeading>
 
             <Field label="Name" error={errors.name} htmlFor="connection-name" help="Shown wherever a model from this connection is offered.">
@@ -1149,7 +1164,7 @@ function ConnectionEditor({
                     variant="subtle"
                     size="sm"
                     onClick={() => void runDiscovery()}
-                    disabled={busy || !shown.discovery}
+                    disabled={busy || !shown.discovery || Boolean(testBlockedReason)}
                 >
                     {discovering ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -1194,10 +1209,14 @@ function ConnectionEditor({
                     Add manually
                 </GlassButton>
             </div>
-            <p className="mb-3 text-xs text-text-3">
+            {adapter.scope.kind === 'personal' ? <p className="mb-3 text-xs text-text-3" role="status">
+                {testBlockedReason || 'Chat tests may incur inference costs. Saving configuration is not an inference test. Image and embedding tests are available only for administrator-managed connections.'}
+            </p> : <p className="mb-3 text-xs text-text-3">
                 Connection checks do not test image or embedding inference. Operation tests use saved bindings and may incur inference costs.
                 {!savedBinding ? ' Save the connection first before testing images or embeddings, or choosing a default.' : ''}
-            </p>
+            </p>}
+            {adapter.advancedEditing ? <ConnectionCapacityFields record={draft} disabled={busy} errors={errors}
+                onChange={(key, value) => setField(key, value)} /> : null}
             {errors.models ? <p role="alert" className="mb-2 text-xs text-danger">{errors.models}</p> : null}
 
             {models.length === 0 ? (
@@ -1327,9 +1346,17 @@ function ConnectionEditor({
                                         .map(([name, message]) => [name.slice(`model_${index}_`.length), message]))}
                                     onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
                                 />
+                                {adapter.advancedEditing ? <ConnectionModelMetadata
+                                    model={model} disabled={busy}
+                                    errors={Object.fromEntries(Object.entries(errors)
+                                        .filter(([name]) => name.startsWith(`model_${index}_`))
+                                        .map(([name, message]) => [name.slice(`model_${index}_`.length), message]))}
+                                    onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
+                                    onIconBusyChange={setIconBusy}
+                                /> : null}
                                 <div className="mt-3 flex flex-wrap gap-2">
                                     {canTest && !embeddingOnly && modelPublishesCapability(model, 'chat') ? (
-                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'chat')}>
+                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy || Boolean(testBlockedReason)} onClick={() => void runModelTest(model, 'chat')}>
                                             Test chat
                                         </GlassButton>
                                     ) : null}
@@ -1632,7 +1659,11 @@ export function ModelConnectionsManager({
             </div>
 
             {help ? <p className="mb-3 text-xs leading-relaxed text-text-3">{help}</p> : null}
-            <p className="mb-3 text-xs text-text-3">Configure credentials once, then choose independent chat, image and embedding defaults. Images and embeddings remain available when chat uses its classic endpoint.</p>
+            <p className="mb-3 text-xs text-text-3">
+                {adapter.scope.kind === 'personal'
+                    ? 'Save each connection individually and enable the models your agents and workflows should use. Personal connections do not change global model defaults.'
+                    : 'Configure credentials once, then choose independent chat, image and embedding defaults. Images and embeddings remain available when chat uses its classic endpoint.'}
+            </p>
             {adapter.canEditNetworkPolicy && !loading ? <CustomNetworkPolicyEditor policy={customNetworkPolicy} onSaved={setCustomNetworkPolicy} /> : null}
             {adapter.showMigrationNotices ? [migration, embeddingMigration].map((notice, index) => notice?.message ? (
                 <p key={index} role="status" className={`mb-3 rounded-lg p-3 text-xs ${notice.status === 'complete' ? 'bg-surface-2 text-text-2' : 'bg-warn-soft text-warn'}`}>

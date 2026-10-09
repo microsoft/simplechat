@@ -58,6 +58,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | --- | --- | --- |
 | [Create and manage tags]({{ '/guides/create-and-manage-tags/' | relative_url }}) | Create colored workspace tags and apply them to documents. | Workspace users |
 | [Create a file sync]({{ '/guides/create-a-file-sync/' | relative_url }}) | Connect an external file source so SimpleChat can import workspace documents. | Workspace users |
+| [Connect personal models in V2]({{ '/guides/personal-model-endpoints/' | relative_url }}) | Configure your own model resources and verify saved chat models without opening classic pages. | Workspace users |
 | [Manage group workspaces]({{ '/guides/manage-group-workspaces/' | relative_url }}) | Use group workspaces for shared documents, prompts, agents, actions, and workflows. | Workspace users |
 | [Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }}) | Browse and manage shared public workspace content when your tenant enables it. | Workspace users |
 | [Review approval requests]({{ '/guides/review-approval-requests/' | relative_url }}) | Find, approve, or deny requests that need reviewer action. | Workspace users |

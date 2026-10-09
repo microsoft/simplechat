@@ -2,6 +2,7 @@
 // Agent-only draft rules, shared by the routed editor and executable functional tests.
 
 import type { WorkspaceModelEndpoint } from './types';
+import { isResourceIconImage } from './resourceIcons';
 import type { ModelCatalogEntry } from './models';
 import { getModelSupportedLevels, type ReasoningEffort } from './reasoning';
 import {
@@ -430,8 +431,7 @@ export function setAgentSecret(draft: AgentConfiguration, path: string, value: s
 }
 
 export function isAgentIconImage(value: unknown): value is string {
-    return typeof value === 'string' && value.length <= 350000 &&
-        /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value);
+    return isResourceIconImage(value);
 }
 
 /** An explicit save may fill Foundry's canonical placeholder, never replace a prompt. */

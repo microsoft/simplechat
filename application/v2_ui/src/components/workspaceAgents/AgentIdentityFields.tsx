@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { Bot } from 'lucide-react';
-import { api } from '../../lib/apiClient';
+import { loadResourceIconNames, resizeResourceIcon } from '../../lib/resourceIcons';
 import type { AgentConfiguration, AgentEditorOptions, WorkspaceAgentType } from '../../lib/workspaceAuthoring';
 import {
     AGENT_INPUT_CLASS, AGENT_TYPE_LABELS, changeAgentType, clearAgentDraftFields, isAgentIconImage, renameAgentDraft,
@@ -25,28 +25,6 @@ export function AgentIcon({ icon }: { icon: AgentConfiguration['icon'] }) {
     return <Bot aria-hidden="true" size={28} className="shrink-0 text-accent" />;
 }
 
-async function resizeAgentIcon(file: File): Promise<string> {
-    if (!['image/png', 'image/jpeg'].includes(file.type)) throw new Error('Choose a PNG or JPEG image.');
-    const url = URL.createObjectURL(file);
-    try {
-        const image = new Image();
-        image.src = url;
-        await image.decode();
-        const scale = Math.min(1, 128 / Math.max(image.width, image.height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('This browser cannot resize the icon.');
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        const data = canvas.toDataURL('image/png');
-        if (!isAgentIconImage(data)) throw new Error('The resized icon exceeds the 350000-character limit.');
-        return data;
-    } finally {
-        URL.revokeObjectURL(url);
-    }
-}
-
 export function AgentIdentityFields({
     draft, setDraft, options, isNew, onIconBusyChange,
 }: {
@@ -63,10 +41,7 @@ export function AgentIdentityFields({
     const loadIcons = async () => {
         setIconError(null);
         try {
-            const css = await api.get<string>('/static/css/bootstrap-icons.css');
-            const available = [...new Set([...css.matchAll(/\.bi-([a-z0-9][a-z0-9-]*)::before/g)].map((match) => `bi-${match[1]}`))].sort();
-            if (!available.length) throw new Error('The local icon catalogue could not be read.');
-            setIcons(available);
+            setIcons(await loadResourceIconNames());
         } catch (error) {
             setIconError(error instanceof Error ? error.message : 'Could not load the local icon catalogue.');
         }
@@ -78,7 +53,7 @@ export function AgentIdentityFields({
         onIconBusyChange?.(true);
         setIconError(null);
         try {
-            const value = await resizeAgentIcon(file);
+            const value = await resizeResourceIcon(file);
             if (sequence === uploadSequence.current) setDraft((current) => ({ ...current, icon: { kind: 'image', value, mime_type: 'image/png' } }));
         } catch (error) {
             if (sequence === uploadSequence.current) setIconError(error instanceof Error ? error.message : 'Could not load the image.');
