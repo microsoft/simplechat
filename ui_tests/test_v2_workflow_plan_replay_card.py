@@ -18,7 +18,7 @@ Run: python -m pytest .\\ui_tests\\test_v2_workflow_plan_replay_card.py -q
 import copy
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import expect

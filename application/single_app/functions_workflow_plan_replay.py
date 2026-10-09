@@ -141,7 +141,6 @@ class PlanReplayRefused(WorkflowInputError):
         text = message or REFUSAL_MESSAGES.get(code) or REFUSAL_MESSAGES['replay_execution_failed']
         super().__init__(text)
         self.code = code
-        self.public_message = text
         self.step_id = step_id
         self.refusals = list(refusals or [])
 
@@ -153,7 +152,6 @@ class PlanReplaySaveError(WorkflowPublicValidationError):
         text = message or REFUSAL_MESSAGES.get(code) or REFUSAL_MESSAGES['source_run_not_eligible']
         super().__init__(text)
         self.code = code
-        self.public_message = text
         self.refusals = list(refusals or [])
 
 
@@ -1291,8 +1289,12 @@ def execute_plan_replay_task(
                 lease=lease,
             )
             execution.execute(emit=None)
-        except BaseException as exc:
+        except Exception as exc:
             execution_error['error'] = exc
+        except BaseException as exc:
+            # The joiner must settle fatal exits without suppressing the worker's signal.
+            execution_error['error'] = exc
+            raise
 
     thread = threading.Thread(target=worker, name=f'plan-replay-{orch_run_id}', daemon=True)
     stopped.update({'thread': thread, 'lease': lease})

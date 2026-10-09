@@ -22,7 +22,7 @@ from copy import deepcopy
 import pytest
 
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, input_binding
+from test_support.orchestration_harness_execution import input_binding
 from test_support.versioning import assert_app_version_at_least
 
 

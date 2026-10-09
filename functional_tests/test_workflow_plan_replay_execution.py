@@ -21,6 +21,7 @@ import json
 import sys
 import threading
 import time
+from asyncio import CancelledError
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -346,6 +347,29 @@ def test_version_includes_plan_replay():
     assert_app_version_at_least("0.261.308")
 
 
+@pytest.mark.parametrize("error_name, base_module, base_name, fallback_code", [
+    ("PlanReplayRefused", "functions_workflow_bindings", "WorkflowInputError", "replay_execution_failed"),
+    ("PlanReplaySaveError", "functions_workflow_definitions", "WorkflowPublicValidationError", "source_run_not_eligible"),
+])
+def test_replay_errors_keep_their_inherited_public_contract(replay, error_name, base_module, base_name, fallback_code):
+    error_class = getattr(replay, error_name)
+    base_class = getattr(importlib.import_module(base_module), base_name)
+    for code, message, text, expected_status in [
+        ("plan_hash_mismatch", None, replay.REFUSAL_MESSAGES["plan_hash_mismatch"], 409),
+        ("unknown_replay_error", None, replay.REFUSAL_MESSAGES[fallback_code], 422),
+        ("replay_disabled", "The saved plan is unavailable.", "The saved plan is unavailable.", 403),
+    ]:
+        refusals = [{"code": code}]
+        error = error_class(code, message, refusals=refusals)
+        require(isinstance(error, base_class) and isinstance(error, ValueError), "The error keeps its base types.")
+        require(error.public_message == text and str(error) == text, "The superclass retains the fixed public text.")
+        require(error.args == (text,) and error.code == code, "The exception arguments and replay code are unchanged.")
+        require(error.refusals == refusals and error.refusals is not refusals, "Refusals remain an independent list.")
+        payload, status = replay.plan_replay_error_response(error.code, error.public_message, error.refusals)
+        require(payload == {"error": text, "code": code, "refusals": refusals}, "The public payload is unchanged.")
+        require(status == expected_status, "The public HTTP status is unchanged.")
+
+
 def test_a_frozen_plan_replays_end_to_end_in_the_workflow_conversation(harness, replay):
     task = _frozen_task(harness, replay)
     workflow = _workflow(task)
@@ -660,7 +684,7 @@ def test_a_lost_workflow_lease_cancels_and_fences_the_replay(harness, replay):
             _renew_past_the_ttl(store, clock, polls)
             renewed.set()
             clock.now += timedelta(minutes=5)
-        except BaseException as exc:
+        except Exception as exc:
             problems.append(exc)
         return gate()
 
@@ -709,6 +733,60 @@ def test_executor_failures_map_to_fixed_codes(harness, replay):
     require(len(harness.model_calls) == calls_before, "A re-entered attempt never runs a second time.")
 
 
+@pytest.mark.parametrize("error_type", [SystemExit, KeyboardInterrupt, GeneratorExit, CancelledError, ProcessDied])
+def test_fatal_worker_exits_are_reported_and_settled(harness, replay, monkeypatch, error_type):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    worker_errors = []
+    monkeypatch.setattr(threading, "excepthook", worker_errors.append)
+    error = error_type("Private worker exit detail.")
+
+    def prepare(claimed, **kwargs):
+        raise error
+
+    refusal = _refused(replay, lambda: _run(
+        replay, harness, _workflow(task), task, prepare_execution=prepare,
+    ), "replay_execution_failed")
+
+    require(refusal.__cause__ is error, "The joiner retains the worker error without exposing its text.")
+    require(len(worker_errors) == 1 and worker_errors[0].exc_value is error, "Fatal signals leave the worker.")
+    run_id = _replay_run_id(replay)
+    record = harness.runs.read_item(run_id, WORKFLOW_CONVERSATION)
+    require(record.get("status") == "failed", "A stopped worker's run is settled, not left running.")
+    require((record.get("failure") or {}).get("code") == "execution_interrupted", "The run has a fixed failure code.")
+    require(record.get("execution_lease") is None, "A stopped worker releases its orchestration lease.")
+    _require_fenced(harness, run_id)
+
+
+def test_worker_cancellation_after_completion_never_returns_success(harness, replay, monkeypatch):
+    task = _frozen_task(harness, replay)
+    _workflow_conversation(harness)
+    execution_module = importlib.import_module("functions_orchestration_execution")
+    worker_errors = []
+    monkeypatch.setattr(threading, "excepthook", worker_errors.append)
+    error = CancelledError("Private cancellation detail.")
+    harness.replies = ["The replayed content."]
+
+    def prepare(claimed, **kwargs):
+        execution = execution_module.prepare_harness_execution(claimed, **kwargs)
+
+        class InterruptedExecution:
+            def execute(self, *, emit):
+                execution.execute(emit=emit)
+                raise error
+
+        return InterruptedExecution()
+
+    refusal = _refused(replay, lambda: _run(
+        replay, harness, _workflow(task), task, prepare_execution=prepare,
+    ), "replay_execution_failed")
+
+    require(refusal.__cause__ is error, "Cancellation remains a failure even after a completed record exists.")
+    require(len(worker_errors) == 1 and worker_errors[0].exc_value is error, "Cancellation leaves the worker.")
+    record = harness.runs.read_item(_replay_run_id(replay), WORKFLOW_CONVERSATION)
+    require(record.get("status") == "completed", "The completed record alone cannot turn a worker exit into success.")
+
+
 def test_a_durable_replay_unit_keeps_its_lease_past_the_ttl_and_completes(harness, replay):
     task = _frozen_task(harness, replay)
     _workflow_conversation(harness)
@@ -720,7 +798,7 @@ def test_a_durable_replay_unit_keeps_its_lease_past_the_ttl_and_completes(harnes
     def renewing_reply():
         try:
             _renew_past_the_ttl(store, clock, polls)
-        except BaseException as exc:
+        except Exception as exc:
             problems.append(exc)
         return "The replayed content."
 
