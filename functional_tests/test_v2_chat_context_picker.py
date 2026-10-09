@@ -2,10 +2,11 @@
 # test_v2_chat_context_picker.py
 """
 Functional test for the V2 chat context picker.
-Version: 0.261.310
+Version: 0.261.315
 Implemented in: 0.261.089
 Independent context selection implemented in: 0.261.094
 Shared editor implemented in: 0.261.096
+Scope picker placement fixed in: 0.261.315
 
 The V2 composer shipped with a Documents button that was a plain on/off, and a
 ``selectedDocumentIds`` field that was declared, forwarded to both the chat
@@ -116,6 +117,20 @@ def test_the_composer_no_longer_carries_a_write_only_selection():
     )
 
     print("  The composer drives the request from its chip row.")
+    return True
+
+
+def test_scope_editing_is_opt_in_and_only_inside_the_documents_picker():
+    """The shared editor must not expose main-chat scope controls in unrelated editors."""
+    composer = COMPOSER_TSX.read_text(encoding="utf-8")
+    editor = EDITOR_TSX.read_text(encoding="utf-8")
+    picker = (V2_DIR / "src" / "components" / "chat" / "DocumentPickerPopover.tsx").read_text(encoding="utf-8")
+    assert "Document search scope</label>" not in composer
+    assert "documentScopeControl={!shared" in composer
+    assert "documentScopeControl?: DocumentScopeControl" in editor
+    assert "scopeControl={!shared && !restricted && !referenceUploadsOnly" in editor
+    assert "!imagesOnly && scopeControl" in picker
+    assert "Search in" in picker
     return True
 
 
@@ -347,6 +362,7 @@ if __name__ == "__main__":
         test_the_version_carries_the_feature,
         test_the_workspace_hand_off_stays_in_v2,
         test_the_composer_no_longer_carries_a_write_only_selection,
+        test_scope_editing_is_opt_in_and_only_inside_the_documents_picker,
         test_sending_clears_the_chips_with_the_text,
         test_caches_are_not_poisoned_by_cancelled_requests,
         test_removing_a_chip_cannot_orphan_a_shared_reference,

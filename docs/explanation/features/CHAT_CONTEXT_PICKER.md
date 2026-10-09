@@ -4,7 +4,7 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
-**Updated in version:** 0.261.310 (`application/single_app/config.py`)
+**Updated in version:** 0.261.315 (`application/single_app/config.py`)
 **Inline answers implemented in version:** 0.261.096
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal documents,
@@ -80,13 +80,19 @@ index is briefly unavailable does not empty the menu of your personal documents.
 
 ## The Documents picker
 
-From **0.261.310**, the main composer's **Document search scope** can select
-All or Visible public workspaces. In either aggregate mode, Documents and `#`
+From **0.261.315**, the main composer's **Documents** picker contains **Search in**:
+Current context, All public workspaces, or Visible public workspaces.
+There is no standalone scope row above the message editor. In Orchestrate,
+open **Manual controls → Documents** when manual controls are enabled.
+The Documents button indicates an active All or Visible scope when visible.
+In either aggregate mode, Documents and `#`
 offer only public sources and tags; All also retrieves from hidden workspaces.
 The scope stays selected after sending even though this turn's chips clear.
 Return to Current context to use ordinary mixed sources or generate an image.
 An incompatible existing personal/group chip is retained and explained, not
 silently dropped. See [Aggregate public chat](V2_AGGREGATE_PUBLIC_CHAT.md).
+The aggregate choices are opt-in to the main chat editor, not controls on
+inline answers, restricted editors, shared chat or image-reference pickers.
 
 Clicking **Documents** opens a panel upward over the composer containing:
 

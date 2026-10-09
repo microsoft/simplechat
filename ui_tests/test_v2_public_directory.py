@@ -1,7 +1,7 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.310
+Version: 0.261.315
 Implemented in: 0.261.175
 The Create dialog holds keyboard focus and hands it back on close: 0.261.188
 
@@ -804,8 +804,15 @@ def test_chat_with_visible_opens_chat_and_writes_nothing(public_directory_ui, th
         exact=False,
     )).to_be_visible()
     page.get_by_role("button", name="Chat with visible", exact=True).click()
-    expect(page.get_by_label("Document search scope", exact=True)).to_have_value("visible")
+    expect(page.get_by_label("Document search scope", exact=True)).to_have_count(0)
+    expect(page.get_by_label("Search in", exact=True)).to_have_count(0)
     expect(page).to_have_url(re.compile(r"/v2/chat$"))
+    documents = page.get_by_title(re.compile(r"^Documents · Visible"))
+    if not documents.is_visible():
+        page.get_by_title("Manual controls", exact=True).click()
+    expect(documents).to_have_attribute("aria-pressed", "true")
+    documents.click()
+    expect(page.get_by_label("Search in", exact=True)).to_have_value("visible")
     assert not ui.classic_visits
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert not visibility_writes(ui), "Chat with visible must not write any visibility preference."

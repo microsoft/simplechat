@@ -37,6 +37,7 @@ import { OrchestrationPlanEditorHost } from '../../../application/v2_ui/src/comp
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { ConversationDrawer } from '../../../application/v2_ui/src/components/chat/ConversationDrawer';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
+import { ComposerEditor } from '../../../application/v2_ui/src/components/chat/ComposerEditor';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
 import { ParticipantsPanel } from '../../../application/v2_ui/src/components/chat/ParticipantsPanel';
 import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
@@ -176,6 +177,7 @@ type ComponentName =
     | 'PlanEditorExperience'
     | 'OrchestrationPlanEditorHost'
     | 'ContextWorkflow'
+    | 'ComposerEditor'
     | 'ParticipantsPanel'
     | 'WorkflowEditorDialog'
     | 'WorkflowRunHistory'
@@ -201,6 +203,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     PlanEditorExperience,
     OrchestrationPlanEditorHost,
     ContextWorkflow,
+    ComposerEditor,
     ParticipantsPanel,
     WorkflowEditorDialog,
     WorkflowRunHistory,

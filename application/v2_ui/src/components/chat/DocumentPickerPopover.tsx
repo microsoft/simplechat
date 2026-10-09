@@ -24,9 +24,19 @@ import {
 } from '../../lib/contextMentions';
 import type { ContextSearchScope } from './ContextMenu';
 import { isReferenceImageFileName } from '../../lib/imageReferences';
+import { readPublicWorkspaceSelection, type PublicWorkspaceSelection } from '../../lib/publicChatScope';
+import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import type { WorkspaceDocument } from '../../lib/types';
 
 const SEARCH_DEBOUNCE_MS = 250;
+
+export interface DocumentScopeControl {
+    id: string;
+    publicEnabled: boolean;
+    disabled: boolean;
+    onChange: (selection: PublicWorkspaceSelection | null) => void;
+    error?: string;
+}
 
 function isReferenceImageDocument(document: WorkspaceDocument): boolean {
     return isReferenceImageFileName(String(document.file_name ?? ''));
@@ -42,6 +52,7 @@ export function DocumentPickerPopover({
     onClose,
     placement = 'up',
     imagesOnly = false,
+    scopeControl,
 }: {
     scope: ContextSearchScope;
     /** The original Documents boolean: search everything by relevance. */
@@ -53,7 +64,9 @@ export function DocumentPickerPopover({
     onClose: () => void;
     placement?: 'up' | 'down';
     imagesOnly?: boolean;
+    scopeControl?: DocumentScopeControl;
 }) {
+    const publicLabels = usePublicWorkspaceLabels();
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
     const [loading, setLoading] = useState(true);
@@ -91,6 +104,7 @@ export function DocumentPickerPopover({
         const controller = new AbortController();
         setLoading(true);
         setError(null);
+        setCandidates([]);
 
         const timer = window.setTimeout(() => {
             searchContextCandidates({
@@ -152,6 +166,33 @@ export function DocumentPickerPopover({
                 placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
             )}
         >
+            {!imagesOnly && scopeControl && (
+                <div className="shrink-0 space-y-1 px-0.5 pb-2">
+                    <label htmlFor={scopeControl.id} className="block text-xs font-medium text-text-2">
+                        Search in
+                    </label>
+                    <select
+                        id={scopeControl.id}
+                        value={scope.publicWorkspaceSelection ?? ''}
+                        disabled={scopeControl.disabled}
+                        onChange={(event) => scopeControl.onChange(readPublicWorkspaceSelection(event.target.value))}
+                        aria-describedby={scope.publicWorkspaceSelection ? `${scopeControl.id}-description` : undefined}
+                        className="w-full min-w-0 rounded-lg border border-edge bg-surface-1 px-2 py-1.5 text-sm text-text-1 focus:border-accent-ring focus:outline-none"
+                    >
+                        <option value="">Current context</option>
+                        <option value="all" disabled={!scopeControl.publicEnabled}>All {publicLabels.plural.toLowerCase()}</option>
+                        <option value="visible" disabled={!scopeControl.publicEnabled}>Visible {publicLabels.plural.toLowerCase()}</option>
+                    </select>
+                    {scope.publicWorkspaceSelection && (
+                        <p id={`${scopeControl.id}-description`} className="text-xs text-text-3">
+                            {scope.publicWorkspaceSelection === 'all'
+                                ? 'Public only, including hidden workspaces.'
+                                : 'Public only, using your directory visibility choices.'}
+                        </p>
+                    )}
+                    {scopeControl.error && <p role="alert" className="text-xs text-danger">{scopeControl.error}</p>}
+                </div>
+            )}
             <div className="relative shrink-0 px-0.5 pb-1.5">
                 <Search
                     size={13}

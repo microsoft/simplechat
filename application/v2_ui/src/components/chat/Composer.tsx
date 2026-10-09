@@ -35,7 +35,6 @@ import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestS
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { promptUrls, resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
-import { readPublicWorkspaceSelection } from '../../lib/publicChatScope';
 import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import {
     addContextItem,
@@ -165,7 +164,7 @@ function ToolToggle({
             )}
         >
             {icon}
-            <span className="hidden lg:inline">{label}</span>
+            <span className="hidden max-w-48 truncate lg:inline">{label}</span>
         </button>
     );
 }
@@ -391,6 +390,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // when orchestrating with manual controls left reachable.
     const manualControlsVisible =
         !orchestrating || (manualControlsGovernable && manualControlsOpen);
+    useEffect(() => {
+        if (!manualControlsVisible) {
+            setPickerOpen(false);
+        }
+    }, [manualControlsVisible]);
 
     /**
      * The Orchestrate model: Auto (a model chosen per step) or one pinned model.
@@ -1014,7 +1018,19 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const submit = (allowUnfilled = false) => {
         if (publicWorkspaceSelection && (!features.enable_public_workspaces || publicScopeConflict || answeringFromStoredResult || (options.imageGeneration && !orchestrating))) {
-            toast.error('Public search needs public sources only. Clear incompatible sources or choose Current context.');
+            const recovery = options.imageGeneration && !orchestrating
+                ? 'Turn off Image, then open Documents and choose Current context.'
+                : answeringFromStoredResult
+                  ? 'Remove the saved result, then open Documents and choose Current context.'
+                  : orchestrating && !manualControlsGovernable
+                    ? 'Switch to Manual mode, then open Documents and choose Current context, or start a new chat.'
+                    : `Open ${orchestrating ? 'Manual controls, then ' : ''}Documents to clear incompatible references or choose Current context.`;
+            toast.error(`Public search needs available public sources only. ${recovery}`);
+            if (!answeringFromStoredResult && !(options.imageGeneration && !orchestrating)
+                && (!orchestrating || manualControlsGovernable)) {
+                setManualControlsOpen(true);
+                setPickerOpen(true);
+            }
             return;
         }
         if (streaming || !canPost || uploadsBlocked || workflowResultOpening) {
@@ -1651,35 +1667,21 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         </div>
                     )}
 
-                    {!shared && (features.enable_public_workspaces || publicWorkspaceSelection) && (
-                        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                            <label htmlFor="public-chat-scope" className="font-medium text-text-2">Document search scope</label>
-                            <select
-                                id="public-chat-scope"
-                                value={publicWorkspaceSelection ?? ''}
-                                disabled={streaming || !canPost}
-                                onChange={(event) => setPublicWorkspaceSelection(readPublicWorkspaceSelection(event.target.value))}
-                                className="max-w-full rounded-lg border border-edge bg-surface-1 px-2 py-1.5 text-text-1 focus:border-accent-ring focus:outline-none"
-                            >
-                                <option value="">Current context</option>
-                                <option value="all" disabled={!features.enable_public_workspaces}>All {publicLabels.plural.toLowerCase()}</option>
-                                <option value="visible" disabled={!features.enable_public_workspaces}>Visible {publicLabels.plural.toLowerCase()}</option>
-                            </select>
-                            {publicWorkspaceSelection && <span className="text-text-3">
-                                {publicWorkspaceSelection === 'all' ? 'Public only, including hidden workspaces.' : 'Public only, using your directory visibility choices.'}
-                            </span>}
-                            {publicScopeConflict && <p role="alert" className="w-full text-danger">
-                                {nonPublicReferences
-                                    ? 'Clear personal or group references, or choose Current context before sending.'
-                                    : 'Clear whole-workspace references, or choose Current context to search a selected workspace.'}
-                            </p>}
-                            {publicWorkspaceSelection && !features.enable_public_workspaces && <p role="alert" className="w-full text-danger">
-                                Public workspaces are currently disabled. Choose Current context to continue.
-                            </p>}
-                        </div>
-                    )}
                     <ComposerEditor
                         publicWorkspaceSelection={publicWorkspaceSelection}
+                        documentScopeControl={!shared && (features.enable_public_workspaces || publicWorkspaceSelection) ? {
+                            id: 'composer-document-scope',
+                            publicEnabled: Boolean(features.enable_public_workspaces),
+                            disabled: streaming || !canPost,
+                            onChange: setPublicWorkspaceSelection,
+                            error: publicWorkspaceSelection && !features.enable_public_workspaces
+                                ? 'Public workspaces are currently disabled. Choose Current context to continue.'
+                                : publicScopeConflict
+                                  ? nonPublicReferences
+                                    ? 'Clear personal or group references, or choose Current context before sending.'
+                                    : 'Clear whole-workspace references, or choose Current context to search a selected workspace.'
+                                  : undefined,
+                        } : undefined}
                         id="composer-input"
                         label="Message"
                         draft={draft}
@@ -1704,12 +1706,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         showTools={false}
                         uploadsDisabled={gating.uploadsDisabledByImageGeneration}
                         referenceUploadsOnly={directReferenceMode}
-                        pickerOpen={pickerOpen}
+                        pickerOpen={pickerOpen && manualControlsVisible}
                         onPickerOpenChange={(open) => {
                             if (open) {
                                 clearAnalysisResultContext();
                             }
                             setPickerOpen(open);
+                            if (!open) {
+                                textareaRef.current?.focus();
+                            }
                         }}
                         searchAll={options.documentSearch}
                         onToggleSearchAll={publicWorkspaceSelection ? undefined : () => {
@@ -1939,7 +1944,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <span className="mx-0.5 h-6 w-px bg-edge-strong" aria-hidden="true" />
 
                                 <ToolToggle
-                                    active={options.documentSearch || contextItems.length > 0}
+                                    active={options.documentSearch || contextItems.length > 0 || Boolean(publicWorkspaceSelection)}
                                     disabled={gating.documentsDisabledByImageGeneration}
                                     onClick={() => {
                                         clearAnalysisResultContext();
@@ -1947,9 +1952,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     }}
                                     icon={<Search size={15} />}
                                     label={
-                                        contextItems.length > 0
-                                            ? `Documents · ${contextItems.length}`
-                                            : 'Documents'
+                                        `Documents${publicWorkspaceSelection
+                                            ? ` · ${publicWorkspaceSelection === 'all' ? 'All' : 'Visible'} ${publicLabels.plural.toLowerCase()}`
+                                            : ''}${contextItems.length > 0 ? ` · ${contextItems.length}` : ''}`
                                     }
                                 />
 
