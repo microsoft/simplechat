@@ -354,6 +354,8 @@ interface ChatState {
 
     streaming: boolean;
     streamingContent: string;
+    /** Identifies the reply that actually completed, even if its shared broadcast arrived first. */
+    completedReply: { conversationId: string; messageId: string } | null;
     streamingReasoningAdjustments: ReasoningResolution[];
     thoughts: ThoughtEntry[];
     streamError: string | null;
@@ -1434,6 +1436,7 @@ function buildStreamHandlers(
                     state.messages,
                     finalMessage as CollaborationMessage,
                 ),
+                completedReply: { conversationId, messageId: finalMessage.id },
                 streaming: false,
                 streamingContent: '',
                 streamingReasoningAdjustments: [],
@@ -1492,6 +1495,7 @@ function buildStreamHandlers(
             set({
                 streaming: false,
                 streamingContent: '',
+                completedReply: null,
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
                 streamError: refusal?.message ?? message,
@@ -2215,6 +2219,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     streaming: false,
     streamingContent: '',
+    completedReply: null,
     thoughts: [],
     streamingReasoningAdjustments: [],
     streamError: null,
@@ -2325,6 +2330,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             analysisTurnRevision: analysisConversationChanged ? null : get().analysisTurnRevision,
             messages: [],
             messagesError: null,
+            completedReply: null,
             // Anything streaming belonged to the conversation being left. An orchestration turn
             // still running in this tab for the one being opened gets its Thinking state and
             // Stop back, which also keeps the composer from sending into a busy turn; its later
@@ -2544,6 +2550,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // behind loading placeholders instead of its empty state.
             messagesLoading: false,
             messagesError: null,
+            completedReply: null,
             // Cleared here and not only by `detachActiveStream`, which knows about chat streams
             // alone. An orchestration turn holds this flag without one, and its settle is skipped
             // once its conversation is off screen, so the new chat kept the old turn's Thinking
@@ -3644,6 +3651,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     messages,
                     finalMessage as CollaborationMessage,
                 ),
+                ...(outcome.status === 'completed'
+                    ? { completedReply: { conversationId, messageId: finalMessage.id } }
+                    : {}),
                 streaming: false,
                 orchestrationSurface: null,
                 streamingContent: '',

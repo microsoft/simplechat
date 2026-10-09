@@ -178,7 +178,7 @@ function releaseHighlight(ref: { current: Highlight | null }) {
  * moment and focused, and the request is spent. If the card is not in the list it is fetched by
  * id; only when that also fails does the person hear that it is unavailable.
  */
-function usePendingActionFocus(scrollRef: RefObject<HTMLElement>, pinnedRef: { current: boolean }) {
+function usePendingActionFocus(scrollRef: RefObject<HTMLElement>, pauseFollowing: () => void) {
     const api = usePendingActionsStoreApi();
     const request = usePendingActions((state) => state.focusRequest);
     const conversationId = usePendingActions((state) => state.conversationId);
@@ -207,7 +207,7 @@ function usePendingActionFocus(scrollRef: RefObject<HTMLElement>, pinnedRef: { c
 
         if (node) {
             // Leave auto-scroll alone: it would otherwise pull the thread back to the bottom.
-            pinnedRef.current = false;
+            pauseFollowing();
             const rootBox = root.getBoundingClientRect();
             const nodeBox = node.getBoundingClientRect();
             const margin = Math.max(16, (root.clientHeight - nodeBox.height) / 2);
@@ -246,7 +246,7 @@ function usePendingActionFocus(scrollRef: RefObject<HTMLElement>, pinnedRef: { c
                 setUnavailableFor(state.conversationId);
                 state.clearFocus();
             });
-    }, [api, conversationId, listStatus, messagesLoading, pinnedRef, placement, present, referenceLoading, request, scrollRef]);
+    }, [api, conversationId, listStatus, messagesLoading, pauseFollowing, placement, present, referenceLoading, request, scrollRef]);
 
     // Only on unmount: clearing the focus request re-runs the effect above, which must not
     // cancel the highlight it just applied.
@@ -266,10 +266,10 @@ function usePendingActionFocus(scrollRef: RefObject<HTMLElement>, pinnedRef: { c
  */
 export function PendingActionsConversationSection({
     scrollRef,
-    pinnedRef,
+    pauseFollowing,
 }: {
     scrollRef: RefObject<HTMLElement>;
-    pinnedRef: { current: boolean };
+    pauseFollowing: () => void;
 }) {
     const api = usePendingActionsStoreApi();
     const headingId = useId();
@@ -283,7 +283,7 @@ export function PendingActionsConversationSection({
     const listLoading = usePendingActions((state) => state.listStatus === 'loading');
 
     usePendingActionsLifecycle(activeConversationId);
-    const { unavailable, dismissUnavailable } = usePendingActionFocus(scrollRef, pinnedRef);
+    const { unavailable, dismissUnavailable } = usePendingActionFocus(scrollRef, pauseFollowing);
 
     // Held back while history loads, so a card is not shown here for an instant and then jump
     // under its message.

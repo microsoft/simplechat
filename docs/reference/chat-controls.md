@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.310"
+version: "0.261.318"
 ---
 
 ## How to use this reference
@@ -62,6 +62,27 @@ leaving the chat. On narrow screens the bell is on the collapsed strip and in th
 open navigation, and Escape closes the panel before the navigation. Since
 **0.261.236**, a workflow alert that needs attention pops up from the bell as well.
 See [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }}).
+
+### React V2 reading new messages
+
+Fixed/Implemented in version: **0.261.318** (`application/single_app/config.py`).
+A completed incoming message opens at its beginning when you are caught up.
+AI replies continue following the latest line while they stream, then return to
+the beginning of the completed reply so you can read downward.
+
+Scrolling up takes priority: your position stays unchanged as other people
+write or an AI reply grows and finishes. **New messages**, with a down arrow,
+appears above the composer when new content arrives while you are looking earlier.
+Activate it to open the **newest message at its beginning**, not at its last line.
+The indication clears, even if that message is too long to fit on screen.
+Scrolling back to the bottom resumes live following.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| New messages (down arrow) | Shows that new content arrived while you were reading earlier messages and takes you to the beginning of the newest rendered message or live reply. | Appears when there is new content to reach in the open conversation. |
+
+This is separate from the classic `scroll-to-bottom-btn`, whose behavior is unchanged.
+See [V2 message scroll anchoring]({{ '/explanation/fixes/V2_CHAT_MESSAGE_SCROLL_ANCHOR_FIX/' | relative_url }}).
 
 ### Foundry sign-in requests
 
