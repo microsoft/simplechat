@@ -1,6 +1,6 @@
 # Chat orchestration workflow run wait
 
-Implemented in version: **0.261.307**.
+Implemented in version: **0.261.309**.
 
 Application version tracking: `application\single_app\config.py`.
 

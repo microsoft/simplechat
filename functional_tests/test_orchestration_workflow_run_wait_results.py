@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_results.py
 """
 Functional test for how a plan's later steps see a saved workflow run the plan waited for.
-Version: 0.261.307
-Implemented in: 0.261.307
+Version: 0.261.309
+Implemented in: 0.261.309
 
 This test ensures that a run result the plan used is read again through the workflow_results
 reader, bound to the exact result digest the wait recorded and fenced as untrusted data, that a
@@ -100,7 +100,7 @@ def _refuse(monkeypatch, results, code):
 
 
 def test_version_is_at_least_the_implementation():
-    assert_app_version_at_least('0.261.307')
+    assert_app_version_at_least('0.261.309')
 
 
 def test_a_used_result_is_read_again_by_its_digest_and_fenced_as_untrusted(results):

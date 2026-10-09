@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_off_golden.py
 """
 Functional test for the Wait For Quick Workflows In Chat setting-off golden.
-Version: 0.261.307
-Implemented in: 0.261.307
+Version: 0.261.309
+Implemented in: 0.261.309
 
 This test ensures that, with ``enable_chat_orchestration_workflow_run_wait`` off (the default),
 starting a saved workflow from a chat plan is byte-identical to the release before waiting
@@ -349,8 +349,8 @@ def _assert_matches(golden, captured, label):
 
 
 def test_version_includes_the_wait_off_golden():
-    """Waiting for quick workflows ships in 0.261.307."""
-    assert_app_version_at_least("0.261.307")
+    """Waiting for quick workflows ships in 0.261.309."""
+    assert_app_version_at_least("0.261.309")
 
 
 def test_the_fixture_covers_the_cases_that_matter():

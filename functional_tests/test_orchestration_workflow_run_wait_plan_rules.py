@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_plan_rules.py
 """
 Functional test for the plan-level rules that decide whether a chat plan waits for a saved workflow run.
-Version: 0.261.307
-Implemented in: 0.261.307
+Version: 0.261.309
+Implemented in: 0.261.309
 
 This test ensures that ``compute_workflow_run_waits`` marks a plan's one workflow_run step as
 waiting only when the server-side planning context says the wait is configured, the workflow's
@@ -97,8 +97,8 @@ def _plan():
 
 
 def test_version_is_at_least_the_implementation():
-    """The plan-level rules ship in 0.261.307."""
-    assert_app_version_at_least('0.261.307')
+    """The plan-level rules ship in 0.261.309."""
+    assert_app_version_at_least('0.261.309')
 
 
 def test_quick_plan_waits():

@@ -2,10 +2,10 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.307
+Version: 0.261.309
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
-Workflow run wait rules seeded in: 0.261.307
+Workflow run wait rules seeded in: 0.261.309
 
 Only production definitions are executed, never their application imports. In particular,
 config.py, the source-review browser stack, and Azure clients must not be imported here.

@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_wait_delivery.py
 """
 Functional test for how a waiting chat plan and the workflow chat post-back share one run's result.
-Version: 0.261.307
-Implemented in: 0.261.307
+Version: 0.261.309
+Implemented in: 0.261.309
 
 This test ensures that a plan waiting on a saved workflow run holds the run's chat post-back only
 while no post of that outcome has begun, that the plan uses the result at most once and only
@@ -204,7 +204,7 @@ def _plan_side(world, container=None):
 
 
 def test_version_is_at_least_the_implementation():
-    assert_app_version_at_least('0.261.307')
+    assert_app_version_at_least('0.261.309')
 
 
 def test_the_bound_is_the_cap_or_the_plan_budget_whichever_ends_first():

@@ -1,8 +1,8 @@
 # test_v2_workflow_run_wait.py
 """
 UI test for a chat plan that waits for a quick saved workflow it started (Phase 6c).
-Version: 0.261.307
-Implemented in: 0.261.307
+Version: 0.261.309
+Implemented in: 0.261.309
 
 This test ensures that, in the real V2 components with every server route stubbed:
 
@@ -51,7 +51,7 @@ from test_v2_workflow_run_card import run_assets  # noqa: E402, F401
 
 
 pytestmark = pytest.mark.ui
-IMPLEMENTED_IN = "0.261.307"
+IMPLEMENTED_IN = "0.261.309"
 HANDLE = "workflow-sales-digest-4f1c2a"
 HOSTILE_NAME = '<img src=x onerror="window.__xss = 1"> Sales <b>digest</b>'
 # The server's line while the step waits (_waiting_summary): the saved name as plain text, quoted.

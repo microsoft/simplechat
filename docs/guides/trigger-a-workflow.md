@@ -106,7 +106,7 @@ approval or sign-in, its status shows **Needs you**, and for a sign-in the card 
 
 ### Use a quick workflow's result in the same answer
 
-Since **0.261.307**, when your administrator also turns on **Wait For Quick Workflows
+Since **0.261.309**, when your administrator also turns on **Wait For Quick Workflows
 In Chat**, a plan can wait for a quick workflow it starts and use the result in its
 answer. For example: "Run my sales digest workflow, then compare its totals with the
 Q3 report in my workspace."
