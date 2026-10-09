@@ -7,7 +7,8 @@ Refs: microsoft/simplechat#1550, microsoft/simplechat#1543
 
 The production MessageList, PlanReplaySaveCard, WorkflowEditorDialog and WorkflowRunHistory run in
 Chromium with production CSS. HTTP routes are stubbed at the plan-replay, workflow editor-options,
-and workflow run-history boundaries.
+and workflow run-history boundaries. The shared empty pending-actions list stub answers V2's
+conversation read without adding unrelated requests to the replay assertions.
 
 Build CSS with the existing V2 build, keeping outputs in UI test artifacts:
 npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
@@ -36,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "functional_tests")
 
 import functions_workflow_editor  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -186,6 +188,9 @@ class PlanReplayApi:
             return
         if path == "/favicon.ico":
             route.fulfill(status=204)
+            return
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
             return
         query = parse_qs(parsed.query)
         body = request.post_data_json if request.method == "POST" else None
