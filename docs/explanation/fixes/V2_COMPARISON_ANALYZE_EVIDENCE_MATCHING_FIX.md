@@ -119,6 +119,11 @@ renders as nothing:
   marks (`*`, `_` and backticks) at the edge of a word, as in `**Note**:`.
 - Character entities are decoded only after tags are handled, so escaped text is never
   read as markup.
+- As of **0.261.316**, Markdown backslash escapes of ASCII punctuation compare
+  with their rendered punctuation, while evidence retains the original source
+  spans. Escaped symbols remain literal rather than becoming markup, and
+  backslashes in recognized code contexts are preserved. See the
+  [Markdown escape fix](DOCUMENT_ANALYSIS_MARKDOWN_ESCAPE_FIX.md).
 - Typographic quotes, and the prime and double prime, fold to `'` or `"`. An acute
   accent typed as an apostrophe, as in `can´t`, also folds to `'`. Hyphen, dash and
   minus variants fold to `-`.
