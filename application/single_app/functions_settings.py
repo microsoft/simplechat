@@ -87,14 +87,12 @@ from json_schema_validation import validate_legacy_plugin_settings_update
 from functions_workflow_limits import (
     CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
     CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
     validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
-    validate_chat_orchestration_min_workflow_interval_seconds,
     validate_chat_orchestration_workflow_run_wait_max_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
@@ -269,6 +267,7 @@ def normalize_public_workspace_display_settings(settings):
 # Switches that no longer exist. A stored value is removed on load so it is not echoed to
 # the browser, and so the V2 admin page stops drawing a switch that changes nothing.
 RETIRED_SETTING_KEYS = (
+    "chat_orchestration_min_workflow_interval_seconds",
     # Gather / Reason / Render became the only chat orchestration plan contract. Earlier
     # releases already left it out of a saved run's settings fingerprint, so removing it
     # does not change that fingerprint.
@@ -1660,10 +1659,8 @@ def get_settings(use_cosmos=False, include_source=False):
         # as that user on a schedule. Off by default; turning it off makes existing replay
         # workflows refuse to run with a fixed reason rather than deleting them.
         'enable_workflow_plan_replay': False,
-        # Workflows that a chat plan creates for a user: how many one user may hold, and the
-        # shortest interval one may run on (also never shorter than the general workflow minimum).
+        # How many workflows created from chat one user may hold.
         'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
-        'chat_orchestration_min_workflow_interval_seconds': CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
         # How many hand-offs one user may start from chat in a rolling 24 hours.
         'chat_orchestration_max_workflow_handoffs_per_day': CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
         # Planner model binding. Unset falls back to the deployment's default chat model,
@@ -2525,15 +2522,6 @@ def update_settings(new_settings, *, expected_etag=None):
             **new_settings,
             'chat_orchestration_max_workflows_per_user': validate_chat_orchestration_max_workflows_per_user(
                 new_settings['chat_orchestration_max_workflows_per_user']
-            ),
-        }
-    if isinstance(new_settings, dict) and 'chat_orchestration_min_workflow_interval_seconds' in new_settings:
-        new_settings = {
-            **new_settings,
-            'chat_orchestration_min_workflow_interval_seconds': (
-                validate_chat_orchestration_min_workflow_interval_seconds(
-                    new_settings['chat_orchestration_min_workflow_interval_seconds']
-                )
             ),
         }
     expected_etag = expected_etag or new_settings.get("_etag")

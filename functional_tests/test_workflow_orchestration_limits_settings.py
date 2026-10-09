@@ -2,27 +2,26 @@
 #!/usr/bin/env python3
 """
 Functional test for the admin limits on workflows created from chat.
-Version: 0.261.202
+Version: 0.261.317
 Implemented in: 0.261.202
+Shared schedule policy and legacy retirement coverage implemented in: 0.261.317
 
-This test ensures that the two limits chat orchestration workflows use are safe by default and
-cannot be stored invalid:
+The chat workflow count cap stays independent, but all workflow origins use the general
+schedule minimum. The retired chat-only minimum is discarded on settings load/save.
 
 * ``chat_orchestration_max_workflows_per_user``: default 20, a whole number from 1 to 100.
-* ``chat_orchestration_min_workflow_interval_seconds``: default 3,600 (hourly), 60 to 86,400.
+* ``workflow_min_schedule_interval_seconds``: default 1, from 1 to 86,400.
 
 The V2 admin API and the settings writer reject an invalid value instead of clamping it. The
-Classic admin form clamps it, like every other number on its Chat Orchestration pane. At use, a
-missing value reads as its default and a corrupt stored value fails closed. Both fields appear in
-the V2 schema only while Chat Orchestration is enabled. The orchestration schedule floor combines
-with the general Workflow Minimum Schedule Interval, so the larger floor wins, and calendar
-schedules always pass. The draft service tests cover enforcement itself.
+Classic admin form clamps its count cap. A corrupt general minimum fails closed; a retired
+chat-only value cannot influence it. Calendar schedules always pass.
 """
 
 import ast
 import copy
 import logging
 import re
+import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -45,16 +44,11 @@ from functions_workflow_limits import (  # noqa: E402
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
-    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
     WorkflowLoopLimitError,
     get_chat_orchestration_max_workflows_per_user,
-    get_chat_orchestration_min_workflow_interval_seconds,
     get_orchestration_workflow_min_interval_seconds,
     validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
-    validate_chat_orchestration_min_workflow_interval_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
     validate_workflow_min_schedule_interval_seconds,
@@ -113,9 +107,6 @@ def _settings_writer(storage):
         "validate_workflow_max_repeat_iterations": validate_workflow_max_repeat_iterations,
         "validate_workflow_min_schedule_interval_seconds": validate_workflow_min_schedule_interval_seconds,
         "validate_chat_orchestration_max_workflows_per_user": validate_chat_orchestration_max_workflows_per_user,
-        "validate_chat_orchestration_min_workflow_interval_seconds": (
-            validate_chat_orchestration_min_workflow_interval_seconds
-        ),
         "validate_chat_orchestration_max_workflow_handoffs_per_day": (
             validate_chat_orchestration_max_workflow_handoffs_per_day
         ),
@@ -139,10 +130,20 @@ def _settings_writer(storage):
         "normalize_public_workspace_display_settings",
         "normalize_key_vault_reminder_settings",
         "normalize_model_endpoint_identity_header_settings",
-        "normalize_retired_orchestration_settings",
         "normalize_mixed_source_derived_settings",
     ):
         namespace[name] = lambda _settings: None
+    settings_tree = ast.parse((APP_ROOT / "functions_settings.py").read_text(encoding="utf-8"))
+    retired = next(
+        node.value for node in settings_tree.body
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "RETIRED_SETTING_KEYS" for target in node.targets
+        )
+    )
+    namespace["RETIRED_SETTING_KEYS"] = ast.literal_eval(retired)
+    namespace["normalize_retired_orchestration_settings"] = _production_function(
+        "functions_settings.py", "normalize_retired_orchestration_settings", namespace,
+    )
     return _production_function("functions_settings.py", "update_settings", namespace)
 
 
@@ -151,16 +152,13 @@ def test_version_is_at_least_the_draft_service_release():
 
 
 def test_the_defaults_are_the_roadmap_defaults_and_the_safe_values():
-    """20 workflows per user and an hourly floor; unset settings read as those defaults."""
+    """20 workflows per user and the shared one-second floor."""
     assert (CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT, CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN,
             CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX) == (20, 1, 100)
-    assert (CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT, CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
-            CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX) == (3600, 60, 86400)
     assert get_chat_orchestration_max_workflows_per_user({}) == 20
-    assert get_chat_orchestration_min_workflow_interval_seconds({}) == 3600
-    assert get_orchestration_workflow_min_interval_seconds({}) == 3600
+    assert get_orchestration_workflow_min_interval_seconds({}) == 1
 
-    # get_settings seeds both keys from the same constants.
+    # get_settings no longer seeds the retired field.
     tree = ast.parse((APP_ROOT / "functions_settings.py").read_text(encoding="utf-8"))
     get_settings = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "get_settings")
     seeded = {
@@ -171,7 +169,6 @@ def test_the_defaults_are_the_roadmap_defaults_and_the_safe_values():
     }
     assert seeded == {
         CAP: "CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT",
-        FLOOR: "CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT",
     }
 
 
@@ -184,12 +181,11 @@ def test_the_defaults_are_the_roadmap_defaults_and_the_safe_values():
         "Workflows Created From Chat Per User must be a whole number from 1 to 100.",
     ),
     (
-        validate_chat_orchestration_min_workflow_interval_seconds,
-        (60, 3600, 86400, "60", " 7200 ", "86400"),
-        (None, "", "1h", "3600.0", "\u0663\u0666\u0660\u0660", -60, 0, 59, 86401, 3600.0, True, [], {}),
-        "chat_orchestration_workflow_interval_invalid",
-        "Minimum Schedule Interval For Workflows Created From Chat must be a whole number of seconds "
-        "from 60 to 86,400.",
+        validate_workflow_min_schedule_interval_seconds,
+        (1, 60, 3600, 86400, "1", " 7200 ", "86400"),
+        (None, "", "1h", "3600.0", "\u0663\u0666\u0660\u0660", -60, 0, 86401, 3600.0, True, [], {}),
+        "workflow_schedule_interval_limit_invalid",
+        "Workflow Minimum Schedule Interval must be a whole number of seconds from 1 to 86,400.",
     ),
 ])
 def test_values_are_validated_not_clamped(validator, accepted, rejected, code, message):
@@ -206,14 +202,12 @@ def test_values_are_validated_not_clamped(validator, accepted, rejected, code, m
 def test_the_getters_fail_closed_on_a_corrupt_or_missing_settings_document():
     """A stored value outside its range is a server fault, never silently corrected at use."""
     assert get_chat_orchestration_max_workflows_per_user({CAP: 5}) == 5
-    assert get_chat_orchestration_min_workflow_interval_seconds({FLOOR: "600"}) == 600
+    assert get_orchestration_workflow_min_interval_seconds({GENERAL_FLOOR: "600", FLOOR: 86400}) == 600
     for getter, key, value, code in (
         (get_chat_orchestration_max_workflows_per_user, CAP, 0, "chat_orchestration_workflow_limit_invalid"),
         (get_chat_orchestration_max_workflows_per_user, CAP, None, "chat_orchestration_workflow_limit_invalid"),
-        (get_chat_orchestration_min_workflow_interval_seconds, FLOOR, 30,
-         "chat_orchestration_workflow_interval_invalid"),
-        (get_orchestration_workflow_min_interval_seconds, FLOOR, True,
-         "chat_orchestration_workflow_interval_invalid"),
+        (get_orchestration_workflow_min_interval_seconds, GENERAL_FLOOR, True,
+         "workflow_schedule_interval_limit_invalid"),
         (get_orchestration_workflow_min_interval_seconds, GENERAL_FLOOR, 0,
          "workflow_schedule_interval_limit_invalid"),
     ):
@@ -222,7 +216,7 @@ def test_the_getters_fail_closed_on_a_corrupt_or_missing_settings_document():
         assert raised.value.code == code
     for getter, code in (
         (get_chat_orchestration_max_workflows_per_user, "chat_orchestration_workflow_limit_unavailable"),
-        (get_chat_orchestration_min_workflow_interval_seconds, "chat_orchestration_workflow_interval_unavailable"),
+        (get_orchestration_workflow_min_interval_seconds, "workflow_schedule_interval_limit_unavailable"),
     ):
         with pytest.raises(WorkflowLoopLimitError) as raised:
             getter(["not", "a", "settings", "document"])
@@ -230,14 +224,15 @@ def test_the_getters_fail_closed_on_a_corrupt_or_missing_settings_document():
 
 
 @pytest.mark.parametrize("settings, floor", [
-    ({}, 3600),
-    ({GENERAL_FLOOR: 300}, 3600),
-    ({FLOOR: 60}, 60),
+    ({}, 1),
+    ({GENERAL_FLOOR: 300}, 300),
+    ({FLOOR: 60}, 1),
     ({FLOOR: 60, GENERAL_FLOOR: 7200}, 7200),
     ({FLOOR: 900, GENERAL_FLOOR: 900}, 900),
-    ({FLOOR: 86400, GENERAL_FLOOR: 1}, 86400),
+    ({FLOOR: 86400, GENERAL_FLOOR: 1}, 1),
+    ({FLOOR: "corrupt", GENERAL_FLOOR: 60}, 60),
 ])
-def test_the_larger_of_both_floors_applies(settings, floor):
+def test_only_the_general_floor_applies(settings, floor):
     assert get_orchestration_workflow_min_interval_seconds(settings) == floor
 
 
@@ -259,8 +254,8 @@ def test_the_cadence_check_refuses_only_intervals_below_the_floor(schedule, floo
     assert isinstance(raised.value, WorkflowPublicValidationError)
     assert raised.value.code == "cadence_below_minimum"
     assert re.fullmatch(
-        r"Workflows created from chat cannot run this often\. Choose an interval of at least [0-9]+ \w+, "
-        r"or a daily, weekly or monthly schedule\.",
+        r"This schedule runs more often than the administrator allows\. "
+        r"Choose an interval of at least [0-9]+ \w+\.",
         raised.value.public_message,
     )
 
@@ -268,12 +263,12 @@ def test_the_cadence_check_refuses_only_intervals_below_the_floor(schedule, floo
 @pytest.mark.parametrize("schedule", CALENDARS, ids=[schedule["frequency"] for schedule in CALENDARS])
 def test_calendar_schedules_always_pass_the_cadence_check(schedule):
     """Calendar schedules repeat at most daily, so even the largest floor admits them."""
-    assert enforce_orchestration_workflow_cadence(schedule, CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX) is schedule
+    checked = enforce_orchestration_workflow_cadence(schedule, 86400)
+    assert checked is schedule
 
 
 @pytest.mark.parametrize("key, default, minimum, maximum", [
     (CAP, 20, 1, 100),
-    (FLOOR, 3600, 60, 86400),
 ])
 def test_the_v2_admin_fields_are_gated_limits_that_refuse_invalid_values(key, default, minimum, maximum):
     """The V2 schema offers each limit only with Chat Orchestration on, and refuses bad input."""
@@ -304,14 +299,15 @@ def test_the_classic_form_clamps_like_the_rest_of_its_pane():
 
     def read(form, settings=None):
         values = normalize(MultiDict(form), settings or {})
-        return values[CAP], values[FLOOR]
+        assert FLOOR not in values
+        return values[CAP]
 
-    assert read([]) == (20, 3600)
-    assert read([], {CAP: 7, FLOOR: 900}) == (7, 900)
-    assert read([(CAP, "12"), (FLOOR, "7200")]) == (12, 7200)
-    assert read([(CAP, "0"), (FLOOR, "30")]) == (1, 60)
-    assert read([(CAP, "500"), (FLOOR, "999999")]) == (100, 86400)
-    assert read([(CAP, SECRET), (FLOOR, SECRET)], {CAP: 7, FLOOR: 900}) == (7, 900)
+    assert read([]) == 20
+    assert read([], {CAP: 7, FLOOR: 900}) == 7
+    assert read([(CAP, "12"), (FLOOR, "7200")]) == 12
+    assert read([(CAP, "0"), (FLOOR, "30")]) == 1
+    assert read([(CAP, "500"), (FLOOR, "999999")]) == 100
+    assert read([(CAP, SECRET), (FLOOR, SECRET)], {CAP: 7, FLOOR: 900}) == 7
 
 
 def test_the_classic_pane_bounds_match_the_v2_schema():
@@ -324,7 +320,9 @@ def test_the_classic_pane_bounds_match_the_v2_schema():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_clamped"
         and node.args and isinstance(node.args[0], ast.Constant)
     }
-    for key in (CAP, FLOOR):
+    assert FLOOR not in pane and FLOOR not in clamps
+    assert FIELDS.get_field_definition(FLOOR) is None
+    for key in (CAP,):
         field = FIELDS.get_field_definition(key)
         assert clamps[key] == (field["default"], field["min"], field["max"])
         tag = re.search(rf'<input[^>]*\bname="{key}"[^>]*>', pane, re.S)
@@ -338,9 +336,10 @@ def test_the_settings_writer_validates_before_storing_and_keeps_absent_values():
     storage = FakeCosmos()
     storage.document[CAP] = 15
     storage.document[FLOOR] = 1800
+    storage.document[GENERAL_FLOOR] = 1
     writer = _settings_writer(storage)
 
-    for update in ({CAP: 0}, {CAP: "101"}, {FLOOR: 59}, {FLOOR: True}, {CAP: 10, FLOOR: SECRET}):
+    for update in ({CAP: 0}, {CAP: "101"}, {GENERAL_FLOOR: 0}, {GENERAL_FLOOR: True}, {CAP: 10, GENERAL_FLOOR: SECRET}):
         with pytest.raises(WorkflowLoopLimitError) as raised:
             writer(dict(update))
         assert SECRET not in raised.value.public_message
@@ -349,18 +348,52 @@ def test_the_settings_writer_validates_before_storing_and_keeps_absent_values():
     embedding = ModuleType("functions_embedding_compatibility")
     embedding.embedding_settings_write_guard = lambda *_args, **_kwargs: nullcontext()
     with patch.dict(sys.modules, {"functions_embedding_compatibility": embedding}):
-        assert writer({"allow_user_workflows": True})
-        assert (storage.document[CAP], storage.document[FLOOR]) == (15, 1800)
+        saved = writer({"allow_user_workflows": True})
+        assert saved
+        assert (storage.document[CAP], storage.document[GENERAL_FLOOR]) == (15, 1)
+        assert FLOOR not in storage.document
         update = {CAP: "25", FLOOR: " 7200 "}
-        assert writer(update)
-        assert (storage.document[CAP], storage.document[FLOOR]) == (25, 7200)
+        saved = writer(update)
+        assert saved
+        assert (storage.document[CAP], storage.document[GENERAL_FLOOR]) == (25, 1)
+        assert FLOOR not in storage.document
         assert update == {CAP: "25", FLOOR: " 7200 "}
 
 
-def test_the_admin_docs_describe_both_limits():
-    """The Chat Orchestration admin page documents each limit with its default and key."""
+def test_the_admin_docs_describe_the_count_cap_and_shared_minimum():
+    """The current admin table contains no separate chat schedule policy."""
     page = (ROOT / "docs" / "admin" / "orchestration.md").read_text(encoding="utf-8")
-    for key, default in ((CAP, "20"), (FLOOR, "3600")):
+    assert not any(line.startswith("|") and f"`{FLOOR}`" in line for line in page.splitlines())
+    assert GENERAL_FLOOR in page
+    for key, default in ((CAP, "20"),):
         row = next((line for line in page.splitlines() if line.startswith("|") and f"`{key}`" in line), None)
         assert row, f"docs/admin/orchestration.md has no settings row for {key}"
         assert f"| {default} |" in row
+
+
+@pytest.mark.parametrize("optimized", [False, True])
+def test_real_settings_load_discards_legacy_floor_without_changing_shared_policy(optimized):
+    probe = """
+from test_support.offline_bootstrap import offline_app_imports
+with offline_app_imports():
+    import functions_settings as settings
+    storage = settings.cosmos_settings_container
+    storage.upsert_item({
+        'id': 'app_settings',
+        'workflow_min_schedule_interval_seconds': 1,
+        'chat_orchestration_min_workflow_interval_seconds': 86400,
+    })
+    loaded = settings.get_settings(use_cosmos=True)
+    if loaded['workflow_min_schedule_interval_seconds'] != 1:
+        raise AssertionError('Legacy policy changed the shared minimum.')
+    if 'chat_orchestration_min_workflow_interval_seconds' in loaded:
+        raise AssertionError('Retired policy survived settings load.')
+    stored = storage.read_item('app_settings', 'app_settings')
+    if 'chat_orchestration_min_workflow_interval_seconds' in stored:
+        raise AssertionError('Retired policy was not removed from storage.')
+"""
+    result = subprocess.run(
+        [sys.executable, *(["-O"] if optimized else []), "-c", probe],
+        cwd=ROOT, capture_output=True, text=True, timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

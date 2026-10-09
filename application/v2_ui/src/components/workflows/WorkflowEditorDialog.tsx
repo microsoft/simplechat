@@ -198,6 +198,7 @@ export function WorkflowEditorDialog({
     const draft = history.draft;
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
+    const [errorSequence, setErrorSequence] = useState(0);
     const [confirmClose, setConfirmClose] = useState(false);
     const [confirmStructured, setConfirmStructured] = useState(false);
     const [accessLost, setAccessLost] = useState(false);
@@ -486,15 +487,19 @@ export function WorkflowEditorDialog({
         return () => cancelAnimationFrame(frame);
     }, [assistPending, askAiInputId, askAiToggleId]);
 
-    const shownError = useRef(error);
+    const shownError = useRef({ error, sequence: errorSequence });
     useEffect(() => {
-        const appeared = Boolean(error) && error !== shownError.current;
-        shownError.current = error;
-        if (!appeared || !panelOpen || sidePanelBesideEditor()) return;
-        // Narrow screens show the panel instead of the editor, so a new error brings the editor back.
-        closeChanges(false);
-        requestAnimationFrame(() => errorRef.current?.focus());
-    }, [error, panelOpen]);
+        const appeared = Boolean(error) &&
+            (error !== shownError.current.error || errorSequence !== shownError.current.sequence);
+        shownError.current = { error, sequence: errorSequence };
+        if (!appeared) return;
+        if (panelOpen && !sidePanelBesideEditor()) closeChanges(false);
+        const frame = requestAnimationFrame(() => {
+            errorRef.current?.focus({ preventScroll: true });
+            errorRef.current?.scrollIntoView({ block: 'nearest' });
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [error, errorSequence]);
 
     const switchSurface = (next: 'list' | 'flow') => {
         history.session.closeGroup();
@@ -556,6 +561,7 @@ export function WorkflowEditorDialog({
     const save = async (confirmed = false) => {
         if (interactionDisabled) {
             setError('Refresh workspace access before saving. Your draft has been retained.');
+            setErrorSequence((value) => value + 1);
             return;
         }
         history.session.closeGroup();
@@ -569,6 +575,7 @@ export function WorkflowEditorDialog({
         ];
         if (currentErrors.length) {
             setError(currentErrors.join(' '));
+            setErrorSequence((value) => value + 1);
             return;
         }
         if (!confirmed && workflowSessionSaveNeedsConfirmation(history.session)) {
@@ -598,6 +605,7 @@ export function WorkflowEditorDialog({
             // A source deleted since the list loaded: reload it so the editor marks that source.
             if (workflowErrorCode(cause) === WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE) fileSyncSources.retry();
             setError(workflowErrorMessage(cause, 'Could not save the workflow. Your draft has been retained.'));
+            setErrorSequence((value) => value + 1);
         } finally {
             history.session.setSaving(false);
             setSaving(false);

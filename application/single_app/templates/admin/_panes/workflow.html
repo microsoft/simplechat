@@ -164,7 +164,8 @@
                             value="{{ settings.workflow_min_schedule_interval_seconds|default(1) }}" />
                         <div class="form-text" id="workflow-min-schedule-interval-help">
                             Shortest repeat interval, in seconds, allowed when a personal or group workflow
-                            interval schedule is created or changed. Default is 1; supported range is 1-86,400.
+                            interval schedule is created or changed, including workflows from chat.
+                            Default is 1; supported range is 1-86,400.
                             Workflows already saved keep their schedule and keep running when this is raised.
                             Calendar schedules are not affected.
                         </div>

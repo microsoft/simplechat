@@ -549,9 +549,6 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
         'chat_orchestration_max_workflows_per_user': _clamped(
             'chat_orchestration_max_workflows_per_user', 20, 1, 100
         ),
-        'chat_orchestration_min_workflow_interval_seconds': _clamped(
-            'chat_orchestration_min_workflow_interval_seconds', 3600, 60, 86400
-        ),
         'chat_orchestration_max_workflow_handoffs_per_day': _clamped(
             'chat_orchestration_max_workflow_handoffs_per_day', 5, 1, 100
         ),

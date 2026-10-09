@@ -2,8 +2,9 @@
 # test_orchestration_workflow_planning_context.py
 """
 Functional test for the workflow proposal planning context.
-Version: 0.261.207
+Version: 0.261.317
 Implemented in: 0.261.207
+Shared schedule policy coverage implemented in: 0.261.317
 
 This test ensures that chat orchestration builds the workflow proposal planning context
 (the requester's agents, File Sync sources, documents and existing workflows, the
@@ -389,6 +390,19 @@ def test_a_failed_read_fails_closed_without_echoing_the_error(wf, monkeypatch, f
 # The ready context
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("minimum", [1, 60, 61, 86400])
+def test_planner_projection_uses_only_the_shared_minimum(wf, minimum):
+    settings = {
+        **AGENT_SETTINGS,
+        "workflow_min_schedule_interval_seconds": minimum,
+        "chat_orchestration_min_workflow_interval_seconds": "invalid legacy value",
+    }
+    context = _build(wf, [], settings)
+    projection = wf.workflow_planner_projection(context)
+    assert projection["limits"]["min_interval_seconds"] == minimum
+    assert "chat_orchestration_min_workflow_interval_seconds" not in json.dumps(projection)
+
+
 def test_the_ready_context_is_bounded_handle_only_and_keeps_its_records_on_the_server(wf, monkeypatch):
     logged = []
     monkeypatch.setattr(wf, "log_event", lambda message, **kwargs: logged.append((message, kwargs)))
@@ -402,7 +416,7 @@ def test_the_ready_context_is_bounded_handle_only_and_keeps_its_records_on_the_s
     )
     assert context["limits"]["max_tasks"] == 5
     assert context["limits"]["quota_used"] == 2 and context["limits"]["quota_limit"] == 20
-    assert context["limits"]["min_interval_seconds"] >= 3600
+    assert context["limits"]["min_interval_seconds"] == 1
     assert context["default_model_valid"] is True
 
     projection = wf.workflow_planner_projection(context)

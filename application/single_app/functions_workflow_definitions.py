@@ -104,7 +104,7 @@ class WorkflowSourceUnavailableError(WorkflowPublicValidationError):
 
 
 class WorkflowCadenceError(WorkflowPublicValidationError):
-    """A workflow created from chat would run more often than its own administrator minimum allows."""
+    """A proposed workflow would run more often than the shared administrator minimum allows."""
 
     code = "cadence_below_minimum"
 

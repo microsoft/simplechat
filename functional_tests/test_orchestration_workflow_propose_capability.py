@@ -2,8 +2,9 @@
 # test_orchestration_workflow_propose_capability.py
 """
 Functional test for the workflow_propose orchestration capability.
-Version: 0.261.315
+Version: 0.261.317
 Implemented in: 0.261.207
+Shared schedule policy and clarification coverage implemented in: 0.261.317
 Merge tasks added in: 0.261.241
 
 This test ensures that chat orchestration offers workflow_propose only when workflow proposals
@@ -186,23 +187,23 @@ def _record():
     return SimpleNamespace(calls=[], logs=[])
 
 
-def _plan_request(monkeypatch, planning, replies, record, *, edit_context=None):
+def _plan_request(monkeypatch, planning, replies, record, *, edit_context=None, message=MESSAGE):
     """Plan one request through the real planner with scripted planner replies."""
     context_module = importlib.import_module("functions_orchestration_context")
     planner = importlib.import_module("functions_orchestration_planner")
     services = importlib.import_module("functions_orchestration_services")
     request_context = context_module.build_capability_request_context(
-        OWNER, deepcopy(IDENTITY), MESSAGE, deepcopy(AGENTS), deepcopy(ACTIONS), allowed_user_urls=[],
+        OWNER, deepcopy(IDENTITY), message, deepcopy(AGENTS), deepcopy(ACTIONS), allowed_user_urls=[],
         native_bridge_for_step=_binding, external_source_admission=_binding,
         external_source_authorizer=_binding, external_source_preflight=_binding,
         capture_external_source_configuration=_binding,
     )
     request_context["workflow_planning"] = planning
     planner_context = context_module.build_planner_context(
-        MESSAGE, candidates=deepcopy(CANDIDATES), seeds={}, ledger=None,
-        signals=context_module.build_conversation_signals([], MESSAGE), agents=deepcopy(AGENTS),
-        original_message=MESSAGE,
-        request_resolution={"relationship": "new_topic", "resolved_message": MESSAGE},
+        message, candidates=deepcopy(CANDIDATES), seeds={}, ledger=None,
+        signals=context_module.build_conversation_signals([], message), agents=deepcopy(AGENTS),
+        original_message=message,
+        request_resolution={"relationship": "new_topic", "resolved_message": message},
         actions=deepcopy(ACTIONS), answered_questions=[], memory_context=None,
     )
     planner_context["export_catalog"] = []
@@ -213,7 +214,7 @@ def _plan_request(monkeypatch, planning, replies, record, *, edit_context=None):
         lambda message, *args, **kwargs: record.logs.append((message, deepcopy(kwargs.get("extra")))),
     )
     return planner.plan_request(
-        MESSAGE, planner_context, "conversation", OWNER, settings={**BASE_SETTINGS, SETTING: True},
+        message, planner_context, "conversation", OWNER, settings={**BASE_SETTINGS, SETTING: True},
         authorized_document_ids=["document-record-1"], revision=0, allow_elicitation=True, turn_id="turn",
         seeds={}, document_labels={"document-record-1": "Weekly priorities.docx"},
         request_context=request_context, planner_model=None, existing_results={},
@@ -439,8 +440,11 @@ def test_a_microsoft_365_agent_runs_as_the_user(schema, planning):
 
 
 def test_the_draft_rules_apply_to_every_proposal(schema, planning):
-    fast = _blueprint(planning, trigger={"type": "interval", "unit": "minutes", "value": 30})
-    error = _rejection(schema, planning, [ANSWER, _propose(fast)])
+    fast = _blueprint(planning, trigger={"type": "interval", "unit": "minutes", "value": 1})
+    policy = {**AGENT_SETTINGS, "workflow_min_schedule_interval_seconds": 61}
+    with pytest.raises(schema.PlanValidationError) as caught:
+        _normalize(schema, planning, [ANSWER, _propose(fast)], settings=policy)
+    error = caught.value
     assert (error.code, error.rule) == ("workflow_blueprint_invalid", "cadence_below_minimum")
     mail = _handle(planning, "agents", "Mail helper")
     many = _blueprint(planning, tasks=[_task(mail, f"Task {index}") for index in range(6)])
@@ -543,6 +547,52 @@ def test_a_stored_proposal_is_rechecked_against_the_closed_schema_only(schema, o
 # ---------------------------------------------------------------------------
 # Planning: offer, repair, degrade
 # ---------------------------------------------------------------------------
+
+def test_missing_recurring_timing_can_elicit_allowed_cadence_choices(monkeypatch, planning):
+    record = _record()
+    question = {
+        "kind": "elicitation",
+        "message": "How often should this workflow run?",
+        "requested_schema": {
+            "type": "object",
+            "properties": {"cadence": {
+                "type": "string", "title": "How often?",
+                "enum": ["Every minute", "Every hour", "Daily", "Weekly"],
+            }},
+            "required": ["cadence"],
+        },
+    }
+    kind, result = _plan_request(
+        monkeypatch, planning, [question], record,
+        message="Keep checking my inbox for urgent messages.",
+    )
+    assert kind == "elicitation"
+    assert result["requested_schema"]["properties"]["cadence"]["enum"] == [
+        "Every minute", "Every hour", "Daily", "Weekly",
+    ]
+    system = record.calls[0][0]["content"]
+    assert "When recurring timing is missing, use the existing" in system
+    assert "Do not invent a cadence." in system
+    assert "relevant allowed choices" in system
+    assert "do not\nsilently lengthen it" in system
+    assert "Do not add policy warnings when the requested schedule is allowed." in system
+
+
+def test_explicit_every_minute_reaches_a_validated_proposal_unchanged(monkeypatch, planning):
+    record = _record()
+    blueprint = _blueprint(planning, trigger={"type": "interval", "unit": "minutes", "value": 1})
+    kind, plan = _plan_request(
+        monkeypatch, planning, [_raw_plan([ANSWER, _propose(blueprint)])], record,
+        message="Check my inbox every minute.",
+    )
+    assert kind == "plan"
+    assert _step(plan, "propose")["arguments"]["blueprint"]["trigger"] == {
+        "type": "interval", "unit": "minutes", "value": 1,
+    }
+    system = record.calls[0][0]["content"]
+    assert "Honor an explicitly requested cadence when it meets limits.min_interval_seconds" in system
+    assert "every-minute timing with hourly timing" in system
+
 
 def test_the_planner_is_offered_the_capability_and_only_the_handle_catalog(monkeypatch, planning):
     record = _record()

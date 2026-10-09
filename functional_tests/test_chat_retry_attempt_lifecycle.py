@@ -1,7 +1,7 @@
 # test_chat_retry_attempt_lifecycle.py
 """
 Functional regression coverage for durable chat retry attempts.
-Version: 0.261.317
+Version: 0.261.319
 Implemented in: 0.261.317
 
 Real replay, route admission, history, and background-worker functions run with

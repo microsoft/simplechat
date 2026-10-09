@@ -252,12 +252,6 @@
                             <div class="form-text">The most workflows a chat plan may create for one user. Workflows built in the workflow editor do not count.</div>
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label" for="chat_orchestration_min_workflow_interval_seconds">Minimum schedule interval for workflows created from chat (seconds)</label>
-                            <input type="number" class="form-control" id="chat_orchestration_min_workflow_interval_seconds" name="chat_orchestration_min_workflow_interval_seconds" min="60" max="86400" step="1"
-                                value="{{ settings.chat_orchestration_min_workflow_interval_seconds if settings.chat_orchestration_min_workflow_interval_seconds is not none else 3600 }}">
-                            <div class="form-text">The shortest repeat interval a chat plan may give a workflow it creates. Daily, weekly and monthly schedules always pass.</div>
-                        </div>
-                        <div class="col-md-6 mb-3">
                             <label class="form-label" for="chat_orchestration_max_workflow_handoffs_per_day">Hand-offs from chat per user per day</label>
                             <input type="number" class="form-control" id="chat_orchestration_max_workflow_handoffs_per_day" name="chat_orchestration_max_workflow_handoffs_per_day" min="1" max="100" step="1"
                                 value="{{ settings.chat_orchestration_max_workflow_handoffs_per_day if settings.chat_orchestration_max_workflow_handoffs_per_day is not none else 5 }}">

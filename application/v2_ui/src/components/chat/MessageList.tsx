@@ -2,7 +2,7 @@
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     BookOpen,
@@ -52,6 +52,7 @@ import { PlanReplaySaveCard } from './PlanReplaySaveCard';
 import { WorkflowDeliveryFooter } from './WorkflowDeliveryFooter';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
+import { useMessageScroll } from './useMessageScroll';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
 import { ElicitationCard } from './ElicitationCard';
 import {
@@ -1357,7 +1358,7 @@ function StreamingBubble() {
     }
 
     return (
-        <div className="flex justify-start">
+        <div data-scroll-live-reply className="flex justify-start">
             <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
                 {/* Shown while connecting even when partial content is already on screen:
                     without it, a response that stopped mid-sentence just looks frozen. */}
@@ -1557,80 +1558,14 @@ export function MessageList() {
         streamAuthUrl,
         activeConversationId,
         retryPresentation,
+        completedReply,
     } = useChatStore();
     const activeTurnId = useOrchestrationStore((state) => selectActiveTurn(state, activeConversationId ?? ''));
     const appTitle = useBootstrapStore((state) => state.data?.branding?.app_title);
     const chatWidth = useUiStore((state) => state.chatWidth);
 
-    const scrollRef = useRef<HTMLDivElement>(null);
-
-    /**
-     * Whether the reader is at the bottom of the thread.
-     *
-     * A ref rather than state on purpose. Held in state, every scroll that crossed the
-     * threshold re-rendered the list and with it every message's markdown, which is expensive
-     * enough to stall a thread containing a large diagram. Nothing on screen depends on it, so
-     * nothing needs to re-render when it changes.
-     */
-    const pinnedRef = useRef(true);
     const retryIndex = retryPresentation ? messages.findIndex((message) => message.id === retryPresentation.userMessageId) : -1;
     const retryingEarlierTurn = retryIndex >= 0 && messages.some((message, index) => index > retryIndex && message.role === 'user');
-
-    const scrollToBottom = useCallback(() => {
-        const element = scrollRef.current;
-        if (element) {
-            // Set directly rather than through `scrollIntoView`, which also scrolls every
-            // scrollable ancestor and can drag the page itself around.
-            element.scrollTop = element.scrollHeight;
-        }
-    }, []);
-
-    // Auto-scroll only while the user is already at the bottom, so reading back through a
-    // long answer is not interrupted by incoming tokens.
-    useEffect(() => {
-        if (pinnedRef.current && !retryingEarlierTurn) {
-            scrollToBottom();
-        }
-    }, [messages, streamingContent, scrollToBottom, retryingEarlierTurn]);
-
-    /**
-     * Follow content that grows after it was laid out.
-     *
-     * A diagram renders asynchronously: a 96px placeholder is replaced by a panel that can be
-     * several hundred pixels tall, long after the scroll that was meant to land at the bottom.
-     * Nothing re-ran, so the reader was left above the end of the thread, chasing a target that
-     * moved every time another diagram finished.
-     */
-    useEffect(() => {
-        const element = scrollRef.current;
-        if (!element || typeof ResizeObserver === 'undefined') {
-            return;
-        }
-        // The content, not the viewport: the viewport's own size changing is a window resize,
-        // which should not yank the reader to the bottom.
-        const content = element.firstElementChild;
-        if (!content) {
-            return;
-        }
-        const observer = new ResizeObserver(() => {
-            if (pinnedRef.current && !retryingEarlierTurn) {
-                scrollToBottom();
-            }
-        });
-        observer.observe(content);
-        return () => observer.disconnect();
-    }, [scrollToBottom, retryingEarlierTurn]);
-
-    const onScroll = () => {
-        const element = scrollRef.current;
-        if (!element) {
-            return;
-        }
-        const distanceFromBottom =
-            element.scrollHeight - element.scrollTop - element.clientHeight;
-        pinnedRef.current = distanceFromBottom < 80;
-    };
-
     const isEmpty = useMemo(
         () => messages.length === 0 && !streaming && !messagesLoading,
         [messages.length, streaming, messagesLoading],
@@ -1696,10 +1631,28 @@ export function MessageList() {
         : undefined;
     const tailPlan = !planAnchor && !threadMessages.some((message) => message.role === 'user' && messageOrchestrationTurn(message));
 
-    return (
+    const {
+        scrollRef, hasNewMessages, onScroll, onWheel, onKeyDown, onTouchStart, onPointerDown, jumpToNewest, pauseFollowing,
+    } = useMessageScroll({
+        conversationId: activeConversationId,
+        messages: threadMessages,
+        loading: messagesLoading,
+        streaming,
+        content: streamingContent,
+        completedReply,
+        followLatest: !retryingEarlierTurn,
+    });
+
+    const messagePane = (
         <div
             ref={scrollRef}
             onScroll={onScroll}
+            onWheel={onWheel}
+            onKeyDown={onKeyDown}
+            onTouchStart={onTouchStart}
+            onPointerDown={onPointerDown}
+            tabIndex={0}
+            aria-label="Conversation messages"
             className="min-h-0 flex-1 overflow-y-auto px-4 py-6"
             data-tour="message-list"
         >
@@ -1733,7 +1686,7 @@ export function MessageList() {
                 {/* Streaming output is announced politely so screen reader users are told
                     a response arrived without every token interrupting them. */}
                 <PendingActionPlacementProvider messages={threadMessages}>
-                    <PendingActionsConversationSection scrollRef={scrollRef} pinnedRef={pinnedRef} />
+                    <PendingActionsConversationSection scrollRef={scrollRef} pauseFollowing={pauseFollowing} />
                     <div aria-live="polite" aria-atomic="false" className="space-y-4">
                         {threadMessages.map((message) => {
                             const here = streamingAnchor === message.id;
@@ -1741,7 +1694,7 @@ export function MessageList() {
                             const error = message.role === 'user' && !here
                                 ? localRetry?.error || selectedAttemptError(message, threadMessages) : undefined;
                             return (
-                                <Fragment key={message.id}>
+                                <div key={message.id} data-scroll-message-id={message.id}>
                                     <MessageBubble message={message} proposalImages={proposalImagesByMessage.get(message.id)} />
                                     {here && <StreamingBubble />}
                                     {here && <StreamingPendingActions />}
@@ -1752,7 +1705,7 @@ export function MessageList() {
                                     {activeConversationId && planAnchor === message.id && !(localRetry && !localRetry.admitted) && (
                                         <ActiveOrchestrationCard conversationId={activeConversationId} />
                                     )}
-                                </Fragment>
+                                </div>
                             );
                         })}
                         {streaming && !streamingAnchor && <StreamingBubble />}
@@ -1767,6 +1720,28 @@ export function MessageList() {
 
                 {streamError && <ResponseError message={streamError} authUrl={streamAuthUrl} />}
             </div>
+        </div>
+    );
+
+    return (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+            {messagePane}
+            <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                {hasNewMessages ? 'New messages below.' : ''}
+            </span>
+            {hasNewMessages && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-4">
+                    <button
+                        type="button"
+                        onClick={jumpToNewest}
+                        aria-label="Go to the beginning of the newest message"
+                        className="pointer-events-auto inline-flex min-h-10 items-center gap-2 rounded-full border border-edge-strong bg-surface-solid px-4 py-2 text-sm font-medium text-text-1 shadow-lg transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                        New messages
+                        <ChevronDown size={16} aria-hidden="true" />
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

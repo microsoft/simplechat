@@ -2,7 +2,7 @@
 //
 // Runs the V2 workflow editor's real draft handling on workflow proposal drafts from a JSON file and
 // prints what the editor would send, so a Python test can hand it to the real accept route.
-// Version: 0.261.207
+// Version: 0.261.317
 // Implemented in: 0.261.207
 //
 // Bundled with the esbuild the V2 app already provides and executed under node by
@@ -21,12 +21,18 @@ import {
 interface DraftRequest {
     workflow: Record<string, unknown>;
     name?: string;
+    schedule?: { unit: 'seconds' | 'minutes' | 'hours'; value: number };
 }
 
 const scope: WorkflowScope = { type: 'personal' };
 const request = JSON.parse(readFileSync(process.argv[2], 'utf-8')) as { drafts: DraftRequest[] };
 const saves = request.drafts.map((entry) => {
     const draft = normalizeWorkflowDefinition(entry.workflow, scope);
-    return workflowForSave(entry.name === undefined ? draft : { ...draft, name: entry.name }, null, scope);
+    const edited = {
+        ...draft,
+        ...(entry.name === undefined ? {} : { name: entry.name }),
+        ...(entry.schedule === undefined ? {} : { trigger_type: 'interval' as const, schedule: entry.schedule }),
+    };
+    return workflowForSave(edited, null, scope);
 });
 process.stdout.write(JSON.stringify({ saves }));

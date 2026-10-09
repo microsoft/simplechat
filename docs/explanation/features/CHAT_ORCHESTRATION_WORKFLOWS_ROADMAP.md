@@ -895,6 +895,9 @@ that opens into the full alert.
   - The limits are `chat_orchestration_max_workflows_per_user` (default 20, range 1–100) and
     `chat_orchestration_min_workflow_interval_seconds` (default 3,600, range 60–86,400). The cadence floor applies only
     when a workflow is created, and the cap is soft: simultaneous accepts can exceed it by the number in flight.
+    **Superseded in 0.261.317:** the chat-only cadence setting is retired. All workflows
+    use `workflow_min_schedule_interval_seconds` for new or changed intervals;
+    the chat-created workflow count cap is unchanged.
   - The run-time line is added only when the stored trigger is scheduled (interval or File Sync) and its schedule is a
     calendar schedule. The line is part of a task's input digest, so after an upgrade from 0.261.193 through 0.261.201,
     a durable calendar run that was still in progress pauses once when it resumes, with "The saved task inputs
@@ -1657,7 +1660,7 @@ tracker, running tag and posted-message footers. The last bullet of the **V2** l
 | Phase | Decision | Recommendation |
 |---|---|---|
 | 1 | Include monthly? Admin minimum interval for new interval schedules? | **Settled in #1561**: monthly is included (day of month, clamped), and `workflow_min_schedule_interval_seconds` applies only to new or changed interval schedules. |
-| 2 | Per-user cap and minimum cadence defaults for orchestration-created workflows | **Settled in #1566**: a cap of 20 (range 1–100) and a minimum interval of one hour (range 1 minute to 1 day), both admin-editable. The interval floor applies only when a workflow is created. |
+| 2 | Per-user cap and minimum cadence defaults for orchestration-created workflows | **Settled in #1566**, then superseded in **0.261.317**: the cap remains 20 (range 1–100); cadence now uses the shared `workflow_min_schedule_interval_seconds` for new or changed intervals. |
 | A1 | Keep `/` prompts in assist inputs? Should the image editor's transcript be local only, or stored? | **Settled in #1564**: `/` prompts are hidden, and the image transcript stays in memory for the tab (up to 20 exchanges). |
 | A2 | Add a "search all my documents" toggle to the plan editor? | A later option, not part of A2. Grounding diagrams and charts in documents is decided: not planned (decision #8). |
 | 3 | Setting key and default for the assistant; persist the side-channel transcript? | **Settled in #1577**: `enable_workflow_ai_assistant`, on by default, effective only when personal workflows are on and the user passes the WorkflowUser role rule. The transcript isn't stored: the client sends up to 20 completed turns with each request. |

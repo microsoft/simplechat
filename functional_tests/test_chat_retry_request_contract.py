@@ -1,7 +1,7 @@
 # test_chat_retry_request_contract.py
 """
 Functional regression coverage for canonical chat retry inputs.
-Version: 0.261.317
+Version: 0.261.319
 Implemented in: 0.261.317
 
 Real replay helpers run with external bootstrap I/O blocked. These checks protect

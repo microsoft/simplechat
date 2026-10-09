@@ -1,8 +1,9 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.315
+Version: 0.261.317
 Implemented in: 0.261.207; merge task wording added in 0.261.241; merge kinds in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
+Shared schedule policy coverage implemented in: 0.261.317; merge task wording added in 0.261.241; merge kinds in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 Next and last run on a created card: 0.261.251 (microsoft/simplechat#1546)
 Microsoft 365 links stay in V2 Settings and V2 Approvals: 0.261.302
 Refs: microsoft/simplechat#1547, microsoft/simplechat#1619
@@ -240,7 +241,7 @@ def agent_proposal():
     return value
 
 
-def editor_options():
+def editor_options(minimum=3600):
     return {
         "definition_version": 2,
         "supported_definition_versions": [1, 2, 3],
@@ -249,7 +250,7 @@ def editor_options():
             "max_nodes": 256, "max_depth": 4, "max_predicate_nodes": 100, "max_predicate_depth": 8,
             "max_executions": 5000, "deadline_seconds": 86400,
         },
-        "schedule": functions_workflow_schedules.build_workflow_schedule_editor_options(min_interval_seconds=3600),
+        "schedule": functions_workflow_schedules.build_workflow_schedule_editor_options(min_interval_seconds=minimum),
         "can_manage": True,
         "max_tasks": 5,
         "agents": [],
@@ -271,6 +272,7 @@ class ProposalApi:
         self.expected_errors = set()
         self.status_error = None
         self.accept_errors = []
+        self.minimum_interval_seconds = 3600
 
     def error(self, route, status, message, code):
         self.expected_errors.add((urlsplit(route.request.url).path, status))
@@ -327,7 +329,7 @@ class ProposalApi:
                 route.fulfill(json={"proposal_id": PROPOSAL_ID, "state": "denied"})
                 return
         if path == EDITOR_OPTIONS_PATH and request.method == "GET":
-            route.fulfill(json=editor_options())
+            route.fulfill(json=editor_options(self.minimum_interval_seconds))
             return
         if path == "/api/documents" and request.method == "GET":
             route.fulfill(json={"documents": [], "total_count": 0, "page": 1, "page_size": 10})

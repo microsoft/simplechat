@@ -1,7 +1,7 @@
 # test_v2_chat_retry.py
 """
 Browser coverage for saved model, agent, and orchestration retry attempts.
-Version: 0.261.317
+Version: 0.261.319
 Implemented in: 0.261.317
 
 Runs the real message list, composer, stores, and controller with production CSS.
@@ -257,6 +257,22 @@ def test_retry_hides_answer_immediately_and_reuses_saved_selections_in_place(ret
             assert request[key] == value
     assert request["web_search_enabled"] is True
     assert request["selected_document_ids"] == ["original-document"]
+
+
+def test_earlier_retry_does_not_follow_the_conversation_tail(retry_ui):
+    page, api = retry_ui
+    api.later[1]["content"] = "\n\n".join("Later answer paragraph. " * 30 for _ in range(30))
+    api.prepare_mode = "held"
+    start(page, api)
+    page.get_by_role("button", name="Retry", exact=True).first.click()
+    expect(page.get_by_text(re.compile("Preparing retry"))).to_be_visible()
+    before = page.locator('[data-tour="message-list"]').evaluate("(node) => node.scrollTop")
+    api.release_preparations()
+    expect(page.get_by_text("The regenerated answer.", exact=True)).to_be_visible()
+    geometry = page.locator('[data-tour="message-list"]').evaluate(
+        "(node) => ({top: node.scrollTop, remaining: node.scrollHeight - node.clientHeight - node.scrollTop})")
+    assert abs(geometry["top"] - before) < 100
+    assert geometry["remaining"] > 300
 
 
 def test_refused_preparation_restores_old_answer_without_a_phantom_attempt(retry_ui):

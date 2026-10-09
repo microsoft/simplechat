@@ -4,7 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
-version: "0.261.122"
+version: "0.261.317"
 ---
 
 ## What this does
@@ -136,6 +136,18 @@ Then choose one of these:
 - **Edit** opens the proposal in the workflow editor. **Save** creates it as you
   edited it, and it stays off unless you turn on **Workflow enabled**.
 - **Deny** declines the proposal. Nothing is created.
+
+From **0.261.317**, chat uses the same administrator minimum as the workflow editor.
+An explicit allowed request such as "every minute" should keep that cadence;
+if you ask for recurring work without saying when, planner guidance asks you
+how often rather than assuming hourly. This is model guidance, not a guarantee
+of a particular model's answer.
+
+Use **Edit**, then **Ask AI**, to change the schedule. Review the AI changes and
+choose **Confirm and save**. If the interval is below policy, the error names the
+shortest permitted interval and is brought into view. Your edited draft stays
+open; choose an allowed interval and save again. No policy warning is shown for
+valid timing.
 
 Once it's created, **Open workflow** opens it in Workflows. If you delete it
 later, **Create again** creates it again, paused. A proposal expires 14 days

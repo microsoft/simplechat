@@ -65,7 +65,7 @@ const REASON_TEXT: Record<string, string> = {
     agent_unavailable: 'The agent this workflow uses is no longer available to you.',
     file_sync_source_unavailable: 'A File Sync source this workflow uses is no longer available to you.',
     reference_unavailable: 'A document this workflow uses is no longer available to you.',
-    cadence_below_minimum: 'This schedule runs more often than workflows created from chat allow.',
+    cadence_below_minimum: 'This schedule runs more often than the administrator allows.',
     proposal_unavailable: 'This proposal cannot be created as planned.',
     content_review: 'This response is in content review, so its proposal cannot be used.',
     workflow_proposals_disabled: 'Workflow proposals are turned off.',

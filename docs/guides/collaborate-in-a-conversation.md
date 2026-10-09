@@ -61,6 +61,18 @@ Use a shared conversation when the discussion, prompts, AI responses, and genera
 
 The same shared conversations work in the V2 interface, with the controls in different places.
 
+### Reading incoming messages
+
+Fixed/Implemented in version: **0.261.318** (`application/single_app/config.py`).
+When you are caught up, a new participant's message opens at its beginning.
+AI replies follow the live streaming line and return to the beginning when
+finished. If you scroll up to read earlier content, incoming messages and AI
+completion leave you where you are. **New messages**, with a down arrow above
+the composer, brings you to the beginning of the most current message when you
+are ready. This indication is local to your open chat, not a participant read receipt.
+
+### Shared conversation controls
+
 - **Share a conversation, or manage who is in one**: the people button in the chat header, or **Share** in the conversation's menu in the left rail. Both open the same panel, which also promotes members to admin, removes people, and lets you leave the conversation or delete it for everyone.
 - **Accept an invitation**: a prompt above the conversation offers **Join** and **Decline**. You can read an invited conversation before joining, but the composer stays disabled until you do.
 - **Mention somebody**: type `@` in the composer. The menu lists the people already in the conversation, then the models and agents you can address, then people you could add. Use the arrow keys and press **Tab** or **Enter** to accept the highlighted suggestion.

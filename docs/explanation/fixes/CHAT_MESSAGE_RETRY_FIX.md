@@ -4,7 +4,7 @@ title: "Chat message retry reliability"
 description: "Canonical saved-input retries, review-first orchestration regeneration, and attempt-scoped progress and errors."
 section: "Explanation"
 audience: developer
-version: "0.261.317"
+version: "0.261.319"
 ---
 
 ## Issue and root cause
@@ -64,6 +64,10 @@ browser. After approval, that request executes as an ordinary new turn; the
 review flag alone does not invent message-carousel lineage.
 
 ## In-place presentation
+
+Version **0.261.319** integrates the retry presentation with the incoming-message
+reading-position hook. Retrying an earlier turn does not follow the conversation
+tail; ordinary incoming replies retain their new reading-position behavior.
 
 The V2 `chatRetryAttempts.ts` helpers and `chatStore.ts` own preparation, saved
 identity adoption, reply placement, and attempt-local errors. `MessageList.tsx`

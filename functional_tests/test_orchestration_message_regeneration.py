@@ -1,7 +1,7 @@
 # test_orchestration_message_regeneration.py
 """
 Functional coverage for fresh, review-required orchestration message generations.
-Version: 0.261.317
+Version: 0.261.319
 Implemented in: 0.261.317
 
 The real planning, revision, execution, and retry state machines run against the
