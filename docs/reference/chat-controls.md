@@ -738,7 +738,7 @@ once.
 
 ## Saved chat plans (V2 interface)
 
-Implemented in **0.261.307** (Refs: microsoft/simplechat#1550). A finished
+Implemented in **0.261.308** (Refs: microsoft/simplechat#1550). A finished
 orchestrated answer can be saved as a personal workflow that repeats the same
 steps on a schedule. The steps are frozen when you save them, and each run
 repeats them as you, in the workflow's own conversation. See

@@ -1,6 +1,6 @@
 // test_v2_workflow_plan_replay_client.mjs
-// Version: 0.261.307
-// Implemented in: 0.261.307
+// Version: 0.261.308
+// Implemented in: 0.261.308
 // Exercises the V2 plan-replay client contract: preview and save parsing, fixed refusal copy,
 // typed replay run results, stored replay summaries, capability labels, and workflow editor
 // round-tripping of read-only plan_replay tasks.

@@ -152,7 +152,7 @@ for how proposals are checked and created.
 
 ### Repeat a chat plan on a schedule
 
-Starting in **0.261.307**, you can save a plan that chat already ran as a
+Starting in **0.261.308**, you can save a plan that chat already ran as a
 personal workflow that repeats the same steps, for example every Monday. Use it
 when an orchestrated answer was worth having once and you want the same
 searches, analysis and answer again without asking each time. A workflow
