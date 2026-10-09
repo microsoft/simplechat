@@ -15,6 +15,10 @@ serve file sources and actions.
 
 **Implemented in version:** 0.261.042
 
+**File-source configuration implemented in version: 0.261.310**, recorded in
+`application/single_app/config.py`. Personal, group and public sources now use
+the native shared editor; see [V2 File Source Configuration](V2_FILE_SOURCE_CONFIGURATION.md).
+
 **Agent/action authoring expanded in version:** 0.261.096, recorded in
 `application/single_app/config.py`.
 
@@ -169,7 +173,7 @@ What each section supports in this release:
 | Section | Available now |
 |---|---|
 | Documents | Upload, search, filter by tag, delete |
-| File sources | List, sync now, run history, delete |
+| File sources | Native create/edit, credentials or saved identities, test/browse, selected paths, filters, tags, schedules, sync now, run history, delete |
 | Prompts | Full create, edit and delete |
 | Agents | Full-page authoring for all permitted agent types, models, knowledge, actions, instructions, and templates; use in chat |
 | Actions | Unified list and full-page create/edit/delete, with native type-specific configuration |
@@ -187,7 +191,7 @@ The following separate management surfaces still use their existing editors:
 
 - The workflow designer: tasks, document actions and scheduling.
 - Model endpoint connection details: provider, API versions, authentication, model list.
-- File source configuration, and identity creation with its auth-type-specific fields.
+- Identity creation with its auth-type-specific fields is separate from file-source configuration.
 
 ## Testing and validation
 

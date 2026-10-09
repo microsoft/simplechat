@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.305
+Version: 0.261.310
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -160,6 +160,8 @@ EXPECTED_PUBLIC_PATHS = {
 }
 
 SENSITIVE_ROUTE_POLICIES = {
+    ("route_backend_file_sync.py", "api_file_sync_personal_source_options"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_file_sync.py", "api_file_sync_personal_source_read"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_insights"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_chat_readiness"): ("login_required", "control_center_required"),

@@ -2,7 +2,7 @@
 
 import logging
 
-from flask import jsonify, request
+from flask import jsonify, request, session
 
 from functions_appinsights import log_event
 from functions_authentication import admin_required, enabled_required, get_current_user_id, get_current_user_info, login_required, user_required
@@ -12,10 +12,15 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_PERSONAL,
     FILE_SYNC_SCOPE_PUBLIC,
     FILE_SYNC_SOURCE_TYPE_SMB,
+    FileSyncConfigConflict,
+    FileSyncDeleteIncomplete,
     FileSyncPublicValidationError,
+    FileSyncSourceBusy,
     FileSyncWriteConflict,
     assert_public_workspace_role,
     browse_file_sync_source_path,
+    build_file_sync_source_options,
+    compute_file_sync_config_revision,
     create_file_sync_source,
     delete_file_sync_source,
     get_authorized_sync_source,
@@ -51,7 +56,9 @@ def register_route_backend_file_sync(bp):
         user_id = get_current_user_id()
         if not user_id:
             return None, None
-        return user_id, get_current_user_info() or {}
+        user_info = get_current_user_info() or {}
+        user_info["roles"] = (session.get("user") or {}).get("roles", [])
+        return user_id, user_info
 
     def _require_personal_context():
         user_id, user_info = _current_user()
@@ -121,7 +128,10 @@ def register_route_backend_file_sync(bp):
         }
 
     def _map_exception(error):
-        expected_error = isinstance(error, (PermissionError, LookupError, ValueError, FileSyncWriteConflict))
+        expected_error = isinstance(error, (
+            PermissionError, LookupError, ValueError, FileSyncWriteConflict,
+            FileSyncConfigConflict, FileSyncSourceBusy,
+        ))
         log_event(
             "[FILE_SYNC] Request failed.",
             level=logging.WARNING if expected_error else logging.ERROR,
@@ -129,49 +139,107 @@ def register_route_backend_file_sync(bp):
                 "endpoint": request.endpoint or "",
                 "method": request.method,
                 "exception_type": type(error).__name__,
-                "error": str(error),
             },
             exceptionTraceback=not expected_error,
         )
         if isinstance(error, FileSyncPublicValidationError):
             return _error(error.public_message, 400)
+        partial_result = getattr(error, "delete_result", None)
+        partial_fields = (
+            {"partial": bool(getattr(error, "partial", False)), "delete_result": partial_result}
+            if partial_result is not None else {}
+        )
+        if isinstance(error, FileSyncDeleteIncomplete):
+            return jsonify({
+                "error": error.public_message,
+                "error_code": "delete_incomplete",
+                "delete_result": error.delete_result,
+                "partial": error.delete_result.get("documents_deleted", 0) > 0,
+            }), 409
+        if isinstance(error, FileSyncConfigConflict):
+            return jsonify({
+                "error": "This file source changed while it was being saved. Reload it and try again.",
+                "error_code": "config_conflict", **partial_fields,
+            }), 409
+        if isinstance(error, FileSyncSourceBusy):
+            return jsonify({
+                "error": "Wait for the running sync to finish, then delete the source.",
+                "error_code": "source_busy", **partial_fields,
+            }), 409
         if isinstance(error, FileSyncWriteConflict):
-            return _error("This File Sync item changed while it was being saved. Reload it and try again.", 409)
+            return jsonify({
+                "error": "This File Sync item changed while it was being saved. Try saving again.",
+                "error_code": "write_conflict", **partial_fields,
+            }), 409
         if isinstance(error, PermissionError):
             return _error("You do not have permission to perform this File Sync operation.", 403)
         if isinstance(error, LookupError):
+            if partial_fields:
+                return jsonify({
+                    "error": "The requested File Sync resource was not found.", **partial_fields,
+                }), 404
             return _error("The requested File Sync resource was not found.", 404)
         if isinstance(error, ValueError):
             return _error("The File Sync request could not be completed. Verify the source configuration and try again.", 400)
         return _error("An unexpected error occurred while processing the File Sync request.", 500)
 
+    def _project_source(scope_type, source):
+        projected = sanitize_file_sync_source(source)
+        if scope_type == FILE_SYNC_SCOPE_PERSONAL:
+            for field in ("_etag", "_rid", "_self", "_attachments", "_ts"):
+                projected.pop(field, None)
+            projected["config_revision"] = compute_file_sync_config_revision(source)
+        return projected
+
     def _list_sources(scope_type, scope_id):
-        sources = [sanitize_file_sync_source(source) for source in list_file_sync_sources(scope_type, scope_id)]
+        sources = [_project_source(scope_type, source) for source in list_file_sync_sources(scope_type, scope_id)]
         return jsonify({"sources": sources}), 200
+
+    def _expected_revision(payload):
+        if "expected_config_revision" not in payload:
+            return None
+        revision = payload.pop("expected_config_revision")
+        if not isinstance(revision, str) or not revision.strip():
+            raise FileSyncPublicValidationError("Provide a valid configuration revision.")
+        return revision.strip()
+
+    def _personal_write_payload():
+        payload = _payload()
+        if not isinstance(payload, dict):
+            raise FileSyncPublicValidationError("A JSON object is required for this action.")
+        return dict(payload)
 
     def _assert_new_source_type_visible(payload):
         source_type = str(payload.get("source_type") or FILE_SYNC_SOURCE_TYPE_SMB).strip().lower()
         if not is_file_sync_source_type_visible(get_settings(), source_type):
             raise PermissionError("This File Sync source type is not available")
 
-    def _create_source(scope_type, scope_id, user_id):
-        payload = _payload()
+    def _create_source(scope_type, scope_id, user_id, *, personal_editor=False):
+        payload = _personal_write_payload() if personal_editor else _payload()
         _assert_new_source_type_visible(payload)
-        source = create_file_sync_source(scope_type, scope_id, payload, user_id)
-        return jsonify({"source": sanitize_file_sync_source(source)}), 201
+        source = create_file_sync_source(scope_type, scope_id, payload, user_id, stage_secrets=personal_editor)
+        return jsonify({"source": _project_source(scope_type, source)}), 201
 
-    def _update_source(scope_type, scope_id, source_id, user_id):
-        source = update_file_sync_source(scope_type, scope_id, source_id, _payload(), user_id)
-        return jsonify({"source": sanitize_file_sync_source(source)}), 200
+    def _update_source(scope_type, scope_id, source_id, user_id, *, personal_editor=False):
+        payload = _personal_write_payload() if personal_editor else _payload()
+        revision = _expected_revision(payload) if personal_editor else None
+        source = update_file_sync_source(
+            scope_type, scope_id, source_id, payload, user_id,
+            expected_config_revision=revision, stage_secrets=revision is not None,
+        )
+        return jsonify({"source": _project_source(scope_type, source)}), 200
 
-    def _delete_source(scope_type, scope_id, source_id, user_id):
-        payload = _payload()
+    def _delete_source(scope_type, scope_id, source_id, user_id, *, personal_editor=False):
+        payload = _personal_write_payload() if personal_editor else _payload()
+        revision = _expected_revision(payload) if personal_editor else None
         delete_result = delete_file_sync_source(
             scope_type,
             scope_id,
             source_id,
             user_id,
             delete_associated_files=bool(payload.get("delete_associated_files")),
+            expected_config_revision=revision,
+            refuse_active_run=revision is not None,
         )
         return jsonify({"message": "File Sync source deleted", "delete_result": delete_result}), 200
 
@@ -571,6 +639,35 @@ def register_route_backend_file_sync(bp):
         except Exception as error:
             return _map_exception(error)
 
+    @bp.route('/api/file-sync/personal/source-options', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_personal_source_options():
+        try:
+            user_id = _require_personal_context()
+            if request.args or request.get_data():
+                raise FileSyncPublicValidationError("This request does not accept parameters or a body.")
+            return jsonify(build_file_sync_source_options(FILE_SYNC_SCOPE_PERSONAL, user_id, get_settings())), 200
+        except Exception as error:
+            return _map_exception(error)
+
+    @bp.route('/api/file-sync/personal/sources/<source_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_file_sync")
+    def api_file_sync_personal_source_read(source_id):
+        try:
+            user_id = _require_personal_context()
+            if request.args or request.get_data():
+                raise FileSyncPublicValidationError("This request does not accept parameters or a body.")
+            source = get_authorized_sync_source(FILE_SYNC_SCOPE_PERSONAL, source_id, user_id, scope_id=user_id)
+            return jsonify({"source": _project_source(FILE_SYNC_SCOPE_PERSONAL, source)}), 200
+        except Exception as error:
+            return _map_exception(error)
+
     @bp.route('/api/file-sync/<scope_type>/sources/browse', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -637,7 +734,7 @@ def register_route_backend_file_sync(bp):
     def api_file_sync_personal_sources_create():
         try:
             user_id = _require_personal_context()
-            return _create_source(FILE_SYNC_SCOPE_PERSONAL, user_id, user_id)
+            return _create_source(FILE_SYNC_SCOPE_PERSONAL, user_id, user_id, personal_editor=True)
         except Exception as error:
             return _map_exception(error)
 
@@ -661,7 +758,7 @@ def register_route_backend_file_sync(bp):
     def api_file_sync_personal_source_update(source_id):
         try:
             user_id = _require_personal_context()
-            return _update_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source_id, user_id)
+            return _update_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source_id, user_id, personal_editor=True)
         except Exception as error:
             return _map_exception(error)
 
@@ -685,7 +782,7 @@ def register_route_backend_file_sync(bp):
     def api_file_sync_personal_source_delete(source_id):
         try:
             user_id = _require_personal_context()
-            return _delete_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source_id, user_id)
+            return _delete_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source_id, user_id, personal_editor=True)
         except Exception as error:
             return _map_exception(error)
 

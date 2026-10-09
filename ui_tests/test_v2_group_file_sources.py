@@ -1,7 +1,7 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.188
+Version: 0.261.310
 Implemented in: 0.261.147
 Credential identifiers kept on edit: 0.261.156
 Selected paths, fixed tags, folder tags, remote delete policy and root-relative browse: 0.261.171
@@ -388,7 +388,7 @@ def test_config_conflict_reload_rebases_concurrent_subfolder_scope_and_local_nam
     assert conflict.value.status == 409
     with page.expect_response(
         lambda response: response.request.method == "GET"
-        and urlsplit(response.url).path == "/api/groups/group-a/file-sources"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
     ):
         page.get_by_role("button", name="Reload", exact=True).click()
     expect(page.get_by_label("Include subfolders", exact=True)).not_to_be_checked()
@@ -421,7 +421,7 @@ def test_config_conflict_reload_reports_name_conflict_and_keeps_local_name(group
     assert conflict.value.status == 409
     with page.expect_response(
         lambda response: response.request.method == "GET"
-        and urlsplit(response.url).path == "/api/groups/group-a/file-sources"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
     ):
         page.get_by_role("button", name="Reload", exact=True).click()
     expect(page.get_by_text(f"{REBASE_NOTICE} You and someone else both changed: Name. Your values are shown.", exact=True)).to_be_visible()
@@ -450,7 +450,7 @@ def test_config_conflict_reload_reports_deleted_source_without_resaving(group_fi
     assert conflict.value.status == 409
     with page.expect_response(
         lambda response: response.request.method == "GET"
-        and urlsplit(response.url).path == "/api/groups/group-a/file-sources"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
     ):
         page.get_by_role("button", name="Reload", exact=True).click()
     expect(page.get_by_text(REBASE_DELETED_NOTICE, exact=True)).to_be_visible()

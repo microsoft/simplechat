@@ -67,6 +67,19 @@ export const FILE_SOURCE_REBASE_FIELDS: RebaseField[] = [
 export const FILE_SOURCE_TYPE_SMB = 'smb';
 export const FILE_SOURCE_TYPE_AZURE_FILES = 'azure_files';
 export const FILE_SOURCE_TYPE_AZURE_BLOB = 'azure_blob';
+export const FILE_SOURCE_TYPE_ONEDRIVE = 'onedrive';
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+    smb: 'Network share',
+    azure_files: 'Azure Files',
+    azure_blob: 'Azure Blob Storage',
+    onedrive: 'OneDrive',
+};
+
+export function sourceTypeLabel(sourceType: unknown): string {
+    const raw = String(sourceType ?? '').trim();
+    return SOURCE_TYPE_LABELS[raw] ?? (raw ? raw.replace(/[_-]+/g, ' ') : 'Unknown');
+}
 
 /**
  * How synced files are tagged from their folders, as `FILE_SYNC_FOLDER_TAG_MODES` defines them. The
@@ -114,9 +127,8 @@ export interface ConnectionDescriptor {
 
 /**
  * The connection shape per source type, mirroring `_normalize_connection_payload` and
- * `FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE`. Only the group-eligible storage types are modelled; a
- * type the options endpoint does not mark visible is never offered, so an unmodelled connector can
- * never be reached from here.
+ * `FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE`. The options endpoint controls new-source availability.
+ * OneDrive is modelled only so an existing personal connector can be edited without changing auth.
  */
 export const CONNECTION_DESCRIPTORS: Record<string, ConnectionDescriptor> = {
     [FILE_SOURCE_TYPE_SMB]: {
@@ -141,10 +153,18 @@ export const CONNECTION_DESCRIPTORS: Record<string, ConnectionDescriptor> = {
         ],
         authTypes: ['managed_identity', 'client_secret', 'connection_string'],
     },
+    [FILE_SOURCE_TYPE_ONEDRIVE]: {
+        fields: [],
+        authTypes: ['global_identity'],
+    },
 };
 
 export function connectionDescriptor(sourceType: string): ConnectionDescriptor {
-    return CONNECTION_DESCRIPTORS[sourceType] ?? CONNECTION_DESCRIPTORS[FILE_SOURCE_TYPE_SMB];
+    const descriptor = CONNECTION_DESCRIPTORS[sourceType];
+    if (!descriptor) {
+        throw new Error('This source type cannot be configured in this editor.');
+    }
+    return descriptor;
 }
 
 export const AUTH_TYPE_LABELS: Record<string, string> = {
@@ -153,6 +173,7 @@ export const AUTH_TYPE_LABELS: Record<string, string> = {
     managed_identity: 'Managed identity',
     client_secret: 'Service principal (client secret)',
     connection_string: 'Connection string or SAS',
+    global_identity: 'Administrator-managed connector',
 };
 
 export function authTypeLabel(authType: unknown): string {
@@ -164,7 +185,7 @@ export const authUsesUsername = (authType: string): boolean => authType === 'use
 export const authUsesClientId = (authType: string): boolean => authType === 'client_secret';
 /** Managed identity and anonymous carry no stored secret; every other method does. */
 export const authUsesSecret = (authType: string): boolean =>
-    authType !== 'anonymous' && authType !== 'managed_identity';
+    !['anonymous', 'managed_identity', 'global_identity'].includes(authType);
 
 export function secretFieldLabel(authType: string, stored: boolean): string {
     if (authType === 'username_password') {
@@ -322,7 +343,7 @@ export function draftFromSource(source: WorkspaceSyncSource, minInterval: number
         remoteDeletePolicy: storedChoice(source.remote_delete_policy, REMOTE_DELETE_POLICIES, DEFAULT_REMOTE_DELETE_POLICY),
         scheduleEnabled: Boolean((schedule as Record<string, unknown>).enabled),
         intervalMinutes: Number((schedule as Record<string, unknown>).interval_minutes ?? minInterval) || minInterval || 60,
-        credentialMode: identityId ? 'identity' : 'inline',
+        credentialMode: sourceType !== FILE_SOURCE_TYPE_ONEDRIVE && identityId ? 'identity' : 'inline',
         identityId,
         credentials: {
             authType: String(credentials.auth_type ?? connectionDescriptor(sourceType).authTypes[0] ?? 'username_password'),
@@ -345,6 +366,9 @@ export function draftFromSource(source: WorkspaceSyncSource, minInterval: number
 function buildConnection(draft: FileSourceDraft): Record<string, unknown> {
     const connection = draft.connection;
     const selectedPaths = [...draft.selectedPaths];
+    if (draft.sourceType === FILE_SOURCE_TYPE_ONEDRIVE) {
+        return { selected_paths: selectedPaths };
+    }
     if (draft.sourceType === FILE_SOURCE_TYPE_AZURE_FILES) {
         return {
             account_url: connection.accountUrl.trim(),
@@ -371,7 +395,7 @@ function buildConnection(draft: FileSourceDraft): Record<string, unknown> {
  */
 function buildCredentials(credentials: FileSourceCredentialsDraft): Record<string, unknown> {
     const authType = credentials.authType;
-    if (authType === 'anonymous') {
+    if (authType === 'anonymous' || authType === 'global_identity') {
         return { auth_type: authType };
     }
     if (authType === 'managed_identity') {
@@ -426,7 +450,10 @@ export function buildFileSourceWrite(draft: FileSourceDraft): FileSourceWrite {
         schedule: { enabled: draft.scheduleEnabled, interval_minutes: draft.intervalMinutes },
         remote_delete_policy: draft.remoteDeletePolicy,
     };
-    if (draft.credentialMode === 'identity') {
+    if (draft.sourceType === FILE_SOURCE_TYPE_ONEDRIVE) {
+        write.identity_id = '';
+        write.credentials = { auth_type: 'global_identity' };
+    } else if (draft.credentialMode === 'identity') {
         write.identity_id = draft.identityId;
     } else {
         write.identity_id = '';
@@ -439,6 +466,9 @@ export function buildFileSourceWrite(draft: FileSourceDraft): FileSourceWrite {
 export function sourcePathText(source: WorkspaceSyncSource): string {
     const connection = readConnection(source);
     const sourceType = String(source.source_type ?? '');
+    if (sourceType === FILE_SOURCE_TYPE_ONEDRIVE) {
+        return 'Your OneDrive';
+    }
     if (sourceType === FILE_SOURCE_TYPE_AZURE_FILES) {
         const share = String(connection.share_name ?? '');
         const directory = String(connection.directory_path ?? '');

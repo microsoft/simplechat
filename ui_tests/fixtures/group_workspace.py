@@ -3267,6 +3267,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "schedule": {"min_interval_minutes": 5, "max_interval_minutes": 10080},
             "limits": {"max_sources": 25},
             "recursive_allowed": True,
+            "default_remote_delete_policy": "ignore",
         }
 
     def _file_source_guard(self, route, entry, group_id):

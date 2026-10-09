@@ -1,7 +1,7 @@
 # test_v2_shared_workspace_overview_counts.py
 """
 Real-SPA regression tests for group/public overview counts.
-Version: 0.261.310
+Version: 0.261.312
 Implemented in: 0.261.310
 
 Uses the established Azure Playwright-compatible connection fixture and closed

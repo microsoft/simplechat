@@ -3,6 +3,10 @@
 Fixed in version: **0.261.310**, recorded in
 `application/single_app/config.py`.
 
+Current application version: **0.261.312** after integrating the base branch's
+file-source configuration changes; the original implementation version remains
+**0.261.310**.
+
 ## Issue and root cause
 
 My workspace displayed resource counts, but the group and public workspace

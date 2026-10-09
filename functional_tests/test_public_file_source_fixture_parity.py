@@ -1,7 +1,7 @@
 # test_public_file_source_fixture_parity.py
 """
 Per-route shape parity between the M10B public file source UI fixture and the real routes.
-Version: 0.261.182
+Version: 0.261.310
 Implemented in: 0.261.182
 
 M10B: the V2 public file sources browser suite mocks the network with the closed HTTP fixture
@@ -63,7 +63,7 @@ SOURCE_ITEM_UI_KEYS = {
 }
 SOURCE_CONNECTION_UI_KEYS = {"unc_path", "selected_paths"}
 FILTERS_UI_KEYS = {"include_patterns", "exclude_patterns", "allowed_extensions", "fixed_tags", "folder_tag_mode"}
-OPTIONS_UI_KEYS = {"source_types", "eligible_identity_ids", "schedule", "limits", "recursive_allowed"}
+OPTIONS_UI_KEYS = {"source_types", "eligible_identity_ids", "schedule", "limits", "recursive_allowed", "default_remote_delete_policy"}
 # The credential fields the editor's draftFromSource reads. A key the server omits would open blank and
 # be sent back blank, which clears the stored value (the identity credential round-trip fix).
 CREDENTIALS_UI_KEYS = {
@@ -277,6 +277,18 @@ def test_options_shape_parity(environment):
     real_payload = real.get_json()
     assert_no_invented_keys("options", payload, real_payload)
     assert_shared_keys("options", payload, real_payload, OPTIONS_UI_KEYS)
+    assert_shared_keys("schedule", payload["schedule"], real_payload["schedule"], {
+        "min_interval_minutes", "max_interval_minutes",
+    })
+    assert_shared_keys("limits", payload["limits"], real_payload["limits"], {"max_sources"})
+    real_types = {item["value"]: item for item in real_payload["source_types"]}
+    for item in payload["source_types"]:
+        assert isinstance(item, dict), "The native editor requires source-type descriptors, not strings."
+        assert_shared_keys("source type", item, real_types[item["value"]], {"value", "label", "visible"})
+        assert isinstance(item["visible"], bool)
+    assert set(payload["eligible_identity_ids"]) == set(real_payload["eligible_identity_ids"])
+    assert payload["eligible_identity_ids"]["azure_files"] == []
+    assert payload["eligible_identity_ids"]["azure_blob"] == []
 
 
 # --------------------------------------------------------------------------
