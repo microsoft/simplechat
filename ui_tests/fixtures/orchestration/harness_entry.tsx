@@ -97,14 +97,14 @@ function PromptExperience() {
     );
 }
 
-function ContextWorkflow() {
+function ContextWorkflow({ nativeChat = false }: { nativeChat?: boolean }) {
     const location = useLocation();
     return (
         <>
             <output aria-label="Current route">{location.pathname}{location.search}</output>
             <Routes>
                 <Route path="/workspace" element={<DocumentExplorer />} />
-                <Route path="/chat" element={<Composer />} />
+                <Route path="/chat" element={nativeChat ? <ChatPage /> : <Composer />} />
             </Routes>
         </>
     );

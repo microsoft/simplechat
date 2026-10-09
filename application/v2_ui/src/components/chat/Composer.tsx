@@ -35,6 +35,8 @@ import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestS
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { promptUrls, resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
+import { readPublicWorkspaceSelection } from '../../lib/publicChatScope';
+import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import {
     addContextItem,
     contextDocumentDescriptors,
@@ -169,6 +171,9 @@ function ToolToggle({
 }
 
 export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
+    const publicWorkspaceSelection = useChatStore((state) => state.publicWorkspaceSelection);
+    const setPublicWorkspaceSelection = useChatStore((state) => state.setPublicWorkspaceSelection);
+    const publicLabels = usePublicWorkspaceLabels();
     const {
         streaming, sendMessage, stopStreaming, activeConversationId,
         analysisResultContext, clearAnalysisResultContext,
@@ -261,6 +266,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const hasMentionChips = (draft.mentions?.length ?? 0) > 0;
     const promptInstance = draft.promptInstance ?? 0;
     const contextItems = composerDraftContextItems(draft);
+    const nonPublicReferences = contextItems.some((item) => item.scope.kind !== 'public');
+    const publicScopeConflict = Boolean(publicWorkspaceSelection)
+        && (nonPublicReferences || contextItems.some((item) => item.kind === 'scope'));
     const imageCapability = useImageEditCapability();
     const referenceLimit = effectiveReferenceImageLimit(imageCapability);
     const referenceImagesAvailable = referenceLimit > 0 && !shared;
@@ -1005,6 +1013,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         ]);
 
     const submit = (allowUnfilled = false) => {
+        if (publicWorkspaceSelection && (!features.enable_public_workspaces || publicScopeConflict || answeringFromStoredResult || (options.imageGeneration && !orchestrating))) {
+            toast.error('Public search needs public sources only. Clear incompatible sources or choose Current context.');
+            return;
+        }
         if (streaming || !canPost || uploadsBlocked || workflowResultOpening) {
             return;
         }
@@ -1111,6 +1123,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // references this message was written with.
         void sendMessage(outgoing.message, {
             ...options,
+            publicWorkspaceSelection,
             contextItems,
             imageReferences: options.imageGeneration && !orchestrating ? draftImageReferences : [],
             promptInfo: outgoing.promptInfo,
@@ -1132,6 +1145,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const buildOrchestrationSeeds = (message: string, promptInfo: Json | null = null): Record<string, unknown> => {
         const workspaces = contextScopes(contextItems);
         const scope = resolveDocumentScope({
+            publicWorkspaceSelection,
             activeGroupId: bootstrap?.scope?.active_group_id,
             activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
             contextGroupIds: workspaces.groupIds,
@@ -1143,7 +1157,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             ...(imageProposalsRequested ? { image_generation_enabled: true } : {}),
             required_capabilities: [
                 // Pinned sources constrain inputs, not the operation (search, Analyze, or Compare).
-                ...(options.documentSearch ? ['document_search'] : []),
+                ...(options.documentSearch || publicWorkspaceSelection ? ['document_search'] : []),
                 ...(options.webSearch ? ['web_search'] : []),
                 ...(options.deepResearch ? ['deep_research'] : []),
                 ...(options.urlAccess && promptUrls(message).length > 0 ? ['url_fetch'] : []),
@@ -1637,7 +1651,35 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         </div>
                     )}
 
+                    {!shared && (features.enable_public_workspaces || publicWorkspaceSelection) && (
+                        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                            <label htmlFor="public-chat-scope" className="font-medium text-text-2">Document search scope</label>
+                            <select
+                                id="public-chat-scope"
+                                value={publicWorkspaceSelection ?? ''}
+                                disabled={streaming || !canPost}
+                                onChange={(event) => setPublicWorkspaceSelection(readPublicWorkspaceSelection(event.target.value))}
+                                className="max-w-full rounded-lg border border-edge bg-surface-1 px-2 py-1.5 text-text-1 focus:border-accent-ring focus:outline-none"
+                            >
+                                <option value="">Current context</option>
+                                <option value="all" disabled={!features.enable_public_workspaces}>All {publicLabels.plural.toLowerCase()}</option>
+                                <option value="visible" disabled={!features.enable_public_workspaces}>Visible {publicLabels.plural.toLowerCase()}</option>
+                            </select>
+                            {publicWorkspaceSelection && <span className="text-text-3">
+                                {publicWorkspaceSelection === 'all' ? 'Public only, including hidden workspaces.' : 'Public only, using your directory visibility choices.'}
+                            </span>}
+                            {publicScopeConflict && <p role="alert" className="w-full text-danger">
+                                {nonPublicReferences
+                                    ? 'Clear personal or group references, or choose Current context before sending.'
+                                    : 'Clear whole-workspace references, or choose Current context to search a selected workspace.'}
+                            </p>}
+                            {publicWorkspaceSelection && !features.enable_public_workspaces && <p role="alert" className="w-full text-danger">
+                                Public workspaces are currently disabled. Choose Current context to continue.
+                            </p>}
+                        </div>
+                    )}
                     <ComposerEditor
+                        publicWorkspaceSelection={publicWorkspaceSelection}
                         id="composer-input"
                         label="Message"
                         draft={draft}
@@ -1670,7 +1712,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             setPickerOpen(open);
                         }}
                         searchAll={options.documentSearch}
-                        onToggleSearchAll={() => {
+                        onToggleSearchAll={publicWorkspaceSelection ? undefined : () => {
                             clearAnalysisResultContext();
                             setOptions((current) => ({ ...current, documentSearch: !current.documentSearch }));
                         }}

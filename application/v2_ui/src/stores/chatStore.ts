@@ -118,6 +118,7 @@ import {
 } from '../lib/conversationSelection';
 import type { ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
+import { publicChatScopeFromMessages, type PublicWorkspaceSelection } from '../lib/publicChatScope';
 import {
     contextDocumentIds,
     contextFilterMode,
@@ -233,6 +234,7 @@ export type ReconnectPhase = 'connecting' | 'reconnected' | null;
 export type OrchestrationSurfacePhase = 'planning' | 'running';
 
 export interface ComposerOptions {
+    publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     /**
      * The picker's selection key for the chosen model, NOT its deployment name.
      *
@@ -381,6 +383,8 @@ interface ChatState {
     /** Right-hand drawer state. Null means closed. */
     drawerMode: DrawerMode;
     metadata: ConversationMetadata | null;
+    publicWorkspaceSelection: PublicWorkspaceSelection | null;
+    setPublicWorkspaceSelection: (selection: PublicWorkspaceSelection | null) => void;
     metadataLoading: boolean;
     metadataError: string | null;
 
@@ -2220,6 +2224,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     drawerMode: null,
     metadata: null,
+    publicWorkspaceSelection: null,
+    setPublicWorkspaceSelection: (selection) => set({ publicWorkspaceSelection: selection }),
     metadataLoading: false,
     metadataError: null,
     attemptsByThread: {},
@@ -2309,6 +2315,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         set({
             activeConversationId: conversationId,
+            publicWorkspaceSelection: null,
             activeConversationKind: knownKind,
             analysisResultContext: analysisConversationChanged ? null : get().analysisResultContext,
             workflowResultContext: analysisConversationChanged ? null : get().workflowResultContext,
@@ -2374,7 +2381,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (get().activeConversationId !== conversationId) {
                 return;
             }
-            set({ messages, messagesLoading: false });
+            set({ messages, messagesLoading: false, publicWorkspaceSelection: publicChatScopeFromMessages(messages) });
             const descriptor = latestSavedAnalysis(messages);
             if (descriptor && !get().analysisContextChosen) {
                 get().selectAnalysisResult(descriptor, analysisRevision);
@@ -2521,6 +2528,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // when someone clicks New Chat and navigates away.
         set({
             activeConversationId: null,
+            publicWorkspaceSelection: null,
             analysisResultContext: null,
             workflowResultContext: null,
             workflowResultLaunch: null,
@@ -2929,6 +2937,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     sendMessage: async (text, options) => {
+        options = {
+            ...options,
+            publicWorkspaceSelection: options.publicWorkspaceSelection === undefined
+                ? get().publicWorkspaceSelection : options.publicWorkspaceSelection,
+        };
         const trimmed = text.trim();
         if (!trimmed || get().streaming) {
             return;
@@ -3165,6 +3178,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const filterMode = contextFilterMode(searchContextItems);
 
         const scope = resolveDocumentScope({
+            publicWorkspaceSelection: options.publicWorkspaceSelection,
             activeGroupId: bootstrap?.scope?.active_group_id,
             activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
             contextGroupIds: contextWorkspaces.groupIds,
@@ -3183,7 +3197,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             chat_type: 'user',
             // Choosing context is itself a request to search: a chip the user added while
             // the toggle happened to be off would otherwise be collected, sent, and ignored.
-            hybrid_search: directImageMode ? false : options.documentSearch || searchContextItems.length > 0,
+            hybrid_search: directImageMode ? false : Boolean(options.publicWorkspaceSelection) || options.documentSearch || searchContextItems.length > 0,
             web_search_enabled: options.webSearch,
             image_generation: options.imageGeneration,
             selected_document_ids: contextDocuments,

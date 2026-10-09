@@ -56,6 +56,7 @@ import {
 import { agentSelectionKey } from '../lib/agents';
 import { toast } from '../stores/toastStore';
 import type { BootstrapPayload } from '../lib/types';
+import { readPublicWorkspaceSelection } from '../lib/publicChatScope';
 
 /**
  * Keep the address bar and the open conversation describing each other.
@@ -76,6 +77,10 @@ function useConversationUrlSync() {
     const openLinkedConversation = useChatStore((state) => state.openLinkedConversation);
 
     const [linkedConversationId] = useState(() => readConversationParam(searchParams));
+    const [hasPublicLaunch] = useState(() => searchParams.has('public_workspace_selection'));
+    const [publicLaunch] = useState(() => readPublicWorkspaceSelection(searchParams.get('public_workspace_selection')));
+    const [publicLaunchHandled, setPublicLaunchHandled] = useState(!hasPublicLaunch);
+    const publicLaunchConsumed = useRef(false);
     const [agentLaunch] = useState(() => readWorkspaceAgentLaunch(searchParams));
     const [hasAgentRequest] = useState(() => !readConversationParam(searchParams) && searchParams.has('agent_id'));
     const [agentLaunchHandled, setAgentLaunchHandled] = useState(!hasAgentRequest);
@@ -100,6 +105,25 @@ function useConversationUrlSync() {
     // across the conversation opening, and the thread acts on it once the card is on screen.
     const [pendingActionFocus] = useState(() => readPendingActionFocus(searchParams));
     const pendingActionRequested = useRef(false);
+
+    useEffect(() => {
+        if (!hasPublicLaunch || publicLaunchConsumed.current) return;
+        publicLaunchConsumed.current = true;
+        if (!publicLaunch || linkedConversationId || hasAgentRequest || hasResultRequest) {
+            toast.error('That public chat link is not valid.');
+        } else if (!useBootstrapStore.getState().data?.features?.enable_public_workspaces) {
+            toast.error('Public workspaces are currently disabled.');
+        } else {
+            useChatStore.getState().startNewConversation();
+            useChatStore.getState().setPublicWorkspaceSelection(publicLaunch);
+        }
+        setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete('public_workspace_selection');
+            return next;
+        }, { replace: true });
+        setPublicLaunchHandled(true);
+    }, [hasPublicLaunch, publicLaunch, linkedConversationId, hasAgentRequest, hasResultRequest, setSearchParams]);
 
     useEffect(() => {
         if (pendingActionRequested.current || !pendingActionFocus || !linkedConversationId) {
@@ -178,7 +202,7 @@ function useConversationUrlSync() {
     useEffect(() => {
         // Held back until the link has been consumed, so the parameter survives long enough
         // to be read.
-        if (!linkHandled || !agentLaunchHandled || !resultLaunchHandled) {
+        if (!linkHandled || !agentLaunchHandled || !resultLaunchHandled || !publicLaunchHandled) {
             return;
         }
 
@@ -191,7 +215,7 @@ function useConversationUrlSync() {
         // `history.replaceState`: the address bar should describe what is open, not turn the
         // back button into a list of every conversation visited.
         setSearchParams(next, { replace: true });
-    }, [activeConversationId, linkHandled, agentLaunchHandled, resultLaunchHandled, searchParams, setSearchParams]);
+    }, [activeConversationId, linkHandled, agentLaunchHandled, resultLaunchHandled, publicLaunchHandled, searchParams, setSearchParams]);
 
     return { launchAgentSelection, agentLaunchPending: !agentLaunchHandled };
 }

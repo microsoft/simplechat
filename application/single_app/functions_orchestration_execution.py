@@ -550,6 +550,17 @@ class HarnessExecution:
             self.record["user_id"], self.record["conversation_id"],
         )
 
+    def _bind_public_chat_scope(self, context, conversation_id):
+        from functions_public_workspaces import resolve_public_chat_workspace_ids
+
+        def read_conversation(requested_conversation_id):
+            if requested_conversation_id != conversation_id:
+                raise PermissionError("That conversation is not available.")
+            return self._read_conversation()
+
+        context.resolve_public_chat_workspace_ids = resolve_public_chat_workspace_ids
+        context.read_conversation_for_public_chat = read_conversation
+
     def _validate_memory(self):
         conversation = self._read_conversation()
         validate_memory_context(
@@ -803,6 +814,7 @@ class HarnessExecution:
                 workflow_planning, self.record.get("time_zone") if workflow_configured else None,
             ),
         )
+        self._bind_public_chat_scope(self.context, conversation_id)
         self.context.prompt_token_usage = self.prompt_token_usage
         if auto_routing:
             def guarded_planner_client(model):
@@ -1025,6 +1037,7 @@ class HarnessExecution:
             task_results={name: TaskResult.from_dict(value) for name, value in tasks.items()},
             execution_deadline_at=self.record["execution_deadline_at"],
         )
+        self._bind_public_chat_scope(self.context, conversation_id)
         self.context.pending_results = deepcopy(pending)
         response = None
         if self.record["plan"].get("final_response"):

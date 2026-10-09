@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.307"
+version: "0.261.310"
 ---
 
 ## How to use this reference
@@ -83,6 +83,23 @@ arrived during streaming. After granting access, send the message again.
 | `confirm-scope-lock-toggle-btn` | Confirms a scope-lock change from the scope-lock modal. | Use it when you intentionally want to lock or unlock the conversation scope after reviewing the warning. | Always available |
 
 ## Chat tools and composer
+
+### React V2 public document search scope
+
+Implemented in version: **0.261.310** (`application/single_app/config.py`).
+When public workspaces are enabled, **Document search scope** offers
+**Current context**, **All public workspaces**, and **Visible public workspaces**.
+All includes hidden, chat-available public workspaces; Visible follows your
+directory curation. Neither changes your saved visibility or active workspace.
+Both aggregate choices exclude personal/group retrieval and restrict Documents
+and `#` browsing to public sources. Clear incompatible references before
+sending, or return to Current context.
+
+The aggregate choice persists across follow-up questions and is restored from
+the latest saved user turn when reopening a conversation. New chat resets it.
+This lifetime is separate from turn-specific document and tag chips, which
+still clear when sent. See
+[Aggregate public chat]({{ '/explanation/features/V2_AGGREGATE_PUBLIC_CHAT/' | relative_url }}).
 
 Microsoft 365 agents can pause for a source-sharing or deeper-analysis decision.
 The local approval dialog offers only the durations permitted by the action.

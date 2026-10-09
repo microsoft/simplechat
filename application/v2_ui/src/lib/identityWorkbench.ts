@@ -180,7 +180,7 @@ function identitiesFromResponse(value: unknown): WorkspaceIdentity[] {
     if (isRecord(value) && Array.isArray(value.identities)) {
         return value.identities as WorkspaceIdentity[];
     }
-    return [];
+    throw new Error('The workspace returned an invalid identity list. Refresh and try again.');
 }
 
 /** The read, create and update routes wrap the record under `identity`. */

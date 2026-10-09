@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 from typing import List, Dict, Any
 from content_screening.access import (
     PROVENANCE_FIELD,
@@ -20,7 +21,10 @@ from functions_embedding_compatibility import (
     read_embedding_settings,
     search_with_embedding_profile,
 )
-from functions_public_workspaces import get_user_visible_public_workspace_docs, get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import (
+    get_user_visible_public_workspace_docs,
+    get_user_visible_public_workspace_ids_from_settings,
+)
 from utils_cache import (
     generate_search_cache_key,
     get_cached_search_results,
@@ -121,6 +125,10 @@ def _resolve_public_workspace_ids_for_search(
     active_public_workspace_id=None,
     enforce_public_workspace_visibility=True,
 ):
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        requested_ids = normalize_search_id_list(active_public_workspace_id)
+        return [value for value in aggregate_ids if not requested_ids or value in requested_ids]
     requested_workspace_ids = normalize_search_id_list(active_public_workspace_id)
     if requested_workspace_ids and not enforce_public_workspace_visibility:
         return requested_workspace_ids
@@ -414,6 +422,10 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
 
     top_n = normalize_search_top_n(top_n)
     doc_scope = normalize_search_scope(doc_scope)
+    if current_public_chat_scope(user_id):
+        doc_scope = "public"
+        if not aggregate_public_workspace_ids(user_id):
+            return []
     document_ids = normalize_search_id_list(document_ids)
     document_filter_mode = _normalize_document_filter_mode(document_filter_mode)
 

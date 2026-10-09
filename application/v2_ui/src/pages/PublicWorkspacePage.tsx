@@ -15,7 +15,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
 import { PublicWorkspacePicker } from '../components/workspace/PublicWorkspacePicker';
 import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
-import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
+import { SharedWorkspaceOverview } from '../components/workspace/SharedWorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
@@ -307,7 +307,7 @@ export function PublicWorkspacePage() {
                                 <div><dt className="text-xs text-text-3">About this workspace</dt><dd className="break-words">{context.workspace.description || 'No description provided.'}</dd></div>
                                 <div><dt className="text-xs text-text-3">Owner</dt><dd className="break-words">{context.workspace.owner.display_name || 'Owner information unavailable'}{context.workspace.owner.email ? ` · ${context.workspace.owner.email}` : ''}</dd></div>
                             </dl>
-                            <WorkspaceOverview basePath={basePath} resolved={resolved} showRelationships={false}
+                            <SharedWorkspaceOverview context={context} basePath={basePath} resolved={resolved} suspended={state.refreshing}
                                 groupBlurbs={PUBLIC_GROUP_BLURBS}
                                 description={`Published documents and prompts for this ${labels.lower_singular}, and how it's connected and run. A locked section shows why it's unavailable to you.`} />
                         </>

@@ -38,6 +38,10 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from functions_appinsights import log_event, workflow_log_context
+from public_chat_scope_state import (
+    PublicChatScopeError, aggregate_public_workspace_ids, current_public_chat_scope,
+    normalize_public_workspace_selection,
+)
 from functions_action_catalog import build_action_planner_projection
 from functions_assist_references import sanitize_reference_label
 from functions_message_block_revisions import resolve_block_sources_in_content
@@ -188,6 +192,7 @@ def resolve_seeds(request_data):
 
     return {
         **({'model_routing': 'auto'} if routing == 'auto' else {}),
+        'public_workspace_selection': normalize_public_workspace_selection(request_data.get('public_workspace_selection')),
         'document_ids': document_ids,
         'document_labels': document_labels,
         'doc_scope': _text(request_data.get('doc_scope')) or 'all',
@@ -575,6 +580,9 @@ def _authorize_reference_scope(scope, user_id, settings, locked_contexts=None):
     the browser, or an active workspace, is never evidence of access.
     """
     kind, scope_id = scope['kind'], scope['id']
+    aggregate = current_public_chat_scope(user_id)
+    if aggregate and kind != 'public':
+        raise ElicitationContextError('Public search cannot use personal or group sources.', reason='workspace_unavailable')
     if not settings.get(WORKSPACE_SCOPE_SETTINGS[kind], False):
         raise ElicitationContextError(
             'That workspace capability is currently disabled.', reason='workspace_disabled',
@@ -608,7 +616,8 @@ def _authorize_reference_scope(scope, user_id, settings, locked_contexts=None):
             get_user_visible_public_workspace_ids_from_settings,
         )
 
-        if scope_id not in get_user_visible_public_workspace_ids_from_settings(user_id):
+        public_ids = aggregate_public_workspace_ids(user_id) if aggregate else get_user_visible_public_workspace_ids_from_settings(user_id)
+        if scope_id not in public_ids:
             raise ElicitationContextError(
                 'That public workspace is not available.', reason='workspace_unavailable',
             )
@@ -1361,6 +1370,8 @@ def resolve_candidate_documents(
             tags_filter=seeds.get('tags') or None,
             document_filter_mode=seeds.get('document_filter_mode') or 'intersection',
         )
+    except PublicChatScopeError:
+        raise
     except Exception as exc:
         log_event(
             f"[ORCHESTRATION_CONTEXT] Candidate document probe failed; planning without "

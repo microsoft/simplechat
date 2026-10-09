@@ -2,7 +2,7 @@
 # test_v2_chat_context_picker.py
 """
 Functional test for the V2 chat context picker.
-Version: 0.261.096
+Version: 0.261.310
 Implemented in: 0.261.089
 Independent context selection implemented in: 0.261.094
 Shared editor implemented in: 0.261.096
@@ -108,7 +108,7 @@ def test_the_composer_no_longer_carries_a_write_only_selection():
     assert "readContextQuery" in editor and "<ContextMenu" in editor, (
         "The shared editor should offer the `#` menu."
     )
-    assert "DocumentPickerPopover" in editor and "onPickerOpenChange={setPickerOpen}" in composer, (
+    assert "DocumentPickerPopover" in editor and "setPickerOpen(open)" in composer, (
         "The Documents button should open the picker rather than toggling."
     )
     assert "appendContextToken" not in composer + editor, (

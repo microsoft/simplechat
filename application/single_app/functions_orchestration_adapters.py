@@ -306,6 +306,8 @@ def _public_workspace_ids(context):
 
 
 def _document_scope(context, arguments):
+    if (_ctx(context, 'seeds', {}) or {}).get('public_workspace_selection'):
+        return 'public'
     standing_scope = _ctx(context, 'doc_scope', 'all')
     if _ctx(context, 'elicitation_references', None) and standing_scope in ('personal', 'group', 'public'):
         return standing_scope
@@ -512,24 +514,28 @@ def resolve_context_source_manifest(
     if not ids:
         return []
 
-    resolver = _ctx(context, 'resolve_source_manifest', None)
-    selection = selection_mode or _selection_mode(context)
-    if callable(resolver):
-        return list(resolver(ids) or [])
+    # Source readers run both before execution and in independent worker threads.
+    from public_chat_scope import public_chat_execution_scope
 
-    from functions_analysis_access import resolve_analysis_source_manifest
+    with public_chat_execution_scope(context, user_id or _ctx(context, 'user_id', None), settings):
+        resolver = _ctx(context, 'resolve_source_manifest', None)
+        selection = selection_mode or _selection_mode(context)
+        if callable(resolver):
+            return list(resolver(ids) or [])
 
-    return list(resolve_analysis_source_manifest(
-        ids,
-        user_id or _ctx(context, 'user_id', None),
-        selection_mode=selection,
-        conversation_id=_ctx(context, 'conversation_id', None),
-        active_group_ids=_ctx(context, 'active_group_ids', None),
-        active_public_workspace_ids=_public_workspace_ids(context),
-        doc_scope=_ctx(context, 'doc_scope', 'all'),
-        cancel_requested=cancel_requested,
-        request_correlation_id=_ctx(context, 'request_correlation_id', None),
-    ) or [])
+        from functions_analysis_access import resolve_analysis_source_manifest
+
+        return list(resolve_analysis_source_manifest(
+            ids,
+            user_id or _ctx(context, 'user_id', None),
+            selection_mode=selection,
+            conversation_id=_ctx(context, 'conversation_id', None),
+            active_group_ids=_ctx(context, 'active_group_ids', None),
+            active_public_workspace_ids=_public_workspace_ids(context),
+            doc_scope=_document_scope(context, {}),
+            cancel_requested=cancel_requested,
+            request_correlation_id=_ctx(context, 'request_correlation_id', None),
+        ) or [])
 
 
 # --------------------------------------------------------------------------------------

@@ -5,6 +5,10 @@ import functions_authentication
 import functions_settings
 from functions_group import *
 from typing import Iterable
+from public_chat_scope_state import (
+    PublicChatScopeError,
+    normalize_public_workspace_selection,
+)
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import (
@@ -511,6 +515,31 @@ def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> Non
     from functions_settings import update_user_settings
     
     update_user_settings(user_id, {"visiblePublicWorkspaceIds": workspace_ids})
+
+
+def resolve_public_chat_workspace_ids(user_id, selection, *, settings=None):
+    """Resolve aggregate curation against existing, chat-available public workspaces."""
+    selection = normalize_public_workspace_selection(selection)
+    if not selection:
+        raise PublicChatScopeError("Choose All or Visible public workspaces.")
+    settings = functions_settings.get_settings() if settings is None else settings
+    if not settings.get("enable_public_workspaces", False):
+        raise PublicChatScopeError("Public workspaces are currently disabled.", "public_chat_disabled", 403)
+    workspaces = get_all_public_workspaces()
+    visible_ids = None
+    if selection == "visible":
+        user_settings = functions_settings.get_user_settings(user_id)
+        visible_ids = set(visible_public_workspace_ids_from_user_settings(
+            user_settings, list_public_workspaces=lambda: workspaces,
+        ))
+    resolved = []
+    for workspace in workspaces:
+        workspace_id = workspace.get("id")
+        allowed, _reason = check_public_workspace_status_allows_operation(workspace, "chat")
+        if workspace_id and allowed and (visible_ids is None or workspace_id in visible_ids):
+            if workspace_id not in resolved:
+                resolved.append(workspace_id)
+    return resolved
 
 
 def add_visible_public_workspace(user_id: str, ws_id: str) -> None:

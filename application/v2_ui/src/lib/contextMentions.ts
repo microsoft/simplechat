@@ -24,6 +24,7 @@ import {
 } from './endpoints';
 import { documentDisplayName, documentId } from './documentExplorer';
 import { isScreeningAvailable } from './contentScreening';
+import type { PublicWorkspaceSelection } from './publicChatScope';
 import {
     PERSONAL_SCOPE,
     contextKey,
@@ -72,6 +73,7 @@ export interface ContextCandidate {
 }
 
 export interface ContextSearchOptions {
+    publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     query: string;
     groups?: readonly WorkspaceRef[];
     publicWorkspaces?: readonly WorkspaceRef[];
@@ -153,7 +155,7 @@ function scopeForDocument(
     }
     const workspaceId = String(document.public_workspace_id ?? '').trim();
     if (workspaceId) {
-        return byWorkspaceId.get(workspaceId) ?? fallback;
+        return byWorkspaceId.get(workspaceId) ?? { kind: 'public', id: workspaceId, name: 'Public workspace' };
     }
     return fallback;
 }
@@ -183,21 +185,18 @@ export async function collectScopeDocuments(
     search: string,
     filter?: (document: WorkspaceDocument) => boolean,
     signal?: AbortSignal,
+    strict = false,
 ): Promise<WorkspaceDocument[]> {
     if (!filter) {
-        const response = await settled(
-            fetchPage({ search, page: 1, pageSize: DOCUMENTS_PER_SCOPE }),
-            { documents: [] } as DocumentListResponse,
-        );
+        const work = fetchPage({ search, page: 1, pageSize: DOCUMENTS_PER_SCOPE });
+        const response = await (strict ? work : settled(work, { documents: [] } as DocumentListResponse));
         return response.documents ?? [];
     }
 
     const found: WorkspaceDocument[] = [];
     for (let page = 1; page <= FILTERED_DOCUMENT_MAX_PAGES && !signal?.aborted; page += 1) {
-        const response = await settled(
-            fetchPage({ search, page, pageSize: FILTERED_DOCUMENT_PAGE_SIZE }),
-            null as DocumentListResponse | null,
-        );
+        const work = fetchPage({ search, page, pageSize: FILTERED_DOCUMENT_PAGE_SIZE });
+        const response = await (strict ? work : settled(work, null as DocumentListResponse | null));
         const documents = response?.documents ?? [];
         found.push(...documents.filter(filter));
         const total = Number(response?.total_count);
@@ -243,7 +242,9 @@ async function loadTags(options: ContextSearchOptions): Promise<ScopedTag[]> {
     const key = [
         options.groupsEnabled ? 'g' : '',
         options.publicEnabled ? 'p' : '',
+        options.publicWorkspaceSelection ?? '',
         (options.groups ?? []).map((group) => group.id).join(','),
+        (options.publicWorkspaces ?? []).map((workspace) => workspace.id).join(','),
     ].join('|');
 
     if (tagCache && tagCacheKey === key && Date.now() - tagCache.at < TAG_CACHE_MS) {
@@ -251,12 +252,14 @@ async function loadTags(options: ContextSearchOptions): Promise<ScopedTag[]> {
     }
 
     const [personal, group, publicTags] = await Promise.all([
-        settled(fetchPersonalDocumentTags(options.signal), { tags: [] }),
-        options.groupsEnabled
+        options.publicWorkspaceSelection ? Promise.resolve({ tags: [] }) : settled(fetchPersonalDocumentTags(options.signal), { tags: [] }),
+        options.groupsEnabled && !options.publicWorkspaceSelection
             ? settled(fetchGroupDocumentTags(options.signal), { tags: [] })
             : Promise.resolve({ tags: [] as WorkspaceTag[] }),
         options.publicEnabled
-            ? settled(fetchPublicWorkspaceDocumentTags(options.signal), { tags: [] })
+            ? options.publicWorkspaceSelection
+                ? fetchPublicWorkspaceDocumentTags(options.signal, options.publicWorkspaceSelection)
+                : settled(fetchPublicWorkspaceDocumentTags(options.signal), { tags: [] })
             : Promise.resolve({ tags: [] as WorkspaceTag[] }),
     ]);
 
@@ -269,7 +272,9 @@ async function loadTags(options: ContextSearchOptions): Promise<ScopedTag[]> {
         // is attributed to the group the user is working in. Getting this wrong only affects
         // which workspace the chip widens the search to, never whether the tag itself matches.
         ...(firstGroup ? readTags(group, groupScope(firstGroup)) : []),
-        ...(firstPublic ? readTags(publicTags, publicScope(firstPublic)) : []),
+        ...(options.publicWorkspaceSelection
+            ? readTags(publicTags, { kind: 'public', id: null, name: 'Public search' })
+            : firstPublic ? readTags(publicTags, publicScope(firstPublic)) : []),
     ];
 
     // A superseded keystroke aborts these requests, and `settled` reports an abort as an
@@ -298,6 +303,9 @@ export async function searchContextCandidates(
 ): Promise<ContextCandidate[]> {
     const needle = String(options.query ?? '').trim();
     const lowered = needle.toLowerCase();
+    if (options.publicWorkspaceSelection && !options.publicEnabled) {
+        throw new Error('Public workspaces are currently disabled.');
+    }
 
     const groups = options.groups ?? [];
     const publicWorkspaces = options.publicWorkspaces ?? [];
@@ -315,13 +323,13 @@ export async function searchContextCandidates(
     const noDocuments = Promise.resolve([] as WorkspaceDocument[]);
 
     const [personalDocs, groupDocs, publicDocs, tags] = await Promise.all([
-        collectScopeDocuments(
+        options.publicWorkspaceSelection ? noDocuments : collectScopeDocuments(
             (query) => fetchPersonalDocuments(query, signal),
             needle,
             filter,
             signal,
         ),
-        options.groupsEnabled && groupIds.length > 0
+        options.groupsEnabled && !options.publicWorkspaceSelection && groupIds.length > 0
             ? collectScopeDocuments(
                   (query) => fetchGroupDocuments(groupIds, query, signal),
                   needle,
@@ -331,15 +339,16 @@ export async function searchContextCandidates(
             : noDocuments,
         options.publicEnabled
             ? collectScopeDocuments(
-                  (query) => fetchPublicWorkspaceDocuments(query, signal),
+                  (query) => fetchPublicWorkspaceDocuments(query, signal, options.publicWorkspaceSelection),
                   needle,
                   filter,
                   signal,
+                  Boolean(options.publicWorkspaceSelection),
               )
             : noDocuments,
         options.documentsOnly
             ? Promise.resolve([] as ScopedTag[])
-            : settled(loadTags(options), [] as ScopedTag[]),
+            : options.publicWorkspaceSelection ? loadTags(options) : settled(loadTags(options), [] as ScopedTag[]),
     ]);
 
     const candidates: ContextCandidate[] = [];
@@ -361,7 +370,7 @@ export async function searchContextCandidates(
     const groupFallback = groups[0] ? groupScope(groups[0]) : PERSONAL_SCOPE;
     const publicFallback = publicWorkspaces[0]
         ? publicScope(publicWorkspaces[0])
-        : PERSONAL_SCOPE;
+        : { kind: 'public' as const, id: null, name: 'Public search' };
 
     for (const document of groupDocs) {
         push(
@@ -401,13 +410,13 @@ export async function searchContextCandidates(
         });
     }
 
-    if (options.includeWorkspaces === false) {
+    if (options.includeWorkspaces === false || options.publicWorkspaceSelection) {
         return candidates;
     }
 
     const allScopes: ContextScopeRef[] = [
-        PERSONAL_SCOPE,
-        ...(options.groupsEnabled ? groups.map(groupScope) : []),
+        ...(!options.publicWorkspaceSelection ? [PERSONAL_SCOPE] : []),
+        ...(options.groupsEnabled && !options.publicWorkspaceSelection ? groups.map(groupScope) : []),
         ...(options.publicEnabled ? publicWorkspaces.map(publicScope) : []),
     ];
     const matchedScopes = allScopes

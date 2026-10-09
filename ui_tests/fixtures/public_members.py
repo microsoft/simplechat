@@ -1,7 +1,7 @@
 # public_members.py
 """
 Closed M10A public workspace membership HTTP fixtures for the real production V2 SPA.
-Version: 0.261.179
+Version: 0.261.310
 Implemented in: 0.261.179
 
 The fixture serves the native public membership family the V2 Members section reads and writes
@@ -473,10 +473,11 @@ class PublicMembersFixture(PublicWorkspaceFixture):
         role = (entry.query.get("role") or [None])[0]
         if role is not None and role not in POLICY.PUBLIC_MEMBER_ROLES:
             raise _invalid("The role must be Owner, Admin, DocumentManager or User.")
-        page = self._whole_number(entry.query.get("page"), default=1, maximum=MAX_PAGE,
-                                  message=f"The page must be a whole number from 1 to {MAX_PAGE}.")
-        page_size = self._whole_number(entry.query.get("page_size"), default=DEFAULT_PAGE_SIZE, maximum=MAX_PAGE_SIZE,
-                                       message=f"The page size must be a whole number from 1 to {MAX_PAGE_SIZE}.")
+        # The composite journey also inherits the directory's unrelated tuple-returning parser.
+        page = PublicMembersFixture._whole_number(entry.query.get("page"), default=1, maximum=MAX_PAGE,
+                                                message=f"The page must be a whole number from 1 to {MAX_PAGE}.")
+        page_size = PublicMembersFixture._whole_number(entry.query.get("page_size"), default=DEFAULT_PAGE_SIZE, maximum=MAX_PAGE_SIZE,
+                                                     message=f"The page size must be a whole number from 1 to {MAX_PAGE_SIZE}.")
         return search, role, page, page_size
 
     @staticmethod
