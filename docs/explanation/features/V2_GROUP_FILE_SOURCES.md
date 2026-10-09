@@ -5,6 +5,12 @@
 Implemented in version: **0.261.147**, tracked in
 `application/single_app/config.py`.
 
+**Shared configuration expanded in version: 0.261.310.** The same native
+workbench now serves personal sources too, without changing the group's route
+or authorization rules. Edit loads a fresh source and options before opening
+the form; a failed load offers retry rather than a guessed configuration.
+See [V2 File Source Configuration](V2_FILE_SOURCE_CONFIGURATION.md).
+
 File sources are the connections a group syncs documents from: an SMB share, an
 Azure Files share, or an Azure Blob Storage container. The documents they bring
 in are processed like uploads and appear in the group's documents. The native V2

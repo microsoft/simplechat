@@ -95,6 +95,7 @@ export function Modal({
     banner,
     panelRef: externalPanelRef,
     placement = 'center',
+    returnFocusTo,
 }: {
     title: string;
     description?: string;
@@ -120,10 +121,12 @@ export function Modal({
     /** The dialog's panel, for a caller that animates it into place. */
     panelRef?: Ref<HTMLDivElement>;
     placement?: 'center' | 'drawer';
+    /** Preserve the original opener across loading/editor dialog handoffs. */
+    returnFocusTo?: HTMLElement | null;
 }) {
     // Read while rendering: by the time an effect runs, a field's autoFocus has already moved
     // focus into the dialog, and it is the control that opened it that focus must return to.
-    const [opener] = useState<HTMLElement | null>(currentOpener);
+    const [opener] = useState<HTMLElement | null>(() => returnFocusTo ?? currentOpener());
     const panelRef = useRef<HTMLDivElement | null>(null);
     const setPanelRef = useCallback((node: HTMLDivElement | null) => {
         panelRef.current = node;
