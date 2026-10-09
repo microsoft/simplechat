@@ -45,6 +45,7 @@ from functions_authentication import get_graph_authority, get_graph_base_url, ge
 from functions_azure_endpoint_validation import (
     AZURE_STORAGE_ENDPOINT_SUFFIXES,
     azure_storage_endpoint_suffix_for_hostname,
+    validate_azure_file_endpoint,
 )
 from functions_debug import debug_print
 from functions_documents import (
@@ -892,12 +893,10 @@ def _normalize_azure_file_url(value: Any) -> Tuple[str, List[str]]:
     if "://" not in raw_url:
         raw_url = f"https://{raw_url}"
 
+    account_url = validate_azure_file_endpoint(raw_url)
     parsed_url = urlparse(raw_url)
-    if parsed_url.scheme != "https" or not parsed_url.netloc:
-        raise ValueError("Azure Files sources require an HTTPS file service or share URL")
-
     path_parts = [unquote(path_part) for path_part in parsed_url.path.split("/") if path_part]
-    return f"{parsed_url.scheme}://{parsed_url.netloc}".rstrip("/"), path_parts
+    return account_url, path_parts
 
 
 def _normalize_azure_share_name(value: Any) -> str:
@@ -3253,9 +3252,11 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
             raise ValueError("Azure Files connection string authentication requires a connection string")
         return ShareServiceClient.from_connection_string(connection_string)
 
-    account_url = connection.get("account_url") or ""
+    account_url, account_path_parts = _normalize_azure_file_url(connection.get("account_url"))
     if not account_url:
         raise ValueError("Azure Files source is missing an account URL")
+    if account_path_parts:
+        raise ValueError("Azure Files source account URL must be a service URL")
     if auth_type == "client_secret":
         client_id = auth.get("identity") or ""
         client_secret = _resolved_auth_secret(auth)

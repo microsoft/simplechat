@@ -88,6 +88,24 @@ separate workflow; the source editor selects an existing eligible identity.
 
 The source appears in the Sync list. Imported files later appear on the workspace **Documents** tab with fixed or folder tags.
 
+## Azure Files endpoint requirements
+
+From version **0.261.314**, use a canonical Azure Files URL such as
+`https://account.file.core.windows.net` or a share URL such as
+`https://account.file.core.windows.net/documents/team`. US Government, China,
+and Germany endpoints use `core.usgovcloudapi.net`, `core.chinacloudapi.cn`,
+and `core.cloudapi.de` respectively after the `account.file.` prefix.
+
+Do not include credentials, an explicit port, a query string, or a fragment in
+the URL. Arbitrary domains, IP addresses, and direct private-link hostnames are
+not accepted; private endpoints should resolve the canonical account hostname
+through private DNS.
+
+Endpoint validation does not repair the separate token-authentication
+limitation: the current connector's managed-identity and service-principal
+client construction is rejected by the pinned Azure Files SDK. Connection-string
+dispatch remains unchanged.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

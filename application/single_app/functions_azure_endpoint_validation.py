@@ -86,6 +86,10 @@ AZURE_QUEUE_ENDPOINT_ERROR = (
     "Queue Storage actions require an HTTPS Azure Queue service endpoint such as "
     "https://account.queue.core.windows.net"
 )
+AZURE_FILE_ENDPOINT_ERROR = (
+    "Azure Files sources require an HTTPS Azure File service endpoint such as "
+    "https://account.file.core.windows.net"
+)
 AZURE_COSMOS_ENDPOINT_ERROR = (
     "Cosmos actions require an HTTPS Azure Cosmos DB endpoint such as "
     "https://account.documents.azure.com"
@@ -241,6 +245,11 @@ def validate_configured_chat_blob_endpoint(value: Any, custom_suffix: str = "") 
 def validate_azure_queue_endpoint(value: Any) -> str:
     """Return a canonical Azure Queue service origin, or raise ValueError."""
     return _validate_storage_endpoint(value, AZURE_QUEUE_SERVICE_LABEL, AZURE_QUEUE_ENDPOINT_ERROR)
+
+
+def validate_azure_file_endpoint(value: Any) -> str:
+    """Return a canonical Azure File service origin, or raise ValueError."""
+    return _validate_storage_endpoint(value, AZURE_FILE_SERVICE_LABEL, AZURE_FILE_ENDPOINT_ERROR)
 
 
 def validate_azure_cosmos_endpoint(value: Any) -> str:
