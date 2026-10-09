@@ -46,6 +46,7 @@ from functions_search import (
     normalize_search_top_n,
 )
 from functions_settings import get_settings, get_user_settings
+from public_chat_scope import aggregate_public_workspace_ids, current_public_chat_scope
 
 
 SUMMARY_DEFAULT_WINDOW_UNIT = "pages"
@@ -141,6 +142,10 @@ def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None, visi
     it computed from a read-only settings snapshot, because the settings lookup can repair the
     user's settings document. The same validation and intersection apply either way.
     """
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        requested_ids = normalize_search_id_list(active_public_workspace_id)
+        return [value for value in aggregate_ids if not requested_ids or value in requested_ids]
     try:
         if visible_public_workspace_ids is None:
             visible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
@@ -555,6 +560,8 @@ def resolve_document_context(
     visible_public_workspace_ids=None,
 ):
     normalized_scope = normalize_search_scope(doc_scope)
+    if current_public_chat_scope(user_id):
+        normalized_scope = "public"
     public_visibility = (
         {} if visible_public_workspace_ids is None
         else {"visible_public_workspace_ids": visible_public_workspace_ids}
@@ -591,6 +598,8 @@ def resolve_document_context(
         if public_context:
             return public_context
 
+    if current_public_chat_scope(user_id):
+        return None
     chat_upload_context = _resolve_chat_upload_context(
         document_id=document_id,
         user_id=user_id,
@@ -616,6 +625,9 @@ def resolve_document_contexts(
 ):
     """Resolve documents, optionally requiring explicit scopes and an accepted access path."""
     normalized_scope = normalize_search_scope(doc_scope)
+    aggregate = current_public_chat_scope(user_id)
+    if aggregate:
+        normalized_scope = "public"
     normalized_document_ids = normalize_search_id_list(document_ids)
     authorized_group_ids = []
     if normalized_scope in ("all", "group") and (
@@ -637,7 +649,7 @@ def resolve_document_contexts(
 
     normalized_conversation_id = str(conversation_id or "").strip()
     chat_conversation_authorized = bool(
-        normalized_conversation_id
+        not aggregate and normalized_conversation_id
         and _authorize_chat_upload_conversation(user_id, normalized_conversation_id)
     )
 
@@ -696,6 +708,8 @@ def build_search_request(
         raise ValueError("Query is required")
 
     normalized_scope = normalize_search_scope(doc_scope)
+    if current_public_chat_scope(user_id):
+        normalized_scope = "public"
     normalized_top_n = normalize_search_top_n(top_n, SEARCH_DEFAULT_TOP_N, SEARCH_MAX_TOP_N)
     normalized_document_ids = normalize_search_id_list(document_ids)
     if document_id and not normalized_document_ids:
@@ -731,7 +745,7 @@ def build_search_request(
     if resolved_public_workspace_ids and normalized_scope in ("all", "public"):
         search_request["active_public_workspace_id"] = (
             resolved_public_workspace_ids
-            if include_all_public_workspaces
+            if include_all_public_workspaces or current_public_chat_scope(user_id)
             else resolved_public_workspace_ids[0]
         )
 
@@ -751,6 +765,8 @@ def search_documents(
     enable_file_sharing=True,
     include_all_public_workspaces=False,
 ):
+    if current_public_chat_scope(user_id) and not aggregate_public_workspace_ids(user_id):
+        return {"query": query, "scope": "public", "results": [], "result_count": 0, "document_count": 0}
     search_request = build_search_request(
         query=query,
         user_id=user_id,

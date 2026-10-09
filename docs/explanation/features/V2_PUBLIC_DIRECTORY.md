@@ -8,6 +8,7 @@ in public chat. It replaces the placeholder that linked to the classic
 directory, and the V2 public workspace picker now reads the same list.
 
 Implemented in version **0.261.175**.
+Updated in version: **0.261.310** (`application/single_app/config.py`).
 
 Dependencies:
 - the public workspace feature (`enable_public_workspaces`);
@@ -59,16 +60,18 @@ From version **0.261.184**, the directory also offers:
   this list** makes exactly a list's workspaces visible and hides the rest, and
   a list can be deleted. They're stored as `publicDirectorySavedLists`, the
   classic directory's shape, so either interface can use them;
-- **Chat with visible (classic)**, which saves any pending change and opens
-  classic chat over the workspaces visible now. V2 chat can only scope to one
-  public workspace (decision 31).
+- **Chat with visible**, which saves any pending visibility change and starts
+  a fresh native V2 chat over visible, chat-available public workspaces from
+  version **0.261.310**. A failed save keeps you in the directory. The composer
+  also offers **All public workspaces**, ignoring visibility without changing
+  it; see [Aggregate public chat](V2_AGGREGATE_PUBLIC_CHAT.md).
 
 The bulk and saved-list actions cover the whole directory, not the page on
 screen, up to 1,000 workspaces; past that they refuse and say how many there
 are. Each reports how many workspaces it changed. From version **0.261.187**,
 **Show all in chat** and **Use this list** leave an unavailable workspace
-hidden, and say how many they skipped: public chat doesn't yet check a
-workspace's status itself (decision 32).
+hidden, and say how many they skipped. Native aggregate chat also checks
+workspace availability on the server before retrieval.
 
 ### Labels
 

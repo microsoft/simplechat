@@ -48,6 +48,7 @@ from werkzeug.utils import secure_filename
 from content_screening.access import assert_current_request_sources_available
 from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event, workflow_log_context
+from public_chat_scope import public_chat_execution_scope
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     MixedSourceCancellationError,
@@ -431,6 +432,7 @@ class RunContext:
         self.elicitation_references = list(elicitation_references or [])
         self.selected_document_ids = list(selected_document_ids or [])
         self.seeds = dict(seeds or {})
+        self.public_workspace_selection = self.seeds.get('public_workspace_selection')
         self.original_seeds = dict(original_seeds or {})
         self.user_message_id = user_message_id
         self.conversation_context = deepcopy(conversation_context or {})
@@ -774,11 +776,12 @@ def execute_plan(
     version = plan_contract_version(plan)
     if version != getattr(context, 'plan_contract_version', None):
         raise ResultContractError('result_version_unsupported')
-    return _execute_dependency_plan(
-        plan, context, settings=settings, user_id=user_id, emit=emit,
-        cancel_requested=cancel_requested, persist=persist, get_adapter=get_adapter,
-        checkpoints=checkpoints,
-    )
+    with public_chat_execution_scope(context, user_id, settings):
+        return _execute_dependency_plan(
+            plan, context, settings=settings, user_id=user_id, emit=emit,
+            cancel_requested=cancel_requested, persist=persist, get_adapter=get_adapter,
+            checkpoints=checkpoints,
+        )
 
 
 def _dependency_request_context(context):
@@ -939,7 +942,7 @@ def _run_dependency_step(
         # to create. Every other Gather or Reason step stays unable to publish anything.
         capability = get_capability(step['capability_id'], contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
         publishes = step['role'] == 'render' or (capability or {}).get('publishes_generated_images') is True
-        with orchestration_file_policy(allow_generated_files=publishes), model_scope:
+        with public_chat_execution_scope(scoped, user_id, settings), orchestration_file_policy(allow_generated_files=publishes), model_scope:
             if step['capability_id'] == 'render_file':
                 result = _render_dependency_step(
                     runtime_step, scoped, settings=settings, user_id=user_id, cancel_requested=cancel_probe,

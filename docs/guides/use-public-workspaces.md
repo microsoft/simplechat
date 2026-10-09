@@ -91,6 +91,16 @@ documents, and cancel the request, from its row. It also shows or hides every
 workspace for chat at once, saves and reuses lists of visible workspaces, and
 opens classic chat over the visible ones.
 
+From version **0.261.310**, **Chat with visible** instead opens a fresh native
+V2 chat. Its **Document search scope** stays **Visible public workspaces** for
+follow-up questions. Select **All public workspaces** in the composer to
+include hidden workspaces too, without changing visibility preferences.
+Both scopes retrieve only public documents from currently chat-available
+workspaces; personal and group active selections are excluded. **Current
+context** returns to normal search, and **New chat** resets the aggregate scope.
+If no workspace qualifies, the request explains the empty scope rather than
+searching somewhere else.
+
 From version **0.261.185**, the Owner and Admins manage the workspace's
 **Settings** (name, description, color and logo for the Owner; file downloads
 and retention for both), read its **Activity**, and chart and export its

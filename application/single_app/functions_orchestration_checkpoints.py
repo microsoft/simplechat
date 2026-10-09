@@ -51,7 +51,7 @@ INPUT_FIELDS = (
     'conversation_context', 'context_message_ids', 'allowed_user_urls',
     'chat_type', 'selection_mode', 'doc_scope', 'tags', 'document_filter_mode',
     'active_group_ids', 'active_group_id', 'active_public_workspace_ids',
-    'gpt_model',
+    'gpt_model', 'public_workspace_selection',
 )
 
 

@@ -343,6 +343,7 @@ def _build_replayed_document_context(original_metadata):
         'selected_document_id': selected_document_ids[0] if selected_document_ids else None,
         'selected_document_ids': selected_document_ids,
         'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
+        'public_workspace_selection': workspace_search.get('public_workspace_selection'),
         'top_n': workspace_search.get('top_n'),
         'classifications': (
             workspace_search.get('classification')

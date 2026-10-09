@@ -10,6 +10,7 @@
 import type { ReasoningResolution } from './reasoning';
 import type { ContentScreeningSummary } from './contentScreening';
 import type { ImageReferenceRequest } from './imageReferences';
+import type { PublicWorkspaceSelection } from './publicChatScope';
 
 export type Json = Record<string, unknown>;
 
@@ -1353,6 +1354,7 @@ export interface ChatStreamEvent {
 
 /** Request body for POST /api/chat/stream. Field names verified against the Flask route. */
 export interface ChatStreamRequest {
+    public_workspace_selection?: PublicWorkspaceSelection;
     message: string;
     conversation_id?: string | null;
     analysis_result_context?: AnalysisResultContext;

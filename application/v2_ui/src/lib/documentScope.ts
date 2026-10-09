@@ -14,7 +14,10 @@
 // 'all' search with no ids silently covers nothing but personal documents — and a user whose
 // documents live in a group gets no results with no explanation.
 
+import type { PublicWorkspaceSelection } from './publicChatScope';
+
 export interface ScopeState {
+    publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     /** The group the user is currently working in, if any. */
     activeGroupId?: string | null;
     /** The public workspace the user is currently working in, if any. */
@@ -33,6 +36,7 @@ export interface ScopeState {
 }
 
 export interface DocumentScopeRequest {
+    public_workspace_selection?: PublicWorkspaceSelection;
     doc_scope: string;
     active_group_ids: string[];
     active_group_id: string | null;
@@ -62,7 +66,7 @@ function mergeIds(active: unknown, fromContext: readonly string[] | undefined): 
 /**
  * Resolve the scope for a document search.
  *
- * Personal documents are always in scope. That was originally because the interface had no
+ * Outside explicit aggregate public mode, personal documents are always in scope. That was originally because the interface had no
  * control for excluding them, and it stays true now that the chip row does: narrowing the
  * scope to the kinds the chips happen to mention would drop personal results that the caller
  * never asked to exclude, and a search that silently covers less is the harder failure to
@@ -70,6 +74,16 @@ function mergeIds(active: unknown, fromContext: readonly string[] | undefined): 
  * constrain the result set directly rather than by omission.
  */
 export function resolveDocumentScope(scope: ScopeState | undefined): DocumentScopeRequest {
+    if (scope?.publicWorkspaceSelection) {
+        return {
+            doc_scope: 'public',
+            public_workspace_selection: scope.publicWorkspaceSelection,
+            active_group_ids: [],
+            active_group_id: null,
+            active_public_workspace_ids: [],
+            active_public_workspace_id: null,
+        };
+    }
     const groupIds = mergeIds(scope?.activeGroupId, scope?.contextGroupIds);
     const publicIds = mergeIds(
         scope?.activePublicWorkspaceId,

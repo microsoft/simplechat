@@ -51,6 +51,7 @@ from config import cosmos_conversations_container, cosmos_messages_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
 from functions_appinsights import log_event, workflow_log_context
+from public_chat_scope import current_public_chat_scope, prepare_public_chat_scope, public_chat_scope_required
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
     should_withhold_chat_event, strip_private_chat_checks,
@@ -1121,6 +1122,9 @@ def _save_turn_message(
     metadata = {
         'orchestration': {'turn_id': turn_id},
         'orchestration_turn_id': turn_id,
+        'workspace_search': {
+            'public_workspace_selection': (current_public_chat_scope(user_id) or {}).get('selection'),
+        },
     }
     if prompt_selection:
         metadata['prompt_selection'] = prompt_selection
@@ -1746,6 +1750,7 @@ def register_route_backend_orchestration(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @public_chat_scope_required(lambda user_id, conversation_id: _authorize_context_conversation(conversation_id, user_id))
     def orchestration_plan():
         """Plan one request, streaming progress and ending with a plan or a question."""
         settings = get_settings()
@@ -2161,6 +2166,8 @@ def register_route_backend_orchestration(bp):
                 turn_context['resolved_message'] = effective_message
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
                 conversation_document = _authorize_context_conversation(resolved_conversation_id, user_id)
+                if seeds.get('public_workspace_selection'):
+                    prepare_public_chat_scope(seeds, user_id, settings, conversation_document)
                 memory_context = load_orchestration_memory(
                     user_id, conversation_document,
                     effective_request, settings=settings, seeds=seeds,
@@ -2173,6 +2180,7 @@ def register_route_backend_orchestration(bp):
                 if (
                     resolution.get('requires_retrieval') is False
                     and not seeds.get('document_ids') and not seeds.get('elicitation_references')
+                    and not seeds.get('public_workspace_selection')
                 ):
                     candidates = []
                 else:
