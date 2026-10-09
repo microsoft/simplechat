@@ -1,6 +1,14 @@
 # Gather / Reason / Render orchestration
 
-**Version: 0.261.140**
+**Version: 0.261.309**
+
+Document-derived handoff reliability implemented in version: **0.261.309**,
+recorded in `application/single_app/config.py`. Native Analyze requests explicit
+JSON field shapes and can correct malformed metadata within its existing window
+retry limit. Complete-only drafting remains blocked by genuine uncertainty,
+missing coverage, or invalid evidence. Manual recovery revisits affected partial
+producers instead of replaying the same refused consumer input. See the
+[document derivation reliability fix](../fixes/ORCHESTRATION_DOCUMENT_DERIVATION_RELIABILITY_FIX.md).
 
 Foundation implemented in version: **0.261.125**; shared export source bindings
 implemented in version: **0.261.126**; application integration implemented in

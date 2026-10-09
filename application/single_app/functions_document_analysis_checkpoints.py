@@ -19,6 +19,7 @@ from functions_analysis_access import (
     analysis_source_snapshot,
     authorize_analysis_sources,
 )
+from functions_document_analysis_results import ANALYSIS_RESPONSE_SHAPE_CODES, analysis_has_response_shape_issues
 from functions_workflow_result_store import (
     AnalysisWorkUnitConflictError,
     WorkflowResultIntegrityError,
@@ -170,6 +171,12 @@ class AnalysisWorkUnitCheckpoints:
                 or not isinstance(payload.get('analysis_text'), str)
             ):
                 raise WorkflowResultIntegrityError('A completed analysis work unit is invalid.')
+            if binding != self.binding and any(
+                issue.get('code') in ANALYSIS_RESPONSE_SHAPE_CODES
+                for candidate in payload['candidate_result'].get('candidates') or []
+                for issue in candidate.get('issues') or []
+            ):
+                payload['needs_response_correction'] = True
             return payload
         return None
 
@@ -205,6 +212,8 @@ class AnalysisWorkUnitCheckpoints:
                     raise WorkflowResultIntegrityError('The final analysis checkpoint is invalid.')
                 coverage = (result.get('analysis_validation') or {}).get('coverage') or {}
                 if coverage.get('failed_work_units') or coverage.get('pending_work_units'):
+                    continue
+                if binding != self.binding and analysis_has_response_shape_issues(result):
                     continue
                 return saved
         return None

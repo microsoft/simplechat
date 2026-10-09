@@ -1828,6 +1828,10 @@ FAILURE_MESSAGES = {
     'input_partial_not_accepted': (
         'An earlier step returned only a partial result, and this step requires complete results, so it did not run.'
     ),
+    'input_partial_not_recoverable': (
+        'The saved analysis has unresolved findings despite complete source coverage. Retrying the same '
+        'dependent steps cannot complete this request. Review the unresolved findings and revise the request or sources.'
+    ),
     'dependency_unavailable': 'A required dependency did not complete. This operation was not executed.',
     'file_publication_not_allowed': 'Gathering and reasoning cannot create downloadable files.',
     'checkpoint_unavailable': 'Progress could not be saved or verified. This attempt cannot safely resume.',

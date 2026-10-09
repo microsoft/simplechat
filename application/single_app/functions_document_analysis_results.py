@@ -22,6 +22,9 @@ ANALYSIS_OPTIONS_VERSION = 'analysis-options-v1'
 EVIDENCE_MATCHER_VERSION = 'evidence-matcher-v2'
 EVIDENCE_MATCH_TIERS = ('exact', 'normalized', 'normalized_casefold')
 EVIDENCE_MISS_REASONS = ('missing_quote', 'missing_location', 'ambiguous', 'not_in_cited_location', 'not_in_window')
+ANALYSIS_RESPONSE_SHAPE_CODES = frozenset({
+    'invalid_identity', 'invalid_values', 'invalid_status', 'invalid_issues', 'invalid_caveats',
+})
 _EVIDENCE_SELECTORS = ('chunk_sequence', 'page_number', 'chunk_id')
 _EVIDENCE_MARKUP = re.compile(r'<!--.*?-->|</?([A-Za-z][A-Za-z0-9:-]*)(?:[\s/][^<>]*)?>', re.DOTALL)
 _EVIDENCE_LINE = re.compile(r'[^\n]+')
@@ -278,6 +281,98 @@ def _unique_json_keys(pairs):
             raise ValueError('Duplicate JSON fields are not supported.')
         value[key] = item
     return value
+
+
+def _analysis_response(analysis_text):
+    cleaned = str(analysis_text or '').strip()
+    fence = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        cleaned = fence.group(1)
+    return json.loads(cleaned, parse_constant=_reject_json_constant, object_pairs_hook=_unique_json_keys)
+
+
+def analysis_response_shape_errors(analysis_text):
+    """Describe malformed fields without copying their values into diagnostics."""
+    payload = _analysis_response(analysis_text)
+    if not isinstance(payload, dict) or not isinstance(payload.get('findings'), list):
+        raise ValueError('The analysis response must contain a findings list.')
+    errors = []
+    for field in ('issues', 'notes'):
+        value = payload.get(field, [])
+        if field == 'notes' and value is None:
+            continue
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            errors.append({'field': field, 'code': f'invalid_{field}'})
+    for index, finding in enumerate(payload['findings']):
+        if not isinstance(finding, dict):
+            errors.append({'finding_index': index, 'field': 'finding', 'code': 'invalid_values'})
+            continue
+        for field, valid in (
+            ('finding_key', isinstance(finding.get('finding_key'), str) and bool(finding['finding_key'].strip())),
+            ('values', isinstance(finding.get('values'), dict) and bool(finding['values'])),
+            ('status', finding.get('status') in ('supported', 'unresolved')),
+            *(
+                (field, (
+                    field == 'caveats' and finding.get(field) is None
+                    or isinstance(finding.get(field, []), list)
+                    and all(isinstance(item, str) for item in finding.get(field, []))
+                ))
+                for field in ('issues', 'caveats')
+            ),
+        ):
+            if not valid:
+                errors.append({
+                    'finding_index': index, 'field': field,
+                    'code': 'invalid_identity' if field == 'finding_key' else f'invalid_{field}',
+                })
+    return errors
+
+
+def validate_analysis_response_correction(original_text, corrected_text, errors):
+    """A shape correction cannot rewrite findings or remove recorded qualifications."""
+    original = _analysis_response(original_text)
+    corrected = _analysis_response(corrected_text)
+    if analysis_response_shape_errors(corrected_text):
+        raise ValueError('The corrected analysis response still has malformed fields.')
+    top_fields = {item['field'] for item in errors if 'finding_index' not in item}
+    original_fields = {key: value for key, value in original.items() if key not in top_fields | {'findings'}}
+    corrected_fields = {key: value for key, value in corrected.items() if key not in top_fields | {'findings'}}
+    if _identity('response', original_fields) != _identity('response', corrected_fields):
+        raise ValueError('The analysis correction changed unrelated fields.')
+    if len(original['findings']) != len(corrected['findings']):
+        raise ValueError('The analysis correction changed the assigned findings.')
+    pairs = [(None, original, corrected), *(
+        (index, left, right) for index, (left, right) in enumerate(
+            zip(original['findings'], corrected['findings'])
+        )
+    )]
+    for index, left, right in pairs:
+        fields = {item['field'] for item in errors if item.get('finding_index') == index}
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            raise ValueError('The analysis correction cannot discard malformed finding content.')
+        if index is not None and _identity('finding', {
+            key: value for key, value in left.items() if key not in fields
+        }) != _identity('finding', {key: value for key, value in right.items() if key not in fields}):
+            raise ValueError('The analysis correction changed supported content.')
+        if fields & {'values', 'finding_key', 'finding'}:
+            raise ValueError('The analysis correction cannot synthesize malformed finding content.')
+        if 'status' in fields and right['status'] != 'unresolved':
+            raise ValueError('The analysis correction cannot promote an unknown support status.')
+        for field in fields & {'issues', 'caveats', 'notes'}:
+            value = left.get(field)
+            texts = [value] if isinstance(value, str) else value
+            if not isinstance(texts, list) or any(not isinstance(item, str) for item in texts):
+                raise ValueError('The analysis correction cannot discard malformed qualifications.')
+            if sorted(texts) != sorted(right[field]):
+                raise ValueError('The analysis correction changed recorded qualifications.')
+
+
+def analysis_has_response_shape_issues(result):
+    validation = (result or {}).get('analysis_validation') or {}
+    return any(
+        isinstance(issue, dict) and issue.get('code') in ANALYSIS_RESPONSE_SHAPE_CODES
+        for issue in validation.get('issues') or []
+    )
 
 
 def _issue(code, message, **context):
@@ -537,11 +632,7 @@ def _locate_analysis_evidence(passage, contents, forms):
 
 def collect_analysis_window_candidates(analysis_text, source, work_unit, window_payload):
     """Check an extraction response against its assigned original source window."""
-    cleaned = str(analysis_text or '').strip()
-    fence = re.fullmatch(r'```(?:json)?\s*(.*?)\s*```', cleaned, flags=re.DOTALL | re.IGNORECASE)
-    if fence:
-        cleaned = fence.group(1)
-    payload = json.loads(cleaned, parse_constant=_reject_json_constant, object_pairs_hook=_unique_json_keys)
+    payload = _analysis_response(analysis_text)
     if not isinstance(payload, dict) or not isinstance(payload.get('findings'), list):
         raise ValueError('The analysis response must contain a findings list.')
     # Also catches exponent overflow (for example 1e999), not only JSON NaN literals.
@@ -570,7 +661,9 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
         if not isinstance(values, dict) or not values:
             issues.append(_issue('invalid_values', 'A finding did not supply an object of requested values.'))
             values = {}
-        if finding.get('status') != 'supported':
+        if finding.get('status') not in ('supported', 'unresolved'):
+            issues.append(_issue('invalid_status', 'A finding supplied an invalid support status.'))
+        elif finding.get('status') != 'supported':
             issues.append(_issue('unresolved_finding', 'The source slice did not support a final conclusion.'))
         finding_issues = finding.get('issues', [])
         if not isinstance(finding_issues, list) or any(not isinstance(item, str) for item in finding_issues):

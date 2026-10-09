@@ -14,11 +14,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 from content_screening.access import PROVENANCE_FIELD, assert_evidence_available, guard_model_callable
 from content_screening.contracts import ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_debug import debug_print
 from functions_document_analysis_results import (
     EVIDENCE_MATCH_TIERS,
     EVIDENCE_MISS_REASONS,
+    analysis_response_shape_errors,
     apply_document_analysis_options,
     build_analysis_source,
     build_analysis_work_unit,
@@ -28,6 +29,7 @@ from functions_document_analysis_results import (
     get_unassigned_analysis_chunks,
     index_analysis_source_manifest,
     normalize_analysis_options,
+    validate_analysis_response_correction,
 )
 from functions_generated_file_exports import get_requested_structured_artifact_format
 from functions_orchestration_execution_policy import generated_file_publication_allowed
@@ -483,10 +485,12 @@ def _build_window_analysis_prompt(
             '- "status": "supported" for a finding supported by this slice, including a documented uncertainty '
             'as the finding itself; otherwise "unresolved".\n'
             '- "caveats": optional qualifications that do not stop the values being final, such as an unstated '
-            'unit, currency, period or entity.\n'
-            '- "issues": only problems that prevent a requested value in this finding being concluded from this '
+            'unit, currency, period or entity. Use a JSON array of strings ([] when empty), never a string or object.\n'
+            '- "issues": an optional JSON array of strings (use [] when empty, never a string or object), '
+            'containing only problems that prevent a requested value in this finding being concluded from this '
             'slice, such as contradictory values. Values absent from this slice are not issues. Put ordinary '
             'recommendations and follow-up discussion in "values", not "issues".\n'
+            'Top-level "issues" and "notes" must also be JSON arrays of strings when supplied. '
             'Top-level "issues" are only task requirements that this slice\'s own content leaves unresolved, never '
             'sources analyzed separately; put other observations about the slice in "notes". '
             'Formatting of the final report and exports is handled separately. Put requested export fields inside '
@@ -1176,6 +1180,10 @@ def _iter_prepared_analysis_windows(
         check_cancelled(cancel_requested, 'narrative', request_correlation_id=request_correlation_id)
         unit = window['analysis_work_unit']
         cached = checkpoints.load_unit(unit) if checkpoints is not None else None
+        repair_response = cached if cached is not None and cached.get('needs_response_correction') else None
+        window['_analysis_repair_response'] = repair_response
+        if repair_response is not None:
+            cached = None
         window['_cached_analysis_unit'] = cached
         if checkpoints is not None and cached is None:
             window['_analysis_claim'] = checkpoints.claim_unit(unit)
@@ -1184,13 +1192,14 @@ def _iter_prepared_analysis_windows(
             'window_range': _serialize_window_range(window), 'attempt_number': 1,
             'analysis_result_version': 'analyze-final-v1', 'work_unit_id': unit['work_unit_id'],
             'assigned_document_ids': [unit['document_id']],
+            'json_output': True,
         }
         window['_analysis_invoker'] = (
             invoke_factory(deepcopy(metadata)) if invoke_factory and cached is None else invoke
         )
         if not callable(window['_analysis_invoker']):
             raise ValueError('The isolated analysis invocation factory did not return a callable.')
-        if concurrency > 1 and cached is None:
+        if concurrency > 1 and cached is None and repair_response is None:
             prompt_text = _build_window_analysis_prompt(
                 prompt, document, window, metadata['window_range'],
                 result_version='analyze-final-v1', analysis_options=options,
@@ -1717,6 +1726,9 @@ def run_document_analysis(
             candidate_result = cached_unit['candidate_result'] if cached_unit is not None else None
             prompt_text = ''
             last_error = ''
+            correction_text = None
+            correction_errors = []
+            retained_response = None
             max_attempts = targets.get('max_retries_per_window', DEFAULT_MAX_RETRIES_PER_WINDOW) + 1
             for attempt_number in range(1, 1 if cached_unit is not None else max_attempts + 1):
                 raise_if_mixed_source_cancelled(
@@ -1738,6 +1750,7 @@ def run_document_analysis(
 
                 try:
                     analysis_text = ''
+                    shape_errors = []
                     prompt_text = _build_window_analysis_prompt(
                         normalized_analysis_prompt,
                         document_payload.get('document', {}),
@@ -1747,6 +1760,18 @@ def run_document_analysis(
                             'result_version': result_version, 'analysis_options': normalized_options,
                         } if use_final_records else {}),
                     )
+                    if correction_text is not None:
+                        prompt_text += (
+                            '\n\n<ResponseShapeCorrection>\n'
+                            'Correct only the malformed fields listed below in the previous JSON response. '
+                            'Keep the findings in their original order, with the same values, evidence, '
+                            'supported fields and uncertainty. Preserve every qualification verbatim; '
+                            'a text qualification belongs in a one-item array, not an empty array. '
+                            'Do not resolve unsupported findings, invent evidence or discard invalid content. '
+                            'Return the entire corrected JSON object, without commentary.\n'
+                            f'Fields: {json.dumps(correction_errors, ensure_ascii=True)}\n'
+                            f'Previous response:\n{correction_text}\n</ResponseShapeCorrection>'
+                        )
                     metadata = {
                         'document_id': document_id, 'document_name': document_name,
                         'window_range': window_range, 'attempt_number': attempt_number,
@@ -1754,9 +1779,16 @@ def run_document_analysis(
                             'analysis_result_version': result_version,
                             'work_unit_id': window_payload['analysis_work_unit']['work_unit_id'],
                             'assigned_document_ids': [document_id],
+                            'json_output': True,
+                            **({
+                                'analysis_response_correction': True,
+                                'complete_saved_analysis_input': True,
+                            } if correction_text is not None else {}),
                         } if use_final_records else {}),
                     }
-                    if use_final_records and attempt_number == 1 and window_payload.get('_first_attempt_future') is not None:
+                    if use_final_records and attempt_number == 1 and window_payload.get('_analysis_repair_response') is not None:
+                        analysis_text = window_payload['_analysis_repair_response']['analysis_text']
+                    elif use_final_records and attempt_number == 1 and window_payload.get('_first_attempt_future') is not None:
                         analysis_text = _await_analysis_invocation(
                             window_payload['_first_attempt_future'], cancel_requested, request_correlation_id,
                             raise_if_mixed_source_cancelled,
@@ -1779,9 +1811,29 @@ def run_document_analysis(
                     if use_final_records:
                         collection_started = time.perf_counter()
                         try:
+                            if correction_text is not None:
+                                validate_analysis_response_correction(
+                                    correction_text, analysis_text, correction_errors,
+                                )
+                            shape_errors = analysis_response_shape_errors(analysis_text)
                             candidate_result = collect_analysis_window_candidates(
                                 analysis_text, analysis_source, window_payload['analysis_work_unit'], window_payload,
                             )
+                            if shape_errors and attempt_number < max_attempts:
+                                correction_text, correction_errors = analysis_text, shape_errors
+                                retained_response = (analysis_text, candidate_result)
+                                log_event(
+                                    '[DOCUMENT_ANALYSIS] Correcting malformed response fields.',
+                                    extra={
+                                        **workflow_log_context(
+                                            conversation_id=conversation_id,
+                                            step_id=window_payload['analysis_work_unit']['work_unit_id'],
+                                        ),
+                                        'validation_code': 'analysis_response_shape',
+                                        'attempt_count': attempt_number, 'field_count': len(shape_errors),
+                                    }, level=logging.WARNING,
+                                )
+                                raise ValueError('The analysis response has malformed fields.')
                         finally:
                             analysis_metrics['durations_ms']['local_consolidation'] += (time.perf_counter() - collection_started) * 1000
                     break
@@ -1800,6 +1852,8 @@ def run_document_analysis(
                     ):
                         _abort_analysis_work(exc, active_windows, analysis_metrics, metrics_lock, work_unit_checkpoints)
                         raise
+                    if use_final_records and shape_errors and correction_text is None and analysis_text:
+                        correction_text, correction_errors = analysis_text, shape_errors
                     last_error = 'The document window could not be analyzed. Please retry.'
                     if use_final_records:
                         window_payload['analysis_work_unit']['failure_code'] = (
@@ -1857,6 +1911,24 @@ def run_document_analysis(
                     if attempt_number >= max_attempts:
                         break
 
+            if retained_response is not None and not analysis_text:
+                analysis_text, candidate_result = retained_response
+            if correction_text is not None:
+                correction_status = (
+                    'failed' if not analysis_text else 'partial' if analysis_text == correction_text else 'corrected'
+                )
+                log_event(
+                    '[DOCUMENT_ANALYSIS] Response correction finished.',
+                    extra={
+                        **workflow_log_context(
+                            conversation_id=conversation_id,
+                            step_id=window_payload['analysis_work_unit']['work_unit_id'],
+                        ),
+                        'validation_code': 'analysis_response_shape',
+                        'status': correction_status,
+                        'attempt_count': attempt_number,
+                    }, level=logging.INFO if correction_status == 'corrected' else logging.WARNING,
+                )
             if analysis_text:
                 if use_final_records:
                     work_unit = window_payload['analysis_work_unit']
