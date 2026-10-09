@@ -1,7 +1,7 @@
 # test_v2_public_chat_scope.py
 """
 Functional regressions for aggregate public chat.
-Version: 0.261.310
+Version: 0.261.311
 Implemented in: 0.261.310
 
 Real scope and workspace modules run over scoped storage doubles. Admission, empty-set
@@ -42,6 +42,8 @@ def load(name, path):
 @pytest.fixture
 def world(monkeypatch):
     monkeypatch.syspath_prepend(str(APP))
+    state = load("public_chat_scope_state", APP / "public_chat_scope_state.py")
+    monkeypatch.setitem(sys.modules, "public_chat_scope_state", state)
     scope = load("public_chat_scope", APP / "public_chat_scope.py")
     monkeypatch.setitem(sys.modules, "public_chat_scope", scope)
     settings = {"enable_public_workspaces": True}
@@ -113,7 +115,9 @@ def test_admission_is_public_only_and_intersects_locks(world):
         {"scope": "personal", "id": USER}, {"scope": "public", "id": "hidden"},
     ]}
     with world.app.test_request_context():
-        admitted = world.scope.prepare_public_chat_scope(data, USER, world.settings, conversation)
+        admitted = world.scope.prepare_public_chat_scope(
+            data, USER, world.settings, world.public.resolve_public_chat_workspace_ids, conversation,
+        )
         assert admitted["workspace_ids"] == ["hidden"]
         assert data["doc_scope"] == "public" and data["hybrid_search"]
         assert data["active_group_ids"] == [] and data["active_group_id"] is None
@@ -127,27 +131,39 @@ def test_empty_disabled_and_saved_result_scopes_fail_before_model_work(world):
     world.preferences["settings"] = {"visiblePublicWorkspaceIds": []}
     with world.app.test_request_context():
         with pytest.raises(world.scope.PublicChatScopeError, match="No public"):
-            world.scope.prepare_public_chat_scope(data, USER, world.settings)
+            world.scope.prepare_public_chat_scope(data, USER, world.settings, world.public.resolve_public_chat_workspace_ids)
         world.settings["enable_public_workspaces"] = False
         with pytest.raises(world.scope.PublicChatScopeError, match="disabled"):
-            world.scope.prepare_public_chat_scope(data, USER, world.settings)
+            world.scope.prepare_public_chat_scope(data, USER, world.settings, world.public.resolve_public_chat_workspace_ids)
         with pytest.raises(world.scope.PublicChatScopeError, match="saved result"):
-            world.scope.prepare_public_chat_scope({**data, "analysis_result_context": {}}, USER, world.settings)
+            world.scope.prepare_public_chat_scope(
+                {**data, "analysis_result_context": {}}, USER, world.settings,
+                world.public.resolve_public_chat_workspace_ids,
+            )
 
 
 def test_each_turn_resolves_again_and_downstream_reads_cannot_widen(world):
     with world.app.test_request_context():
-        first = world.scope.prepare_public_chat_scope({"public_workspace_selection": "all"}, USER, world.settings)
+        first = world.scope.prepare_public_chat_scope(
+            {"public_workspace_selection": "all"}, USER, world.settings,
+            world.public.resolve_public_chat_workspace_ids,
+        )
         world.workspaces.append({"id": "new", "status": "active"})
         world.workspaces[1]["status"] = "inactive"
         current = world.scope.aggregate_public_workspace_ids(USER)
         assert current == ["shown", "uploads-off"]
-        second = world.scope.prepare_public_chat_scope({"public_workspace_selection": "all"}, USER, world.settings)
+        second = world.scope.prepare_public_chat_scope(
+            {"public_workspace_selection": "all"}, USER, world.settings,
+            world.public.resolve_public_chat_workspace_ids,
+        )
         assert "new" in second["workspace_ids"] and "new" not in first["workspace_ids"]
 
 
 def test_revoked_run_scope_is_an_error_and_thread_binding_is_isolated(world):
-    context = SimpleNamespace(seeds={"public_workspace_selection": "all", "active_public_workspace_ids": ["hidden"]})
+    context = SimpleNamespace(
+        seeds={"public_workspace_selection": "all", "active_public_workspace_ids": ["hidden"]},
+        resolve_public_chat_workspace_ids=world.public.resolve_public_chat_workspace_ids,
+    )
     def worker():
         with world.scope.public_chat_execution_scope(context, USER, world.settings):
             return world.scope.aggregate_public_workspace_ids(USER)
@@ -167,7 +183,11 @@ def test_admission_refuses_ownership_and_storage_errors_safely(world, failure, e
         assert (user_id, conversation_id) == (USER, "someone-elses-chat")
         raise failure
     @world.app.post("/scope")
-    @world.scope.public_chat_scope_required(authorize)
+    @world.scope.public_chat_scope_required(
+        authorize, lambda: USER, lambda: world.settings,
+        world.public.resolve_public_chat_workspace_ids,
+        lambda *args, **kwargs: world.logs.append(kwargs),
+    )
     def route():
         calls.append("model")
         return {"ok": True}
@@ -193,7 +213,9 @@ def test_search_request_retains_all_public_ids_without_group_scope(world):
         "_resolve_active_group_ids": lambda *args, **kwargs: ["private-group"],
     }
     execute_functions("functions_search_service.py", {"build_search_request", "_resolve_public_workspace_ids"}, namespace)
-    with world.scope.public_chat_scope_context(USER, "all", ["shown", "hidden"]):
+    with world.scope.public_chat_scope_context(
+        USER, "all", ["shown", "hidden"], world.public.resolve_public_chat_workspace_ids,
+    ):
         request = namespace["build_search_request"]("policy", USER, doc_scope="personal")
     assert request["doc_scope"] == "public"
     assert request["active_public_workspace_id"] == ["shown", "hidden"]
@@ -202,10 +224,10 @@ def test_search_request_retains_all_public_ids_without_group_scope(world):
 
 def test_execution_rechecks_live_conversation_lock_and_owner(world):
     conversation = {"user_id": USER, "scope_locked": True, "locked_contexts": [{"scope": "public", "id": "hidden"}]}
-    sys.modules["config"].cosmos_conversations_container = SimpleNamespace(read_item=lambda **kwargs: conversation)
     context = SimpleNamespace(conversation_id="saved", seeds={
         "public_workspace_selection": "all", "active_public_workspace_ids": ["shown", "hidden"],
-    })
+    }, resolve_public_chat_workspace_ids=world.public.resolve_public_chat_workspace_ids,
+       read_conversation_for_public_chat=lambda requested: conversation if requested == "saved" else None)
     with world.scope.public_chat_execution_scope(context, USER, world.settings):
         resolved = world.scope.aggregate_public_workspace_ids(USER)
     assert resolved == ["hidden"]
@@ -240,6 +262,7 @@ def test_delegated_request_bridge_retains_admission_without_parent_workspace_sta
         g.active_group_id = "parent-private-group"
         admitted = world.scope.prepare_public_chat_scope(
             {"public_workspace_selection": selection}, USER, world.settings,
+            world.public.resolve_public_chat_workspace_ids,
         )
         identity = capture_execution_identity(USER, "saved")
     assert world.scope.current_public_chat_scope(USER) is None

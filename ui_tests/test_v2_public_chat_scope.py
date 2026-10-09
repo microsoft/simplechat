@@ -1,7 +1,7 @@
 # test_v2_public_chat_scope.py
 """
 Native aggregate public chat, using the real React composer, stores and router.
-Version: 0.261.310
+Version: 0.261.311
 Implemented in: 0.261.310
 
 HTTP boundaries reuse the context workflow harness; no Azure or model calls are made.
@@ -14,7 +14,7 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.test_v2_chat_context_selection import (  # noqa: F401
-    CONVERSATION_ID, HANDOFF_CONVERSATION_ID, STREAM_PATHS,
+    HANDOFF_CONVERSATION_ID, STREAM_PATHS,
     connect_options, context_page, mount_workflow, open_picker, pick_context,
 )
 from ui_tests.fixtures.public_documents import chat_list

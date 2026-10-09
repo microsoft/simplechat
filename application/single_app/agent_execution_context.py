@@ -178,7 +178,7 @@ def capture_execution_identity(user_id, conversation_id=None):
     invocation; concurrent children never share ``g`` or a mutable session.
     """
     from flask import current_app, g, has_request_context, request, session
-    from public_chat_scope import current_public_chat_scope, public_chat_scope_context
+    from public_chat_scope_state import current_public_chat_scope, public_chat_scope_context
 
     if not has_request_context():
         return ExecutionIdentity(user_id, conversation_id)
@@ -226,7 +226,10 @@ def capture_execution_identity(user_id, conversation_id=None):
             if group_id:
                 g.conversation_group_id = group_id
             scope_context = (
-                public_chat_scope_context(user_id, public_scope["selection"], public_scope["workspace_ids"])
+                public_chat_scope_context(
+                    user_id, public_scope["selection"], public_scope["workspace_ids"],
+                    public_scope.get("resolve_public_chat_workspace_ids"),
+                )
                 if public_scope else nullcontext()
             )
             with scope_context:

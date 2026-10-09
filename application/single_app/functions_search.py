@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from public_chat_scope import aggregate_public_workspace_ids, current_public_chat_scope
+from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 from typing import List, Dict, Any
 from content_screening.access import (
     PROVENANCE_FIELD,
@@ -21,7 +21,10 @@ from functions_embedding_compatibility import (
     read_embedding_settings,
     search_with_embedding_profile,
 )
-from functions_public_workspaces import get_user_visible_public_workspace_docs, get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import (
+    get_user_visible_public_workspace_docs,
+    get_user_visible_public_workspace_ids_from_settings,
+)
 from utils_cache import (
     generate_search_cache_key,
     get_cached_search_results,

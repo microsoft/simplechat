@@ -6,7 +6,7 @@ from semantic_kernel.functions import kernel_function
 
 from content_screening.contracts import ScreeningError
 from functions_authentication import get_current_user_id
-from public_chat_scope import current_public_chat_scope
+from public_chat_scope_state import current_public_chat_scope
 from functions_agent_document_citations import annotate_document_search_payload
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,

@@ -2,7 +2,7 @@
 # test_document_search_action_scope_enforcement.py
 """
 Functional test for document search action scope enforcement.
-Version: 0.261.310
+Version: 0.261.311
 Implemented in: 0.261.276
 
 This test ensures that document-search action settings narrow runtime scopes
@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_PATH = REPO_ROOT / "application" / "single_app" / "semantic_kernel_plugins" / "document_search_plugin.py"
 sys.path.insert(0, str(PLUGIN_PATH.parents[1]))
 
-from public_chat_scope import public_chat_scope_context  # noqa: E402
+from public_chat_scope_state import public_chat_scope_context  # noqa: E402
 
 
 def normalize_search_scope(doc_scope, default_scope="all"):

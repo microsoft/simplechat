@@ -51,7 +51,9 @@ from config import cosmos_conversations_container, cosmos_messages_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
 from functions_appinsights import log_event, workflow_log_context
-from public_chat_scope import current_public_chat_scope, prepare_public_chat_scope, public_chat_scope_required
+from public_chat_scope import prepare_public_chat_scope, public_chat_scope_required
+from public_chat_scope_state import current_public_chat_scope
+from functions_public_workspaces import resolve_public_chat_workspace_ids
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
     should_withhold_chat_event, strip_private_chat_checks,
@@ -1419,6 +1421,11 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
     model = resolve_orchestration_model(
         settings, user_id=user_id, seeds=answer_selection(record['plan'], seeds), identity_context=identity,
     )
+    def read_conversation_for_public_chat(requested_conversation_id):
+        if requested_conversation_id != conversation_id:
+            raise PermissionError("That conversation is not available.")
+        return _authorize_context_conversation(requested_conversation_id, user_id)
+
     try:
         principal = capture_execution_identity(user_id, conversation_id)
         context = RunContext(
@@ -1455,6 +1462,8 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
                 record.get('time_zone') if workflow_time_zone_configured(settings) else None,
             ),
         )
+        context.resolve_public_chat_workspace_ids = resolve_public_chat_workspace_ids
+        context.read_conversation_for_public_chat = read_conversation_for_public_chat
         context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
         context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
         context.result_service = services.results
@@ -1750,7 +1759,10 @@ def register_route_backend_orchestration(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @public_chat_scope_required(lambda user_id, conversation_id: _authorize_context_conversation(conversation_id, user_id))
+    @public_chat_scope_required(
+        lambda user_id, conversation_id: _authorize_context_conversation(conversation_id, user_id),
+        get_current_user_id, get_settings, resolve_public_chat_workspace_ids, log_event,
+    )
     def orchestration_plan():
         """Plan one request, streaming progress and ending with a plan or a question."""
         settings = get_settings()
@@ -2167,7 +2179,9 @@ def register_route_backend_orchestration(bp):
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
                 conversation_document = _authorize_context_conversation(resolved_conversation_id, user_id)
                 if seeds.get('public_workspace_selection'):
-                    prepare_public_chat_scope(seeds, user_id, settings, conversation_document)
+                    prepare_public_chat_scope(
+                        seeds, user_id, settings, resolve_public_chat_workspace_ids, conversation_document,
+                    )
                 memory_context = load_orchestration_memory(
                     user_id, conversation_document,
                     effective_request, settings=settings, seeds=seeds,

@@ -128,7 +128,7 @@ import asyncio, types
 import ast
 import csv
 from functools import wraps
-from public_chat_scope import aggregate_public_workspace_ids, public_chat_scope_required
+from public_chat_scope import public_chat_scope_required
 import io
 import inspect
 import json
@@ -149,6 +149,8 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from functions_authentication import *
 from functions_search import *
 from functions_search_service import search_relevant_tabular_candidates
+from functions_public_workspaces import resolve_public_chat_workspace_ids
+from public_chat_scope_state import aggregate_public_workspace_ids
 from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
@@ -17513,7 +17515,10 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @public_chat_scope_required(_authorize_personal_conversation_access)
+    @public_chat_scope_required(
+        _authorize_personal_conversation_access, get_current_user_id, get_settings,
+        resolve_public_chat_workspace_ids, log_event,
+    )
     @_with_m365_pending_action_cards
     def chat_api():
         publish_background_event = getattr(
@@ -21878,7 +21883,10 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
-    @public_chat_scope_required(_authorize_personal_conversation_access)
+    @public_chat_scope_required(
+        _authorize_personal_conversation_access, get_current_user_id, get_settings,
+        resolve_public_chat_workspace_ids, log_event,
+    )
     def chat_stream_api():
         """
         Streaming version of chat endpoint using Server-Sent Events (SSE).

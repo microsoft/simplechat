@@ -38,7 +38,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from functions_appinsights import log_event, workflow_log_context
-from public_chat_scope import (
+from public_chat_scope_state import (
     PublicChatScopeError, aggregate_public_workspace_ids, current_public_chat_scope,
     normalize_public_workspace_selection,
 )

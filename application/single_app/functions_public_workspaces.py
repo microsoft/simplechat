@@ -5,7 +5,10 @@ import functions_authentication
 import functions_settings
 from functions_group import *
 from typing import Iterable
-from public_chat_scope import PublicChatScopeError, normalize_public_workspace_selection
+from public_chat_scope_state import (
+    PublicChatScopeError,
+    normalize_public_workspace_selection,
+)
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import (

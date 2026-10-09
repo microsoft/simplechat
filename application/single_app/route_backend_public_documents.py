@@ -34,7 +34,7 @@ from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
 from functions_debug import *
 from swagger_wrapper import swagger_route, get_auth_security
-from public_chat_scope import PublicChatScopeError
+from public_chat_scope_state import PublicChatScopeError
 
 
 PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [

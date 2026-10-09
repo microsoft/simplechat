@@ -46,7 +46,7 @@ from functions_search import (
     normalize_search_top_n,
 )
 from functions_settings import get_settings, get_user_settings
-from public_chat_scope import aggregate_public_workspace_ids, current_public_chat_scope
+from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 
 
 SUMMARY_DEFAULT_WINDOW_UNIT = "pages"
