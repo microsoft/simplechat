@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.310"
+version: "0.261.317"
 ---
 
 ## How to use this reference
@@ -588,6 +588,38 @@ Render are roles, not global phase buckets: consecutive groups preserve the
 server's actual dependency order, including repeated roles. Plans created by an earlier orchestration version show the stable message that they can't be opened or rerun. Named input descriptions identify the producer,
 output, and whether partial data is allowed. The server remains authoritative
 for binding compatibility, capability admission, source access, and limits.
+
+## Message Retry and attempt history (V2 interface)
+
+Implemented in version: **0.261.317** (`application/single_app/config.py`).
+Use **Retry** when you want another answer to the question you are viewing,
+including an edited question. It reuses that attempt's saved model or agent,
+prompt, sources, and options; changing the composer does not change the retry.
+Unavailable selections are refused rather than silently replaced.
+
+The previous answer disappears immediately while **Preparing retry**, then
+**Thinking** or **Planning**, appears beside the same question. Earlier answers
+stay in **Previous attempt** / **Next attempt** unless you deleted them. A refused
+preparation restores the previous answer without adding an attempt. After
+preparation succeeds, a failure belongs to the new attempt: returning to an older
+successful answer hides that failure, and returning to the failed attempt shows
+it again. **Stop** retains available partial text.
+
+Retry still works from a surviving question after deleting its answer. Retrying
+an earlier question does not delete or regenerate later messages, and those later
+messages are not used to answer the earlier question.
+
+For an orchestrated question, **Retry** creates a **fresh plan requiring review**,
+even when normal approval is Auto. **Approve and run the plan** starts that new
+plan only after your approval. It does not reuse execution approvals, restore
+checkpoints, or undo actions that an earlier run completed. Finish or stop a live
+or waiting execution before regenerating its plan.
+
+Use **Retry from failed step** below when you want checkpoint recovery instead.
+A prepared message retry that has not started offers a notice to select **Retry**
+to continue the same saved preparation. Reloading does not start a new generation
+or automatically execute an orchestration plan. Historical requests without
+complete saved inputs explain how to review a new request in the composer.
 
 ## Orchestration failure recovery (V2 interface)
 

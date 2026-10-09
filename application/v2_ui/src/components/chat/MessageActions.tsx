@@ -591,7 +591,7 @@ export function MessageActions({
                     )
                 ) : workflowDelivery ? null : (
                     <IconButton
-                        label={message.metadata?.orchestration ? 'Review orchestration recovery' : 'Retry'}
+                        label="Retry"
                         onClick={() => void retryMessage(message.id)}
                         disabled={streaming}
                     >

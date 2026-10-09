@@ -328,6 +328,12 @@ export function OrchestrationPlanCard({
                 <OrchestrationDeliverables plan={plan} edits={edits} compact />
             </div>
 
+            {plan.requires_fresh_review ? (
+                <p role="status" className="mt-2 text-xs text-text-2">
+                    Fresh plan: review before running. Earlier completed actions are not undone and may be repeated.
+                </p>
+            ) : null}
+
             {repairs.length > 0 ? (
                 // The plan that runs may differ from what the model proposed; saying so is the
                 // point. `validation.repairs` is the honest record of what the server corrected.

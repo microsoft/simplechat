@@ -6,6 +6,8 @@
 // Keeping them in one module means a backend path change is a one-line edit here.
 
 import { api, apiUrl, request, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
+import type { SelectionFields } from './chatRequestSelection';
+import type { OrchestrationPlanRequest } from './orchestration';
 import { buildDocumentListParams } from './documentExplorer';
 import { artifactDownloadPath, artifactFileName } from './generatedArtifacts';
 import { ANALYSIS_PAGE_SIZE, analysisResultContext, validateAnalysisPage } from './savedAnalysis';
@@ -292,19 +294,48 @@ export const deleteMessage = (messageId: string, deleteThread = false) =>
  */
 export interface AttemptChatRequest {
     success: boolean;
+    thread_id?: string;
     new_attempt?: number;
     user_message_id?: string;
+    user_message?: ChatMessage;
+    attempt_state?: string;
+    available_attempts?: number[];
     chat_request: ChatStreamRequest & { conversation_id: string };
 }
 
+export interface AttemptOrchestrationRequest {
+    success: boolean;
+    thread_id: string;
+    new_attempt: number;
+    user_message_id: string;
+    user_message: ChatMessage;
+    attempt_state: string;
+    available_attempts: number[];
+    turn_id: string;
+    requires_fresh_review: true;
+    plan_request: OrchestrationPlanRequest;
+}
+
+export const regenerateOrchestrationMessage = (
+    messageId: string,
+    options: SelectionFields & { submission_id?: string } = {},
+) => api.post<AttemptOrchestrationRequest>(`/api/v2/orchestration/messages/${encodeURIComponent(messageId)}/regenerate`, {
+    ...options,
+    submission_id: options.submission_id || crypto.randomUUID(),
+});
+
 export const retryMessage = (
     messageId: string,
-    options: { model?: string; reasoning_effort?: string; agent_info?: unknown } = {},
-) => api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/retry`, options);
+    options: SelectionFields & { model?: string; submission_id?: string } = {},
+) => api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/retry`, {
+    ...options,
+    submission_id: options.submission_id || crypto.randomUUID(),
+});
 
-export const editMessage = (messageId: string, content: string) =>
+export const editMessage = (messageId: string, content: string, submissionId = crypto.randomUUID()) =>
     api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/edit`, {
         content,
+        submission_id: submissionId,
     });
 
 export const switchAttempt = (messageId: string, direction: 'prev' | 'next') =>

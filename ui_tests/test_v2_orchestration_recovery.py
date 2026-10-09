@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.303
+Version: 0.261.317
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
@@ -369,14 +369,16 @@ def test_failure_persists_in_main_and_drawer_and_confirmed_retry_reuses_progress
     assert state["messages"][-1]["model_deployment_name"] == "original-model"
 
 
-def test_reload_keeps_failure_without_automatic_retry_and_message_retry_is_not_plain_chat(recovery_ui):
+def test_reload_keeps_failure_without_automatic_retry_and_recovery_is_explicit(recovery_ui):
     page, api = recovery_ui
     api.finish(api.plan["run_id"])
     api.plan["approval"]["mode"] = "auto"
     mount_recovery(page, api, saved=True)
     expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
     assert not api.calls("/run") and not api.calls("/retry")
-    page.get_by_role("button", name="Review orchestration recovery").click(force=True)
+    expect(page.get_by_role("button", name="Retry", exact=True).first).to_be_enabled()
+    expect(page.get_by_role("button", name="Review orchestration recovery")).to_have_count(0)
+    page.get_by_role("button", name="Review saved attempt").first.click(force=True)
     expect(page.get_by_role("complementary", name="Review drawer")).to_be_visible()
     assert not any("/api/message/" in request["path"] for request in api.requests)
 

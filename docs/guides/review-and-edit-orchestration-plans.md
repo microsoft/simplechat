@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.201"
+version: "0.261.317"
 ---
 
 ## Decide what should run
@@ -278,8 +278,10 @@ document or integration you can no longer use may not be restorable.
 ## Recover before a plan exists
 
 Since **0.261.115**, **Retry** on a failed planning question retries planning with
-the original prompt, model or agent selection, documents, scope, and approval
-mode retained in that browser tab. It does not use the temporary chat bubble as
+the original prompt, model or agent selection, documents, and scope retained in
+that browser tab. Since **0.261.317**, the resulting plan always requires review,
+including when the original approval mode was Auto. It does not use the temporary
+chat bubble as
 a saved message ID or append a duplicate question. Stop interrupts the local
 planning request; a late response cannot populate another or deleted conversation.
 
@@ -288,6 +290,34 @@ original message into the composer, review its selections, and send it deliberat
 The application does not guess a model or document selection from current controls.
 If a plan or clarification already exists, continue from that plan or question
 instead; Retry must not discard accepted answers or start an independent execution.
+
+## Generate a fresh plan from a saved question
+
+Implemented in version: **0.261.317** (`application/single_app/config.py`).
+Select the message's **Retry** when you want a new plan for the question you are
+viewing, not a continuation of its old execution. This works after deleting the
+answer, provided the question and complete saved planning inputs remain available.
+
+Retry preserves the viewed attempt's wording, prompt, model or agent, sources,
+options, and accepted clarification answers. Current composer selections do not
+replace them. Sources and permissions are checked again; a missing original
+selection is explained rather than replaced with a different one.
+
+The old answer is hidden while the new attempt plans at the question's position.
+It remains available through the message's attempt arrows unless you deleted it.
+Failures belong to their own attempt, so viewing a successful older answer does
+not leave the newer failure over that answer.
+
+Review the new plan and select **Approve and run the plan** when you want its work
+to execute. Retry cannot run it automatically, even with Auto configured or after
+a clarification. Editing the regenerated plan does not remove that requirement.
+Earlier completed actions are not undone and could be repeated by the new plan.
+Use **Retry from failed step** for recovery that reuses saved completed work.
+
+Finish or stop a running or waiting execution before requesting another plan.
+Retrying an earlier question keeps later messages, but excludes them from the
+earlier question's planning context. A request whose planning failed before a run
+was saved remains retryable when its saved inputs are complete.
 
 ## Recover from a failed change
 

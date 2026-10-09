@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.315
+Version: 0.261.317
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -608,6 +608,18 @@ def test_workflow_proposal_routes_keep_the_orchestration_security_policy() -> No
         assert route.function_name == expected[path]
         assert route.route_target == "bp"
         assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
+def test_message_regeneration_keeps_the_authenticated_orchestration_policy() -> None:
+    """A fresh generation never bypasses the owned conversation or authenticated Blueprint."""
+    path = "/api/v2/orchestration/messages/<message_id>/regenerate"
+    routes = [route for route in iter_route_functions() if route.path == path]
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.file_name == "route_backend_orchestration.py"
+    assert route.function_name == "regenerate_orchestration_message"
+    assert route.route_target == "bp"
+    assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
 
 
 def test_workflow_run_link_route_keeps_the_orchestration_security_policy() -> None:

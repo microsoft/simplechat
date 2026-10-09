@@ -1156,6 +1156,17 @@ class HarnessExecution:
         )
         return reasoning
 
+    def _regeneration_thread(self):
+        if not self.record.get("regeneration_of_run_id"):
+            return None
+        question = self.lease.message_container.read_item(
+            item=self.record.get("user_message_id"), partition_key=self.record["conversation_id"],
+        )
+        thread = (question.get("metadata") or {}).get("thread_info") or {}
+        if question.get("role") != "user" or not thread.get("thread_id"):
+            raise HarnessExecutionError("context_unavailable")
+        return deepcopy(thread)
+
     def _file_state(self):
         if self.services is None or not any(
             step.get("enabled", True) and step["capability_id"] == "render_file"
@@ -1559,6 +1570,9 @@ class HarnessExecution:
                 if workflow_result_reads and workflow_result_contexts else {}
             ),
         }
+        thread = self._regeneration_thread()
+        if thread:
+            metadata["thread_info"] = thread
         documents, web, tools = _partition_citations(citations)
         document = {
             "id": message_id, "conversation_id": self.record["conversation_id"],
@@ -1675,6 +1689,19 @@ class HarnessExecution:
                     finalization_status="failed", outputs=[],
                 ),
             ]
+        if self.record.get("requires_fresh_review"):
+            status = (self._final_record or {}).get("status") or "failed"
+            state = {"completed": "completed", "failed": "failed", "cancelled": "interrupted"}.get(status)
+            if state:
+                # The attempt store is application-owned and must remain deferred until execution.
+                from functions_chat_retry import set_retry_attempt_state
+
+                set_retry_attempt_state(
+                    self.lease.message_container, self.record["conversation_id"],
+                    self.record.get("user_message_id"), state,
+                    error=(self._final_record or {}).get("error") if state != "completed" else None,
+                    run_id=self.record["id"],
+                )
         return list(self._frames)
 
     def _preparation_error(self, error):

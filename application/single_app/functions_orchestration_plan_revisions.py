@@ -69,12 +69,14 @@ _IMMUTABLE_FIELDS = (
 )
 # Turn fields only some turns have, kept exactly like the immutable fields: a revision plans
 # the same request, in the same time zone, from the same server-built workflow context.
-_OPTIONAL_TURN_FIELDS = ('time_zone', 'workflow_planning')
+_OPTIONAL_TURN_FIELDS = (
+    'time_zone', 'workflow_planning', 'regeneration_of_run_id', 'requires_fresh_review',
+)
 _PLAN_FIELDS = (
     'plan_id', 'run_id', 'turn_id', 'revision', 'conversation_id', 'user_id',
     'planner_contract_version', 'intent', 'assumptions', 'approval', 'status',
     'steps', 'inputs', 'outputs', 'validation', 'edit_version',
-    'final_response', 'model_routing', 'planner', 'deliverables',
+    'final_response', 'model_routing', 'planner', 'deliverables', 'requires_fresh_review',
 )
 _STEP_FIELDS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
@@ -987,7 +989,7 @@ def _require_approval_floor(record, plan):
 def claim_plan_run(
     run_id, user_id, conversation_id, *, plan_id=None, expected_version=None,
     edits=None, conversation_context=None, result_alias_resolver=None,
-    export_catalog=None, composition_profiles=None, settings=None,
+    export_catalog=None, composition_profiles=None, settings=None, reviewed_regeneration=False,
 ):
     """Atomically turn a current pre-execution plan into the one executable run.
 
@@ -996,6 +998,11 @@ def claim_plan_run(
     The start and deadline use server settings and share that same conditional write.
     """
     record = read_revision_run(run_id, user_id, conversation_id)
+    if record.get('requires_fresh_review') and not record.get('retry_of_run_id') and reviewed_regeneration is not True:
+        raise PlanRevisionError(
+            'Review and approve this regenerated plan before running it.',
+            code='fresh_review_required',
+        )
     if record.get('checkpoints_deleted') or record.get('latest_attempt_run_id'):
         raise PlanRevisionError('This execution is no longer current.', code='already_run')
     if record.get('retry_of_run_id') and edits:

@@ -1,7 +1,7 @@
 # test_v2_orchestration_planning_retry.py
 """
 Browser regressions for failed, unpersisted orchestration planning turns.
-Version: 0.261.226
+Version: 0.261.317
 Implemented in: 0.261.115
 Leaving a planning turn for a new chat also releases its Thinking state and Stop: 0.261.226
 
@@ -98,15 +98,32 @@ class PlanningApi:
             if "pending-user-" in path:
                 route.fulfill(status=404, json={"error": "Message not found."})
             else:
-                route.fulfill(json={"chat_request": {
-                    "conversation_id": CONVERSATION, "message": "Ordinary persisted message",
-                }})
+                question = {
+                    "id": "ordinary-retry-user", "conversation_id": CONVERSATION,
+                    "role": "user", "content": "Ordinary persisted message",
+                    "metadata": {
+                        "thread_info": {"thread_id": "ordinary-thread", "thread_attempt": 2, "active_thread": True},
+                        "response_attempt": {"kind": "chat", "state": "prepared"},
+                    },
+                }
+                self.messages = [question]
+                route.fulfill(json={
+                    "user_message": question, "user_message_id": question["id"],
+                    "thread_id": "ordinary-thread", "new_attempt": 2, "available_attempts": [1, 2],
+                    "chat_request": {
+                        "conversation_id": CONVERSATION, "message": question["content"],
+                        "retry_user_message_id": question["id"], "retry_thread_id": "ordinary-thread",
+                        "retry_thread_attempt": 2,
+                    },
+                })
             return
         if path == "/api/chat/stream":
             self.messages.append({
                 "id": "ordinary-answer", "conversation_id": CONVERSATION,
                 "role": "assistant", "content": "Ordinary retry answer.",
+                "metadata": {"thread_info": {"thread_id": "ordinary-thread", "thread_attempt": 2, "active_thread": True}},
             })
+            self.messages[0]["metadata"]["response_attempt"]["state"] = "completed"
             event = {
                 "done": True, "conversation_id": CONVERSATION,
                 "message_id": "ordinary-answer", "full_content": "Ordinary retry answer.",
@@ -228,7 +245,7 @@ def test_failed_planning_retry_reuses_exact_context_without_a_second_bubble(plan
     page.get_by_role("button", name="Retry", exact=True).click()
     expect(page.get_by_role("button", name="Approve and run the plan").first).to_be_visible()
     assert len(api.calls(PLAN)) == 2
-    assert api.calls(PLAN)[0]["body"] == api.calls(PLAN)[1]["body"]
+    assert api.calls(PLAN)[1]["body"] == {**api.calls(PLAN)[0]["body"], "requires_fresh_review": True}
     state = page.evaluate("""() => {
         const S = window.OrchHarness.stores.chat.useChatStore.getState();
         return {messages: S.messages, error: S.streamError, streaming: S.streaming};
@@ -269,7 +286,7 @@ def test_failed_planning_retry_keeps_the_original_group_agent(planning_ui):
     api.mode = "plan"
     page.get_by_role("button", name="Retry", exact=True).click()
     expect(page.get_by_role("button", name="Approve and run the plan").first).to_be_visible()
-    assert api.calls(PLAN)[0]["body"] == api.calls(PLAN)[1]["body"]
+    assert api.calls(PLAN)[1]["body"] == {**api.calls(PLAN)[0]["body"], "requires_fresh_review": True}
     assert api.calls(PLAN)[1]["body"]["agent_info"] == seeds["agent_info"]
     assert "model_deployment" not in api.calls(PLAN)[1]["body"]
 

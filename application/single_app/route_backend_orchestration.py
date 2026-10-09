@@ -40,27 +40,34 @@ import uuid
 from copy import deepcopy
 from agent_execution_context import capture_execution_identity
 from datetime import datetime, timezone
+from functools import wraps
 
 from azure.cosmos import exceptions
 from azure.core.exceptions import AzureError
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Response, g, has_request_context, jsonify, request, session, stream_with_context
+from flask import Response, g, has_request_context, jsonify, make_response, request, session, stream_with_context
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
 from functions_appinsights import log_event, workflow_log_context
+from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from public_chat_scope import prepare_public_chat_scope, public_chat_scope_required
-from public_chat_scope_state import current_public_chat_scope
+from public_chat_scope_state import PublicChatScopeError, current_public_chat_scope
 from functions_public_workspaces import resolve_public_chat_workspace_ids
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
     should_withhold_chat_event, strip_private_chat_checks,
 )
 from functions_chat_content_review import (
-    checked_history_messages, record_blocked_chat_attempt, reply_is_retracted,
+    checked_history_messages, patch_chat_message_metadata, record_blocked_chat_attempt, reply_is_retracted,
 )
+from functions_chat_retry import (
+    MODEL_FIELDS, ChatRetryError, available_retry_attempts, claim_retry_attempt, load_owned_retry_message,
+    prepare_retry_attempt, reconcile_prepared_retry, retry_history_prefix, set_retry_attempt_state,
+)
+from functions_message_deletion import is_soft_deleted_message
 from functions_saved_analysis import (
     analysis_result_contexts,
     load_saved_analysis,
@@ -419,6 +426,7 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
             result_alias_resolver=lambda current: admitted_result_aliases(current, services.results),
             export_catalog=services.export_catalog(), composition_profiles=composition_profiles(),
             settings=settings,
+            reviewed_regeneration=data.get('reviewed_regeneration') is True,
         )
     except (
         PlanRevisionError, AzureError, ResultContractError, PermissionError,
@@ -427,6 +435,11 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
     ) as exc:
         payload, status = _plan_edit_error(exc)
         return jsonify(payload), status
+    if claimed.get('requires_fresh_review'):
+        set_retry_attempt_state(
+            cosmos_messages_container, conversation_id, claimed.get('user_message_id'), 'running',
+            run_id=claimed['run_id'], expected_states={'awaiting_review'},
+        )
     lease = ExecutionLease(
         claimed, lambda: _authorize_context_conversation(conversation_id, user_id),
         message_container=cosmos_messages_container,
@@ -512,7 +525,7 @@ def _document_labels(candidates):
     }
 
 
-def _load_ledger(conversation_id, user_id, settings):
+def _load_ledger(conversation_id, user_id, settings, *, message_ids=None):
     """Earlier runs in this conversation, summarised for the planner.
 
     A ledger that cannot be read is not a reason to refuse to plan; it only means this turn
@@ -579,6 +592,7 @@ def _load_ledger(conversation_id, user_id, settings):
         run for run in runs
         if run.get('user_message_id') in visible
         and (not run.get('assistant_message_id') or run['assistant_message_id'] in visible)
+        and (message_ids is None or run.get('user_message_id') in message_ids)
     ]
     safe_runs = []
     for run in runs:
@@ -631,6 +645,421 @@ def _authorize_context_conversation(conversation_id, user_id):
 
 
 WORKFLOW_REPLAY_RUN_MANAGED_CODE = 'workflow_replay_run_managed'
+
+
+def _regeneration_unavailable():
+    return ChatRetryError(
+        'This request has no complete saved planning inputs. Copy the question to the composer, '
+        'review its selections, and deliberately create a new plan.',
+        code='orchestration_regeneration_context_unavailable',
+    )
+
+
+def _regeneration_source(message_id, user_id):
+    clicked, _ = load_owned_retry_message(
+        cosmos_messages_container, cosmos_conversations_container, user_id, message_id,
+    )
+    metadata = clicked.get('metadata') or {}
+    orchestration = metadata.get('orchestration') or {}
+    run_id = orchestration.get('run_id') or (metadata.get('response_attempt') or {}).get('run_id')
+    turn_id = orchestration.get('turn_id') or metadata.get('orchestration_turn_id')
+    record = (
+        get_latest_turn_run(clicked['conversation_id'], user_id, turn_id)
+        if clicked.get('role') == 'user' and turn_id
+        else get_orchestration_run(run_id, user_id, clicked['conversation_id'], strict=True) if run_id else None
+    )
+    if not record and clicked.get('role') == 'user':
+        attempt = metadata.get('response_attempt') or {}
+        if attempt.get('kind') == 'orchestration' and attempt.get('state') in ('failed', 'interrupted'):
+            _restore_prepared_regeneration(clicked, user_id, get_settings())
+            parent = get_orchestration_run(
+                (metadata.get('orchestration_regeneration') or {}).get('source_run_id'),
+                user_id, clicked['conversation_id'], strict=True,
+            )
+            return clicked, parent
+    if not record or is_legacy_plan(record.get('plan')):
+        raise _regeneration_unavailable()
+    if _is_workflow_replay_run(record):
+        raise ChatRetryError(_workflow_replay_run_message(), code=WORKFLOW_REPLAY_RUN_MANAGED_CODE)
+    if clicked.get('role') == 'user':
+        source = clicked
+    elif clicked.get('role') == 'assistant' and record.get('user_message_id'):
+        source, _ = load_owned_retry_message(
+            cosmos_messages_container, cosmos_conversations_container, user_id, record['user_message_id'],
+        )
+    else:
+        raise _regeneration_unavailable()
+    if record.get('user_message_id') != source['id'] or record.get('user_message') != source.get('content'):
+        raise _regeneration_unavailable()
+    if record.get('latest_attempt_run_id'):
+        latest = get_orchestration_run(
+            record['latest_attempt_run_id'], user_id, source['conversation_id'], strict=True,
+        )
+        if not latest or latest.get('user_message_id') != source['id']:
+            raise _regeneration_unavailable()
+        record = latest
+    _require_regeneration_source_idle(record)
+    return source, record
+
+
+def _require_regeneration_source_idle(record):
+    terminal = {'completed', 'failed', 'cancelled', 'canceled', 'interrupted', 'expired', 'timed_out'}
+    if record.get('status') in ('running', 'waiting') or (
+        record.get('started_at') and record.get('status') not in terminal
+    ):
+        raise ChatRetryError(
+            'This execution is still active or waiting for input. Finish or cancel it before regenerating its plan.',
+            code='orchestration_regeneration_busy',
+        )
+
+
+def _regeneration_request(record):
+    seeds = record.get('seeds') or record.get('original_seeds')
+    if not isinstance(seeds, dict) or not (
+        seeds.get('model') or seeds.get('agent') or seeds.get('model_routing') == 'auto'
+    ):
+        raise _regeneration_unavailable()
+    body = {
+        'message': record['user_message'], 'conversation_id': record['conversation_id'],
+        'selected_document_ids': deepcopy(seeds.get('document_ids') or []),
+        'doc_scope': seeds.get('doc_scope') or 'all',
+        'tags': deepcopy(seeds.get('tags') or []),
+        'document_filter_mode': seeds.get('document_filter_mode') or 'intersection',
+        'active_group_ids': deepcopy(seeds.get('active_group_ids') or []),
+        'active_public_workspace_ids': deepcopy(seeds.get('active_public_workspace_ids') or []),
+        'public_workspace_selection': deepcopy(seeds.get('public_workspace_selection')),
+        'reasoning_effort': seeds.get('reasoning_effort'),
+        'web_search_enabled': bool(seeds.get('web_search')),
+        'image_generation_enabled': bool(seeds.get('image_generation')),
+        'image_references': deepcopy(seeds.get('image_references') or []),
+        'required_capabilities': deepcopy(seeds.get('required_capabilities') or []),
+        'elicitation_references': deepcopy(seeds.get('elicitation_references') or []),
+    }
+    if seeds.get('agent'):
+        body['agent_info'] = deepcopy(seeds['agent'])
+    if seeds.get('model_routing') == 'auto':
+        body['model_routing'] = 'auto'
+    elif seeds.get('model'):
+        body.update({key: value for key, value in seeds['model'].items() if key in MODEL_FIELDS})
+    if seeds.get('prompt'):
+        body['prompt_info'] = deepcopy(seeds['prompt'])
+    if record.get('time_zone'):
+        body['time_zone'] = record['time_zone']
+    return body
+
+
+def _regeneration_input_fingerprint(record):
+    return hashlib.sha256(json.dumps(
+        {'request': _regeneration_request(record), 'answers': record.get('answered_questions') or []},
+        sort_keys=True, ensure_ascii=False, separators=(',', ':'),
+    ).encode('utf-8')).hexdigest()
+
+
+def _authorize_regeneration_request(source, body, user_id, settings, *, overrides=None):
+    # Shared replay authorization loads after both route modules have registered.
+    from route_backend_conversations import _build_authorized_message_replay_request
+
+    seeds = resolve_seeds(body)
+    seeds['elicitation_references'] = deepcopy(body.get('elicitation_references') or [])
+    synthetic = deepcopy(source)
+    metadata = synthetic.setdefault('metadata', {})
+    metadata['image_generation'] = {'enabled': False}
+    metadata.pop('agent_selection', None)
+    metadata['model_selection'] = {
+        'selected_model': body.get('model_deployment'),
+        **{key: body[key] for key in MODEL_FIELDS if key != 'model_deployment' and key in body},
+        'reasoning_effort': body.get('reasoning_effort'),
+    }
+    if body.get('agent_info'):
+        metadata['agent_selection'] = deepcopy(body['agent_info'])
+    metadata['workspace_search'] = {
+        'requested_document_ids': seeds['document_ids'], 'document_scope': seeds['doc_scope'],
+        'tags': seeds['tags'], 'active_group_ids': seeds['active_group_ids'],
+        'active_public_workspace_ids': seeds['active_public_workspace_ids'],
+        'public_workspace_selection': seeds['public_workspace_selection'],
+        'document_filter_mode': seeds['document_filter_mode'],
+    }
+    authorized = _build_authorized_message_replay_request(
+        user_id, synthetic, overrides or {}, settings, allow_auto_selection=seeds.get('model_routing') == 'auto',
+    )
+    result = deepcopy(body)
+    explicit_selection = any((overrides or {}).get(key) for key in (*MODEL_FIELDS, 'model', 'agent_info'))
+    if explicit_selection:
+        result.pop('model_routing', None)
+    for key in (*MODEL_FIELDS, 'agent_info', 'reasoning_effort'):
+        result.pop(key, None)
+    if authorized.get('agent_info'):
+        result['agent_info'] = authorized['agent_info']
+    else:
+        for key in (*MODEL_FIELDS, 'reasoning_effort'):
+            if authorized.get(key):
+                result[key] = authorized[key]
+    if seeds.get('public_workspace_selection'):
+        prepare_public_chat_scope(
+            seeds, user_id, settings, resolve_public_chat_workspace_ids,
+            _authorize_context_conversation(source['conversation_id'], user_id),
+        )
+    resolve_elicitation_references(
+        seeds['elicitation_references'], user_id, source['conversation_id'], settings=settings,
+    )
+    if seeds['document_ids']:
+        candidates, _ = resolve_candidate_documents(
+            source['content'], user_id, seeds=seeds,
+            conversation_id=source['conversation_id'], settings=settings,
+        )
+        available = {candidate.get('document_id') for candidate in candidates}
+        if set(seeds['document_ids']) - available:
+            raise ChatRetryError('An original document is unavailable. Review the request sources.', code='retry_source_unavailable')
+    else:
+        candidates = []
+    if seeds.get('image_references'):
+        resolve_image_reference_candidates(
+            seeds, user_id, source['conversation_id'], candidates=candidates, settings=settings,
+        )
+    return result
+
+
+def _load_regeneration_snapshot(source, user_id, settings):
+    """Bound context by the original logical turn, including earlier retried turns."""
+    _authorize_context_conversation(source['conversation_id'], user_id)
+    preview = deepcopy(source)
+    metadata = preview.setdefault('metadata', {})
+    metadata['retried'] = True
+    thread = metadata.setdefault('thread_info', {})
+    thread.setdefault('thread_id', f"orchestration_thread_{uuid.uuid5(uuid.NAMESPACE_URL, source['id']).hex}")
+    anchor = thread.get('root_timestamp') or source['timestamp']
+    thread['root_timestamp'] = anchor
+    rows = list(cosmos_messages_container.query_items(
+        query=(
+            f'SELECT TOP {HISTORY_SCAN_LIMIT} * FROM c WHERE c.conversation_id = @conversation_id '
+            'AND (c.timestamp < @anchor OR c.metadata.thread_info.root_timestamp < @anchor) '
+            'AND c.role IN ("user", "assistant") ORDER BY c.timestamp DESC'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': source['conversation_id']},
+            {'name': '@anchor', 'value': anchor},
+        ],
+        partition_key=source['conversation_id'],
+    ))
+    truncated = len(rows) >= HISTORY_SCAN_LIMIT
+    rows = retry_history_prefix([*rows, preview], preview['id'])[:-1]
+    rows = checked_history_messages(rows, for_model=True)
+    rows = sanitize_saved_analysis_messages(rows, user_id)
+    return build_conversation_snapshot(
+        rows, settings, truncated=truncated, logical_order=True,
+    )
+
+
+def _link_regeneration_thread(source, record, user_id):
+    if (source.get('metadata') or {}).get('thread_info', {}).get('thread_id'):
+        return source
+    thread = {
+        'thread_id': f"orchestration_thread_{uuid.uuid5(uuid.NAMESPACE_URL, source['id']).hex}",
+        'thread_attempt': 1, 'active_thread': True, 'previous_thread_id': None,
+        'root_timestamp': source['timestamp'],
+    }
+    source.setdefault('metadata', {})['thread_info'] = thread
+    source = patch_chat_message_metadata(cosmos_messages_container, source)
+    records = [record, *list_conversation_runs(source['conversation_id'], user_id, limit=100, strict=True)]
+    linked = set()
+    for saved_run in records:
+        answer_id = saved_run.get('assistant_message_id')
+        if not answer_id or answer_id in linked or saved_run.get('user_message_id') != source['id']:
+            continue
+        linked.add(answer_id)
+        try:
+            answer = cosmos_messages_container.read_item(item=answer_id, partition_key=source['conversation_id'])
+        except CosmosResourceNotFoundError:
+            continue
+        if answer.get('conversation_id') != source['conversation_id'] or is_soft_deleted_message(answer):
+            continue
+        answer.setdefault('metadata', {})['thread_info'] = deepcopy(thread)
+        patch_chat_message_metadata(cosmos_messages_container, answer)
+    return source
+
+
+def _prepared_regeneration_response(question):
+    turn_id = (question.get('metadata') or {}).get('orchestration', {}).get('turn_id')
+    if not turn_id:
+        turn_id = f"turn_regeneration_{uuid.uuid5(uuid.NAMESPACE_URL, question['id']).hex}"
+        metadata = question.setdefault('metadata', {})
+        metadata.setdefault('orchestration', {}).update({'turn_id': turn_id, 'requires_fresh_review': True})
+        metadata['orchestration_turn_id'] = turn_id
+        question = patch_chat_message_metadata(
+            cosmos_messages_container, question, fields=('orchestration', 'orchestration_turn_id'),
+        )
+    thread = question['metadata']['thread_info']
+    return {
+        'success': True, 'user_message': question, 'user_message_id': question['id'],
+        'thread_id': thread['thread_id'], 'new_attempt': thread['thread_attempt'],
+        'attempt_state': question['metadata']['response_attempt']['state'],
+        'turn_id': turn_id, 'requires_fresh_review': True,
+        'available_attempts': available_retry_attempts(cosmos_messages_container, question['conversation_id'], thread['thread_id']),
+        'plan_request': {
+            **deepcopy(question['metadata']['orchestration_inputs']),
+            'turn_id': turn_id, 'retry_user_message_id': question['id'], 'approval_mode': 'manual',
+            'retry_thread_id': thread['thread_id'], 'retry_thread_attempt': thread['thread_attempt'],
+        },
+    }
+
+
+def _restore_prepared_regeneration(question, user_id, settings):
+    metadata = question.get('metadata') or {}
+    lineage = metadata.get('orchestration_regeneration') or {}
+    parent = get_orchestration_run(
+        lineage.get('source_run_id'), user_id, question['conversation_id'], strict=True,
+    )
+    if not parent or _regeneration_input_fingerprint(parent) != lineage.get('source_input_fingerprint'):
+        raise ChatRetryError('The original planning inputs changed. Review a new request.', code='retry_source_changed')
+    _require_regeneration_source_idle(parent)
+    if parent.get('latest_attempt_run_id'):
+        latest = get_orchestration_run(
+            parent['latest_attempt_run_id'], user_id, question['conversation_id'], strict=True,
+        )
+        if not latest or latest.get('user_message_id') != parent.get('user_message_id'):
+            raise _regeneration_unavailable()
+        _require_regeneration_source_idle(latest)
+    body = metadata.get('orchestration_inputs')
+    if not isinstance(body, dict) or body.get('message') != question.get('content') or body.get('conversation_id') != question['conversation_id']:
+        raise _regeneration_unavailable()
+    normalized = normalize_history_message(question)
+    if not normalized:
+        raise ChatRetryError('This question is unavailable or no longer selected. Reload it.', code='retry_source_changed')
+    body = _authorize_regeneration_request(question, body, user_id, settings)
+    snapshot = _load_regeneration_snapshot(question, user_id, settings)
+    answers = deepcopy(metadata.get('orchestration_clarification_answers', parent.get('answered_questions') or []))
+    validate_clarification_answers(answers)
+    return body, {
+        'user_message_id': question['id'], 'user_message_fingerprint': normalized['fingerprint'],
+        'conversation_context': snapshot, 'answered_questions': answers,
+        'regeneration_of_run_id': parent['run_id'], 'requires_fresh_review': True,
+        'prompt_selection': deepcopy(metadata.get('prompt_selection') or parent.get('prompt_selection')),
+        'retry_thread_info': deepcopy(metadata.get('thread_info') or {}),
+    }
+
+
+def _save_regeneration_inputs(turn_context, user_id, conversation_id):
+    if not turn_context.get('requires_fresh_review') or not turn_context.get('user_message_id'):
+        return
+    question, _ = load_owned_retry_message(
+        cosmos_messages_container, cosmos_conversations_container, user_id, turn_context['user_message_id'],
+    )
+    metadata = question.setdefault('metadata', {})
+    if (metadata.get('response_attempt') or {}).get('kind') != 'orchestration':
+        return
+    metadata['orchestration_inputs'] = _regeneration_request({
+        **turn_context, 'conversation_id': conversation_id,
+    })
+    metadata['orchestration_clarification_answers'] = deepcopy(turn_context.get('answered_questions') or [])
+    patch_chat_message_metadata(
+        cosmos_messages_container, question, fields=('orchestration_inputs', 'orchestration_clarification_answers'),
+    )
+    set_retry_attempt_state(
+        cosmos_messages_container, conversation_id, question['id'], 'planning',
+        expected_states={'awaiting_clarification'},
+    )
+
+
+def _regeneration_error(exc):
+    if isinstance(exc, ChatRetryError):
+        payload, status = {'error': exc.public_message, 'code': exc.code}, exc.status_code
+    elif isinstance(exc, SubmissionIdError):
+        payload, status = {'error': str(exc), 'code': 'invalid_request'}, 400
+    elif isinstance(exc, (ModelCatalogError, ImageReferenceError, PublicChatScopeError)):
+        payload, status = {'error': exc.public_message, 'code': exc.code}, getattr(exc, 'status_code', 400)
+    else:
+        return _plan_edit_error(exc)
+    log_event('[ORCHESTRATION] Regeneration was refused.', level=logging.WARNING, extra={'code': payload['code']})
+    return payload, status
+
+
+def _with_prepared_regeneration(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True) or {}
+        question_id = data.get('retry_user_message_id') if isinstance(data, dict) else None
+        if not question_id:
+            return view(*args, **kwargs)
+        question = None
+        try:
+            user_id = get_current_user_id()
+            question, _ = load_owned_retry_message(
+                cosmos_messages_container, cosmos_conversations_container, user_id, question_id,
+            )
+            body, context = _restore_prepared_regeneration(question, user_id, get_settings())
+            question = claim_retry_attempt(
+                cosmos_messages_container, cosmos_conversations_container, user_id,
+                question['conversation_id'], question['id'], kind='orchestration',
+                thread_id=data.get('retry_thread_id'), thread_attempt=data.get('retry_thread_attempt'),
+            )
+            turn_id = question['metadata']['orchestration']['turn_id']
+            body.update({'turn_id': turn_id, 'retry_user_message_id': question['id'], 'approval_mode': 'manual'})
+            data.clear()
+            data.update(body)
+            g.orchestration_regeneration_context = context
+            result = make_response(view(*args, **kwargs))
+            if result.status_code >= 400:
+                payload = result.get_json(silent=True) or {}
+                set_retry_attempt_state(
+                    cosmos_messages_container, question['conversation_id'], question['id'], 'failed',
+                    error=payload.get('error') or 'Planning could not start.', expected_states={'planning'},
+                )
+            return result
+        except (
+            ChatRetryError, ConversationContextError, ElicitationContextError, ModelCatalogError,
+            ImageReferenceError, PublicChatScopeError, CatalogResolutionError,
+            PermissionError, ScreeningError, AzureError,
+        ) as exc:
+            payload, status = _regeneration_error(exc)
+            if question:
+                set_retry_attempt_state(
+                    cosmos_messages_container, question['conversation_id'], question['id'], 'failed',
+                    error=payload['error'], expected_states={'prepared'},
+                )
+            return jsonify(payload), status
+        except Exception:
+            if question:
+                set_retry_attempt_state(
+                    cosmos_messages_container, question['conversation_id'], question['id'], 'failed',
+                    error='The regenerated plan could not be confirmed.', expected_states={'prepared', 'planning'},
+                )
+            raise
+    return wrapped
+
+
+def _regeneration_planning_events(events, context):
+    question_id = context.get('user_message_id') if context.get('requires_fresh_review') else None
+    terminal = False
+    try:
+        for frame in events:
+            if not question_id or not frame.startswith('data:'):
+                yield frame
+                continue
+            event = json.loads(frame.partition('data:')[2].strip())
+            state = {
+                'orchestration_plan': 'awaiting_review', 'orchestration_elicitation': 'awaiting_clarification',
+            }.get(event.get('type'))
+            if event.get('error'):
+                state = 'failed'
+            if state:
+                set_retry_attempt_state(
+                    cosmos_messages_container, context['conversation_id'], question_id, state,
+                    error=event.get('error'), run_id=(event.get('plan') or {}).get('run_id'),
+                )
+                terminal = True
+            thread = context.get('retry_thread_info') or {}
+            yield serialize_sse({
+                **event, 'user_message_id': question_id,
+                'retry_thread_id': thread.get('thread_id'), 'retry_thread_attempt': thread.get('thread_attempt'),
+                'requires_fresh_review': True,
+            })
+    finally:
+        if question_id and not terminal:
+            set_retry_attempt_state(
+                cosmos_messages_container, context['conversation_id'], question_id, 'interrupted',
+                error='Planning was interrupted. Retry this question to create another plan.',
+                expected_states={'planning'},
+            )
 
 
 def _plan_replay():
@@ -1055,6 +1484,11 @@ def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id)
 def _persist_planned_turn(
     plan, turn_context, user_id, conversation_id, submission=None, expected_previous_run=None,
 ):
+    if turn_context.get('requires_fresh_review'):
+        plan['requires_fresh_review'] = True
+        plan['approval_mode'] = 'manual'
+        plan['approval'] = {**(plan.get('approval') or {}), 'mode': 'manual', 'state': 'pending'}
+        plan['status'] = 'awaiting_approval'
     _validate_turn_memory_context(turn_context, user_id, conversation_id)
     if has_request_context() and getattr(g, 'orchestration_analysis_result_contexts', None):
         turn_context['analysis_result_contexts'] = list(g.orchestration_analysis_result_contexts)
@@ -1078,6 +1512,15 @@ def _persist_planned_turn(
         plan, user_id, conversation_id=conversation_id, idempotent=True,
         turn_context=turn_context, expected_previous_run=expected_previous_run,
     )
+    if turn_context.get('requires_fresh_review'):
+        question = cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+        question.setdefault('metadata', {}).setdefault('orchestration', {}).update({
+            'run_id': plan['run_id'], 'turn_id': turn_context['turn_id'], 'requires_fresh_review': True,
+        })
+        patch_chat_message_metadata(cosmos_messages_container, question, fields=('orchestration',))
+        set_retry_attempt_state(
+            cosmos_messages_container, conversation_id, message_id, 'awaiting_review', run_id=plan['run_id'],
+        )
     if submission:
         prepare_elicitation_outcome(submission, 'plan', plan, turn_context)
 
@@ -1115,7 +1558,7 @@ def _save_turn_message(
                 metadata[CHECK_METADATA] = deepcopy(content_check)
             if image_references:
                 metadata['image_references'] = deepcopy(image_references)
-            cosmos_messages_container.upsert_item(stored)
+            patch_chat_message_metadata(cosmos_messages_container, stored, fields=(CHECK_METADATA, 'image_references'))
         return message_id, normalized['fingerprint']
     # The flat turn id is what ties a reloaded thread back to its run: the live card stamps
     # the same field on its optimistic bubble, and a message fetched from the server has
@@ -1755,10 +2198,75 @@ def register_route_backend_orchestration(bp):
                 'code': 'output_storage_unavailable',
             }), 503
 
+    @bp.route("/api/v2/orchestration/messages/<message_id>/regenerate", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def regenerate_orchestration_message(message_id):
+        settings = get_settings()
+        if not _orchestration_enabled(settings):
+            return jsonify({'error': 'Chat orchestration is not enabled.'}), 403
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        data = request.get_json(silent=True)
+        if data is None and not request.get_data():
+            data = {}
+        if not isinstance(data, dict):
+            return jsonify({'error': 'A regeneration request must be an object.'}), 400
+        try:
+            normalize_submission_id(data.get('submission_id'))
+            clicked, _ = load_owned_retry_message(
+                cosmos_messages_container, cosmos_conversations_container, user_id, message_id,
+            )
+            attempt = (clicked.get('metadata') or {}).get('response_attempt') or {}
+            if attempt.get('kind') == 'orchestration' and attempt.get('state') == 'prepared':
+                if any(data.get(key) for key in (*MODEL_FIELDS, 'model', 'agent_info', 'reasoning_effort')):
+                    raise ChatRetryError(
+                        'This plan request is already prepared. Plan it before changing selections.',
+                        code='retry_in_progress',
+                    )
+                _restore_prepared_regeneration(clicked, user_id, settings)
+                question = reconcile_prepared_retry(
+                    cosmos_messages_container, cosmos_conversations_container, user_id, clicked, kind='orchestration',
+                )
+                return jsonify(_prepared_regeneration_response(question))
+            source, record = _regeneration_source(message_id, user_id)
+            source_metadata = source.get('metadata') or {}
+            failed_planning = record.get('user_message_id') != source['id']
+            inputs = source_metadata['orchestration_inputs'] if failed_planning else _regeneration_request(record)
+            answers = source_metadata.get('orchestration_clarification_answers', record.get('answered_questions') or [])
+            body = _authorize_regeneration_request(source, inputs, user_id, settings, overrides=data)
+            validate_clarification_answers(answers)
+            _load_regeneration_snapshot(source, user_id, settings)
+            source = _link_regeneration_thread(source, record, user_id)
+            question = prepare_retry_attempt(
+                cosmos_messages_container, cosmos_conversations_container, user_id, source, body,
+                submission_id=data.get('submission_id'), kind='orchestration',
+                extra_metadata={
+                    'orchestration_inputs': body,
+                    'orchestration_clarification_answers': deepcopy(answers),
+                    'orchestration_regeneration': {
+                        'source_run_id': record['run_id'],
+                        'source_input_fingerprint': _regeneration_input_fingerprint(record),
+                    },
+                    'prompt_selection': deepcopy(record.get('prompt_selection')),
+                },
+            )
+            return jsonify(_prepared_regeneration_response(question))
+        except (
+            ChatRetryError, SubmissionIdError, ConversationContextError, ElicitationContextError, ModelCatalogError,
+            ImageReferenceError, PublicChatScopeError, CatalogResolutionError,
+            PlanRevisionError, PermissionError, ScreeningError, AzureError,
+        ) as exc:
+            payload, status = _regeneration_error(exc)
+            return jsonify(payload), status
+
     @bp.route("/api/v2/orchestration/plan", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_prepared_regeneration
     @public_chat_scope_required(
         lambda user_id, conversation_id: _authorize_context_conversation(conversation_id, user_id),
         get_current_user_id, get_settings, resolve_public_chat_workspace_ids, log_event,
@@ -1816,6 +2324,17 @@ def register_route_backend_orchestration(bp):
             'replan_hint': replan_hint,
             'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         }
+        if data.get('requires_fresh_review') is True:
+            turn_context['requires_fresh_review'] = True
+            approval_mode = 'manual'
+            turn_context['approval_mode'] = 'manual'
+        regeneration_context = getattr(g, 'orchestration_regeneration_context', None)
+        if regeneration_context:
+            turn_context.update(regeneration_context)
+            approval_mode = 'manual'
+            turn_context['approval_mode'] = 'manual'
+            answered_record = deepcopy(turn_context.get('answered_questions') or [])
+        turn_context['conversation_id'] = conversation_id
         shared_details = _shared_turn_details(data)
         if shared_details:
             turn_context['collaboration'] = shared_details
@@ -1932,6 +2451,8 @@ def register_route_backend_orchestration(bp):
                 approval_mode = turn_context.get('approval_mode', '')
                 if not settings.get('chat_orchestration_allow_user_approval_override', True):
                     approval_mode = ''
+                if turn_context.get('requires_fresh_review'):
+                    approval_mode = 'manual'
                 replan_hint = turn_context.get('replan_hint', '')
                 revision = pending['question']['revision'] + 1
                 resolve_elicitation_references(
@@ -2029,7 +2550,7 @@ def register_route_backend_orchestration(bp):
                 observed_pending = None
                 current_revision = revision
                 planning_base = None
-                if submission:
+                if submission or turn_context.get('regeneration_of_run_id'):
                     snapshot = _conversation_context_for_run({
                         **turn_context, 'conversation_id': resolved_conversation_id,
                     }, user_id, settings)
@@ -2105,6 +2626,7 @@ def register_route_backend_orchestration(bp):
                     seeds.get('elicitation_references') or [],
                     user_id, resolved_conversation_id, settings=settings,
                 )
+                _save_regeneration_inputs(turn_context, user_id, resolved_conversation_id)
                 action_catalog = resolve_action_catalog(
                     user_id, seeds=seeds, settings=settings,
                     user_groups=seeds.get('active_group_ids') or None,
@@ -2218,7 +2740,11 @@ def register_route_backend_orchestration(bp):
                         'image_reference_messages': [],
                     }
                 turn_context['seeds'] = seeds
-                ledger = _load_ledger(resolved_conversation_id, user_id, settings)
+                context_ids = (
+                    {item['id'] for item in snapshot['messages']}
+                    if turn_context.get('requires_fresh_review') else None
+                )
+                ledger = _load_ledger(resolved_conversation_id, user_id, settings, message_ids=context_ids)
                 signals = build_conversation_signals(
                     snapshot['messages'], message, truncated=snapshot['truncated'],
                     message_ids=resolution['message_ids'],
@@ -2277,10 +2803,10 @@ def register_route_backend_orchestration(bp):
                 services = _orchestration_services(
                     user_id, resolved_conversation_id, settings=settings,
                 )
-                retained = discover_result_aliases(
-                    list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True),
-                    services.results,
-                )
+                retained_runs = list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True)
+                if context_ids is not None:
+                    retained_runs = [record for record in retained_runs if record.get('user_message_id') in context_ids]
+                retained = discover_result_aliases(retained_runs, services.results)
                 if retained['unavailable_count']:
                     yield build_planning_thought(
                         'Some saved results are no longer accessible and are not offered as inputs.',
@@ -2396,7 +2922,7 @@ def register_route_backend_orchestration(bp):
             finally:
                 close_planning_resources()
 
-        streamed = _sse(stream_with_context(generate()))
+        streamed = _sse(stream_with_context(_regeneration_planning_events(generate(), turn_context)))
         streamed.call_on_close(close_planning_resources)
         return streamed
 

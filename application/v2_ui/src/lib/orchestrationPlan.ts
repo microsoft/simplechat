@@ -531,6 +531,7 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
     return {
         plan_id: asString(source.plan_id),
         reasoning_adjustments: normalizeReasoningAdjustments(source.reasoning_adjustments),
+        ...(source.requires_fresh_review === true ? { requires_fresh_review: true } : {}),
         run_id: asString(source.run_id),
         edit_version: typeof source.edit_version === 'string' ? source.edit_version : undefined,
         turn_id: asString(source.turn_id),
@@ -547,7 +548,8 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         ...(normalizeDeliverables(source.deliverables) ? { deliverables: normalizeDeliverables(source.deliverables) } : {}),
         ...(normalizePlanner(source.planner) ? { planner: normalizePlanner(source.planner) } : {}),
         ...(source.model_routing === 'auto' ? { model_routing: 'auto' as const } : {}),
-        approval: normalizeApproval(source.approval),
+        approval: source.requires_fresh_review === true
+            ? { ...normalizeApproval(source.approval), mode: 'manual' } : normalizeApproval(source.approval),
         validation: normalizeValidation(source.validation),
         status: oneOf(source.status, PLAN_STATUSES, 'awaiting_approval'),
     };

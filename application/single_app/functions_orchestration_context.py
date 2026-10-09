@@ -1851,15 +1851,23 @@ def conversation_snapshot_size(snapshot):
     return len(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
 
 
-def build_conversation_snapshot(messages, settings=None, *, turn_id=None, truncated=False):
+def build_conversation_snapshot(
+    messages, settings=None, *, turn_id=None, truncated=False, logical_order=False,
+):
     """Keep the recent eligible conversation, bounded independently of the current request.
 
     An attempt a later retry replaced is left out: its failure text no longer describes the
     request, and the retry's own answer is what the conversation now says.
     """
     eligible = []
-    superseded = superseded_orchestration_run_ids(messages)
-    for message in messages or ():
+    rows = list(messages or ())
+    superseded = superseded_orchestration_run_ids(rows)
+    if logical_order:
+        # Retry ordering depends on initialized application-owned message storage.
+        from functions_chat_retry import order_retry_messages
+
+        rows = order_retry_messages([message for message in rows if isinstance(message, dict)])
+    for message in rows:
         if not isinstance(message, dict):
             continue
         metadata = message.get('metadata') or {}
@@ -1873,7 +1881,8 @@ def build_conversation_snapshot(messages, settings=None, *, turn_id=None, trunca
             if not normalized['id']:
                 raise ConversationContextError('The conversation contains a message without an ID.')
             eligible.append(normalized)
-    eligible.sort(key=_history_order)
+    if not logical_order:
+        eligible.sort(key=_history_order)
     limit = history_message_limit(settings)
     retained = eligible[-limit:] if limit else []
     snapshot = {
@@ -1881,6 +1890,8 @@ def build_conversation_snapshot(messages, settings=None, *, turn_id=None, trunca
         'messages': retained,
         'truncated': bool(truncated or len(eligible) > len(retained)),
     }
+    if logical_order:
+        snapshot['logical_order'] = True
     while len(retained) > 1 and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
         retained.pop(0)
         snapshot['truncated'] = True
@@ -1950,6 +1961,7 @@ def validate_conversation_snapshot(snapshot, messages):
         [sources[item['id']] for item in snapshot['messages']],
         {'conversation_history_limit': len(snapshot['messages'])},
         truncated=bool(snapshot.get('truncated')),
+        logical_order=bool(snapshot.get('logical_order')),
     )
     if rebuilt != snapshot:
         raise ConversationContextError('This plan needs to be created again.')

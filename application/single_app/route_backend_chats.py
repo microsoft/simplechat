@@ -156,6 +156,7 @@ from functions_service_health import (
     SemanticSearchQuotaExceededError,
 )
 from functions_chat_content_checks import (
+    CHECK_METADATA,
     attach_chat_check,
     blocked_chat_payload,
     check_chat_content,
@@ -167,11 +168,17 @@ from functions_chat_content_checks import (
 )
 from functions_chat_content_review import (
     ChatContentReviewConflict, checked_history_messages, persist_chat_reply,
-    record_chat_content_incident, retracted_stream_payload, reply_is_retracted,
+    patch_chat_message_metadata, record_chat_content_incident, retracted_stream_payload, reply_is_retracted,
+)
+from functions_chat_retry import (
+    ChatRetryError, claim_retry_attempt, load_owned_retry_message,
+    order_retry_messages, retry_history_prefix, set_retry_attempt_state,
 )
 from azure.core import MatchConditions
 from functions_prompt_metadata import build_prompt_selection_metadata
 from functions_settings import *
+from functions_model_catalog import ModelCatalogError
+from public_chat_scope_state import PublicChatScopeError
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
@@ -8529,6 +8536,157 @@ def _with_m365_pending_action_cards(view):
     return wrapped
 
 
+def _persist_retry_terminal_payload(question, payload):
+    """The generation worker, not the HTTP consumer, owns attempt completion."""
+    if not question:
+        return None
+    if payload.get('cancelled') or payload.get('canceled') or payload.get('interrupted'):
+        state = 'interrupted'
+    elif payload.get('error') or payload.get('blocked'):
+        state = 'failed'
+    elif payload.get('done'):
+        state = 'completed'
+    else:
+        return None
+    error = payload.get('error') if isinstance(payload.get('error'), str) else None
+    if state == 'failed' and not error:
+        error = 'This attempt could not complete. Review the request before retrying.'
+    try:
+        set_retry_attempt_state(
+            cosmos_messages_container, question['conversation_id'], question['id'], state,
+            error=error, code=payload.get('error_code') or payload.get('code'),
+        )
+    except (AzureError, ChatRetryError) as exc:
+        log_event(
+            '[CHAT_RETRY] Could not save terminal attempt status.',
+            extra={'conversation_id': question['conversation_id'], 'user_message_id': question['id'],
+                   'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        payload['error'] = error or 'The response finished, but its attempt status could not be saved. Reload before retrying.'
+        payload['attempt_status_error'] = 'retry_status_unavailable'
+    thread = question['metadata']['thread_info']
+    payload.update({
+        'user_message_id': question['id'], 'conversation_id': question['conversation_id'],
+        'retry_thread_id': thread['thread_id'], 'retry_thread_attempt': thread['thread_attempt'],
+        'attempt_state': state,
+    })
+    return state
+
+
+def _with_prepared_chat_retry(view):
+    """Use only authorized, saved attempt inputs before any model or agent work."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True)
+        retry_id = (data.get('retry_user_message_id') or data.get('edited_user_message_id')) if isinstance(data, dict) else None
+        if not retry_id:
+            return view(*args, **kwargs)
+        already_claimed = getattr(g, 'chat_retry_question', None)
+        if (
+            already_claimed and already_claimed['id'] == retry_id
+            and already_claimed['conversation_id'] == data.get('conversation_id')
+        ):
+            return view(*args, **kwargs)
+        user_id = get_current_user_id()
+        question = None
+
+        def fail_unstarted_attempt(message, code):
+            if question and question.get('conversation_id') == data.get('conversation_id'):
+                set_retry_attempt_state(
+                    cosmos_messages_container, question['conversation_id'], question['id'],
+                    'failed', error=message, code=code, expected_states=('prepared',),
+                )
+
+        try:
+            question, _ = load_owned_retry_message(
+                cosmos_messages_container, cosmos_conversations_container, user_id, retry_id,
+            )
+            if question.get('role') != 'user' or question['conversation_id'] != data.get('conversation_id'):
+                raise ChatRetryError('Retry question not found.', code='message_not_found', status_code=404)
+            if (question.get('metadata') or {}).get('orchestration'):
+                raise ChatRetryError('Regenerate this orchestration plan instead.', code='retry_requires_orchestration')
+            # Import at the operation boundary: both route modules register during bootstrap.
+            from route_backend_conversations import _build_authorized_message_replay_request
+
+            settings = get_settings()
+            body = _build_authorized_message_replay_request(user_id, question, {}, settings)
+            input_check = check_chat_content(body['message'], 'chat_input', user_id=user_id, settings=settings)
+            if input_check.blocked:
+                set_retry_attempt_state(
+                    cosmos_messages_container, question['conversation_id'], question['id'],
+                    'failed', error=input_check.notice, code='retry_input_blocked', expected_states=('prepared',),
+                )
+                raise ChatRetryError(input_check.notice, code='retry_input_blocked', status_code=422)
+            claimed = claim_retry_attempt(
+                cosmos_messages_container, cosmos_conversations_container, user_id,
+                question['conversation_id'], question['id'],
+                thread_id=data.get('retry_thread_id'), thread_attempt=data.get('retry_thread_attempt'),
+            )
+            thread = claimed['metadata']['thread_info']
+            identity_field = 'edited_user_message_id' if claimed['metadata'].get('edited') else 'retry_user_message_id'
+            body.update({
+                identity_field: claimed['id'], 'retry_thread_id': thread['thread_id'],
+                'retry_thread_attempt': thread['thread_attempt'],
+            })
+            # The compatibility handler reads this same cached Flask JSON object.
+            data.clear()
+            data.update(body)
+            g.chat_retry_question = claimed
+        except ChatRetryError as error:
+            log_event('[CHAT_RETRY] Invocation refused.', extra={'code': error.code, 'user_id': user_id}, level=logging.INFO)
+            if error.code not in ('retry_already_submitted', 'retry_attempt_changed'):
+                fail_unstarted_attempt(error.public_message, error.code)
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        except ScreeningError as error:
+            fail_unstarted_attempt(error.public_message, error.code)
+            return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+        except PublicChatScopeError as error:
+            fail_unstarted_attempt(error.public_message, error.code)
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        except ModelCatalogError as error:
+            log_event('[CHAT_RETRY] Invocation catalog is unavailable.', extra={'error_type': type(error).__name__}, level=logging.WARNING)
+            fail_unstarted_attempt('The original model is unavailable. Review the request.', 'retry_model_unavailable')
+            return jsonify({'error': 'The original model is unavailable. Review the request.', 'code': 'retry_model_unavailable'}), 409
+        except PermissionError:
+            log_event('[CHAT_RETRY] Invocation selection is no longer authorized.', extra={'user_id': user_id}, level=logging.WARNING)
+            fail_unstarted_attempt('An original selection is no longer authorized. Review the request.', 'forbidden')
+            return jsonify({'error': 'An original selection is no longer authorized. Review the request.', 'code': 'forbidden'}), 403
+        except AzureError as error:
+            log_event('[CHAT_RETRY] Invocation storage is unavailable.', extra={'error_type': type(error).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'The attempt could not start. Reload to check its status before retrying.', 'code': 'retry_storage_unavailable'}), 503
+        try:
+            result = view(*args, **kwargs)
+        except Exception:
+            log_event('[CHAT_RETRY] Invocation failed before returning a response.', level=logging.ERROR, exceptionTraceback=True)
+            set_retry_attempt_state(
+                cosmos_messages_container, claimed['conversation_id'], claimed['id'],
+                'failed', error='This attempt could not complete. Reload before retrying.',
+            )
+            raise
+        response = current_app.make_response(result)
+        if response.mimetype != 'text/event-stream':
+            payload = response.get_json(silent=True) or {}
+            if response.status_code >= 400 and not payload.get('error'):
+                payload['error'] = 'This attempt could not start. Reload before retrying.'
+            if not payload.get('error') and not payload.get('blocked'):
+                payload['done'] = True
+            _persist_retry_terminal_payload(claimed, payload)
+            response.set_data(current_app.json.dumps(payload))
+            return response
+        return result
+    return wrapped
+
+
+def _save_chat_user_metadata(message, is_retry):
+    if not is_retry:
+        return cosmos_messages_container.upsert_item(message)
+    return patch_chat_message_metadata(
+        cosmos_messages_container, message,
+        fields=tuple(key for key in message.get('metadata', {}) if key not in ('thread_info', 'response_attempt')),
+    )
+
+
 def _extract_sse_event_payload(event_text):
     """Parse JSON data lines from a raw SSE event string."""
     if not isinstance(event_text, str):
@@ -8790,6 +8948,8 @@ class ActiveConversationStreamSession:
         is_terminal_event = isinstance(payload, dict) and (payload.get('done') or payload.get('error') or is_cancel_event)
 
         metadata = self._build_metadata(active=not is_terminal_event, existing=self._get_metadata())
+        if isinstance(payload, dict) and payload.get('user_message_id'):
+            metadata['user_message_id'] = payload['user_message_id']
         if isinstance(payload, dict) and payload.get("message_id") and payload.get("type") != "user_message_persisted":
             metadata["message_id"] = payload["message_id"]
         metadata['event_count'] = _safe_int(metadata.get('event_count')) + 1
@@ -14902,9 +15062,11 @@ def register_route_backend_chats(bp):
         viewer_user_id = get_current_user_id()
         stream_user_message_id = None
         content_check_settings = get_settings()
+        retry_question = getattr(g, 'chat_retry_question', None)
+        retry_terminal_seen = False
 
         def publish_background_event(event_text):
-            nonlocal stream_user_message_id
+            nonlocal stream_user_message_id, retry_terminal_seen
             if event_text is None:
                 return False
 
@@ -14937,7 +15099,10 @@ def register_route_backend_chats(bp):
                             enriched['conversation_id'] = enriched.get('conversation_id') or references[0]['conversation_id']
                             enriched['request_id'] = enriched.get('request_id') or references[0]['request_id']
                     if enriched is not payload:
-                        event_text = f"data: {json.dumps(enriched)}\n\n"
+                        payload = enriched
+                if _persist_retry_terminal_payload(retry_question, payload):
+                    retry_terminal_seen = True
+                event_text = f"data: {json.dumps(payload)}\n\n"
 
             if stream_session:
                 if not stream_session.publish(event_text):
@@ -14965,6 +15130,7 @@ def register_route_backend_chats(bp):
 
         @copy_current_request_context
         def stream_worker():
+            g.chat_retry_question = retry_question
             with m365_action_card_events(publish_pending_action):
                 event_iterator = None
                 try:
@@ -15011,6 +15177,11 @@ def register_route_backend_chats(bp):
                         if event_iterator is not None and callable(getattr(event_iterator, 'close', None)):
                             event_iterator.close()
                     finally:
+                        if retry_question and not retry_terminal_seen:
+                            publish_background_event(build_stream_error_event(
+                                'This response was interrupted before it completed. Reload before retrying.',
+                                interrupted=True, error_code='retry_stream_incomplete',
+                            ))
                         if stream_session:
                             stream_session.close()
                         stream_bridge.finish()
@@ -17515,6 +17686,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_prepared_chat_retry
     @public_chat_scope_required(
         _authorize_personal_conversation_access, get_current_user_id, get_settings,
         resolve_public_chat_workspace_ids, log_event,
@@ -18541,7 +18713,7 @@ def register_route_backend_chats(bp):
                     elif image_gen_enabled and chat_image_reference_request.get('image_mask') is None:
                         user_metadata.pop('image_reference_mask', None)
                     attach_chat_check(user_message_doc, input_check)
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
 
                     debug_print(f"🔍 Chat API - Read retry user message:")
                     debug_print(f"    thread_id: {user_message_doc.get('metadata', {}).get('thread_info', {}).get('thread_id')}")
@@ -18962,7 +19134,7 @@ def register_route_backend_chats(bp):
                                 'search_query': search_query,
                             }
                             user_message_doc['metadata'] = user_metadata
-                            cosmos_messages_container.upsert_item(user_message_doc)
+                            user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
                 else:
                     thought_tracker.add_thought(
                         'history_context',
@@ -19679,7 +19851,7 @@ def register_route_backend_chats(bp):
             debug_print(f"Updated message metadata with chat_type: {message_chat_type}")
 
             # Update the user message in Cosmos DB with the final chat_type information
-            cosmos_messages_container.upsert_item(user_message_doc)
+            user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
             debug_print(f"User message re-saved to Cosmos DB with updated chat_context")
 
             # Image Generation
@@ -19912,7 +20084,7 @@ def register_route_backend_chats(bp):
                 if continuity_decision:
                     user_metadata['source_continuity'] = continuity_decision
                 user_message_doc['metadata'] = user_metadata
-                cosmos_messages_container.upsert_item(user_message_doc)
+                user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
                 if continuity_decision:
                     emit_mixed_source_telemetry(
                         settings,
@@ -21751,7 +21923,7 @@ def register_route_backend_chats(bp):
                         user_message_doc['metadata']['model_selection'].update(_build_chat_reasoning_metadata(
                             reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
                         ))
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
 
             except Exception as e:
                 debug_print(f"Warning: Could not update user message metadata: {e}")
@@ -21883,6 +22055,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_prepared_chat_retry
     @public_chat_scope_required(
         _authorize_personal_conversation_access, get_current_user_id, get_settings,
         resolve_public_chat_workspace_ids, log_event,
@@ -23121,7 +23294,9 @@ def register_route_backend_chats(bp):
                         yield f"data: {json.dumps(payload)}\n\n"
                         return
                     attach_chat_check(user_message_doc, retry_input_check)
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    user_message_doc = patch_chat_message_metadata(
+                        cosmos_messages_container, user_message_doc, fields=(CHECK_METADATA,),
+                    )
                     user_metadata = user_message_doc.get('metadata') if isinstance(user_message_doc.get('metadata'), dict) else {}
                     thread_info = user_metadata.get('thread_info') if isinstance(user_metadata.get('thread_info'), dict) else {}
                     requested_thread_id = str(retry_thread_id or '').strip()
@@ -23156,6 +23331,7 @@ def register_route_backend_chats(bp):
                         f"previous_thread_id={previous_thread_id} | "
                         f"attempt={effective_retry_thread_attempt}"
                     )
+                    yield build_user_message_persisted_stream_event(conversation_id, user_message_id)
                 else:
                     # Save user message
                     user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
@@ -23590,7 +23766,7 @@ def register_route_backend_chats(bp):
                                     'search_query': search_query,
                                 }
                                 user_message_doc['metadata'] = user_metadata
-                                cosmos_messages_container.upsert_item(user_message_doc)
+                                user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
                     else:
                         yield emit_thought(
                             'history_context',
@@ -24189,7 +24365,7 @@ def register_route_backend_chats(bp):
                     if continuity_decision:
                         user_metadata['source_continuity'] = continuity_decision
                     user_message_doc['metadata'] = user_metadata
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
                     if continuity_decision:
                         emit_mixed_source_telemetry(
                             settings,
@@ -24579,7 +24755,7 @@ def register_route_backend_chats(bp):
                 )
                 user_metadata['chat_context']['chat_type'] = message_chat_type
                 user_message_doc['metadata'] = user_metadata
-                cosmos_messages_container.upsert_item(user_message_doc)
+                user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
 
                 # Prepare conversation history
                 conversation_history_for_api = []
@@ -26086,7 +26262,7 @@ def register_route_backend_chats(bp):
                             user_message_doc['metadata'].setdefault('model_selection', {}).update(_build_chat_reasoning_metadata(
                                 reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
                             ))
-                        cosmos_messages_container.upsert_item(user_message_doc)
+                        user_message_doc = _save_chat_user_metadata(user_message_doc, is_retry)
                     except Exception as e:
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
 
@@ -26305,7 +26481,7 @@ def register_route_backend_chats(bp):
                                     'thread_id': user_thread_id,
                                     'previous_thread_id': user_previous_thread_id,
                                     'active_thread': True,
-                                    'thread_attempt': 1
+                                    'thread_attempt': assistant_thread_attempt
                                 }
                             }
                         })
@@ -28470,6 +28646,10 @@ def build_conversation_history_segments(
     include_assistant_citation_context=True,
 ):
     """Build shared conversation history segments for chat completions."""
+    target = next((message for message in all_messages if message.get('id') == user_message_id), None)
+    retry_history = bool(target and any((target.get('metadata') or {}).get(key) for key in ('response_attempt', 'retried', 'edited')))
+    if retry_history:
+        all_messages = retry_history_prefix(all_messages, user_message_id)
     all_messages = checked_history_messages(all_messages, for_model=True)
     all_messages = _sanitize_saved_analysis_history(all_messages)
     conversation_history_messages = []
@@ -28479,7 +28659,7 @@ def build_conversation_history_segments(
     artifact_payload_map = build_message_artifact_payload_map(all_messages or [])
     filtered_messages = filter_assistant_artifact_items(all_messages or [])
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
-    ordered_messages = sort_messages_by_thread(filtered_messages)
+    ordered_messages = order_retry_messages(filtered_messages) if retry_history else sort_messages_by_thread(filtered_messages)
     # Dropped after ordering, so the surviving messages keep the order the thread chain gives
     # them. A deleted message must not reach the summary or the recent window, nor take a slot
     # in the history limit; its mask is only a fail-safe, not what keeps it out.
@@ -28509,6 +28689,7 @@ def build_conversation_history_segments(
     masked_range_message_refs = []
     history_message_source_refs = []
     appended_fallback_user_message = False
+    last_history_user_message_id = None
 
     if enable_summarize_older_messages and older_messages_to_summarize and gpt_client and gpt_model:
         debug_print(
@@ -28617,6 +28798,7 @@ def build_conversation_history_segments(
             if role == 'assistant' and include_assistant_citation_context:
                 content = build_assistant_history_content_with_citations(message, content)
             conversation_history_messages.append({"role": role, "content": content})
+            last_history_user_message_id = message.get('id') if role == 'user' else None
             history_message_source_refs.append(_format_history_message_ref(message))
         elif role == 'file':
             filename = message.get('filename', 'uploaded_file')
@@ -28723,7 +28905,10 @@ def build_conversation_history_segments(
 
             history_message_source_refs.append(f"system:image:{message.get('id', 'unknown')}")
 
-    if not conversation_history_messages or conversation_history_messages[-1].get('role') != 'user':
+    if (
+        not conversation_history_messages or conversation_history_messages[-1].get('role') != 'user'
+        or user_message_id and last_history_user_message_id != user_message_id
+    ):
         debug_print("Warning: Last message in history is not the user's current message. Appending.")
         user_msg_found = False
         for message in reversed(recent_messages):

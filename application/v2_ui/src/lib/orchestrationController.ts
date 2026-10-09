@@ -14,7 +14,7 @@
 // component coming and going exactly as `chatStore`'s own stream controller does — and for the
 // same reason.
 
-import { createConversation } from './endpoints';
+import { createConversation, type AttemptOrchestrationRequest } from './endpoints';
 import { ApiError } from './apiClient';
 import { legacyPlanErrorMessage } from './orchestrationErrors';
 import {
@@ -144,6 +144,7 @@ interface TurnContext {
     seeds: OrchestrationSeeds;
     revision: number;
     pendingUserMessageId: string;
+    requiresFreshReview?: boolean;
 }
 
 const turnContexts = new Map<string, TurnContext>();
@@ -378,12 +379,16 @@ async function dispatchPlan(
         turn_id: currentTurnId,
         revision: context.revision,
         approval_mode: context.approvalMode,
+        ...(context.requiresFreshReview ? { requires_fresh_review: true } : {}),
     };
     const timeZone = requestTimeZone();
-    if (timeZone) {
+    if (timeZone && !body.time_zone) {
         body.time_zone = timeZone;
     }
     if (continuation) {
+        delete body.retry_user_message_id;
+        delete body.retry_thread_id;
+        delete body.retry_thread_attempt;
         body.elicitation = continuation.elicitation;
         body.elicitation_response = continuation.response;
         body.elicitation_id = continuation.elicitationId;
@@ -412,7 +417,7 @@ async function dispatchPlan(
                         currentConversationId, currentTurnId, event.reasoning_adjustments,
                     );
                     useChatStore.getState()
-                        .pushOrchestrationThought(currentConversationId, event as RunStreamEvent);
+                        .pushOrchestrationThought(currentConversationId, { ...event, turn_id: currentTurnId } as RunStreamEvent);
                 }
             },
             onConversationMetadata: (event) => {
@@ -428,12 +433,14 @@ async function dispatchPlan(
                 if (!isCurrentRequest()) {
                     return;
                 }
-                const normalized = normalizePlan(plan);
+                const normalized = normalizePlan(context.requiresFreshReview
+                    ? { ...plan, requires_fresh_review: true } : plan);
                 if (!normalized?.plan_id || !normalized.run_id || !normalized.turn_id
                     || normalized.conversation_id !== currentConversationId || !isPlanRunnable(normalized)) {
                     errored = true;
                     failure = 'The planner returned an invalid plan. Please try again.';
                     useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
+                        turnId: currentTurnId,
                         status: 'failed',
                         error: failure,
                     });
@@ -475,6 +482,7 @@ async function dispatchPlan(
                 useChatStore
                     .getState()
                     .settleOrchestrationTurn(currentConversationId, {
+                        turnId: currentTurnId,
                         status: 'failed',
                         error: message,
                     });
@@ -502,6 +510,8 @@ async function dispatchPlan(
         const autoRun =
             settledPlan !== null &&
             settledPlan.approval.mode === 'auto' &&
+            !context.requiresFreshReview &&
+            !settledPlan.requires_fresh_review &&
             !planHasApprovalFloor(settledPlan) &&
             !selectHasPlanHold(useOrchestrationStore.getState(), currentConversationId, currentTurnId) &&
             isPlanApproved(settledPlan) &&
@@ -513,7 +523,12 @@ async function dispatchPlan(
         } else {
             useChatStore
                 .getState()
-                .settleOrchestrationTurn(currentConversationId, { status: 'planned' });
+                .settleOrchestrationTurn(currentConversationId, {
+                    turnId: currentTurnId,
+                    status: 'planned',
+                    attemptState: selectElicitation(useOrchestrationStore.getState(), currentConversationId, currentTurnId)
+                        ? 'awaiting_clarification' : 'awaiting_review',
+                });
         }
         return { ok: true };
     } else if (!errored && controller.signal.aborted) {
@@ -521,7 +536,7 @@ async function dispatchPlan(
         // rather than leaving an empty plan slot the drawer would puzzle over.
         useChatStore
             .getState()
-            .settleOrchestrationTurn(currentConversationId, { status: 'cancelled', accumulated: '' });
+            .settleOrchestrationTurn(currentConversationId, { turnId: currentTurnId, status: 'cancelled', accumulated: '' });
         if (!continuation) {
             useOrchestrationStore.getState().clearActiveTurn(currentConversationId);
         }
@@ -530,6 +545,7 @@ async function dispatchPlan(
     failure ||= 'The planner did not return a plan or a question. Please try again.';
     if (!errored) {
         useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
+            turnId: currentTurnId,
             status: 'failed',
             error: failure,
         });
@@ -567,6 +583,23 @@ export async function startOrchestrationPlan(params: StartPlanParams): Promise<v
     );
 }
 
+export async function planRegeneratedMessage(prepared: AttemptOrchestrationRequest): Promise<ElicitationSubmitResult> {
+    const { message, ...seeds } = prepared.plan_request;
+    return dispatchPlan(
+        prepared.user_message.conversation_id,
+        prepared.turn_id,
+        {
+            message,
+            seeds,
+            approvalMode: 'manual',
+            revision: 0,
+            pendingUserMessageId: prepared.user_message_id,
+            requiresFreshReview: true,
+        },
+        false,
+    );
+}
+
 /** Retry only an unsaved planning turn whose original request is still held in this tab. */
 export async function retryOrchestrationPlanning(
     conversationId: string,
@@ -595,7 +628,7 @@ export async function retryOrchestrationPlanning(
     if (selectElicitation(store, conversationId, turnId)) {
         return { ok: false, error: 'This request has a planner question. Continue from that question so your answers are preserved.' };
     }
-    return dispatchPlan(conversationId, turnId, { ...context }, false);
+    return dispatchPlan(conversationId, turnId, { ...context, approvalMode: 'manual', requiresFreshReview: true }, false);
 }
 
 /** A deleted conversation must not regain a plan from a late response or retained Retry context. */
@@ -729,14 +762,18 @@ export async function approveAndRunPlan(params: {
     // Nothing automatic -- a countdown or auto-run -- may start a plan that starts a saved
     // workflow; only the user's own click does.
     if (!plan || selectPlanRunBlocked(store, conversationId, turnId)
-        || (params.automatic && (selectHasPlanHold(store, conversationId, turnId) || planHasApprovalFloor(plan)))) {
+        || (params.automatic && (plan.requires_fresh_review
+            || turnContexts.get(scopeKey(conversationId, turnId))?.requiresFreshReview
+            || selectHasPlanHold(store, conversationId, turnId) || planHasApprovalFloor(plan)))) {
         return;
     }
     const edits = selectEdits(store, conversationId, turnId);
     if (!isPlanRunnable(applyPlanEdits(plan, edits))) {
         return;
     }
-    await executeSavedPlan(conversationId, turnId, plan, edits);
+    await executeSavedPlan(conversationId, turnId, plan, edits, !params.automatic && (
+        plan.requires_fresh_review === true || turnContexts.get(scopeKey(conversationId, turnId))?.requiresFreshReview === true
+    ));
 }
 
 async function executeSavedPlan(
@@ -744,6 +781,7 @@ async function executeSavedPlan(
     turnId: string,
     plan: OrchestrationPlan,
     edits?: PlanEdits,
+    reviewedRegeneration = false,
 ): Promise<void> {
     const store = useOrchestrationStore.getState();
 
@@ -767,7 +805,7 @@ async function executeSavedPlan(
     // Enter the streaming state for the answer without a second user bubble — the question is
     // already in the thread from planning. Taken as the run phase: the plan card shows a run's
     // progress, so the streaming bubble stays out of the way until there is an answer to show.
-    useChatStore.getState().beginOrchestrationTurn(conversationId, '', false, undefined, undefined, 'running');
+    useChatStore.getState().beginOrchestrationTurn(conversationId, '', false, turnId, undefined, 'running');
 
     const controller = new AbortController();
     activeControllers.get(conversationId)?.abort();
@@ -781,6 +819,7 @@ async function executeSavedPlan(
         ...(edits ? { edits } : {}),
         // A retry uses its returned child plan version, not the source recovery token.
         ...(plan.edit_version ? { expected_version: plan.edit_version } : {}),
+        ...(reviewedRegeneration ? { reviewed_regeneration: true } : {}),
     };
 
     let settled = false;
@@ -798,7 +837,7 @@ async function executeSavedPlan(
         }
         // Release only the browser's streaming surface. Keep the attempt in flight, without
         // manufacturing an assistant answer or a new execution for the durable computation.
-        useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+        useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'planned', attemptState: 'waiting' });
     };
     const result = await runOrchestration(
         runBody,
@@ -818,10 +857,10 @@ async function executeSavedPlan(
                 );
                 useChatStore
                     .getState()
-                    .pushOrchestrationThought(conversationId, event as RunStreamEvent);
+                    .pushOrchestrationThought(conversationId, { ...event, turn_id: turnId } as RunStreamEvent);
             },
             onContent: (_delta, accumulated) =>
-                useChatStore.getState().pushOrchestrationContent(conversationId, accumulated),
+                useChatStore.getState().pushOrchestrationContent(conversationId, accumulated, turnId),
             onWaiting: acknowledgeWaiting,
             onDone: (event, accumulated) => {
                 settled = true;
@@ -841,6 +880,7 @@ async function executeSavedPlan(
                     conversationId, turnId, event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments,
                 );
                 useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                    turnId,
                     status,
                     event: terminal,
                     accumulated,
@@ -867,7 +907,7 @@ async function executeSavedPlan(
                 });
                 useChatStore
                     .getState()
-                    .settleOrchestrationTurn(conversationId, { status: 'cancelled', event: terminal, accumulated });
+                    .settleOrchestrationTurn(conversationId, { turnId, status: 'cancelled', event: terminal, accumulated });
                 useOrchestrationStore.getState().endRun(runId, 'cancelled');
             },
             // Older error-only frames do not prove that finalization reached storage.
@@ -880,7 +920,7 @@ async function executeSavedPlan(
                 current.updatePlanEditor(conversationId, turnId, (editor) => ({
                     ...editor, blocked: true, error: message,
                 }));
-                useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+                useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'planned' });
             },
             // The plan was already run somewhere else.
             //
@@ -919,11 +959,11 @@ async function executeSavedPlan(
         if (legacyMessage) {
             // The server will never run this plan, so it is put away and the thread says why.
             current.clearPlan(conversationId, turnId);
-            current.clearActiveTurn(conversationId);
-            useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'failed', error: legacyMessage });
+            if (current.activeTurns[conversationId] === turnId) current.clearActiveTurn(conversationId);
+            useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'failed', error: legacyMessage });
             return;
         }
-        useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+        useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'planned' });
         return;
     }
     if (result.waiting) {
@@ -937,6 +977,7 @@ async function executeSavedPlan(
         });
         if (!activeControllers.has(conversationId)) {
             useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                turnId,
                 status: 'unknown',
                 event: { run_id: runId, turn_id: turnId },
                 accumulated: result.accumulated,
@@ -1052,9 +1093,10 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
                 .some((run) => run.conversationId === conversationId && run.runId !== runId);
             const activeTurn = current.activeTurns[conversationId];
             if (chat.activeConversationId === conversationId && !otherRun
-                && (!chat.streaming || !activeTurn || activeTurn === record.turn_id)) {
+                && (!chat.streaming || (chat.orchestrationSurface && (!activeTurn || activeTurn === record.turn_id)))) {
                 const partial = chat.messages.find((message) => message.id === `orchestration-status-${runId}`)?.content ?? '';
                 chat.settleOrchestrationTurn(conversationId, {
+                    turnId: record.turn_id ?? tracked?.turnId,
                     status, event, accumulated: record.assistant_message_id ? '' : partial,
                 });
                 // Saved messages own final content, citations and artifact metadata.
@@ -1308,18 +1350,23 @@ export function hasActiveOrchestration(conversationId: string): boolean {
  * history is left untouched — a run that already finished stays in the timeline.
  */
 export function dismissOrchestrationTurn(conversationId: string, turnId: string): void {
-    cancelOrchestration(conversationId);
+    const store = useOrchestrationStore.getState();
+    if (store.activeTurns[conversationId] === turnId) {
+        void cancelOrchestration(conversationId);
+    } else {
+        const runId = selectPlan(store, conversationId, turnId)?.run_id;
+        if (runId) void cancelOrchestration(conversationId, runId);
+    }
     const key = scopeKey(conversationId, turnId);
     turnContexts.delete(key);
     editorControllers.get(key)?.abort();
     editorControllers.delete(key);
-    const store = useOrchestrationStore.getState();
     store.clearPlan(conversationId, turnId);
     store.clearElicitation(conversationId, turnId);
-    store.clearActiveTurn(conversationId);
+    if (store.activeTurns[conversationId] === turnId) store.clearActiveTurn(conversationId);
     useChatStore
         .getState()
-        .settleOrchestrationTurn(conversationId, { status: 'cancelled', accumulated: '' });
+        .settleOrchestrationTurn(conversationId, { turnId, status: 'cancelled', accumulated: '' });
 }
 
 function editorRequestFailure(error: unknown): { message: string; info: OrchestrationRequestError } {
