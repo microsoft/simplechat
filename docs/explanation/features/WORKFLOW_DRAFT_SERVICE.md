@@ -6,6 +6,8 @@ Application version tracking: `application\single_app\config.py`.
 
 Native rules-mode alert blueprints implemented in version: **0.261.315**.
 
+Shared schedule policy implemented in version: **0.261.317**.
+
 Related issue: #1545, part of #1543. Builds on
 [Workflow calendar schedules](WORKFLOW_CALENDAR_SCHEDULES.md) (#1544).
 
@@ -275,7 +277,7 @@ blueprint. At most 10 errors are returned, sorted by path.
 | `unsupported_field` | A field the schema doesn't define, or one the chosen trigger, frequency or runner doesn't use | The field to remove |
 | `too_many_tasks` | More than 5 tasks, or more than **Workflow Task Limit** | `/tasks` |
 | `trigger_invalid` | A trigger or schedule field is wrong; an unknown time zone points at `timezone` | The trigger field |
-| `cadence_below_minimum` | An interval shorter than the minimum for workflows created from chat; the message names the minimum | `/trigger` or `/trigger/schedule` |
+| `cadence_below_minimum` | A blueprint interval shorter than the shared administrator minimum; the message names the minimum. Edited payload saves use `invalid_workflow_settings` for the same refusal. | `/trigger` or `/trigger/schedule` |
 | `quota_exceeded` | The user already has the most workflows created from chat allowed | `''` |
 | `agent_unavailable` | `agent_ref` names an agent the user can't use | Each use |
 | `reference_unknown` | A handle the request didn't map, or text that isn't a handle | Each use |
@@ -363,19 +365,19 @@ revives another record. A save payload can't choose the id.
 | Setting | Default | Range | Applies |
 | --- | --- | --- | --- |
 | `chat_orchestration_max_workflows_per_user` | 20 | 1 to 100 | When a workflow is created from chat |
-| `chat_orchestration_min_workflow_interval_seconds` | 3,600 (hourly) | 60 to 86,400 | When a workflow is created from chat |
+| `workflow_min_schedule_interval_seconds` | 1 second | 1 to 86,400 | Every new or changed interval schedule, regardless of origin |
 
 - The cap counts the user's workflows whose `origin.source` is `orchestration`
   and that aren't being deleted. Workflows the user builds in the editor never
   count. A count that fails refuses the create rather than treating the count as
   zero. Two accepts at the same moment can both pass, so the cap can be exceeded
   by the number of concurrent accepts.
-- The effective minimum interval is the larger of this setting and the general
-  **Workflow Minimum Schedule Interval**. Calendar schedules run no more than
-  once a day, so they always pass.
-- Both limits apply when a workflow is created from chat. The owner's later edits
-  follow only the general minimum, like any other workflow.
-- Workflows without an orchestration origin are unaffected.
+- The shared **Workflow Minimum Schedule Interval** is the only cadence policy.
+  The retired chat-only key is discarded on settings load/save without changing
+  that value. Calendar schedules run no more than once a day and always pass.
+- The count cap applies only to chat-created workflows. The shared cadence policy
+  applies to every origin, including later edits. An unchanged existing interval
+  below a newly raised minimum remains savable.
 - The V2 admin page refuses a value outside the range. The classic admin page
   keeps its existing behavior of clamping to the range.
 

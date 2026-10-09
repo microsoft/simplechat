@@ -18,16 +18,11 @@ WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT = 1
 WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN = 1
 WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX = 86400
 WORKFLOW_MIN_SCHEDULE_INTERVAL_SETTING = "workflow_min_schedule_interval_seconds"
-# Workflows that chat orchestration creates for a user have their own cap and a higher floor, so a
-# conversation cannot fill a workspace with workflows or schedule one to run every minute.
+# Workflows that chat orchestration creates for a user have their own count cap.
 CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT = 20
 CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN = 1
 CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX = 100
 CHAT_ORCHESTRATION_MAX_WORKFLOWS_SETTING = "chat_orchestration_max_workflows_per_user"
-CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT = 3600
-CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN = 60
-CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX = 86400
-CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_SETTING = "chat_orchestration_min_workflow_interval_seconds"
 # Each accepted hand-off creates a one-time workflow and queues a durable run, so a rolling 24-hour
 # limit per user bounds how much background work chat can start, separately from the cap above.
 CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT = 5
@@ -289,51 +284,9 @@ def get_chat_orchestration_workflow_run_wait_max_seconds(settings=None):
     )
 
 
-def validate_chat_orchestration_min_workflow_interval_seconds(value):
-    """Validate the shortest interval a workflow created from chat may run on."""
-    candidate = _whole_number(value)
-    if (
-        candidate is None
-        or not CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN <= candidate <= CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX
-    ):
-        raise WorkflowLoopLimitError(
-            "Minimum Schedule Interval For Workflows Created From Chat must be a whole number of "
-            "seconds from 60 to 86,400.",
-            code="chat_orchestration_workflow_interval_invalid",
-        )
-    return candidate
-
-
-def get_chat_orchestration_min_workflow_interval_seconds(settings=None):
-    """Read the orchestration schedule floor on its own, before the general floor is applied."""
-    if settings is None:
-        # Settings initialize application clients; load them only at a request boundary.
-        from functions_settings import get_settings
-
-        settings = get_settings()
-    if not isinstance(settings, Mapping):
-        raise WorkflowLoopLimitError(
-            "The schedule minimum for workflows created from chat is temporarily unavailable.",
-            code="chat_orchestration_workflow_interval_unavailable",
-        )
-    return validate_chat_orchestration_min_workflow_interval_seconds(
-        settings.get(
-            CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_SETTING, CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
-        )
-    )
-
-
 def get_orchestration_workflow_min_interval_seconds(settings=None):
-    """The shortest interval an orchestration-created workflow may use: the larger of both floors."""
-    if settings is None:
-        # Settings initialize application clients; load them only at a request boundary.
-        from functions_settings import get_settings
-
-        settings = get_settings()
-    return max(
-        get_chat_orchestration_min_workflow_interval_seconds(settings),
-        get_workflow_min_schedule_interval_seconds(settings),
-    )
+    """Use the same administrator minimum for chat planning as for every workflow editor."""
+    return get_workflow_min_schedule_interval_seconds(settings)
 
 
 def effective_workflow_loop_limit(max_items=None, *, settings=None, policy=None):

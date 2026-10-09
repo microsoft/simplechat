@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the workflow draft service.
-Version: 0.261.202
+Version: 0.261.317
 Implemented in: 0.261.202
+Shared schedule policy coverage implemented in: 0.261.317
 
 This test ensures that a workflow blueprint proposed from chat:
 
@@ -693,20 +694,23 @@ def test_trigger_invalid_points_at_the_field_to_fix(harness):
     assert _codes(harness.dry_run(review, REVIEW_HANDLES)) == [("trigger_invalid", "/trigger/schedule/timezone")]
 
 
-def test_cadence_below_minimum_uses_the_larger_floor_and_passes_calendar_schedules(harness):
+def test_cadence_below_minimum_uses_the_shared_floor_and_passes_calendar_schedules(harness):
+    harness.settings["workflow_min_schedule_interval_seconds"] = 3600
     every_30_minutes = _blueprint(trigger={"type": "interval", "unit": "minutes", "value": 30})
     result = harness.dry_run(every_30_minutes, EMAIL_HANDLES)
     assert result["errors"] == [{
         "code": "cadence_below_minimum",
         "message": (
-            "Workflows created from chat cannot run this often. Choose an interval of at least 1 hour, "
-            "or a daily, weekly or monthly schedule."
+            "This schedule runs more often than the administrator allows. "
+            "Choose an interval of at least 1 hour."
         ),
         "path": "/trigger",
     }]
-    assert harness.dry_run(_blueprint(trigger={"type": "interval", "unit": "hours", "value": 1}), EMAIL_HANDLES)["ok"]
+    allowed_hourly = harness.dry_run(
+        _blueprint(trigger={"type": "interval", "unit": "hours", "value": 1}), EMAIL_HANDLES,
+    )
+    assert allowed_hourly["ok"]
 
-    # The general floor wins when an administrator sets it above the orchestration floor.
     harness.settings["workflow_min_schedule_interval_seconds"] = 7200
     hourly = harness.dry_run(_blueprint(trigger={"type": "interval", "unit": "hours", "value": 1}), EMAIL_HANDLES)
     assert _codes(hourly) == [("cadence_below_minimum", "/trigger")]
@@ -718,13 +722,15 @@ def test_cadence_below_minimum_uses_the_larger_floor_and_passes_calendar_schedul
         "type": "calendar", "frequency": "daily", "time_of_day": "06:30", "timezone": "Asia/Tokyo",
     }), EMAIL_HANDLES)
     assert daily["ok"] is True, daily["errors"]
-    assert _codes(harness.dry_run(_blueprint(trigger={"type": "interval", "unit": "hours", "value": 23}), EMAIL_HANDLES)) == [
-        ("cadence_below_minimum", "/trigger"),
-    ]
+    allowed = harness.dry_run(
+        _blueprint(trigger={"type": "interval", "unit": "minutes", "value": 5}), EMAIL_HANDLES,
+    )
+    assert allowed["ok"] is True, allowed["errors"]
 
     review = copy.deepcopy(DOCUMENT_REVIEW)
-    review["trigger"]["schedule"] = {"kind": "interval", "unit": "minutes", "value": 15}
-    assert _codes(harness.dry_run(review, REVIEW_HANDLES)) == [("cadence_below_minimum", "/trigger/schedule")]
+    review["trigger"]["schedule"] = {"kind": "interval", "unit": "minutes", "value": 4}
+    refused_review = harness.dry_run(review, REVIEW_HANDLES)
+    assert _codes(refused_review) == [("cadence_below_minimum", "/trigger/schedule")]
 
 
 def test_a_manual_blueprint_has_no_schedule_to_check(harness):
@@ -840,8 +846,10 @@ def test_agent_unavailable_applies_the_existing_agent_rules_at_every_use(harness
     }]
     # Other checks still run, so one repair round can fix everything at once.
     both = copy.deepcopy(two_tasks)
+    harness.settings["workflow_min_schedule_interval_seconds"] = 3600
     both["trigger"] = {"type": "interval", "unit": "minutes", "value": 5}
-    assert [code for code, _ in _codes(harness.dry_run(both, EMAIL_HANDLES))] == [
+    refused_both = harness.dry_run(both, EMAIL_HANDLES)
+    assert [code for code, _ in _codes(refused_both)] == [
         "agent_unavailable", "agent_unavailable", "cadence_below_minimum",
     ]
 
@@ -1133,6 +1141,7 @@ def test_create_never_adopts_or_revives_another_record_under_its_id(harness):
 
 
 def test_a_create_rejected_by_a_draft_check_writes_nothing(harness):
+    harness.settings["workflow_min_schedule_interval_seconds"] = 3600
     result = harness.create(_blueprint(trigger={"type": "interval", "unit": "minutes", "value": 10}), EMAIL_HANDLES)
     assert (result["created"], _codes(result)) == (False, [("cadence_below_minimum", "/trigger")])
     assert harness.writes() == {}
@@ -1144,7 +1153,7 @@ def test_a_misconfigured_limit_is_a_server_fault_not_a_draft_error(harness):
                   tasks=[_task("t1", "Check", "Check the queue.")])
     for setting, value in (
         ("chat_orchestration_max_workflows_per_user", 0),
-        ("chat_orchestration_min_workflow_interval_seconds", 30),
+        ("workflow_min_schedule_interval_seconds", 0),
     ):
         harness.settings = {**harness.settings, setting: value}
         with pytest.raises(limit_error):
@@ -1221,6 +1230,7 @@ def test_a_group_payload_dry_run_writes_nothing(harness):
 
 
 def test_create_from_an_edited_payload_uses_the_same_id_origin_and_limits(harness):
+    harness.settings["workflow_min_schedule_interval_seconds"] = 3600
     workflow_id = harness.drafts.orchestration_workflow_id(OWNER_ID, PROPOSAL_ID)
     payload = harness.call(
         "build_workflow_blueprint_payload", EMAIL_DIGEST, EMAIL_HANDLES, workflow_id=workflow_id,
@@ -1238,7 +1248,7 @@ def test_create_from_an_edited_payload_uses_the_same_id_origin_and_limits(harnes
         "code": "workflow_conflict", "message": "This draft names a different workflow.", "path": "/id",
     }]
     too_often = create({**payload, "trigger_type": "interval", "schedule": {"unit": "minutes", "value": 30}})
-    assert _codes(too_often) == [("cadence_below_minimum", "")]
+    assert _codes(too_often) == [("invalid_workflow_settings", "")]
     assert harness.writes() == {}
 
     created = create({**payload, "id": workflow_id})

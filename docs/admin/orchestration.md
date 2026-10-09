@@ -637,14 +637,15 @@ context.
 | Earlier runs shown to the planner | How many previous run summaries the planner can see. Zero disables the activity ledger, not recent message history. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
 | Earlier-run summary size | Caps the size of that summary. Older runs lose their detail first when the budget is reached. Supported range is 1024-131072 bytes. | 16384 | `chat_orchestration_ledger_max_bytes` |
 | Workflows created from chat per user | Caps how many workflows a chat plan may create for one user, so a conversation cannot fill a workspace with workflows. Workflows a user builds in the workflow editor never count toward it, and deleting a workflow created from chat frees its place. Supported range is 1-100. | 20 | `chat_orchestration_max_workflows_per_user`; since **0.261.202** |
-| Minimum schedule interval for workflows created from chat | The shortest repeat interval a chat plan may give a workflow it creates. When the general **Workflow Minimum Schedule Interval** on the Workflow tab is longer, that one applies instead. Daily, weekly and monthly schedules always pass. It is checked when the workflow is created; the owner's later edits follow the general minimum only. Supported range is 60-86,400 seconds. | 3600 | `chat_orchestration_min_workflow_interval_seconds`; since **0.261.202** |
 | Hand-offs from chat per user per day | Caps how many hand-offs one user may accept from chat in any rolling 24 hours. Each hand-off creates a one-time workflow and starts a durable run, so this bounds how much background work one user can start from chat. It counts the hand-off workflows that still exist, so deleting one frees its place, and hand-off workflows never count toward **Workflows created from chat per user**. It applies only when **Hand Off Large Work From Chat** is on. Supported range is 1-100. | 5 | `chat_orchestration_max_workflow_handoffs_per_day`; since **0.261.250** |
 | Wait for a workflow from chat | The longest a plan waits for a quick saved workflow before its answer moves on and the result is posted to the chat later instead. **Run timeout** also bounds every wait, so a plan always keeps time to write its answer. Five minutes covers the short digests people run from chat; raise it when their quick workflows routinely take longer, at the cost of holding answers open longer. It applies only when **Wait For Quick Workflows In Chat** is on. Supported range is 60-1800 seconds. | 300 | `chat_orchestration_workflow_run_wait_max_seconds`; since **0.261.309** |
 
-Since **0.261.202**, **Workflows created from chat per user** and **Minimum schedule
-interval for workflows created from chat** are enforced by the workflow draft service
-that chat orchestration uses to turn a plan into a saved workflow. Workflows created any
-other way are not affected by either one.
+**Workflows created from chat per user** is enforced by the workflow draft service;
+workflows created in the editor do not count toward it. Since **0.261.317**, every
+workflow uses **Workflow Minimum Schedule Interval** (`workflow_min_schedule_interval_seconds`)
+on the [Workflow tab]({{ '/admin/workflow/' | relative_url }}). Chat proposals,
+Ask AI edits, and saves share that policy. The former chat-only minimum is retired;
+its stored value is discarded without changing the general minimum.
 
 ### Planner Model {#chat-orchestration-planner-model-section}
 

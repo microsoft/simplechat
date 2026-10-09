@@ -1,8 +1,9 @@
 # test_admin_orchestration_workflow_proposals.py
 """
 UI coverage for the switch that lets chat orchestration propose workflows, in both admin surfaces.
-Version: 0.261.207
+Version: 0.261.317
 Implemented in: 0.261.207
+Chat-only minimum retirement coverage implemented in: 0.261.317
 
 The V2 page shows Propose Workflows From Chat off by default, only while Chat Orchestration and
 personal workflows are both on, and saves it as a partial update through the production field
@@ -82,6 +83,7 @@ def test_v2_switch_defaults_off_and_saves_as_a_partial_update(orchestration_admi
     expect(_switch(page, LABEL)).not_to_be_checked()
     expect(page.get_by_text("Off by default, because an approved proposal", exact=False)).to_be_visible()
     expect(page.get_by_role("checkbox", name="Propose workflows", exact=True)).to_be_visible()
+    expect(page.get_by_label("Minimum Schedule Interval For Workflows Created From Chat (seconds)", exact=True)).to_have_count(0)
 
     _set_switch(page, LABEL, True)
     _save(page)
@@ -156,6 +158,7 @@ def test_classic_pane_switch_submits_a_normal_form_value(page, width, enabled):
     page.set_viewport_size({"width": width, "height": 900})
     _render_classic_pane(page, {"enable_chat_orchestration": True, "allow_user_workflows": True, KEY: enabled})
     checkbox = page.get_by_label(LABEL, exact=True)
+    expect(page.locator('[name="chat_orchestration_min_workflow_interval_seconds"]')).to_have_count(0)
     expect(checkbox).to_be_checked(checked=enabled)
     expect(checkbox).to_have_attribute("aria-describedby", HELP_ID)
     expect(page.locator(f"#{HELP_ID}")).to_be_visible()

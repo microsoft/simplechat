@@ -4,6 +4,8 @@ Implemented in version: **0.261.308**.
 
 Application version tracking: `application\single_app\config.py`.
 
+Shared schedule policy implemented in version: **0.261.317**.
+
 Related issue: part of #1550, under #1543. Builds on
 [Chat orchestration workflow proposals](CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md),
 [Chat orchestration workflow runs](CHAT_ORCHESTRATION_WORKFLOW_RUNS.md),
@@ -384,10 +386,10 @@ orchestration wait.
 
 There is no spend cap, so replay reuses the caps on chat-created workflows:
 
-- The schedule must meet `get_orchestration_workflow_min_interval_seconds`, the
-  larger of `chat_orchestration_min_workflow_interval_seconds` (one hour by
-  default) and `workflow_min_schedule_interval_seconds`. It is enforced on every
-  save of a replay workflow, including later edits.
+- New or changed interval schedules must meet `workflow_min_schedule_interval_seconds`
+  (1 second by default), the same policy as all other workflows. An unchanged
+  existing shorter interval remains savable after an administrator raises the
+  minimum. Calendar schedules always pass.
 - Replay workflows count toward `chat_orchestration_max_workflows_per_user`
   (20 by default). Over the limit, the save is refused as `quota_exceeded` (429).
 
@@ -467,7 +469,7 @@ builds and run-history redaction against a golden captured from base
 | --- | --- |
 | `functions_workflow_plan_replay.py` | New: allowlist, freeze, hash, preview, save, run-time authorization, executor, reconciliation and typed result. |
 | `functions_workflow_runner.py` | Dispatches a `plan_replay` task to the replay executor in one durable unit, and records the typed result on the run item. |
-| `functions_personal_workflows.py` | Keeps the frozen plan read-only on save and applies the chat cadence floor to replay workflows. |
+| `functions_personal_workflows.py` | Keeps the frozen plan read-only on save and applies the shared cadence policy to replay workflows. |
 | `functions_group_workflows.py` | Refuses a `plan_replay` task. |
 | `functions_orchestration_scheduler.py` | Excludes replay runs from the due-run query. |
 | `route_backend_orchestration.py` | Preview and save routes; 409 for chat routes on replay runs. |

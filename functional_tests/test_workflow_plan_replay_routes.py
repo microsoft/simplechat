@@ -2,8 +2,9 @@
 # test_workflow_plan_replay_routes.py
 """
 Functional test for the saved-plan replay routes: preview and save a completed chat plan.
-Version: 0.261.308
+Version: 0.261.317
 Implemented in: 0.261.308
+Shared schedule policy coverage implemented in: 0.261.317
 
 This test ensures that only the creator, in a private conversation they own, can preview or save a
 completed chat orchestration plan as a personal workflow that repeats it. The preview discloses
@@ -525,11 +526,27 @@ def test_personal_workflows_off_blocks_both_routes(h):
     require(status == 400 and stored(h) == [], f"{status} {body}")
 
 
-def test_a_schedule_faster_than_the_chat_minimum_is_refused(h):
+def test_a_schedule_faster_than_the_shared_minimum_is_refused(h):
     seed_run(h)
     login(h)
-    _refused(save_previewed(h, schedule={"unit": "minutes", "value": 5}), 422, "cadence_below_minimum")
+    h.state.settings["workflow_min_schedule_interval_seconds"] = 301
+    _refused(save_previewed(h, schedule={"unit": "minutes", "value": 5}), 422, "invalid_workflow_settings")
     require(stored(h) == [], "A too-frequent schedule creates nothing.")
+
+
+def test_a_replay_can_run_every_minute_under_the_shared_policy(h):
+    seed_run(h)
+    login(h)
+    h.state.settings["workflow_min_schedule_interval_seconds"] = 60
+    h.state.settings["chat_orchestration_min_workflow_interval_seconds"] = 86400
+    status, body = save_previewed(h, schedule={"unit": "minutes", "value": 1})
+    require(status == 201, f"{status} {body}")
+    require(stored(h)[0]["schedule"] == {"unit": "minutes", "value": 1}, "Minute cadence is persisted.")
+    h.state.settings["workflow_min_schedule_interval_seconds"] = 3600
+    edited = deepcopy(body["workflow"])
+    edited["name"] = "Renamed minute replay"
+    saved = h.personal.save_personal_workflow(OWNER, edited, actor_user_id=OWNER)
+    require(saved["schedule"] == {"unit": "minutes", "value": 1}, "An unchanged schedule stays editable.")
 
 
 def test_a_refused_step_is_named_and_nothing_is_created(h):
@@ -633,10 +650,10 @@ def test_the_frozen_plan_stays_read_only_through_the_ordinary_save(h):
     require(saved["tasks"][0]["type"] == h.replay.PLAN_REPLAY_TASK_TYPE, "The task keeps its type.")
     require(saved["tasks"][0]["plan_replay"]["plan_sha256"] == original["plan_sha256"], "The plan is unchanged.")
 
-    # The chat-workflow cadence floor applies every time the schedule is saved, not only at creation.
+    h.state.settings["workflow_min_schedule_interval_seconds"] = 301
     faster = json.loads(json.dumps(saved))
     faster["schedule"] = {"unit": "minutes", "value": 5}
-    cadence_error = importlib.import_module("functions_workflow_definitions").WorkflowCadenceError
+    cadence_error = importlib.import_module("functions_workflow_definitions").WorkflowPublicValidationError
     with pytest.raises(cadence_error):
         h.personal.save_personal_workflow(OWNER, faster, actor_user_id=OWNER)
 
