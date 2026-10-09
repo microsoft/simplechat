@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures" / "orchestration"))
 
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402, F401
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -158,6 +159,8 @@ class ApprovalApi:
             self.respond(route, {"messages": []})
         elif path == "/api/conversations/feed" and request.method == "GET":
             self.respond(route, {"conversations": [], "has_more": False})
+        elif is_pending_actions_list(request.method, path):
+            self.respond(route, pending_actions_payload())
         else:
             self.unexpected.append(f"{request.method} {path}")
             self.respond(route, {"error": "Unexpected approval fixture request"}, 404)

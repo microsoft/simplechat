@@ -516,8 +516,21 @@ export interface PendingAction {
     web_link?: string;
     conversation_id?: string;
     workflow_id?: string;
+    run_id?: string;
+    request_id?: string;
+    message_id?: string;
+    event_id?: string;
+    error_code?: string;
+    delay_seconds?: number;
+    /** Set when the owner's Microsoft 365 sign-in has to be renewed before this action can be sent. */
+    auth_required?: boolean;
+    sources?: unknown;
+    scopes?: unknown;
     updated_at?: string;
     created_at?: string;
+    completed_at?: string;
+    cancelled_at?: string;
+    failed_at?: string;
 }
 
 export const ACTIONABLE_PENDING_STATUSES = new Set(['pending', 'scheduled', 'review_required']);
@@ -592,6 +605,33 @@ export async function fetchPendingActions(
     };
 }
 
+/**
+ * One page of the outgoing actions saved in a conversation, for the chat view.
+ *
+ * Unlike the Approvals inbox this includes finished actions, so a reply that saved an email
+ * still shows what became of it. A page with a row that is not a saved action is refused
+ * rather than filtered, because a partly read page must never look like a complete one.
+ */
+export async function fetchConversationPendingActions(
+    conversationId: string,
+    continuationToken = '',
+    signal?: AbortSignal,
+): Promise<{ items: PendingAction[]; continuationToken: string }> {
+    const params = new URLSearchParams({ conversation_id: conversationId, limit: '30' });
+    if (continuationToken) params.set('continuation_token', continuationToken);
+    const data = await m365Request<{ pending_actions?: unknown; continuation_token?: unknown }>(
+        `/api/msgraph/pending-actions?${params.toString()}`,
+        { signal },
+    );
+    if (!Array.isArray(data?.pending_actions) || !data.pending_actions.every(isPendingAction)) {
+        throw new Error('Outgoing actions could not be verified.');
+    }
+    return {
+        items: data.pending_actions,
+        continuationToken: typeof data.continuation_token === 'string' ? data.continuation_token : '',
+    };
+}
+
 function actionFromResponse(payload: unknown, id: string): PendingAction {
     const action = (payload as { pending_action?: unknown } | null)?.pending_action;
     if (!isPendingAction(action) || action.id !== id) {
@@ -600,9 +640,20 @@ function actionFromResponse(payload: unknown, id: string): PendingAction {
     return action;
 }
 
-export async function fetchPendingAction(id: string, signal?: AbortSignal): Promise<PendingAction> {
+/**
+ * The current state of one saved action.
+ *
+ * Pass the conversation to read an action someone else saved in a shared conversation; the
+ * server then checks access to that conversation instead of ownership of the action.
+ */
+export async function fetchPendingAction(
+    id: string,
+    signal?: AbortSignal,
+    conversationId = '',
+): Promise<PendingAction> {
+    const query = conversationId ? `?${new URLSearchParams({ conversation_id: conversationId }).toString()}` : '';
     return actionFromResponse(
-        await m365Request<unknown>(`/api/msgraph/pending-actions/${encodeURIComponent(id)}`, { signal }),
+        await m365Request<unknown>(`/api/msgraph/pending-actions/${encodeURIComponent(id)}${query}`, { signal }),
         id,
     );
 }

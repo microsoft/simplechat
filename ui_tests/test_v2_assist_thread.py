@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "orchestra
 
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -170,6 +171,9 @@ class AssistApi:
                 return
             if path == "/api/v2/orchestration/runs":
                 route.fulfill(json={"runs": []})
+                return
+            if is_pending_actions_list(request.method, path):
+                route.fulfill(json=pending_actions_payload())
                 return
             if path == "/favicon.ico":
                 route.fulfill(status=204)

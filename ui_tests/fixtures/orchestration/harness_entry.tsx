@@ -21,6 +21,7 @@ import * as generatedDocumentsStore from '../../../application/v2_ui/src/stores/
 import * as generatedExportRunStore from '../../../application/v2_ui/src/stores/generatedExportRunStore';
 import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
 import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
+import * as m365PendingActionsStore from '../../../application/v2_ui/src/stores/m365PendingActionsStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
@@ -302,6 +303,9 @@ function reset(): void {
     // Assist threads live in memory only, so a test reusing an editor would otherwise see
     // the previous test's exchanges and draft.
     assistThreadStore.useAssistThreadStore.getState().resetThreads();
+    // Saved Microsoft 365 actions belong to the conversation they were read for, so a test
+    // reusing a conversation id would otherwise start from the previous test's cards.
+    m365PendingActionsStore.chatPendingActionsStore.getState().reset();
     try {
         window.localStorage.clear();
     } catch {
@@ -326,6 +330,7 @@ const harness = {
         generatedExportRuns: generatedExportRunStore,
         userSettings: userSettingsStore,
         assistThread: assistThreadStore,
+        pendingActions: m365PendingActionsStore,
     },
     controller,
     plan,

@@ -1,9 +1,10 @@
 # test_v2_notifications_bell.py
 """
 Browser regressions for the V2 notification bell, its panel and desktop notifications.
-Version: 0.261.251
+Version: 0.261.307
 Implemented in: 0.261.195
 Notices about a chat-started run's results, and workflow-activity links, open the run in V2: 0.261.251
+Notices about a Microsoft 365 pending action open its card in V2 chat, not classic chat: 0.261.307
 
 Exercises the real rail, bell, panel, chat page, preferences tab, stores and notification
 runtime, bundled by fixtures/notification_bell. Only HTTP answers and the browser APIs a
@@ -273,6 +274,31 @@ def m365_pending_action_notice(notice_id="n-m365-action", conversation_id="conv-
     )
 
 
+def pending_action(action_id="act-1", conversation_id="conv-b", subject="Budget summary"):
+    """A saved outgoing email in the shape the server sends it."""
+    return {
+        "type": "msgraph_pending_action",
+        "id": action_id,
+        "version": "v1",
+        "status": "pending",
+        "operation": "send_mail",
+        "graph_resource_type": "mail",
+        "subject": subject,
+        "summary": {
+            "subject": subject,
+            "body_preview": "Hello Ann, here is the budget summary.",
+            "body_preview_truncated": False,
+            "to_recipients": ["ann@example.com"],
+        },
+        "can_cancel": True,
+        "can_send_now": True,
+        "viewer_is_owner": True,
+        "review_details_required": False,
+        "conversation_id": conversation_id,
+        "updated_at": "2026-10-07T16:00:00Z",
+    }
+
+
 def document_notice(notice_id="n-doc", read=False):
     return notice(
         notice_id, "document_processing_complete", "Document ready: Q3 forecast.pdf",
@@ -347,6 +373,9 @@ class NotificationApi:
         self.errors = []
         self.unexpected = []
         self.expected_http_failures = set()
+        # Every saved Microsoft 365 action the server knows by id, and the ones its list leaves out.
+        self.pending_actions = {}
+        self.unlisted_pending_actions = set()
         self._created = 0
 
     # Server state -----------------------------------------------------------------------------
@@ -385,7 +414,10 @@ class NotificationApi:
         path = parsed.path
         self.requests.append((method, f"{path}?{parsed.query}" if parsed.query else path, request.resource_type))
         query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
-        for answer in (self.page_route, self.notification_route, self.conversation_route, self.other_route):
+        for answer in (
+            self.page_route, self.notification_route, self.conversation_route, self.pending_action_route,
+            self.other_route,
+        ):
             if answer(route, method, path, query):
                 return
         self.unexpected.append(f"{method} {path}")
@@ -455,6 +487,31 @@ class NotificationApi:
             route.fulfill(json={"messages": []})
         elif method == "POST" and (match := re.fullmatch(r"/api/conversations/([^/]+)/mark-read", path)):
             self.answer_conversation_read(route, unquote(match.group(1)))
+        else:
+            return False
+        return True
+
+    def pending_action_route(self, route, method, path, query):
+        """The conversation's saved Microsoft 365 actions, and one action read by its id."""
+        if method != "GET":
+            return False
+        if path == "/api/msgraph/pending-actions":
+            route.fulfill(json={
+                "success": True,
+                "pending_actions": [
+                    copy.deepcopy(record) for action_id, record in self.pending_actions.items()
+                    if record["conversation_id"] == query.get("conversation_id")
+                    and action_id not in self.unlisted_pending_actions
+                ],
+                "continuation_token": "",
+            })
+        elif match := re.fullmatch(r"/api/msgraph/pending-actions/([^/]+)", path):
+            record = self.pending_actions.get(unquote(match.group(1)))
+            if record is None:
+                self.expected_http_failures.add((path, 404))
+                route.fulfill(status=404, json={"success": False, "error": "Pending action not found."})
+            else:
+                route.fulfill(json={"success": True, "pending_action": copy.deepcopy(record)})
         else:
             return False
         return True
@@ -1433,11 +1490,6 @@ CLASSIC_LINKS = {
         lambda: workflow_notice("n-classic", "The digest step timed out.", group_id="grp-9"),
         "/elsewhere", "/workflow-activity?workflowId=wf-1&runId=run-1", [{"groupId": "grp-9"}], 200,
     ),
-    # Only the classic chat page draws the pending-action card, so it is not opened in V2.
-    "m365-pending-action": (
-        lambda: m365_pending_action_notice("n-classic"),
-        "/chat", "/chats?conversationId=conv-b&m365_pending_action=act-1", [], 200,
-    ),
 }
 
 
@@ -1462,6 +1514,122 @@ def test_notices_for_pages_v2_has_not_rebuilt_open_the_classic_page(harness, cas
     if set_active:
         assert read_at < order.index(("PATCH", "/api/groups/setActive")) < page_at
     assert harness.count_requests("GET", "/api/conversations/conv-b/kind") == 0
+
+
+# Microsoft 365 pending actions: V2 chat draws the card itself, so the notice stays in V2 -------
+
+PENDING_CARD = '[data-testid="v2-pending-action-card"][data-pending-action-id="act-1"]'
+PENDING_SECTION = "Microsoft 365 outgoing actions for this conversation"
+PENDING_UNAVAILABLE = (
+    "That Microsoft 365 action is not available in this conversation. "
+    "It may have been removed, or you may not have access to it."
+)
+
+# Records every change to a card's highlight, so a test sees it come and go however quickly it does.
+WATCH_HIGHLIGHT = r"""() => {
+    window.highlightLog = [];
+    new MutationObserver((records) => {
+        for (const record of records) {
+            window.highlightLog.push(record.target.getAttribute('data-highlighted'));
+        }
+    }).observe(document.body, {subtree: true, attributes: true, attributeFilter: ['data-highlighted']});
+}"""
+
+
+def open_pending_action_notice(harness, start, *, active="conv-a"):
+    harness.open(start, active=active)
+    harness.js(WATCH_HIGHLIGHT)
+    harness.open_panel()
+    harness.action("n-action", "open").click()
+
+
+def highlights(harness):
+    return harness.js("() => window.highlightLog")
+
+
+@pytest.mark.parametrize("start", ["/elsewhere", "/chat"])
+def test_a_pending_action_notice_opens_its_card_in_v2_chat(harness, start):
+    harness.pending_actions["act-1"] = pending_action()
+    harness.add(m365_pending_action_notice("n-action"))
+    open_pending_action_notice(harness, start)
+
+    card = harness.page.locator(PENDING_CARD)
+    expect(card).to_be_visible()
+    expect(current_route(harness)).to_have_text("/chat?conversationId=conv-b")
+    expect(harness.panel).to_have_count(0)
+    # The card is drawn in the chat, scrolled to, highlighted and focused for the keyboard.
+    expect(harness.page.get_by_role("region", name=PENDING_SECTION).locator(PENDING_CARD)).to_have_count(1)
+    expect(card).to_be_focused()
+    harness.wait_for(lambda: highlights(harness)[:1] == ["true"], "The card was not highlighted.")
+    harness.wait_for(lambda: harness.read_calls == ["n-action"], "Opening the notice should mark it read.")
+    assert harness.active_conversation() == "conv-b"
+    assert harness.set_active_calls == []
+    # V2 answers the notice itself: the classic page is never loaded, and the address no longer
+    # names the action, so reloading the chat does not scroll to the card a second time.
+    assert harness.page.url == f"{ORIGIN}/harness.html"
+    assert not harness.saw("GET", "/chats")
+    assert harness.saw("GET", "/api/msgraph/pending-actions?conversation_id=conv-b")
+    assert harness.saw("GET", "/api/get_messages?conversation_id=conv-b")
+    assert harness.count_requests("GET", "/api/conversations/conv-b/kind") == 1
+
+
+def test_a_pending_action_notice_for_the_conversation_on_screen_highlights_its_card_in_place(harness):
+    harness.pending_actions["act-1"] = pending_action()
+    harness.add(m365_pending_action_notice("n-action"))
+    harness.open("/chat", active="conv-b")
+    card = harness.page.locator(PENDING_CARD)
+    expect(card).to_be_visible()
+    expect(card).not_to_be_focused()
+    harness.js(WATCH_HIGHLIGHT)
+
+    harness.open_panel()
+    harness.action("n-action", "open").click()
+    expect(card).to_be_focused()
+    harness.wait_for(lambda: highlights(harness)[:1] == ["true"], "The card was not highlighted.")
+    harness.wait_for(lambda: harness.read_calls == ["n-action"], "Opening the notice should mark it read.")
+    # The conversation already on screen is left alone: no reload, and no lost stream.
+    assert harness.active_conversation() == "conv-b"
+    assert harness.count_requests("GET", "/api/get_messages") == 0
+    assert harness.count_requests("GET", "/api/conversations/conv-b/kind") == 0
+    assert harness.page.url == f"{ORIGIN}/harness.html"
+    expect(current_route(harness)).to_have_text("/chat?conversationId=conv-b")
+
+
+def test_a_pending_action_notice_finds_an_action_the_conversation_list_does_not_show(harness):
+    # The list is paged, so an older action is read by its id.
+    harness.pending_actions["act-1"] = pending_action()
+    harness.unlisted_pending_actions.add("act-1")
+    harness.add(m365_pending_action_notice("n-action"))
+    open_pending_action_notice(harness, "/elsewhere")
+
+    card = harness.page.locator(PENDING_CARD)
+    expect(card).to_be_visible()
+    expect(card).to_be_focused()
+    harness.wait_for(lambda: highlights(harness)[:1] == ["true"], "The card was not highlighted.")
+    expect(harness.page.get_by_test_id("v2-pending-action-focus-unavailable")).to_have_count(0)
+    assert harness.saw("GET", "/api/msgraph/pending-actions/act-1?conversation_id=conv-b")
+    assert harness.page.url == f"{ORIGIN}/harness.html"
+
+
+@pytest.mark.parametrize("start", ["/elsewhere", "/chat"])
+def test_a_pending_action_notice_for_an_action_that_is_gone_says_so_and_opens_the_conversation(harness, start):
+    harness.pending_actions["act-other"] = pending_action("act-other", subject="Another draft")
+    harness.add(m365_pending_action_notice("n-action", action_id="act-gone"))
+    open_pending_action_notice(harness, start)
+
+    unavailable = harness.page.get_by_test_id("v2-pending-action-focus-unavailable")
+    expect(unavailable).to_be_visible()
+    expect(unavailable).to_contain_text(PENDING_UNAVAILABLE)
+    expect(current_route(harness)).to_have_text("/chat?conversationId=conv-b")
+    # The conversation still opens with the cards it does have, none of them highlighted by mistake.
+    other = harness.page.locator('[data-pending-action-id="act-other"]')
+    expect(other).to_have_count(1)
+    expect(other).not_to_have_attribute("data-highlighted", "true")
+    harness.wait_for(lambda: harness.read_calls == ["n-action"], "Opening the notice should mark it read.")
+    assert highlights(harness) == []
+    assert harness.saw("GET", "/api/msgraph/pending-actions/act-gone?conversation_id=conv-b")
+    assert harness.page.url == f"{ORIGIN}/harness.html"
+    assert harness.set_active_calls == []
 
 
 # (notice id, link, link context, what the panel says instead of opening it)

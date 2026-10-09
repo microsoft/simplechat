@@ -40,6 +40,7 @@ sys.path.insert(0, str(FIXTURES / "orchestration"))
 # These shared helpers live outside the test module's import directory.
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402, F401
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -300,6 +301,11 @@ class EditorApi:
             return
         if request.method == "GET" and path in self.assets:
             route.fulfill(path=str(self.assets[path]))
+            return
+        # The chat reads a conversation's saved Microsoft 365 actions whenever one is open. Answered
+        # before the request is recorded, so a suite about something else counts only its own.
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
             return
         body = request.post_data_json if request.method == "POST" else {}
         self.requests.append({"path": path, "method": request.method, "body": body, "query": parsed.query})

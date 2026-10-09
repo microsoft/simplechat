@@ -44,6 +44,7 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from ui_tests.fixtures.workflow_editor import WORKFLOW_ID, WorkflowEditorFixture  # noqa: E402
 from ui_tests.fixtures.workspace_authoring import ORIGIN as SPA_ORIGIN  # noqa: E402
+from ui_tests.fixtures.v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -107,6 +108,9 @@ class LinksApi:
             return
         if request.method == "GET" and path in self.assets:
             route.fulfill(path=str(self.assets[path]))
+            return
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
             return
         if path == LINKS_PATH and request.method == "GET":
             self.reads.append(parsed.query)

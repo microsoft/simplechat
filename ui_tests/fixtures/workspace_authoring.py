@@ -38,6 +38,7 @@ from ui_tests.fixtures.v2_notification_stubs import (
     conversation_mark_read_payload, is_notification_count, mark_read_conversation,
     notification_count_payload,
 )
+from ui_tests.fixtures.v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -775,6 +776,9 @@ class WorkspaceAuthoringFixture:
         elif mark_read_conversation(method, path):
             # A personal reply the reader watched finish is marked read.
             self._json(route, conversation_mark_read_payload(mark_read_conversation(method, path)))
+        elif is_pending_actions_list(method, path):
+            # A conversation's saved outgoing Microsoft 365 actions: none to show.
+            self._json(route, pending_actions_payload())
         elif path == "/api/user/agent/settings" and method == "GET":
             assert entry.query == {"view": ["editor"]}
             self._json(route, self.options)

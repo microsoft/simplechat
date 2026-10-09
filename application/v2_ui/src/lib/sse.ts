@@ -52,6 +52,16 @@ export function parseSseEventPayload(eventBlock: string): string | null {
     return dataLines.map((line) => line.substring(5).trimStart()).join('\n');
 }
 
+/** True for a frame that announces outgoing Microsoft 365 actions or says they could not be listed. */
+export function carriesPendingActions(event: ChatStreamEvent | null | undefined): event is ChatStreamEvent {
+    return (
+        !!event &&
+        (event.type === 'm365_pending_action' ||
+            event.m365_pending_actions !== undefined ||
+            event.m365_pending_actions_error !== undefined)
+    );
+}
+
 export interface ChatStreamHandlers {
     /** A content delta arrived. Append it to the message being built. */
     onContent?: (delta: string, accumulated: string) => void;
@@ -61,6 +71,12 @@ export interface ChatStreamHandlers {
     onConversationMetadata?: (event: ChatStreamEvent) => void;
     /** The user's message reached durable storage (`type: "user_message_persisted"`). */
     onUserMessagePersisted?: (event: ChatStreamEvent) => void;
+    /**
+     * A frame carries Microsoft 365 outgoing actions: the `m365_pending_action` frame sent the
+     * moment one is saved, or a terminal frame listing them. It does not end the stream, and a
+     * terminal frame is still delivered to its own handler afterwards.
+     */
+    onM365PendingActions?: (event: ChatStreamEvent) => void;
     /** Terminal frame carrying the final assistant message and its metadata. */
     onDone?: (event: ChatStreamEvent, accumulated: string) => void;
     /** The stream was cancelled, either by the user or server-side. */
@@ -268,6 +284,8 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
+        // Reported before the error check: a failed run can still have saved an action.
+        if (carriesPendingActions(event)) handlers.onM365PendingActions?.(event);
         if (event.replace_content === true) {
             result.accumulated = resolveStreamContent(event, '');
             handlers.onContent?.('', result.accumulated);
@@ -290,6 +308,11 @@ async function consumeStreamResponse(
 
         if (event.type === 'user_message_persisted') {
             handlers.onUserMessagePersisted?.(event);
+            return false;
+        }
+
+        // Announced above; the frame carries no answer text of its own.
+        if (event.type === 'm365_pending_action') {
             return false;
         }
 
@@ -530,6 +553,8 @@ export async function streamChat(
         } catch {
             /* Non-JSON error body; keep the status-based message. */
         }
+        // A refused request can still say that its outgoing actions could not be listed.
+        if (carriesPendingActions(event)) handlers.onM365PendingActions?.(event);
         // Reported through onError and returned rather than thrown: failure is already
         // modelled by result.errored, and throwing here would escape as an unhandled
         // rejection and skip the caller's post-stream cleanup.

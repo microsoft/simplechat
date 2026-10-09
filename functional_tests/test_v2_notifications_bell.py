@@ -128,7 +128,13 @@ FOLLOWED_LINKS = [
     (
         "/chats?conversationId=conv-5&m365_pending_action=act-1",
         {},
-        {"kind": "classic", "href": "/chats?conversationId=conv-5&m365_pending_action=act-1", "groupId": None},
+        {"kind": "conversation", "conversationId": "conv-5", "pendingActionId": "act-1"},
+    ),
+    # An action id a link must not carry opens the conversation without the focus request.
+    (
+        "/chats?conversationId=conv-5&m365_pending_action=act%2F1",
+        {},
+        {"kind": "conversation", "conversationId": "conv-5"},
     ),
     (
         "/approvals?approval_id=a-1",
@@ -378,7 +384,9 @@ def test_the_seams_later_tracks_build_on_are_in_place():
     assert "export function v2WorkflowRunPath(" in links
     assert links.count("v2WorkflowRunPath(") >= 3
     # Links are read with the chat page's own reader, so both accept the same spellings.
-    assert "import { readConversationParam } from './conversationUrl';" in links
+    assert "import { readConversationParam, readPendingActionFocus } from './conversationUrl';" in links
+    # The saved action a chat link names is read with the chat page's own reader too.
+    assert "readPendingActionFocus(url.searchParams)" in links
 
     # Workflow runs announce delivered results through the same channel as chat replies.
     events = read_v2("lib/replyEvents.ts")

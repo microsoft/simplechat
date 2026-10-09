@@ -35,6 +35,7 @@ from test_v2_orchestration_plan_editor import (  # noqa: F401
     editor_assets,
     editor_browser,
 )
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 pytestmark = pytest.mark.ui
 
@@ -137,6 +138,9 @@ class MediaApi:
             return
         if request.method == "GET" and parsed.path in self.assets:
             route.fulfill(path=str(self.assets[parsed.path]))
+            return
+        if is_pending_actions_list(request.method, parsed.path):
+            route.fulfill(json=pending_actions_payload())
             return
         if parsed.path.startswith("/media/") and self.media(route, name):
             return
