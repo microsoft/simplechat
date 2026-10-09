@@ -1,7 +1,7 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.293
+Version: 0.261.305
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -18,6 +18,7 @@ logged; the log records only application codes and hashed identifiers.
 
 When an input carries citation values, such as the Microsoft 365 sources an action step lists,
 the step is told to copy them verbatim after the claims they support (0.261.303).
+Microsoft 365 answers avoid routine provenance introductions without losing disclosures (0.261.305).
 """
 
 import json
@@ -29,6 +30,7 @@ from jsonschema import Draft202012Validator
 from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event, workflow_log_context
 from functions_chart_operations import normalize_inline_chart_markdown
+from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_context import conversation_reference_messages
 from functions_orchestration_deliverables import (
@@ -112,7 +114,8 @@ CITATION_POLICY = (
     'copy its citation value verbatim right after the sentence or list line it supports. Never '
     'invent, shorten, renumber or alter a citation value, and never cite an item you did not use. '
     "When you list Microsoft 365 emails, events or files, follow the layout in that input's "
-    'presentation field: one numbered line per item, each ending with its citation value.'
+    'presentation field: one numbered line per item, each ending with its citation value. '
+    f'{M365_ANSWER_STYLE_INSTRUCTIONS}'
 )
 # A citation value as it appears inside the serialized inputs.
 _CITATION_VALUE_RE = re.compile(r'\(Source:.{1,400}?\)\s*\[#')

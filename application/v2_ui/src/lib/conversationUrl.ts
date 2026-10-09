@@ -51,6 +51,36 @@ export const RESULT_WORKFLOW_PARAM = 'result_workflow_id';
 export const RESULT_RUN_PARAM = 'result_run_id';
 
 /**
+ * A one-shot parameter that scrolls the opened conversation to a saved Microsoft 365 outgoing
+ * action and highlights it, as `/chat?conversationId=<id>&m365_pending_action=<id>`.
+ *
+ * Like `prompt`, the chat page reads it once while it first renders and `syncedConversationParams`
+ * strips it afterwards, so a reload or a copied address does not keep pulling the page back to
+ * the card. The id is a request, never authorization: the card only appears when the server
+ * returns that action for this conversation.
+ */
+export const M365_PENDING_ACTION_PARAM = 'm365_pending_action';
+
+/**
+ * A saved-action id that is safe to put in a URL or a selector, or '' when it is not.
+ *
+ * The server only issues opaque ids, so anything with a path, query or control character
+ * (including values pasted into a link by hand) is refused instead of being cleaned up.
+ */
+export function normalizePendingActionId(value: unknown): string {
+    if (typeof value !== 'string') return '';
+    const id = value.trim();
+    if (!id || id.length > 200 || id === '.' || id === '..') return '';
+    // eslint-disable-next-line no-control-regex
+    return /[\u0000-\u001f\u007f/\\?#]/.test(id) ? '' : id;
+}
+
+/** The saved action a set of query parameters asks to focus, or null when it names none or names it badly. */
+export function readPendingActionFocus(params: URLSearchParams): string | null {
+    return normalizePendingActionId(params.get(M365_PENDING_ACTION_PARAM)) || null;
+}
+
+/**
  * The prompt a set of query parameters names, or null when it names none.
  *
  * Read by the composer through a lazy state initialiser, which runs during the first render --
@@ -166,6 +196,17 @@ export function chatHrefForConversation(conversationId: string): string {
 }
 
 /**
+ * A link that opens a conversation and scrolls to one of its saved Microsoft 365 outgoing
+ * actions. An id that cannot be carried safely opens the conversation without the focus
+ * request instead of dropping the whole link.
+ */
+export function chatHrefForPendingAction(conversationId: string, pendingActionId: string): string {
+    const base = chatHrefForConversation(conversationId);
+    const id = normalizePendingActionId(pendingActionId);
+    return id ? `${base}&${M365_PENDING_ACTION_PARAM}=${encodeURIComponent(id)}` : base;
+}
+
+/**
  * Also accepted when reading, never written.
  *
  * The server emits both spellings and they are already in circulation: notifications and
@@ -217,9 +258,10 @@ export function syncedConversationParams(
     const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM)
         || params.has(AGENT_SCOPE_ID_PARAM);
     const hasResultLaunch = hasWorkflowResultLaunch(params);
+    const hasPendingActionFocus = params.has(M365_PENDING_ACTION_PARAM);
 
     if (!hasLegacy && !hasPrompt && !hasPromptScope && !hasAgentLaunch && !hasResultLaunch
-        && (current ?? null) === conversationId) {
+        && !hasPendingActionFocus && (current ?? null) === conversationId) {
         return null;
     }
 
@@ -228,6 +270,7 @@ export function syncedConversationParams(
     next.delete(PROMPT_PARAM);
     next.delete(PROMPT_SCOPE_PARAM);
     next.delete(PROMPT_SCOPE_ID_PARAM);
+    next.delete(M365_PENDING_ACTION_PARAM);
     if (hasAgentLaunch) {
         next.delete(WORKSPACE_AGENT_PARAM);
         next.delete(AGENT_SCOPE_PARAM);

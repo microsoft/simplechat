@@ -54,6 +54,7 @@ import functions_orchestration_workflow_runs as workflow_runs  # noqa: E402  (th
 import functions_workflow_editor  # noqa: E402  (the editor options the server sends)
 import functions_workflow_handoff_builder as builder  # noqa: E402  (the disclosure the card shows)
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 def server_literal(module, name):
@@ -394,6 +395,9 @@ class HandoffApi:
             return
         if request.method == "GET" and path in self.assets:
             route.fulfill(path=str(self.assets[path]))
+            return
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
             return
         query = parse_qs(parsed.query)
         body = request.post_data_json if request.method == "POST" else None

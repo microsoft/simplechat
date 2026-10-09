@@ -97,7 +97,10 @@ from functions_simplechat_operations import (
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
-from functions_orchestration_recovery import cleanup_conversation_checkpoints
+from functions_orchestration_recovery import (
+    cleanup_conversation_checkpoints,
+    conversation_cleanup_failure_context,
+)
 from functions_orchestration_artifacts import is_retained_orchestration_file
 from functions_orchestration_external_configuration import ExternalConfigurationServiceError
 from functions_orchestration_external_identity import ExternalIdentityServiceError
@@ -117,6 +120,7 @@ from functions_workflow_chat_delivery import (
 )
 from functions_workflow_result_masking import message_asks_about_workflow_result, message_uses_workflow_result
 from functions_workflow_result_reader import WorkflowResultUnavailable, workflow_result_error_payload
+from functions_workflow_result_store import WorkflowResultIntegrityError, WorkflowResultStorageUnavailableError
 from utils_cache import invalidate_personal_search_cache
 
 
@@ -131,6 +135,54 @@ def _enroll_retained_orchestration_outputs(user_id, conversation_id, run_id):
     from functions_orchestration_bootstrap import build_orchestration_cleanup_service
 
     return build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup(run_id)
+
+
+def _conversation_delete_failure(error, conversation_id, *, stage, is_bulk=False):
+    """Map failures to trusted browser text and sanitized cleanup telemetry."""
+    code = 'conversation_delete_failed'
+    message = 'The conversation could not be deleted. Please retry deletion.'
+    status_code = 500
+    event = '[CONVERSATION_DELETE] Conversation deletion failed.'
+    if stage == 'm365_cancellation':
+        code = 'conversation_pending_actions_cleanup_failed'
+        message = 'Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.'
+        status_code = 503
+        event = '[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.'
+    elif stage in {'orchestration_cleanup', 'chat_analysis_cleanup'}:
+        code = 'conversation_execution_cleanup_failed'
+        message = (
+            'Execution data could not be removed. Please retry deletion. '
+            'If this continues, contact your administrator.'
+        )
+        status_code = 503
+        event = (
+            '[ORCHESTRATION_RUNS] Conversation recovery cleanup failed.'
+            if stage == 'orchestration_cleanup'
+            else '[CONVERSATION_DELETE] Saved analysis cleanup failed.'
+        )
+        if isinstance(error, WorkflowResultIntegrityError):
+            code = 'conversation_execution_integrity_failed'
+            message = (
+                'Saved execution data could not be verified for deletion. '
+                'Contact your administrator, then retry deletion.'
+            )
+        elif isinstance(error, (AzureError, WorkflowResultStorageUnavailableError, OutputStorageError)):
+            code = 'conversation_execution_storage_unavailable'
+            message = (
+                'Execution data storage is unavailable. Please retry deletion. '
+                'If this continues, ask your administrator to check storage access.'
+            )
+    log_event(
+        event,
+        extra={
+            **conversation_cleanup_failure_context(error, conversation_id, stage=stage),
+            'response_failure': code,
+            'response_status_code': status_code,
+            'is_bulk_operation': is_bulk,
+        },
+        level=logging.ERROR, exceptionTraceback=False,
+    )
+    return {'error': message, 'code': code}, status_code
 
 
 def normalize_chat_type(conversation_item):
@@ -1786,22 +1838,19 @@ def register_route_backend_conversations(bp):
             }), 404
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
-        except Exception as e:
-            return jsonify({
-                "error": str(e)
-            }), 500
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='authorization',
+            )
+            return jsonify(payload), status_code
 
         try:
             cancel_m365_conversation_deliveries(conversation_id)
         except Exception as error:
-            log_event(
-                "[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.",
-                extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
-                level=logging.ERROR,
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='m365_cancellation',
             )
-            return jsonify({
-                "error": "Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.",
-            }), 503
+            return jsonify(payload), status_code
 
         try:
             cleanup_conversation_checkpoints(
@@ -1812,12 +1861,11 @@ def register_route_backend_conversations(bp):
                 output_cleanup=partial(_enroll_retained_orchestration_outputs, user_id, conversation_id),
                 retain_committed=archiving_enabled,
             )
-        except Exception as exc:
-            log_event(
-                '[ORCHESTRATION_RUNS] Conversation recovery cleanup failed.',
-                extra={'conversation_id': conversation_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='orchestration_cleanup',
             )
-            return jsonify({'error': 'Execution data could not be removed. Please retry deletion.'}), 503
+            return jsonify(payload), status_code
 
         if archiving_enabled:
             archived_item = dict(conversation_item)
@@ -1835,11 +1883,17 @@ def register_route_backend_conversations(bp):
             )
 
         message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
-        results = list(cosmos_messages_container.query_items(
-            query=message_query,
-            partition_key=conversation_id
-        ))
-        cleanup_chat_analysis_conversation(conversation_id, conversation_item.get('user_id'), results)
+        try:
+            results = list(cosmos_messages_container.query_items(
+                query=message_query,
+                partition_key=conversation_id
+            ))
+            cleanup_chat_analysis_conversation(conversation_id, conversation_item.get('user_id'), results)
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='chat_analysis_cleanup',
+            )
+            return jsonify(payload), status_code
         direct_messages = [message for message in results if not _is_retained_orchestration_file(message)]
         direct_message_ids = {message['id'] for message in direct_messages}
 
@@ -1906,10 +1960,11 @@ def register_route_backend_conversations(bp):
             )
             bump_conversation_cache_version(user_id, reason="conversation_deleted")
             # TODO: Delete any facts that were stored with this conversation.
-        except Exception as e:
-            return jsonify({
-                "error": str(e)
-            }), 500
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='conversation_delete',
+            )
+            return jsonify(payload), status_code
 
         return jsonify({
             "success": True
@@ -1938,17 +1993,27 @@ def register_route_backend_conversations(bp):
         
         success_count = 0
         failed_ids = []
+        failures = []
         
         for conversation_id in conversation_ids:
+            stage = 'authorization'
             try:
                 # Verify the conversation exists and belongs to the user
                 try:
                     conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
                 except (LookupError, PermissionError):
                     failed_ids.append(conversation_id)
+                    failures.append({
+                        'conversation_id': conversation_id,
+                        'error': 'Conversation not found or access denied.',
+                        'code': 'conversation_unavailable',
+                        'status_code': 404,
+                    })
                     continue
 
+                stage = 'm365_cancellation'
                 cancel_m365_conversation_deliveries(conversation_id)
+                stage = 'orchestration_cleanup'
                 cleanup_conversation_checkpoints(
                     conversation_id, user_id,
                     lambda: _authorize_personal_conversation_read(user_id, conversation_id),
@@ -1959,6 +2024,7 @@ def register_route_backend_conversations(bp):
                 )
                 
                 # Archive if enabled
+                stage = 'conversation_archive'
                 if archiving_enabled:
                     archived_item = dict(conversation_item)
                     archived_item["archived_at"] = datetime.utcnow().isoformat()
@@ -1975,6 +2041,7 @@ def register_route_backend_conversations(bp):
                     )
                 
                 # Get and archive messages if enabled
+                stage = 'chat_analysis_cleanup'
                 message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
                 messages = list(cosmos_messages_container.query_items(
                     query=message_query,
@@ -1986,6 +2053,7 @@ def register_route_backend_conversations(bp):
                 ]
                 direct_message_ids = {message['id'] for message in direct_messages}
 
+                stage = 'message_cleanup'
                 if not archiving_enabled:
                     delete_blob_backed_chat_message_files(direct_messages, conversation=conversation_item)
                 
@@ -1999,6 +2067,7 @@ def register_route_backend_conversations(bp):
                         cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
 
                 # Archive/delete thoughts for conversation
+                stage = 'thoughts_cleanup'
                 if archiving_enabled:
                     archive_thoughts_for_conversation(conversation_id, user_id)
                 else:
@@ -2017,6 +2086,7 @@ def register_route_backend_conversations(bp):
                 )
                 
                 # Delete the conversation
+                stage = 'conversation_delete'
                 cosmos_conversations_container.delete_item(
                     item=conversation_id,
                     partition_key=conversation_id
@@ -2025,12 +2095,15 @@ def register_route_backend_conversations(bp):
                 success_count += 1
                 
             except Exception as error:
-                log_event(
-                    "[CONVERSATION_DELETE] Conversation deletion failed.",
-                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
-                    level=logging.ERROR,
+                payload, status_code = _conversation_delete_failure(
+                    error, conversation_id, stage=stage, is_bulk=True,
                 )
                 failed_ids.append(conversation_id)
+                failures.append({
+                    'conversation_id': conversation_id,
+                    **payload,
+                    'status_code': status_code,
+                })
 
         if success_count:
             bump_conversation_cache_version(user_id, reason="conversations_bulk_deleted")
@@ -2038,7 +2111,8 @@ def register_route_backend_conversations(bp):
         return jsonify({
             "success": True,
             "deleted_count": success_count,
-            "failed_ids": failed_ids
+            "failed_ids": failed_ids,
+            "failures": failures,
         }), 200
 
     @bp.route('/api/conversations/<conversation_id>/pin', methods=['POST'])

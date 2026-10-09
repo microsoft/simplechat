@@ -49,6 +49,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 import functions_workflow_schedules  # noqa: E402  (the server's own schedule choices)
 import functions_workflow_result_masking as masking  # noqa: E402  (the result descriptor's version)
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -290,6 +291,9 @@ class ProposalApi:
             return
         if request.method == "GET" and path in self.assets:
             route.fulfill(path=str(self.assets[path]))
+            return
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
             return
         query = parse_qs(parsed.query)
         body = request.post_data_json if request.method == "POST" else None

@@ -31,6 +31,12 @@ import { stripLegacyMapBlocks } from '../../lib/inlineMaps';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { M365CitationProvider } from './M365CitationContext';
+import {
+    InlinePendingActions,
+    PendingActionPlacementProvider,
+    PendingActionsConversationSection,
+    StreamingPendingActions,
+} from './PendingActionSlots';
 import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
@@ -1227,6 +1233,8 @@ function MessageBubbleInner({
             </div>
             </div>
 
+            <InlinePendingActions anchor={message.id} />
+
             {maskingAllowed && !masks.fullyMasked && (
                 <MaskSelectionPopup
                     containerRef={bodyRef}
@@ -1673,21 +1681,25 @@ export function MessageList() {
 
                 {/* Streaming output is announced politely so screen reader users are told
                     a response arrived without every token interrupting them. */}
-                <div aria-live="polite" aria-atomic="false" className="space-y-4">
-                    {threadMessages.map((message) => (
-                        <MessageBubble
-                            key={message.id}
-                            message={message}
-                            proposalImages={proposalImagesByMessage.get(message.id)}
-                        />
-                    ))}
-                    {streaming && <StreamingBubble />}
-                    {activeConversationId && (
-                        <ActiveOrchestrationCard conversationId={activeConversationId} />
-                    )}
-                    <AgentActivityIndicator />
-                    <TypingIndicator />
-                </div>
+                <PendingActionPlacementProvider messages={threadMessages}>
+                    <PendingActionsConversationSection scrollRef={scrollRef} pinnedRef={pinnedRef} />
+                    <div aria-live="polite" aria-atomic="false" className="space-y-4">
+                        {threadMessages.map((message) => (
+                            <MessageBubble
+                                key={message.id}
+                                message={message}
+                                proposalImages={proposalImagesByMessage.get(message.id)}
+                            />
+                        ))}
+                        {streaming && <StreamingBubble />}
+                        <StreamingPendingActions />
+                        {activeConversationId && (
+                            <ActiveOrchestrationCard conversationId={activeConversationId} />
+                        )}
+                        <AgentActivityIndicator />
+                        <TypingIndicator />
+                    </div>
+                </PendingActionPlacementProvider>
 
                 {streamError && (
                     <GlassPanel

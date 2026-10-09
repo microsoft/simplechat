@@ -258,7 +258,7 @@ test('a workflow-activity link the notice does not agree with keeps the classic 
     }
 });
 
-test('a Microsoft 365 notice keeps the classic page wherever its action id was written', () => {
+test('a Microsoft 365 notice about a workflow run keeps the classic page wherever its action id was written', () => {
     const link = activityLink('wf-1', 'run-1');
     const metadata = { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'personal' };
     for (const value of ['act-1', '', null]) {
@@ -278,12 +278,20 @@ test('a Microsoft 365 notice keeps the classic page wherever its action id was w
         resolve({ link_url: link, metadata, link_context: { m365_pending_action_id: 'act-1', group_id: 'grp-3' } }),
         classicAt(link, 'grp-3'),
     );
-    // A chat link to a pending action opens classic's chat page, the only one that renders it.
+});
+
+test('a chat link to a Microsoft 365 action opens the V2 conversation and names the action', () => {
+    // V2 chat renders the saved action's card, so this no longer goes through classic.
     assert.deepEqual(resolve({
         notification_type: 'm365_approval_requested',
         link_url: '/chats?conversationId=conv-1&m365_pending_action=act-1',
         metadata: { m365_pending_action_id: 'act-1' },
-    }), classicAt('/chats?conversationId=conv-1&m365_pending_action=act-1'));
+    }), { target: { kind: 'conversation', conversationId: 'conv-1', pendingActionId: 'act-1' }, error: null });
+    // An action id a link must not carry opens the conversation without it.
+    assert.deepEqual(resolve({
+        link_url: '/chats?conversationId=conv-1&m365_pending_action=act%2F1',
+        metadata: { m365_pending_action_id: 'act-1' },
+    }), { target: { kind: 'conversation', conversationId: 'conv-1' }, error: null });
 });
 
 test('a workflow notice without a link opens the run its metadata names, and nothing else does', () => {

@@ -22,6 +22,7 @@ import {
 } from '../stores/generatedDocumentsStore';
 import { useUiStore } from '../stores/uiStore';
 import { useImageProposalStore } from '../stores/imageProposalStore';
+import { chatPendingActionsStore } from '../stores/m365PendingActionsStore';
 import {
     selectActiveTurn,
     selectPlan,
@@ -33,6 +34,7 @@ import { resumeOrchestrationForConversation } from '../lib/orchestrationResume';
 import {
     hasWorkflowResultLaunch,
     readConversationParam,
+    readPendingActionFocus,
     readWorkflowResultLaunch,
     syncedConversationParams,
 } from '../lib/conversationUrl';
@@ -93,6 +95,19 @@ function useConversationUrlSync() {
     // that effect must re-run once the link has been dealt with.
     const linkConsumed = useRef(false);
     const [linkHandled, setLinkHandled] = useState(!linkedConversationId);
+    // A Microsoft 365 notice names the saved action to bring into view. Like the conversation
+    // id it is captured during the first render and asked for once; the store holds the request
+    // across the conversation opening, and the thread acts on it once the card is on screen.
+    const [pendingActionFocus] = useState(() => readPendingActionFocus(searchParams));
+    const pendingActionRequested = useRef(false);
+
+    useEffect(() => {
+        if (pendingActionRequested.current || !pendingActionFocus || !linkedConversationId) {
+            return;
+        }
+        pendingActionRequested.current = true;
+        chatPendingActionsStore.getState().requestFocus(pendingActionFocus, linkedConversationId);
+    }, [pendingActionFocus, linkedConversationId]);
 
     useEffect(() => {
         if (linkConsumed.current || !linkedConversationId) {

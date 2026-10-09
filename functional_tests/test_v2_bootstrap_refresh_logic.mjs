@@ -1,9 +1,10 @@
 // test_v2_bootstrap_refresh_logic.mjs
 //
 // Runtime test for the V2 bootstrap store's refresh action.
-// Version: 0.261.096
+// Version: 0.261.305
 // Implemented in: 0.261.046
 // Required authoring selection refresh added in: 0.261.096
+// Scope-only refresh for group switching added in: 0.261.305 (#1725)
 //
 // The companion test, test_v2_admin_settings_live_shell_refresh.py, asserts that the pieces
 // are wired together. Those are source assertions: they prove the call exists, not that it
@@ -301,6 +302,108 @@ async function testSupersededRequiredRefreshCannotAuthorizeFromAnOlderResult() {
     assert.equal(useBootstrapStore.getState().data, latest);
 }
 
+async function testScopeRefreshPatchesOnlyTheActiveScope() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', active_group_name: 'One', active_public_workspace_id: null, groups: [{ id: 'g1' }, { id: 'g2' }], public_workspaces: [] };
+    loaded.catalogs = { agents: [{ id: 'kept' }] };
+    let seen;
+    fetchImpl = async (path, init) => {
+        seen = { path: String(path), cache: init?.cache };
+        return jsonResponse({ user: { id: 'u1' }, scope: { active_group_id: 'g2', active_group_name: 'Two', active_public_workspace_id: null } });
+    };
+    const result = await useBootstrapStore.getState().refreshScope('u1');
+    assert.equal(seen.path, '/api/v2/scope');
+    assert.equal(seen.cache, 'no-store', 'A group switch must not queue behind a cached bootstrap read');
+    assert.equal(result.scope.active_group_id, 'g2');
+    assert.equal(result.scope.active_group_name, 'Two');
+    assert.equal(result.scope.groups, loaded.scope.groups);
+    assert.equal(result.catalogs, loaded.catalogs);
+    assert.equal(result.branding, loaded.branding);
+    assert.equal(useBootstrapStore.getState().data, result);
+}
+
+async function testScopeRefreshRejectsAnotherViewer() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    fetchImpl = async () => jsonResponse({ user: { id: 'someone-else' }, scope: { active_group_id: 'g2' } });
+    await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /sign-in changed/);
+    await assert.rejects(useBootstrapStore.getState().refreshScope('not-u1'), /sign-in changed/);
+    fetchImpl = async () => jsonResponse({ user: { id: 'u1' } });
+    await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /could not be read/);
+    assert.equal(useBootstrapStore.getState().data, loaded);
+}
+
+async function testSupersededScopeRefreshCannotApply() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    let release;
+    fetchImpl = () => new Promise((resolve) => { release = resolve; });
+    const older = useBootstrapStore.getState().refreshScope('u1');
+    const releaseOlder = release;
+    fetchImpl = async () => jsonResponse({
+        user: { id: 'u1' },
+        scope: { active_group_id: 'g3', active_group_name: 'Three', active_public_workspace_id: null },
+    });
+    await useBootstrapStore.getState().refreshScope('u1');
+    releaseOlder(jsonResponse({ user: { id: 'u1' }, scope: { active_group_id: 'g2' } }));
+    await assert.rejects(older, /active workspace changed/);
+    assert.equal(useBootstrapStore.getState().data.scope.active_group_id, 'g3');
+}
+
+async function testMalformedScopeIsNotAnEmptySelection() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    for (const scope of [
+        {}, { active_group_id: 12, active_group_name: null, active_public_workspace_id: null },
+        { active_group_id: '', active_group_name: null, active_public_workspace_id: null },
+        { active_group_id: null, active_group_name: {}, active_public_workspace_id: null },
+    ]) {
+        fetchImpl = async () => jsonResponse({ user: { id: 'u1' }, scope });
+        await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /could not be read/);
+        assert.equal(useBootstrapStore.getState().data, loaded);
+    }
+}
+
+async function testBootstrapStartedDuringScopeRefreshCannotRestoreOldSelection() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    let releaseScope;
+    let releaseBootstrap;
+    fetchImpl = (path) => new Promise((resolve) => {
+        if (String(path) === '/api/v2/scope') releaseScope = resolve;
+        else releaseBootstrap = resolve;
+    });
+    const scopeRead = useBootstrapStore.getState().refreshScope('u1');
+    const fullRead = useBootstrapStore.getState().refresh();
+    releaseScope(jsonResponse({
+        user: { id: 'u1' },
+        scope: { active_group_id: 'g2', active_group_name: 'Two', active_public_workspace_id: null },
+    }));
+    await scopeRead;
+    const stale = payloadWithBanner(BANNER_OFF);
+    stale.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    releaseBootstrap(jsonResponse(stale));
+    await fullRead;
+    assert.equal(useBootstrapStore.getState().data.scope.active_group_id, 'g2');
+    assert.equal(useBootstrapStore.getState().data.branding.classification_banner, BANNER_OFF);
+}
+
+async function testScopeRefreshCannotHideACompetingSelectionAlreadyInstalled() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    let releaseScope;
+    fetchImpl = () => new Promise((resolve) => { releaseScope = resolve; });
+    const scopeRead = useBootstrapStore.getState().refreshScope('u1');
+    const competing = payloadWithBanner(BANNER_ON);
+    competing.scope = { active_group_id: 'g3', active_public_workspace_id: null };
+    useBootstrapStore.setState({ data: competing });
+    releaseScope(jsonResponse({
+        user: { id: 'u1' },
+        scope: { active_group_id: 'g2', active_group_name: 'Two', active_public_workspace_id: null },
+    }));
+    await assert.rejects(scopeRead, /active workspace changed/);
+    assert.equal(useBootstrapStore.getState().data, competing);
+}
+
 const tests = [
     testRefreshAppliesTheNewPayload,
     testRefreshNeverBlanksTheInterface,
@@ -310,6 +413,12 @@ const tests = [
     testRequiredRefreshReturnsFreshDataWithoutBlanking,
     testRequiredRefreshRejectsInsteadOfReturningCachedAgents,
     testSupersededRequiredRefreshCannotAuthorizeFromAnOlderResult,
+    testScopeRefreshPatchesOnlyTheActiveScope,
+    testScopeRefreshRejectsAnotherViewer,
+    testSupersededScopeRefreshCannotApply,
+    testMalformedScopeIsNotAnEmptySelection,
+    testBootstrapStartedDuringScopeRefreshCannotRestoreOldSelection,
+    testScopeRefreshCannotHideACompetingSelectionAlreadyInstalled,
 ];
 
 let passed = 0;

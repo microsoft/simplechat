@@ -210,7 +210,11 @@ def test_m365_links_stay_in_v2():
         V2_SRC / "components" / "chat" / "WorkflowProposalCard.tsx",
         V2_SRC / "components" / "chat" / "WorkflowRunCard.tsx",
         V2_SRC / "components" / "approvals" / "PendingActionsPanel.tsx",
+        V2_SRC / "components" / "approvals" / "PendingActionCard.tsx",
         V2_SRC / "components" / "approvals" / "PausedRequestsPanel.tsx",
+        V2_SRC / "components" / "chat" / "PendingActionSlots.tsx",
+        V2_SRC / "stores" / "m365PendingActionsStore.ts",
+        V2_SRC / "lib" / "m365PendingActions.ts",
     ):
         source = _read(path)
         assert not re.search(r"['\"`]/profile", source), f"{path.name} links to the classic Profile page"

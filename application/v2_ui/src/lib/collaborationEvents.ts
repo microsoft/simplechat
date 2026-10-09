@@ -46,6 +46,12 @@ const REPLAY_TOLERANCE_MS = 1000;
  */
 const MAX_REMEMBERED_EVENTS = 2000;
 
+/** The event the server publishes when a shared conversation's AI request saves an outgoing action. */
+const PENDING_ACTION_EVENT = 'collaboration.m365.pending_action';
+
+/** The `error` the server sends when it could not project the saved actions for a viewer. */
+const PENDING_ACTIONS_UNAVAILABLE = 'm365_pending_actions_unavailable';
+
 /**
  * Fields of a serialized conversation that describe the *viewer* rather than the conversation.
  *
@@ -170,6 +176,14 @@ export interface CollaborationEventHandlers {
      * before the reader opened the conversation is still running, and only its history says so.
      */
     onAiActivity?: (event: AiActivityEvent) => void;
+    /**
+     * An AI request in the conversation saved a Microsoft 365 outgoing action.
+     *
+     * The event only names the actions (or says they could not be listed), and what a viewer may
+     * see of them differs per person, so the handler reads the conversation's list again rather
+     * than trusting the payload.
+     */
+    onM365PendingActions?: (event: { actionIds: string[]; requestId: string; unavailable: boolean }) => void;
 }
 
 /**
@@ -182,13 +196,20 @@ export interface CollaborationEventHandlers {
 function eventKey(event: CollaborationEvent): string {
     const payload = event.payload ?? {};
     const run = payload.run as { run_id?: unknown } | undefined;
+    // An outgoing-action event names no message, so the actions it announces and the request
+    // that saved them tell two such events apart.
+    const pendingActions =
+        event.event_type === PENDING_ACTION_EVENT
+            ? JSON.stringify([payload.m365_pending_action_ids ?? [], payload.request_id ?? ''])
+            : '';
     const subject =
-        payload.message?.id ??
-        payload.message_id ??
-        payload.participant?.user_id ??
-        payload.user?.user_id ??
-        payload.deleted_by_user_id ??
-        (typeof run?.run_id === 'string' ? run.run_id : '');
+        pendingActions ||
+        (payload.message?.id ??
+            payload.message_id ??
+            payload.participant?.user_id ??
+            payload.user?.user_id ??
+            payload.deleted_by_user_id ??
+            (typeof run?.run_id === 'string' ? run.run_id : ''));
     return [
         event.conversation_id ?? payload.conversation?.id ?? '',
         event.event_type ?? '',
@@ -325,6 +346,18 @@ export function dispatchCollaborationEvent(
                 );
             }
             return;
+
+        case PENDING_ACTION_EVENT: {
+            const ids = payload.m365_pending_action_ids;
+            handlers.onM365PendingActions?.({
+                actionIds: Array.isArray(ids)
+                    ? ids.filter((id): id is string => typeof id === 'string' && Boolean(id))
+                    : [],
+                requestId: typeof payload.request_id === 'string' ? payload.request_id : '',
+                unavailable: payload.error === PENDING_ACTIONS_UNAVAILABLE,
+            });
+            return;
+        }
 
         case 'collaboration.typing.updated':
             handlers.onTyping?.(payload.user, payload.is_typing !== false, payload.expires_at);

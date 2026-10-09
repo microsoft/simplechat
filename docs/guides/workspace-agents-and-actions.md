@@ -1,10 +1,10 @@
 ---
 layout: page
 title: "Build agents and actions in My Workspace"
-description: "Configure a reusable assistant and its approved tools without leaving the V2 workspace."
+description: "Find an available agent or configure a reusable assistant and its approved tools in V2."
 section: "Guides"
 audience: user
-version: "0.261.122"
+version: "0.261.305"
 ---
 
 ## What this does
@@ -19,8 +19,34 @@ Implemented in version: **0.261.096**, recorded in
 
 Remote-only MCP integration updated in version: **0.261.122**.
 
-This guide concerns your personal workspace. Group and administrator management
-continue to use their existing interfaces and permissions.
+Catalogue discovery was implemented in version: **0.261.305**, recorded in
+`application/single_app/config.py`.
+
+The authoring examples focus on personal resources. Catalogue discovery spans
+all permitted scopes; editing still depends on each workspace's permissions.
+
+## Find and start an agent
+
+Open **Agents** from the V2 navigation rail to browse agents available to your
+account, rather than build an agent from scratch. **Popular** combines usage
+rankings with administrator promotions; choose **All time** or **Last 30 days**
+depending on whether you want established or recently used agents.
+
+The Personal, Group, and Enterprise categories narrow the catalogue. Search
+looks across every category, including descriptions, group names, models, and
+tags. Multiple tag filters require all selected tags. Clearing search restores
+the category you were browsing; **Clear filters** also removes tag selections.
+
+Use **Details** to review the agent's role, model, actions, and instructions when
+your administrators permit them to be shown. **Chat** starts a new conversation
+with that exact agent. A group agent uses its own group even when another group
+is active. If its access was revoked or it was removed after browsing, chat
+explains that it is no longer available.
+
+Governance-restricted agents are not listed. A promotion does not grant access,
+and this page has no agent-specific request-access workflow. When personal
+creation is available, **New agent** in the Personal category opens the native
+editor; in Group it leads to the active visible group's Agents section.
 
 ## Decide what belongs where
 

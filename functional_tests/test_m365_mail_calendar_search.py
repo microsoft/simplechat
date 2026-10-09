@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for searching Microsoft 365 mail and calendar history.
-Version: 0.261.129
+Version: 0.261.305
 Implemented in: 0.261.129
+Source-card metadata retention refined in: 0.261.305
 
 These tests run the real Graph plugin and transport with scripted Graph
 responses. They check that Read my mail and Read my calendar events reach
@@ -86,6 +87,7 @@ def test_mail_date_range_reaches_older_mail_and_continues_exactly(graph_plugins)
     )
     assert calls[0]["params"]["$orderby"] == "receivedDateTime desc"
     assert calls[0]["params"]["$top"] == 3
+    assert set(plugin.DEFAULT_MESSAGE_SELECT.split(",")) <= set(calls[0]["params"]["$select"].split(","))
     assert "$search" not in calls[0]["params"]
     assert ids(first) == ["m1", "m2"] and first["count"] == 2 and first["truncated"] is True
     coverage = first["coverage"]
@@ -309,6 +311,7 @@ def test_calendar_query_matches_every_word_and_hides_scan_fields(graph_plugins):
     assert params["startDateTime"] == "2024-01-01T00:00:00Z"
     assert params["endDateTime"] == "2025-01-01T00:00:00Z"
     assert params["$top"] == 100
+    assert set(plugin.DEFAULT_EVENT_SELECT.split(",")) <= set(params["$select"].split(","))
     for field in ("attendees", "bodyPreview", "categories"):
         assert field in params["$select"]
     assert ids(result) == ["review", "planning"]

@@ -5,7 +5,7 @@
 // route_backend_chats.py, route_backend_documents.py and functions_conversation_feed.py.
 // Keeping them in one module means a backend path change is a one-line edit here.
 
-import { api, apiUrl, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
+import { api, apiUrl, request, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
 import { buildDocumentListParams } from './documentExplorer';
 import { artifactDownloadPath, artifactFileName } from './generatedArtifacts';
 import { ANALYSIS_PAGE_SIZE, analysisResultContext, validateAnalysisPage } from './savedAnalysis';
@@ -14,6 +14,7 @@ import type { ExportVisualAsset } from './exportVisuals';
 import type { GeneratedArtifact, GeneratedRunStatus } from './generatedArtifacts';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
 import type {
+    ActiveScopePayload,
     AiNoticeFrequency,
     BootstrapPayload,
     ChatMessage,
@@ -74,8 +75,16 @@ export async function fetchAnalysisEvidence(
 /* Bootstrap                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/*
+ * Keep these account-specific reads out of the browser's HTTP cache, including any
+ * same-URL request coalescing while another bootstrap read is in flight.
+ */
 export const fetchBootstrap = (signal?: AbortSignal) =>
-    api.get<BootstrapPayload>('/api/v2/bootstrap', signal);
+    request<BootstrapPayload>('/api/v2/bootstrap', { method: 'GET', signal, cache: 'no-store' });
+
+/** Only the caller's active group and public workspace, validated as bootstrap does. */
+export const fetchActiveScope = (signal?: AbortSignal) =>
+    request<ActiveScopePayload>('/api/v2/scope', { method: 'GET', signal, cache: 'no-store' });
 
 /**
  * Record that the caller has dismissed the AI notice.

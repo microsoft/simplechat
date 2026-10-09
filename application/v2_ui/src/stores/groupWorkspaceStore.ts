@@ -160,7 +160,9 @@ export const useGroupWorkspaceStore = create<GroupWorkspaceState>((set, get) => 
             await GROUP_WORKSPACES.setActive(groupId);
             writeAcknowledged = true;
             assertCurrent(token, viewerId);
-            const bootstrap = await useBootstrapStore.getState().refreshRequired(viewerId);
+            // Only the active scope changes on a switch, so it is confirmed with the scope
+            // read rather than the full bootstrap, which takes seconds to rebuild.
+            const bootstrap = await useBootstrapStore.getState().refreshScope(viewerId);
             assertCurrent(token, viewerId);
             if (bootstrap.scope?.active_group_id !== groupId) {
                 throw new Error('The active group changed during selection.');
@@ -199,7 +201,7 @@ export const useGroupWorkspaceStore = create<GroupWorkspaceState>((set, get) => 
         set({ context: null, loading: true, refreshing: false, needsRevalidation: false, needsReconciliation: true, error: null });
         try {
             // Recovery is read-only: never replay an ambiguously acknowledged mutation.
-            const bootstrap = await useBootstrapStore.getState().refreshRequired(viewerId);
+            const bootstrap = await useBootstrapStore.getState().refreshScope(viewerId);
             assertCurrent(token, viewerId);
             const groupId = bootstrap.scope?.active_group_id;
             const context = groupId
