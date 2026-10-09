@@ -708,6 +708,18 @@ the workflow to do but not which fields hold it, or to make the same kind of
 change across many tasks. It never saves. Its changes are highlighted like your
 own, and you review them before you save.
 
+From **0.261.315**, you can also ask “Require acknowledgment on Rule 2” or change a rule's
+sound and size. Acknowledgment is separate from task approvals. For an explicit request
+for the strongest available attention, AI guidance proposes critical severity, a pop-up,
+required acknowledgment, repeating sound and full-screen size for your review; quieter
+requests retain their defaults, and device sound preferences still apply.
+
+Chat-created monitoring proposals can use these same native conditional alerts. A read-only
+agent can fetch external telemetry and SimpleChat can alert on actual adverse findings without
+changing the source system's alarm configuration or sending email. Review each rule's condition
+and attention options on the proposal card before creating it. Personal workflows alert their
+owner, not a whole group.
+
 **Ask AI** appears when your administrator has turned the assistant on, the
 workflow is personal, and you can edit it. Group workflows don't offer it.
 

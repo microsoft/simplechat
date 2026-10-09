@@ -310,6 +310,42 @@ Its arguments are {"blueprint":{...},"task_actions":[[...],...]}. The blueprint 
   words such as "this week" can stay relative.
 - optionally "alerts" {"mode":"every_run"|"failures_only","severity":"info"|"low"}, "run_as"
   "self"|"none", and "durable": true.
+  Those legacy alert modes are quiet, bell-only run-status notifications. For native conditional
+  monitoring alerts instead use "alerts":{"mode":"rules","rules":[...]} (1 to 20 rules).
+  Each rule has "severity":"info"|"low"|"medium"|"high"|"critical" and "condition"; optionally
+  "name", "enabled" (boolean), "delivery":"default"|"notify_only"|"popup",
+  "require_acknowledgment" (boolean), "sound":"off"|"once"|"repeat", "size":"small"|"medium"|"large",
+  and "scope":{"type":"final"|"any_task"} or {"type":"task","task":N}, where N is the 1-based
+  position of a task in this blueprint, not a stored id. Default scope is final.
+  Conditions: {"type":"run_status","statuses":[...]} (completed, failed, cancelled,
+  completed_with_task_errors); {"type":"task_status","statuses":[...]} (succeeded, failed);
+  {"type":"text_match","mode":"contains_any"|"contains_all"|"not_contains","values":[...],
+  "case_sensitive":false}, or {"type":"text_match","mode":"regex","pattern":"..."};
+  {"type":"model_evaluation","prompt":"..."}; {"type":"agent_signal","signal_name":"...",
+  "min_severity":"info"|"low"|"medium"|"high"|"critical"}; {"type":"no_output"};
+  or {"type":"file_sync","outcome":"changes_found"|"no_changes"|"sync_failed"}.
+  run_status, file_sync and agent_signal conditions must use final scope.
+  Native alerts require no email action or Microsoft 365 connection. Normally info/low go to the
+  bell, medium/high/critical pop up. Acknowledgment, sound and larger size require pop-up delivery;
+  repeat sound requires acknowledgment. These settings respect device sound preferences.
+  When the user explicitly requests strongest/highest attention, propose critical, delivery popup,
+  require_acknowledgment true, sound repeat, size large, unless their constraints say otherwise.
+  Disclose these attention options for approval; never make them the default for ordinary alerts.
+  A personal workflow alerts its owner, not arbitrary recipients or everyone in a group.
+  Monitor external data using an offered read-capable agent, then alert inside SimpleChat on adverse
+  output. This is different from changing an external system's alarm configuration: do not request
+  external writes unless that is what the user asks. A successful monitoring run may find failures.
+  run_status/task_status failures detect workflow execution errors, not domain problems in telemetry.
+  Prefer model_evaluation for semantic findings, explicitly excluding healthy/negated findings
+  ("no active alerts"); text_match is for defined literal signals, and agent_signal needs an agent
+  known to produce supported signals. Do not infer signal support from an agent's name.
+  For example, ongoing vehicle monitoring can read telemetry and use a critical model_evaluation
+  rule for actual active faults, while "email me the findings" needs a mail-capable agent.
+  "Configure the source system's alarms" is an external configuration request, not native alerting.
+  Use the native rules for "create a workflow that monitors and alerts me"; ask for missing cadence
+  rather than inventing a schedule. Do not turn a one-time alert/configuration request into recurring
+  monitoring. If native workflow proposals are unavailable, explain the limitation rather than
+  claiming an external read-only integration cannot support SimpleChat alerting.
 - A task can merge files with code instead of a model by adding "merge": {"kind","files",
   "output_format","file_name","options"} and no agent runner. kind "tabular" (the default) appends
   the rows of CSV and Excel files into one "csv" or "xlsx" file; "workbook" puts each CSV or Excel

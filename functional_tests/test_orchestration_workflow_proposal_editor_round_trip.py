@@ -2,7 +2,7 @@
 # test_orchestration_workflow_proposal_editor_round_trip.py
 """
 Functional test for editing a workflow proposal in the V2 workflow editor before accepting it.
-Version: 0.261.207
+Version: 0.261.315
 Implemented in: 0.261.207
 
 The proposal card's Edit opens the draft route's workflow in the V2 workflow editor, and Save
@@ -139,6 +139,31 @@ def test_a_renamed_proposal_is_recorded_as_edited_and_stored_as_typed(h):
     assert stored["name"] == "Weekly inbox triage"
     assert stored["origin"]["edited"] is True
     assert stored["origin"]["source"] == "orchestration"
+
+
+@pytest.mark.parametrize("edit", [False, True])
+def test_native_critical_alerts_survive_editor_and_accept(h, edit):
+    blueprint = blueprint_with(TRIGGERS["manual"])
+    blueprint["alerts"] = {"mode": "rules", "rules": [{
+        "name": "Critical finding", "severity": "critical", "delivery": "popup",
+        "require_acknowledgment": True, "sound": "repeat", "size": "large",
+        "scope": {"type": "task", "task": 1},
+        "condition": {"type": "model_evaluation", "prompt": "An actual active fault was reported."},
+    }]}
+    seed_run(h, blueprint=blueprint)
+    login(h)
+    workflow = draft_workflow(h)
+    [payload] = run_probe([{"workflow": workflow, **({"name": "Changed monitor"} if edit else {})}])
+    response = accept(h, workflow=payload)
+    assert response.status_code == 201, response.get_data(as_text=True)
+    stored = stored_workflow(h)
+    assert stored["alert_rules"] == workflow["alert_rules"]
+    assert stored["origin"]["edited"] is edit
+    rule = stored["alert_rules"][0]
+    assert (rule["severity"], rule["require_acknowledgment"], rule["sound"], rule["size"]) == (
+        "critical", True, "repeat", "large",
+    )
+    assert rule["scope"]["task_id"] == stored["tasks"][0]["id"]
 
 
 if __name__ == "__main__":

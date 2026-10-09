@@ -4,6 +4,8 @@ Implemented in version: **0.261.202**.
 
 Application version tracking: `application\single_app\config.py`.
 
+Native rules-mode alert blueprints implemented in version: **0.261.315**.
+
 Related issue: #1545, part of #1543. Builds on
 [Workflow calendar schedules](WORKFLOW_CALENDAR_SCHEDULES.md) (#1544).
 
@@ -135,8 +137,9 @@ The schema is JSON Schema Draft 2020-12, `$id`
 | `tasks[].instructions` | Required. 1 to 4,000 characters. |
 | `tasks[].runner` | Optional. `{"type": "agent", "agent_ref": <handle>}` or `{"type": "model"}`. Omitted means the default model. |
 | `tasks[].inputs` | Optional. Up to 10 distinct document handles. |
-| `alerts.mode` | Optional. `every_run` (the default) or `failures_only`. |
-| `alerts.severity` | Optional. `info` (the default) or `low`. |
+| `alerts.mode` | Optional. `every_run` (the default), `failures_only`, or explicit `rules`. |
+| `alerts.severity` | Optional for legacy modes. `info` (the default) or `low`; not accepted with `rules`. |
+| `alerts.rules` | Required only in `rules` mode. 1 to 20 bounded, ID-free native personal alert rules. Each requires a condition and severity; task scope uses a 1-based blueprint task position. |
 | `run_as` | Optional. `self` or `none`. |
 | `durable` | Optional. Only `true`; every workflow created from chat is durable. |
 
@@ -194,7 +197,7 @@ for this user:
 | `runner.type: agent` | `selected_agent` from the agent handle |
 | `runner.type: model`, or no runner | `runner: {type: inherit}`, the default model |
 | Task `inputs` | `reference_inputs` named by handle, and each task's `reference_ids` |
-| `alerts` | Bell-only alert rules; see below |
+| `alerts` | Legacy modes become bell-only rules; explicit rules retain native conditions and pop-up options |
 | `run_as: self` | `m365_run_as_user_id` set to the user, with no approval yet |
 
 Every created workflow also has `definition_version: 2`,
@@ -205,7 +208,7 @@ retry_count: 0}`. It's paused unless the caller passes `enabled=True`.
 In a File Sync workflow, the first task analyzes the documents each sync
 changed, when the document analysis action is enabled. Later tasks don't.
 
-**Alerts.** A workflow created from chat is a digest: its results should reach
+**Alerts.** Legacy blueprint alert modes describe a quiet digest: results reach
 the notification bell without interrupting anyone. The stored `every_run` mode
 always opens a pop-up, so the builder writes `alert_mode: rules` instead:
 
@@ -216,6 +219,15 @@ always opens a pop-up, so the builder writes `alert_mode: rules` instead:
 
 Both rules deliver `notify_only`, so they never pop up. `alert_evaluation` is
 `{on_error: skip}`. With `failures_only`, `severity` is accepted and ignored.
+
+Since **0.261.315**, explicit `rules` blueprints instead preserve native severity
+(`info` through `critical`), delivery and conditions, plus `require_acknowledgment`,
+`sound` and `size`. Conditions can evaluate output text or semantic findings, run/task
+status, File Sync outcomes, missing output, or supported agent alert signals.
+Pop-up options require pop-up delivery; repeating sound also requires acknowledgment.
+The builder uses native validation, maps task positions to deterministic IDs and rejects
+group audience or free-form recipients. The proposal card discloses the resulting rules.
+See [workflow proposals](CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md#monitoring-with-native-alerts).
 
 **Determinism.** The workflow id is a UUID 5 of the user and the proposal. Task,
 reference and alert rule ids are UUID 5 values of the workflow id and their

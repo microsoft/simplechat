@@ -2,7 +2,7 @@
 # test_orchestration_workflow_propose_capability.py
 """
 Functional test for the workflow_propose orchestration capability.
-Version: 0.261.242
+Version: 0.261.315
 Implemented in: 0.261.207
 Merge tasks added in: 0.261.241
 
@@ -1293,7 +1293,7 @@ def test_the_proposal_module_creates_nothing_and_never_imports_flask():
     assert not any(name.split(".")[0] == "flask" for name in imported)
     assert imported["functions_workflow_drafts"] == {
         "BLUEPRINT_TASK_TITLE_MAX_LENGTH", "WORKFLOW_ORIGIN_SOURCE_ORCHESTRATION", "check_workflow_blueprint",
-        "dry_run_workflow_blueprint", "validate_workflow_blueprint",
+        "dry_run_workflow_blueprint", "validate_workflow_blueprint", "blueprint_alert_summary",
     }
     assert not any(name.startswith(("functions_workflows", "functions_personal")) for name in imported)
     assert "cosmos_" not in source and "create_personal_workflow" not in source

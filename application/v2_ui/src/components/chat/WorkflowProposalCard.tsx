@@ -124,6 +124,19 @@ function howOftenText(summary: WorkflowProposalSummary): string {
 }
 
 function alertsText(summary: WorkflowProposalSummary): string {
+    if (summary.alerts.mode === 'rules') {
+        return summary.alerts.rules.map((rule, index) => {
+            const options = [
+                rule.delivery === 'popup' ? 'Pop-up alert' : 'Notification bell only',
+                rule.require_acknowledgment ? 'Requires acknowledgment; returns until acknowledged' : '',
+                rule.sound === 'repeat' ? 'Sound repeats until acknowledged' : rule.sound === 'once' ? 'Sound plays once' : 'Sound off',
+                rule.delivery === 'popup' ? rule.size === 'large' ? 'Full-screen size'
+                    : rule.size === 'medium' ? 'Medium size' : 'Small size' : '',
+            ].filter(Boolean).join('. ');
+            return `Rule ${index + 1}: ${rule.name}${rule.enabled ? '' : ' (disabled)'}. ${rule.condition}. `
+                + `Looks at: ${rule.scope}. Severity: ${rule.severity}. ${options}.`;
+        }).join('\n') + "\nSound follows each device's preferences.";
+    }
     const when = summary.alerts.mode === 'failures_only'
         ? 'A notification only when a run fails'
         : 'A notification after every run';
@@ -239,7 +252,7 @@ function ProposalDetails({ proposal }: { proposal: WorkflowProposal }) {
             <dl className="space-y-1.5">
                 <Detail term="When">{whenText(summary)}</Detail>
                 <Detail term="How often">{howOftenText(summary)}</Detail>
-                <Detail term="Alerts">{alertsText(summary)}</Detail>
+                <Detail term="Alerts"><span className="whitespace-pre-line">{alertsText(summary)}</span></Detail>
                 <Microsoft365 proposal={proposal} />
                 {summary.durable ? (
                     <Detail term="Durable">Each run saves checkpoints and can resume after an interruption.</Detail>

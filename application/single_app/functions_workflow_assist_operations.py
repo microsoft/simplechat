@@ -28,6 +28,8 @@ import uuid
 
 from jsonschema import Draft202012Validator
 
+from functions_workflow_alert_authoring import alert_rule_properties
+from functions_workflow_alerts import normalize_alert_rule, normalize_alert_flag
 from functions_workflow_assist_editor import (
     WORKFLOW_ALIAS_PATTERN,
     WORKFLOW_REFERENCE_SCOPES,
@@ -43,7 +45,7 @@ from functions_workflow_assist_editor import (
     workflow_alert_config,
     workflow_schedule_for_editor,
 )
-from functions_workflow_definitions import WorkflowPublicValidationError
+from functions_workflow_definitions import WorkflowAlertValidationError, WorkflowPublicValidationError
 from functions_workflow_schedules import (
     enforce_workflow_schedule_minimum,
     normalize_workflow_schedule,
@@ -83,13 +85,13 @@ ASSIST_ALERT_SEVERITIES = ('info', 'low', 'medium', 'high', 'critical')
 ASSIST_ALERT_DELIVERIES = ('default', 'notify_only', 'popup')
 ASSIST_ALERT_SCOPES = ('final', 'any_task', 'task')
 ASSIST_ALERT_PRIORITIES = ('low', 'medium', 'high')
-ASSIST_ALERT_CONDITIONS = ('run_status', 'task_status', 'text_match', 'model_evaluation', 'agent_signal', 'no_output')
+ASSIST_ALERT_CONDITIONS = ('run_status', 'task_status', 'text_match', 'file_sync', 'model_evaluation', 'agent_signal', 'no_output')
 ASSIST_ALERT_RUN_STATUSES = ('completed', 'failed', 'cancelled', 'completed_with_task_errors')
 ASSIST_ALERT_TASK_STATUSES = ('succeeded', 'failed')
 ASSIST_ALERT_TEXT_MODES = ('contains_any', 'contains_all', 'not_contains', 'regex')
 # Conditions that read run-level facts. The editor resets their scope to final when one is chosen
 # (WORKFLOW_ALERT_SCOPELESS_CONDITIONS in workflowAlerts.ts), so the assistant only writes final.
-ASSIST_SCOPELESS_CONDITIONS = frozenset({'run_status', 'agent_signal'})
+ASSIST_SCOPELESS_CONDITIONS = frozenset({'run_status', 'file_sync', 'agent_signal'})
 
 HANDLE_PATTERN = r'^[A-Za-z][A-Za-z0-9_-]{0,63}$'
 TASK_HANDLE_PATTERN = r'^(task|new)_[1-9][0-9]{0,2}$'
@@ -685,6 +687,9 @@ def _alert_rule_view(rule, handle, handles):
         'enabled': alert_rule_enabled(rule),
         'severity': _string(rule.get('severity')) or 'medium',
         'delivery': _string(rule.get('delivery')) or 'default',
+        'require_acknowledgment': normalize_alert_flag(rule.get('require_acknowledgment')),
+        'sound': _string(rule.get('sound')) or 'off',
+        'size': _string(rule.get('size')) or 'small',
         'scope': scope_view,
         'condition': {key: copy.deepcopy(condition[key]) for key in _ALERT_CONDITION_KEYS if key in condition},
     }
@@ -813,51 +818,6 @@ def _operation(name, properties=None, required=(), all_of=()):
 
 
 _TASK = _handle(TASK_HANDLE_PATTERN)
-_CONDITION_SCHEMAS = {
-    'run_status': {
-        'statuses': {'type': 'array', 'minItems': 1, 'maxItems': 4, 'uniqueItems': True,
-                     'items': {'enum': list(ASSIST_ALERT_RUN_STATUSES)}},
-    },
-    'task_status': {
-        'statuses': {'type': 'array', 'minItems': 1, 'maxItems': 2, 'uniqueItems': True,
-                     'items': {'enum': list(ASSIST_ALERT_TASK_STATUSES)}},
-    },
-    'text_match': {
-        'mode': {'enum': list(ASSIST_ALERT_TEXT_MODES)},
-        'values': {'type': 'array', 'minItems': 1, 'maxItems': ASSIST_ALERT_MAX_VALUES,
-                   'items': _str(ASSIST_ALERT_VALUE_MAX_LENGTH)},
-        'pattern': _str(ASSIST_ALERT_REGEX_MAX_LENGTH),
-        'case_sensitive': {'type': 'boolean'},
-    },
-    'model_evaluation': {'prompt': _str(ASSIST_ALERT_PROMPT_MAX_LENGTH)},
-    'agent_signal': {
-        'signal_name': _str(ASSIST_ALERT_NAME_MAX_LENGTH, min_length=0),
-        'min_severity': {'enum': list(ASSIST_ALERT_SEVERITIES)},
-    },
-    'no_output': {},
-}
-_CONDITION_REQUIRED = {
-    'run_status': ['statuses'], 'task_status': ['statuses'], 'text_match': ['mode'], 'model_evaluation': ['prompt'],
-}
-_CONDITION = {
-    'type': 'object',
-    'required': ['type'],
-    'properties': {'type': {'enum': list(ASSIST_ALERT_CONDITIONS)}},
-    'allOf': [
-        _when('type', condition_type, {
-            'additionalProperties': False,
-            'required': _CONDITION_REQUIRED.get(condition_type, []),
-            'properties': {'type': {'const': condition_type}, **fields},
-        })
-        for condition_type, fields in _CONDITION_SCHEMAS.items()
-    ] + [
-        {'if': {'required': ['type', 'mode'], 'properties': {'type': {'const': 'text_match'}, 'mode': {'const': 'regex'}}},
-         'then': {'required': ['pattern'], **_forbid('values', 'case_sensitive')}},
-        {'if': {'required': ['type', 'mode'], 'properties': {'type': {'const': 'text_match'}, 'mode': {'not': {'const': 'regex'}}}},
-         'then': {'required': ['values'], **_forbid('pattern')}},
-    ],
-}
-
 OPERATION_SCHEMAS = {
     'set_name': _operation('set_name', {'name': _str(ASSIST_WORKFLOW_NAME_MAX_LENGTH)}, ['name']),
     'set_description': _operation(
@@ -889,20 +849,12 @@ OPERATION_SCHEMAS = {
     }, ['mode'], [
         {'if': {'required': ['mode'], 'properties': {'mode': {'not': {'const': 'every_run'}}}}, 'then': _forbid('priority')},
     ]),
-    'add_alert_rule': _operation('add_alert_rule', {
-        'name': _str(ASSIST_ALERT_NAME_MAX_LENGTH, min_length=0),
-        'severity': {'enum': list(ASSIST_ALERT_SEVERITIES)},
-        'delivery': {'enum': list(ASSIST_ALERT_DELIVERIES)},
-        'scope': {
-            'type': 'object', 'additionalProperties': False, 'required': ['type'],
-            'properties': {'type': {'enum': list(ASSIST_ALERT_SCOPES)}, 'task': _TASK},
-            'allOf': [
-                _when('type', 'task', {'required': ['task']}),
-                {'if': {'required': ['type'], 'properties': {'type': {'not': {'const': 'task'}}}}, 'then': _forbid('task')},
-            ],
-        },
-        'condition': _CONDITION,
-    }, ['severity', 'condition']),
+    'add_alert_rule': _operation(
+        'add_alert_rule', alert_rule_properties(_TASK), ['severity', 'condition'],
+    ),
+    'update_alert_rule': _operation('update_alert_rule', {
+        'rule': _handle(ALERT_HANDLE_PATTERN), **alert_rule_properties(_TASK),
+    }, ['rule'], [{'anyOf': [{'required': [field]} for field in alert_rule_properties(_TASK)]}]),
     'remove_alert_rule': _operation('remove_alert_rule', {'rule': _handle(ALERT_HANDLE_PATTERN)}, ['rule']),
     'set_workflow_runner': _operation('set_workflow_runner', {
         'runner': {'enum': ['agent', 'model']},
@@ -1368,6 +1320,8 @@ class _Applier:
         if condition_type == 'model_evaluation':
             prompt = model_text(raw['prompt'], 'The condition', ASSIST_ALERT_PROMPT_MAX_LENGTH, multiline=True)
             return {'type': condition_type, 'prompt': prompt}
+        if condition_type == 'file_sync':
+            return {'type': condition_type, 'outcome': raw['outcome']}
         if condition_type == 'agent_signal':
             return {
                 'type': condition_type,
@@ -1382,19 +1336,42 @@ class _Applier:
         condition = self._alert_condition(op['condition'])
         scope = op.get('scope') or {'type': 'final'}
         if condition['type'] in ASSIST_SCOPELESS_CONDITIONS and scope['type'] != 'final':
-            raise _OperationError('Run status and agent signal rules watch the whole run, so their scope must be final.')
+            raise _OperationError('Run status, File Sync and agent signal rules watch the whole run, so their scope must be final.')
         task_id = self._task_id(scope['task']) if scope['type'] == 'task' else ''
         # newWorkflowAlertRule's shape, with the model's choices.
         self.alert_rules.append((None, {
             'id': _new_uuid(),
             'name': model_text(op.get('name', ''), 'The rule name', ASSIST_ALERT_NAME_MAX_LENGTH, required=False),
-            'enabled': True,
+            'enabled': op.get('enabled', True),
             'severity': op['severity'],
             'delivery': op.get('delivery', 'default'),
             'scope': {'type': scope['type'], 'task_id': task_id},
             'condition': condition,
+            **{key: op[key] for key in ('require_acknowledgment', 'sound', 'size') if key in op},
         }))
         self.added_rules += 1
+
+    def op_update_alert_rule(self, op):
+        self._alerts()
+        target = self.handles.resolve(op['rule'])
+        if target is None or target[0] != 'alert':
+            raise _OperationError('It names an alert rule that is not in the draft.')
+        rule = next((rule for index, rule in self.alert_rules if index == target[1]), None)
+        if rule is None:
+            raise _OperationError('It names an alert rule that an earlier operation removed.')
+        for key in ('name', 'enabled', 'severity', 'delivery', 'require_acknowledgment', 'sound', 'size'):
+            if key in op:
+                rule[key] = (
+                    model_text(op[key], 'The rule name', ASSIST_ALERT_NAME_MAX_LENGTH, required=False)
+                    if key == 'name' else op[key]
+                )
+        if 'condition' in op:
+            rule['condition'] = self._alert_condition(op['condition'])
+        if 'scope' in op:
+            scope = op['scope']
+            rule['scope'] = {'type': scope['type'], 'task_id': self._task_id(scope['task']) if scope['type'] == 'task' else ''}
+        if rule['condition']['type'] in ASSIST_SCOPELESS_CONDITIONS and rule['scope']['type'] != 'final':
+            raise _OperationError('Run status, File Sync and agent signal rules watch the whole run, so their scope must be final.')
 
     def op_remove_alert_rule(self, op):
         self._alerts()
@@ -1744,6 +1721,20 @@ class _Applier:
             messages.append('The rules alert mode needs at least one alert rule.')
         if len(rules) > ASSIST_ALERT_MAX_RULES:
             messages.append(f'A workflow can have at most {ASSIST_ALERT_MAX_RULES} alert rules.')
+        original_rules = workflow_alert_config(self.draft)['alert_rules']
+        for index, rule in enumerate(rules):
+            original_index = self.alert_rules[index][0]
+            if original_index is not None and same_editor_value(rule, original_rules[original_index]):
+                continue
+            try:
+                normalize_alert_rule(
+                    rule, task_ids={task['id'] for task in self._tasks()}, index=index, workflow_scope='personal',
+                )
+            except WorkflowAlertValidationError:
+                messages.append(
+                    f'Alert rule {index + 1} is invalid. Use pop-up delivery for acknowledgment, sound or size; '
+                    'repeat sound requires acknowledgment. Check its condition and task scope too.'
+                )
         final = {
             'alert_mode': settings['alert_mode'], 'alert_priority': settings['alert_priority'],
             'alert_rules': rules, 'alert_evaluation': settings['alert_evaluation'],
