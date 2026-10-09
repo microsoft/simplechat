@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.305
+Version: 0.261.310
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -1207,11 +1207,11 @@ def group_search_matches(workspace, term):
 
 
 class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
-    def __init__(self, page):
+    def __init__(self, page, *, active_group=None):
         super().__init__(page)
         self.group_enabled = True
         self.viewer_id = OWNER_ID
-        self.active_group = None
+        self.active_group = active_group
         self.groups = {
             "group-a": group_context("group-a", "Research group"),
             "group-b": group_context("group-b", "Read-only group", role="User"),
@@ -1489,6 +1489,21 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self.unexpected_requests.append(f"{method} {path} (admin route from a group page)")
             self._json(route, {"error": "Admin routes are not available on group pages."}, 500)
             return
+        if method == "GET" and entry.query.get("page_size") == ["1"]:
+            match = re.fullmatch(r"/api/groups/([^/]+)/(prompts|membership/members)", path)
+            if match:
+                group_id, resource = match.groups()
+                assert group_id in self.groups
+                payload = {"page": 1, "page_size": 1, "total_count": 0}
+                if resource == "prompts":
+                    payload["prompts"] = []
+                else:
+                    payload.update({
+                        "members": [],
+                        "membership_management": {"schema_version": 1, "operations": []},
+                    })
+                self._json(route, payload)
+                return
         if path.startswith("/api/groups/") and path.endswith("/agent-options"):
             self._agent_options(route, entry)
             return
@@ -1666,7 +1681,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 elif not self._group_workflow_member_allowed(group_id):
                     self._json(route, {"error": "Forbidden."}, 403)
                 else:
-                    self._json(route, {"workflows": copy.deepcopy(self.workflows[group_id])})
+                    self._json(route, {"workflows": copy.deepcopy(self.workflows.get(group_id, []))})
             elif path == "/api/group/workflows" and method == "POST":
                 if not self._group_workflow_feature_enabled(group_id):
                     self._json(route, {"error": "The selected group or workflow sources are not allowed."}, 403)
@@ -3252,6 +3267,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "schedule": {"min_interval_minutes": 5, "max_interval_minutes": 10080},
             "limits": {"max_sources": 25},
             "recursive_allowed": True,
+            "default_remote_delete_policy": "ignore",
         }
 
     def _file_source_guard(self, route, entry, group_id):

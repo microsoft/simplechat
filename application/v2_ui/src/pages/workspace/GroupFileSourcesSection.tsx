@@ -14,7 +14,8 @@
 // chooses whether to remove them, the counts are shown, and a refusal that already removed the
 // documents says so instead of claiming nothing changed.
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, FolderSync, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import {
     Pill,
@@ -40,17 +41,19 @@ import {
 } from '../../lib/fileSourceWorkbench';
 import {
     buildFileSourceWrite,
+    connectionDescriptor,
     draftFromSource,
     emptyFileSourceDraft,
     sourcePathText,
+    sourceTypeLabel,
     visibleSourceTypes,
     FILE_SOURCE_REBASE_FIELDS,
     type FileSourceDraft,
 } from '../../lib/fileSourceFields';
 import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/rebaseDraft';
-import { sourceTypeLabel } from './FileSourcesSection';
 import { statusTone } from './WorkflowsSection';
 import { toast } from '../../stores/toastStore';
+import { ApiError, safeSameOriginUrl } from '../../lib/apiClient';
 import type {
     FileSourceOptions,
     WorkspaceIdentity,
@@ -123,7 +126,7 @@ interface DeleteState {
     result: FileSourceDeleteOutcome | null;
 }
 
-export function GroupFileSourcesSection({
+export function FileSourcesWorkbenchSection({
     adapter,
     scopeNoun = 'group',
 }: {
@@ -153,9 +156,15 @@ export function GroupFileSourcesSection({
     // A conditional-write conflict on save: the draft stays open and a reload is offered.
     const [saveConflict, setSaveConflict] = useState(false);
     const [editorLoading, setEditorLoading] = useState(false);
+    const [editorOpen, setEditorOpen] = useState(false);
+    const [editorTarget, setEditorTarget] = useState<WorkspaceSyncSource | null>(null);
+    const [editingSource, setEditingSource] = useState<WorkspaceSyncSource | null>(null);
+    const [sourceDeleted, setSourceDeleted] = useState(false);
+    const editorRequest = useRef<AbortController | null>(null);
+    const editorOpener = useRef<HTMLElement | null>(null);
     const [options, setOptions] = useState<FileSourceOptions | null>(null);
     const [identities, setIdentities] = useState<WorkspaceIdentity[]>([]);
-    // The group's existing tags, offered as fixed-tag suggestions. They are optional: a failed read
+    // Existing workspace tags are optional suggestions; a failed read
     // only costs the suggestions, so the editor still opens and a tag can still be typed.
     const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
     const [tagSuggestionsFailed, setTagSuggestionsFailed] = useState(false);
@@ -163,6 +172,14 @@ export function GroupFileSourcesSection({
     const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
 
     const canCreate = adapter.allows('create');
+    const documentsHref = adapter.scope.kind === 'personal'
+        ? '/workspace/documents'
+        : adapter.scope.kind === 'group'
+            ? `/groups/${encodeURIComponent(adapter.scope.id)}/documents`
+            : `/public/${encodeURIComponent(adapter.scope.id)}/documents`;
+
+    // Scope wrappers remount for another target; same-scope permission refreshes keep the draft.
+    useEffect(() => () => editorRequest.current?.abort(), []);
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -175,60 +192,92 @@ export function GroupFileSourcesSection({
     }, [items, query]);
 
     const openEditor = async (source: WorkspaceSyncSource | null) => {
+        if (!editorOpen) {
+            editorOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }
+        editorRequest.current?.abort();
+        const controller = new AbortController();
+        editorRequest.current = controller;
+        setEditorOpen(true);
+        setEditorTarget(source);
+        setDraft(null);
+        setBaseline(null);
+        setEditingSource(null);
+        setSaving(false);
+        setSourceDeleted(false);
         setSaveError(null);
         setSaveConflict(false);
         setEditingId(source ? source.id : null);
         setEditorLoading(true);
-        // A blank draft while options load, so the dialog can open immediately.
-        setDraft(source ? draftFromSource(source, 1) : emptyFileSourceDraft('smb', 1));
+        setTagSuggestions([]);
         setTagSuggestionsFailed(false);
-        void adapter.tags().then(setTagSuggestions, () => {
-            setTagSuggestions([]);
-            setTagSuggestionsFailed(true);
+        void adapter.tags(controller.signal).then((tags) => {
+            if (!controller.signal.aborted) setTagSuggestions(tags);
+        }, () => {
+            if (!controller.signal.aborted) setTagSuggestionsFailed(true);
         });
         try {
-            const [loadedOptions, loadedIdentities] = await Promise.all([
-                adapter.options(),
-                adapter.identities(),
+            const [loadedOptions, loadedIdentities, loadedSource] = await Promise.all([
+                adapter.options(controller.signal),
+                adapter.identities(controller.signal),
+                source ? adapter.read(source, controller.signal) : Promise.resolve(null),
             ]);
+            if (controller.signal.aborted) return;
+            if (!loadedOptions) {
+                throw new Error('The editor options are unavailable. Retry to load them.');
+            }
             setOptions(loadedOptions);
             setIdentities(loadedIdentities);
             const minInterval = loadedOptions?.schedule?.min_interval_minutes ?? 1;
-            if (source) {
-                setDraft(draftFromSource(source, minInterval));
-                setBaseline(draftFromSource(source, minInterval));
+            if (loadedSource) {
+                connectionDescriptor(String(loadedSource.source_type));
+                const loadedDraft = draftFromSource(loadedSource, minInterval);
+                setDraft(loadedDraft);
+                setBaseline(loadedDraft);
+                setEditingSource(loadedSource);
             } else {
-                const firstType = visibleSourceTypes(loadedOptions)[0]?.value ?? 'smb';
-                setDraft(emptyFileSourceDraft(firstType, minInterval));
+                const firstType = visibleSourceTypes(loadedOptions)[0]?.value;
+                if (!firstType) {
+                    throw new Error('No source types are available. Ask an administrator to review File Sync settings.');
+                }
+                connectionDescriptor(firstType);
+                setDraft({
+                    ...emptyFileSourceDraft(firstType, minInterval),
+                    recursive: loadedOptions.recursive_allowed,
+                    remoteDeletePolicy: loadedOptions.default_remote_delete_policy ?? 'ignore',
+                });
             }
         } catch (loadError) {
-            setSaveError(errorMessage(loadError, 'Could not load the editor options.'));
+            if (!controller.signal.aborted) setSaveError(errorMessage(loadError, 'Could not load the editor options.'));
         } finally {
-            setEditorLoading(false);
+            if (!controller.signal.aborted) setEditorLoading(false);
         }
     };
 
     const closeEditor = () => {
+        editorRequest.current?.abort();
+        setEditorOpen(false);
         setDraft(null);
         setBaseline(null);
         setEditingId(null);
+        setEditingSource(null);
+        setSaving(false);
         setSaveError(null);
         setSaveConflict(false);
     };
 
     const onSave = async () => {
-        if (!draft) {
+        if (!draft || sourceDeleted) {
             return;
         }
+        const controller = editorRequest.current;
         setSaving(true);
         setSaveError(null);
         setSaveConflict(false);
         try {
             const write = buildFileSourceWrite(draft);
             if (editingId) {
-                // The config_revision rides on the current list row, so a save retried after a
-                // reload picks up the fresh marker without the draft having to carry it.
-                const current = items.find((source) => source.id === editingId);
+                const current = editingSource;
                 if (!current) {
                     throw new Error('This file source is no longer available. Reload and try again.');
                 }
@@ -236,10 +285,12 @@ export function GroupFileSourcesSection({
             } else {
                 await adapter.create(write);
             }
+            if (controller?.signal.aborted) return;
             closeEditor();
             await refresh();
             toast.success(editingId ? 'File source saved' : 'File source created');
         } catch (writeError) {
+            if (controller?.signal.aborted) return;
             if (writeError instanceof FileSourceConflictError) {
                 // The config revision moved. Keep the draft open. Reload brings the new
                 // config_revision, and saving again applies the edit on top of it.
@@ -256,7 +307,7 @@ export function GroupFileSourcesSection({
                 setSaveError(errorMessage(writeError, 'Could not save the file source.'));
             }
         } finally {
-            setSaving(false);
+            if (!controller?.signal.aborted) setSaving(false);
         }
     };
 
@@ -267,47 +318,60 @@ export function GroupFileSourcesSection({
             await refresh();
             return;
         }
+        const controller = editorRequest.current;
+        setSaving(true);
         try {
-            const fresh = await adapter.list(new AbortController().signal);
-            setItems(fresh);
-            const current = fresh.find((source) => source.id === editingId) ?? null;
-            if (!current) {
-                setSaveConflict(false);
-                setSaveError(REBASE_DELETED_NOTICE);
-                return;
-            }
+            if (!editingSource) throw new Error(REBASE_DELETED_NOTICE);
+            const current = await adapter.read(editingSource, controller?.signal);
+            if (controller?.signal.aborted) return;
+            setItems(items.map((source) => source.id === current.id ? current : source));
             const minInterval = options?.schedule?.min_interval_minutes ?? 1;
             const freshDraft = draftFromSource(current, minInterval);
             const { draft: rebased, conflicts } = rebaseDraft(baseline, freshDraft, draft, FILE_SOURCE_REBASE_FIELDS);
             setDraft(rebased);
             setBaseline(freshDraft);
+            setEditingSource(current);
             setSaveConflict(false);
             setSaveError(rebaseNotice(conflicts));
         } catch (reloadError) {
+            if (controller?.signal.aborted) return;
+            if (reloadError instanceof ApiError && reloadError.status === 404) {
+                setSourceDeleted(true);
+                setSaveConflict(false);
+                setSaveError(REBASE_DELETED_NOTICE);
+                return;
+            }
             setSaveError(errorMessage(reloadError, 'Could not reload the latest version.'));
+        } finally {
+            if (!controller?.signal.aborted) setSaving(false);
         }
     };
 
     const onTest = async () => {
+        if (sourceDeleted) throw new Error(REBASE_DELETED_NOTICE);
         if (!draft) {
             throw new Error('There is nothing to test yet.');
         }
         const write = buildFileSourceWrite(draft);
-        const saved = editingId ? items.find((source) => source.id === editingId) ?? null : null;
+        const saved = editingSource;
+        if (editingId && !saved) throw new Error(REBASE_DELETED_NOTICE);
         return adapter.testConnection(saved, write);
     };
 
     const onBrowse = async (browsePath: string) => {
+        if (sourceDeleted) throw new Error(REBASE_DELETED_NOTICE);
         if (!draft) {
             throw new Error('There is nothing to browse yet.');
         }
         const write = buildFileSourceWrite(draft);
-        const saved = editingId ? items.find((source) => source.id === editingId) ?? null : null;
+        const saved = editingSource;
+        if (editingId && !saved) throw new Error(REBASE_DELETED_NOTICE);
         return adapter.browse(saved, write, browsePath);
     };
 
     const onIgnore = editingId
         ? async (remotePath: string, ignored: boolean) => {
+              if (sourceDeleted) throw new Error(REBASE_DELETED_NOTICE);
               const item = await adapter.ignorePath(editingId, remotePath, ignored);
               return Boolean(item.ignored);
           }
@@ -411,6 +475,8 @@ export function GroupFileSourcesSection({
                 {canCreate
                     ? 'Connect a source to bring documents in without uploading them one by one.'
                     : `A workspace manager can connect a source for this ${scopeNoun}.`}
+                {' '}Files appear in{' '}
+                <Link to={safeSameOriginUrl(documentsHref, '/workspace/documents')} className="text-accent hover:underline">Documents</Link>.
             </p>
 
             <SectionSearch value={query} onChange={setQuery} placeholder="Search file sources" />
@@ -493,15 +559,38 @@ export function GroupFileSourcesSection({
                 }}
             />
 
+            {editorOpen && !draft ? (
+                <Modal
+                    title={editingId ? 'Edit file source' : 'New file source'}
+                    returnFocusTo={editorOpener.current}
+                    onClose={closeEditor}
+                    footer={
+                        <>
+                            <GlassButton size="sm" onClick={closeEditor}>Cancel</GlassButton>
+                            {!editorLoading ? (
+                                <GlassButton size="sm" onClick={() => void openEditor(editorTarget)}>
+                                    Retry editor
+                                </GlassButton>
+                            ) : null}
+                        </>
+                    }
+                >
+                    {editorLoading ? <p role="status">Loading file source configuration…</p>
+                        : <p role="alert" className="text-sm text-danger">{saveError}</p>}
+                </Modal>
+            ) : null}
+
             {draft ? (
                 <FileSourceEditorDialog
                     draft={draft}
+                    returnFocusTo={editorOpener.current}
                     options={options}
                     identities={identities}
                     scopeNoun={scopeNoun}
                     tagSuggestions={tagSuggestions}
                     tagSuggestionsFailed={tagSuggestionsFailed}
                     saving={saving || editorLoading}
+                    saveBlocked={sourceDeleted}
                     error={saveError}
                     onChange={setDraft}
                     onSave={() => void onSave()}
@@ -548,6 +637,7 @@ export function GroupFileSourcesSection({
                             </GlassButton>
                         </>
                     }
+
                 >
                     <div className="space-y-3 text-sm text-text-2">
                         <p>
@@ -569,6 +659,17 @@ export function GroupFileSourcesSection({
             ) : null}
         </div>
     );
+}
+
+export function GroupFileSourcesSection({
+    adapter,
+    scopeNoun = 'group',
+}: {
+    adapter: FileSourceWorkbenchAdapter;
+    scopeNoun?: string;
+}) {
+    const key = adapter.scope.kind === 'personal' ? 'personal' : `${adapter.scope.kind}:${adapter.scope.id}`;
+    return <FileSourcesWorkbenchSection key={key} adapter={adapter} scopeNoun={scopeNoun} />;
 }
 
 /**

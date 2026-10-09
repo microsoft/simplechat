@@ -867,6 +867,7 @@ def build_file_sync_source_options(scope_type: str, scope_id: str, settings: Opt
         },
         "limits": {"max_sources": config["file_sync_max_sources_per_scope"]},
         "recursive_allowed": bool(config["file_sync_allow_recursive_sources"]),
+        "default_remote_delete_policy": config["file_sync_default_remote_delete_policy"],
     }
 
 

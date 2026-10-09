@@ -10,6 +10,7 @@
 import type { ReasoningResolution } from './reasoning';
 import type { ContentScreeningSummary } from './contentScreening';
 import type { ImageReferenceRequest } from './imageReferences';
+import type { PublicWorkspaceSelection } from './publicChatScope';
 
 export type Json = Record<string, unknown>;
 
@@ -502,7 +503,7 @@ export interface FileSourceTypeOption {
     visible: boolean;
 }
 
-/** The server-decided options envelope for the group file source editor. */
+/** Server-decided editor options in any workspace scope. */
 export interface FileSourceOptions {
     source_types: FileSourceTypeOption[];
     /** Identity ids eligible per source type; the picker filters against this. */
@@ -510,6 +511,7 @@ export interface FileSourceOptions {
     schedule: { min_interval_minutes: number; max_interval_minutes: number };
     limits: { max_sources: number };
     recursive_allowed: boolean;
+    default_remote_delete_policy?: 'ignore' | 'hard_delete';
 }
 
 /**
@@ -1353,6 +1355,7 @@ export interface ChatStreamEvent {
 
 /** Request body for POST /api/chat/stream. Field names verified against the Flask route. */
 export interface ChatStreamRequest {
+    public_workspace_selection?: PublicWorkspaceSelection;
     message: string;
     conversation_id?: string | null;
     analysis_result_context?: AnalysisResultContext;

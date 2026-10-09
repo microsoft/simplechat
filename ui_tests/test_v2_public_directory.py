@@ -1,7 +1,7 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.188
+Version: 0.261.310
 Implemented in: 0.261.175
 The Create dialog holds keyboard focus and hands it back on close: 0.261.188
 
@@ -21,7 +21,7 @@ a malformed envelope surfacing as a hard error rather than an empty directory, t
 exact rules (default-all-visible with the honest note, an additive one-entry write, and an
 unavailable-status row that stays hideable and never errors), a graceful deep link into a section a
 public workspace does not offer, the whole-directory visibility tools (bulk show/hide, saved lists,
-and the classic-chat hand-off, each acting across the server's pages), and both themes at both
+and the native-chat hand-off, each acting across the server's pages), and both themes at both
 breakpoints.
 """
 
@@ -610,12 +610,12 @@ def test_a_workspace_not_found_reports_and_drops_the_row(public_directory_ui):
 
 
 # --------------------------------------------------------------------------
-# Visibility tools: bulk show/hide, saved lists, and the classic-chat hand-off.
+# Visibility tools: bulk show/hide, saved lists, and the native-chat hand-off.
 #
 # The bulk and saved-list controls act on the whole directory, which is server-paged, so the page
 # walks the directory route at the server's largest page to cover every workspace rather than the
-# page on screen. The single chat entry point hands off to the classic public chat -- V2 chat has
-# no all-visible public scope (recorded exception, decision 31) -- and writes nothing itself.
+# page on screen. The chat entry point opens a fresh native V2 chat in Visible mode
+# after flushing pending curation, and writes nothing itself.
 # --------------------------------------------------------------------------
 
 def all_directory_ids(ui):
@@ -652,15 +652,6 @@ def wrote_key(key):
             and key in (response.request.post_data or "")
         )
     return _match
-
-
-def stub_chat_navigation(ui):
-    """Fulfil the classic aggregate-chat document navigation so the hand-off can be observed."""
-    ui.page.context.route(
-        "**/chats*",
-        lambda route: route.fulfill(status=200, content_type="text/html",
-                                    body="<!doctype html><title>chat</title>"),
-    )
 
 
 def test_show_all_makes_available_workspaces_visible_and_skips_the_rest(public_directory_ui):
@@ -802,21 +793,40 @@ def test_delete_removes_only_the_named_list(public_directory_ui):
     expect(page.get_by_text('Deleted the saved list "Alpha".', exact=False)).to_be_visible()
 
 
-def test_chat_with_visible_opens_chat_and_writes_nothing(public_directory_ui):
-    """Chat with visible (classic) hands off to the classic public chat without changing any preference."""
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_chat_with_visible_opens_chat_and_writes_nothing(public_directory_ui, theme, width, height):
+    """Native public chat works without a legacy navigation or preference mutation."""
     ui, page = public_directory_ui, public_directory_ui.page
-    stub_chat_navigation(ui)
-    open_directory(ui)
-    # The help text is exact about the destination: it is classic chat searching the visible
-    # workspaces, not the classic workspace page, and the button itself writes nothing (decision 31).
+    page.set_viewport_size({"width": width, "height": height})
+    open_directory(ui, theme=theme)
     expect(page.get_by_text(
-        "Opens classic chat, searching the public workspaces that are visible now. It changes nothing.",
+        "Opens a new chat, searching the public workspaces that are visible now. It changes nothing.",
         exact=False,
     )).to_be_visible()
-    with page.expect_navigation(url=re.compile(r"/chats\?openSearch=1&scope=public"),
-                                wait_until="domcontentloaded"):
-        page.get_by_role("button", name="Chat with visible (classic)", exact=True).click()
+    page.get_by_role("button", name="Chat with visible", exact=True).click()
+    expect(page.get_by_label("Document search scope", exact=True)).to_have_value("visible")
+    expect(page).to_have_url(re.compile(r"/v2/chat$"))
+    assert not ui.classic_visits
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     assert not visibility_writes(ui), "Chat with visible must not write any visibility preference."
+
+
+def test_chat_with_visible_stays_in_directory_when_pending_visibility_save_fails(public_directory_ui):
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    def refuse_save(route):
+        if route.request.method != "POST":
+            route.fallback()
+            return
+        ui.expected_http_errors.add((route.request.url, 503))
+        route.fulfill(status=503, json={"error": "Could not save preferences."})
+    page.route("**/api/user/settings", refuse_save)
+    visibility_switch(ui, LOGO_WORKSPACE_NAME).uncheck(force=True)
+    page.get_by_role("button", name="Chat with visible", exact=True).click()
+    expect(page.get_by_role("status").filter(has_text="chat was not opened")).to_be_visible()
+    expect(page).to_have_url(re.compile(r"/v2/public/directory(?:\?.*)?$"))
+    expect(page.get_by_label("Document search scope", exact=True)).to_have_count(0)
+    assert not ui.classic_visits
 
 
 def test_the_visibility_tools_are_hidden_on_an_empty_directory(public_directory_ui):

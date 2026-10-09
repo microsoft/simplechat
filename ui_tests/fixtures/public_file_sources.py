@@ -1,7 +1,7 @@
 # public_file_sources.py
 """
 Closed M10B public file source HTTP fixtures for the real production V2 SPA.
-Version: 0.261.182
+Version: 0.261.310
 Implemented in: 0.261.182
 
 The fixture serves the immutable `/api/public-workspaces/<workspace_id>/file-sources[...]` family and
@@ -237,14 +237,21 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
         # Sync identity is offered for every type it supports. pub-a carries one; pub-b none.
         eligible_id = FILE_SYNC_IDENTITY_ID if workspace_id == "pub-a" else None
         eligible_identity_ids = {
-            source_type: ([eligible_id] if eligible_id else []) for source_type in source_types
+            source_type: ([eligible_id] if eligible_id and source_type == "smb" else []) for source_type in source_types
         }
         return {
-            "source_types": source_types,
+            "source_types": [
+                {"value": source_type, "label": label, "visible": True}
+                for source_type, label in (
+                    ("smb", "Network share"), ("azure_files", "Azure Files"),
+                    ("azure_blob", "Azure Blob Storage"),
+                )
+            ],
             "eligible_identity_ids": eligible_identity_ids,
-            "schedule": {"min_interval_minutes": 15, "default_interval_minutes": 60},
-            "limits": {"max_sources": 10, "current_count": len(self.file_sources.get(workspace_id, []))},
+            "schedule": {"min_interval_minutes": 15, "max_interval_minutes": 10080},
+            "limits": {"max_sources": 10},
             "recursive_allowed": True,
+            "default_remote_delete_policy": "ignore",
         }
 
     def _dispatch(self, route, entry):
@@ -313,6 +320,35 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
         if policy is None:
             return
         allowed = set(policy["operations"])
+        operation = parts[-1]
+        if method == "POST" and operation in ("test-connection", "browse", "ignore-path"):
+            source_id = parts[5] if len(parts) == 7 else None
+            record = next((row for row in self.file_sources.get(workspace_id, []) if row["id"] == source_id), None)
+            assert "test" in allowed and policy["status"] == "active", f"Tool reached a read-only workspace: {entry}"
+            if source_id and record is None:
+                self._json(route, copy.deepcopy(FILE_SOURCE_NOT_FOUND_BODY), 404)
+                return
+            if record:
+                assert "test" in record["source_actions"], f"Tool reached a withheld source: {entry}"
+            if operation == "test-connection":
+                self._json(route, {"connection": {"success": True, "entries_checked": 1}})
+            elif operation == "browse":
+                connection = (entry.body or {}).get("connection") or (record or {}).get("connection") or {}
+                root = connection.get("unc_path", "\\\\files.example.test\\reports")
+                self._json(route, {"browse": {
+                    "path": (entry.body or {}).get("browse_path", ""),
+                    "entries": [{
+                        "name": "budget.xlsx", "path": "budget.xlsx", "is_dir": False,
+                        "remote_path": f"{root}\\budget.xlsx",
+                    }],
+                }})
+            else:
+                assert record, "Ignore requires a saved source."
+                self._json(route, {"item": {
+                    "source_id": source_id, "remote_path": entry.body["remote_path"],
+                    "ignored": entry.body["ignored"],
+                }})
+            return
         if identifier is None:
             if method == "GET":
                 if entry.query:

@@ -1,12 +1,8 @@
 // fileSourceWorkbench.ts
 // Scope-aware file source reads and writes for the workspace "Sync" (file sources) section.
 //
-// The file sources section shipped personal-only: it called the /api/file-sync/personal
-// functions in workspaceApi.ts directly, and stayed list-and-delete. This module is the seam that
-// lets the section serve a group workspace natively, the way identityWorkbench.ts did for
-// identities, and from M10B a public workspace too. A FileSourceScope selects which URLs are used
-// and which per-operation gates apply. The personal adapter is a thin pass-through so its behaviour
-// stays byte-identical in effect: same list URL, same runs/sync/delete URLs.
+// Each scope selects its own URLs and envelopes. Personal sources keep their existing API family;
+// shared sources use immutable workspace IDs and server-advertised operation gates.
 //
 // The group and public paths never fall back to personal behaviour. An absent or unrecognised
 // file_source_management hint yields an empty operation set, which leaves every write gate refusing
@@ -16,7 +12,7 @@
 // check (§9), so the envelope is validated strictly instead: a malformed response throws rather
 // than rendering as empty.
 //
-// Group and public scope carry a conditional write over config_revision, not an etag: PATCH and
+// All native editors carry a conditional write over config_revision, not an etag: PATCH and
 // DELETE send expected_config_revision (missing is 400, stale is 409). A 409 becomes a typed error
 // the section turns into "your draft is kept, reload and retry". Delete is richer: the associated
 // documents may already be gone when the removal is refused, so a refusal carrying partial:true
@@ -25,12 +21,11 @@
 
 import { ApiError, api, requestWithStatus } from './apiClient';
 import { fetchScopedGroupDocumentTags, fetchScopedPublicDocumentTags } from './documentReadAdapter';
+import { fetchPersonalDocumentTags } from './endpoints';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
 import {
-    deleteSyncSource as deletePersonalSyncSource,
     fetchSyncRuns as fetchPersonalSyncRuns,
-    fetchSyncSources as fetchPersonalSyncSources,
     startSyncRun as startPersonalSyncRun,
 } from './workspaceApi';
 import type {
@@ -162,13 +157,13 @@ export interface FileSourceWorkbenchAdapter {
     create: (write: FileSourceWrite) => Promise<WorkspaceSyncSource>;
     update: (source: WorkspaceSyncSource, write: FileSourceWrite) => Promise<WorkspaceSyncSource>;
     remove: (source: WorkspaceSyncSource, deleteAssociatedFiles: boolean) => Promise<FileSourceDeleteOutcome>;
-    /** The server-decided editor options; null when the scope has none (personal). */
+    /** The server-decided editor options. */
     options: (signal?: AbortSignal) => Promise<FileSourceOptions | null>;
-    /** The group identities that back the credential picker; empty for personal. */
+    /** Same-scope identities backing the credential picker. */
     identities: (signal?: AbortSignal) => Promise<WorkspaceIdentity[]>;
     /**
      * The workspace's existing tag names, offered as fixed-tag suggestions, most used first; empty
-     * for personal. A failed read only costs the suggestions, so the section treats it as optional.
+     * A failed read only costs the suggestions, so the section treats it as optional.
      */
     tags: (signal?: AbortSignal) => Promise<string[]>;
     runs: (sourceId: string, signal?: AbortSignal) => Promise<WorkspaceSyncRun[]>;
@@ -176,8 +171,6 @@ export interface FileSourceWorkbenchAdapter {
     testConnection: (source: WorkspaceSyncSource | null, write: FileSourceWrite | null) => Promise<FileSourceConnectionResult>;
     browse: (source: WorkspaceSyncSource | null, write: FileSourceWrite | null, browsePath: string) => Promise<FileSourceBrowseResult>;
     ignorePath: (sourceId: string, remotePath: string, ignored: boolean) => Promise<FileSourceIgnoreItem>;
-    /** Where "adding one is still done in the classic workspace" points, for personal scope. */
-    classicPath: string;
 }
 
 /**
@@ -225,48 +218,85 @@ export function fileSourceOperationAllowed(
     return Array.isArray(source.source_actions) && source.source_actions.includes(operation);
 }
 
-const NOT_IN_PERSONAL = 'This action is only available in a group workspace.';
+function personalFileSourcesUrl(sourceId?: string, suffix?: string): string {
+    const base = '/api/file-sync/personal/sources';
+    const path = sourceId ? `${base}/${encodeURIComponent(requireWorkspaceId(sourceId))}` : base;
+    return suffix ? `${path}/${suffix}` : path;
+}
+
+function personalSourceFromResponse(value: unknown): WorkspaceSyncSource {
+    if (isRecord(value) && isRecord(value.source) && typeof value.source.id === 'string'
+        && value.source.id && typeof value.source.config_revision === 'string'
+        && value.source.config_revision) {
+        return value.source as WorkspaceSyncSource;
+    }
+    throw new Error('The file source response was malformed. Refresh and try again.');
+}
 
 export const PERSONAL_FILE_SOURCE_WORKBENCH: FileSourceWorkbenchAdapter = {
     scope: { kind: 'personal' },
-    manageable: false,
-    supported: new Set(),
+    manageable: true,
+    supported: new Set(FILE_SOURCE_OPERATIONS),
     allows: () => true,
-    list: (signal) => fetchPersonalSyncSources(signal),
-    read: async (source) => source,
-    create: () => {
-        throw new Error('Adding a file source is done in the classic workspace.');
+    list: async (signal) => {
+        const response = await api.get<unknown>(personalFileSourcesUrl(), signal);
+        if (!isRecord(response) || !Array.isArray(response.sources)) {
+            throw new Error('The file sources response was malformed. Refresh and try again.');
+        }
+        return response.sources.map((source) => personalSourceFromResponse({ source }));
     },
-    update: () => {
-        throw new Error('Editing a file source is done in the classic workspace.');
+    read: async (source, signal) =>
+        personalSourceFromResponse(await api.get<unknown>(personalFileSourcesUrl(source.id), signal)),
+    create: async (write) =>
+        personalSourceFromResponse(await api.post<unknown>(personalFileSourcesUrl(), groupWriteBody(write))),
+    update: async (source, write) => {
+        const response = await conditionalGroupUpdate(personalFileSourcesUrl(source.id), {
+            ...groupWriteBody(write), expected_config_revision: requiredConfigRevision(source),
+        });
+        return personalSourceFromResponse(response);
     },
-    remove: async (source, deleteAssociatedFiles) => {
-        await deletePersonalSyncSource(source.id, deleteAssociatedFiles);
-        return {
-            associated_files_requested: deleteAssociatedFiles,
-            documents_deleted: 0,
-            documents_skipped: 0,
-            documents_failed: 0,
-        };
+    remove: (source, deleteAssociatedFiles) => deleteGroupSource(personalFileSourcesUrl(source.id), {
+        expected_config_revision: requiredConfigRevision(source),
+        delete_associated_files: deleteAssociatedFiles,
+    }),
+    options: async (signal) =>
+        optionsFromResponse(await api.get<unknown>('/api/file-sync/personal/source-options', signal)),
+    identities: async (signal) =>
+        identitiesFromResponse(await api.get<unknown>('/api/workspace-identities/personal/identities', signal)),
+    tags: async (signal) => {
+        const response = await fetchPersonalDocumentTags(signal);
+        if (!Array.isArray(response.tags)) {
+            throw new Error('The document tags response was malformed.');
+        }
+        return [...response.tags]
+            .sort((left, right) => (Number(right.count) - Number(left.count)) || left.name.localeCompare(right.name))
+            .map((tag) => tag.name);
     },
-    options: async () => null,
-    identities: async () => [],
-    tags: async () => [],
     runs: (sourceId, signal) => fetchPersonalSyncRuns(sourceId, signal),
     sync: async (sourceId) => {
         const response = await startPersonalSyncRun(sourceId);
         return response.run ?? null;
     },
-    testConnection: () => {
-        throw new Error(NOT_IN_PERSONAL);
+    testConnection: async (source, write) => {
+        const response = await api.post<unknown>(
+            personalFileSourcesUrl(source?.id, 'test-connection'),
+            write ? groupWriteBody(write) : undefined,
+        );
+        return connectionFromResponse(response);
     },
-    browse: () => {
-        throw new Error(NOT_IN_PERSONAL);
+    browse: async (source, write, browsePath) => {
+        const response = await api.post<unknown>(
+            personalFileSourcesUrl(source?.id, 'browse'),
+            { ...(write ? groupWriteBody(write) : {}), browse_path: browsePath },
+        );
+        return browseFromResponse(response);
     },
-    ignorePath: () => {
-        throw new Error(NOT_IN_PERSONAL);
+    ignorePath: async (sourceId, remotePath, ignored) => {
+        const response = await api.post<unknown>(
+            personalFileSourcesUrl(sourceId, 'ignore-path'), { remote_path: remotePath, ignored },
+        );
+        return ignoreItemFromResponse(response);
     },
-    classicPath: '/workspace',
 };
 
 function groupFileSourcesUrl(groupId: string, sourceId?: string, suffix?: string): string {
@@ -323,7 +353,20 @@ function sourceFromResponse(value: unknown): WorkspaceSyncSource {
 
 function optionsFromResponse(value: unknown): FileSourceOptions {
     if (!isRecord(value) || !Array.isArray(value.source_types) || !isRecord(value.eligible_identity_ids)
-        || !isRecord(value.schedule) || !isRecord(value.limits)) {
+        || !value.source_types.every((type) => isRecord(type) && typeof type.value === 'string'
+            && typeof type.label === 'string' && typeof type.visible === 'boolean')
+        || !Object.values(value.eligible_identity_ids).every((ids) =>
+            Array.isArray(ids) && ids.every((id) => typeof id === 'string'))
+        || !isRecord(value.schedule) || !isRecord(value.limits)
+        || typeof value.schedule.min_interval_minutes !== 'number'
+        || !Number.isInteger(value.schedule.min_interval_minutes) || value.schedule.min_interval_minutes < 1
+        || typeof value.schedule.max_interval_minutes !== 'number'
+        || !Number.isInteger(value.schedule.max_interval_minutes)
+        || value.schedule.max_interval_minutes < value.schedule.min_interval_minutes
+        || typeof value.limits.max_sources !== 'number' || !Number.isInteger(value.limits.max_sources)
+        || value.limits.max_sources < 1 || typeof value.recursive_allowed !== 'boolean'
+        || (value.default_remote_delete_policy !== undefined
+            && !['ignore', 'hard_delete'].includes(String(value.default_remote_delete_policy)))) {
         throw new Error('The file source options response was malformed. Refresh and try again.');
     }
     return value as unknown as FileSourceOptions;
@@ -345,7 +388,7 @@ function runsFromResponse(value: unknown): WorkspaceSyncRun[] {
 }
 
 function connectionFromResponse(value: unknown): FileSourceConnectionResult {
-    if (isRecord(value) && isRecord(value.connection)) {
+    if (isRecord(value) && isRecord(value.connection) && value.connection.success === true) {
         return value.connection as FileSourceConnectionResult;
     }
     throw new Error('The connection test response was malformed. Try again.');
@@ -362,7 +405,7 @@ function browseFromResponse(value: unknown): FileSourceBrowseResult {
 }
 
 function ignoreItemFromResponse(value: unknown): FileSourceIgnoreItem {
-    if (isRecord(value) && isRecord(value.item)) {
+    if (isRecord(value) && isRecord(value.item) && typeof value.item.ignored === 'boolean') {
         return value.item as FileSourceIgnoreItem;
     }
     throw new Error('The ignore-path response was malformed. Try again.');
@@ -394,12 +437,20 @@ function groupWriteBody(write: FileSourceWrite): Record<string, unknown> {
 }
 
 function deleteOutcome(value: unknown): FileSourceDeleteOutcome {
-    const result = isRecord(value) ? value : {};
+    if (!isRecord(value) || typeof value.associated_files_requested !== 'boolean'
+        || typeof value.documents_deleted !== 'number' || !Number.isInteger(value.documents_deleted)
+        || value.documents_deleted < 0
+        || typeof value.documents_skipped !== 'number' || !Number.isInteger(value.documents_skipped)
+        || value.documents_skipped < 0
+        || typeof value.documents_failed !== 'number' || !Number.isInteger(value.documents_failed)
+        || value.documents_failed < 0) {
+        throw new Error('The deletion response could not be verified. Refresh to confirm the source and document status.');
+    }
     return {
-        associated_files_requested: Boolean(result.associated_files_requested),
-        documents_deleted: Number(result.documents_deleted ?? 0),
-        documents_skipped: Number(result.documents_skipped ?? 0),
-        documents_failed: Number(result.documents_failed ?? 0),
+        associated_files_requested: value.associated_files_requested,
+        documents_deleted: value.documents_deleted,
+        documents_skipped: value.documents_skipped,
+        documents_failed: value.documents_failed,
     };
 }
 
@@ -553,7 +604,6 @@ export function createGroupFileSourceWorkbench(
             );
             return ignoreItemFromResponse(response);
         },
-        classicPath: '/group_workspaces',
     };
 }
 
@@ -662,6 +712,5 @@ export function createPublicFileSourceWorkbench(
             );
             return ignoreItemFromResponse(response);
         },
-        classicPath: '/public_workspaces',
     };
 }

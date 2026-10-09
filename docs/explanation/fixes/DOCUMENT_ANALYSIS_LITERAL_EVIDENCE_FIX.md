@@ -1,8 +1,8 @@
 # Document analysis literal evidence fix
 
-**Version: 0.261.310**
+**Version: 0.261.314**
 
-Fixed in version: **0.261.310**, recorded in
+Fixed in version: **0.261.314**, recorded in
 `application/single_app/config.py`.
 
 ## Issue and root cause

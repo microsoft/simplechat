@@ -2,7 +2,7 @@
 # test_document_search_action_scope_enforcement.py
 """
 Functional test for document search action scope enforcement.
-Version: 0.261.276
+Version: 0.261.311
 Implemented in: 0.261.276
 
 This test ensures that document-search action settings narrow runtime scopes
@@ -18,6 +18,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_PATH = REPO_ROOT / "application" / "single_app" / "semantic_kernel_plugins" / "document_search_plugin.py"
+sys.path.insert(0, str(PLUGIN_PATH.parents[1]))
+
+from public_chat_scope_state import public_chat_scope_context  # noqa: E402
 
 
 def normalize_search_scope(doc_scope, default_scope="all"):
@@ -119,6 +122,24 @@ def test_scope_helper_defaults_and_restrictions():
     assert plugin_module.intersect_allowed_search_ids("g1,g2", []) == "g1,g2"
 
 
+def test_aggregate_public_scope_cannot_bypass_action_scope_or_workspace_restrictions():
+    plugin_module = load_plugin_module()
+    calls = []
+    plugin_module.run_document_search = lambda **kwargs: calls.append(kwargs) or {"results": []}
+    private = plugin_module.DocumentSearchPlugin({"additionalFields": {"allowed_scopes": ["personal"]}})
+    public = plugin_module.DocumentSearchPlugin({"additionalFields": {
+        "allowed_scopes": ["public"], "allowed_public_workspace_ids": ["p2"],
+    }})
+    with public_chat_scope_context("test-user", "all", ["p1", "p2"]):
+        denied = private.search_documents(query="policy", doc_scope="personal")
+        allowed = public.search_documents(query="policy", doc_scope="all")
+        other = public.search_documents(query="policy", active_public_workspace_id="outside")
+    assert denied == {"error": "Document search scope is not allowed for this action."}
+    assert "error" not in allowed and len(calls) == 1
+    assert calls[0]["doc_scope"] == "public" and calls[0]["active_public_workspace_id"] == ["p2"]
+    assert "error" in other
+
+
 def test_search_documents_skips_disabled_scopes_and_intersects_ids():
     plugin_module = load_plugin_module()
     calls = []
@@ -197,6 +218,7 @@ def test_target_length_parsing_and_normalization():
 if __name__ == "__main__":
     tests = [
         test_scope_helper_defaults_and_restrictions,
+        test_aggregate_public_scope_cannot_bypass_action_scope_or_workspace_restrictions,
         test_search_documents_skips_disabled_scopes_and_intersects_ids,
         test_search_documents_rejects_disabled_specific_scope,
         test_target_length_parsing_and_normalization,

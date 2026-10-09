@@ -1,10 +1,10 @@
 # test_document_analysis_evidence_matching.py
 """
 Functional tests for general Analyze evidence matching, caveats, notes and validation logging.
-Version: 0.261.310
+Version: 0.261.314
 Implemented in: 0.261.191
 
-Literal source matching precedes lossy normalization as of 0.261.310.
+Literal source matching precedes lossy normalization as of 0.261.314.
 
 Refs #1540. A model quoting table-heavy or formatted source text must be located in its
 original chunk when the only differences are presentation: markup, table rules, entities,
@@ -120,7 +120,7 @@ def test_evidence_matching_fix_is_in_the_application_version():
 
 
 def test_literal_evidence_fix_is_in_the_application_version():
-    assert_app_version_at_least('0.261.310')
+    assert_app_version_at_least('0.261.314')
 
 
 @pytest.mark.parametrize('chunk_text,quote,expected_text,tier', [

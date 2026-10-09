@@ -34,6 +34,7 @@ from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
 from functions_debug import *
 from swagger_wrapper import swagger_route, get_auth_security
+from public_chat_scope_state import PublicChatScopeError
 
 
 PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
@@ -521,14 +522,24 @@ def register_route_backend_public_documents(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        # Get user settings to access publicDirectorySettings
-        settings = get_user_settings(user_id)
-        public_directory_settings = settings.get('settings', {}).get('publicDirectorySettings', {})
-        
-        # Get IDs of workspaces marked as visible (value is true)
-        workspace_ids = [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
+        selection = request.args.get('public_workspace_selection')
+        if selection is not None:
+            try:
+                workspace_ids = resolve_public_chat_workspace_ids(user_id, selection)
+            except PublicChatScopeError as error:
+                return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+            except Exception as error:
+                log_event('[PUBLIC_CHAT_SCOPE] Could not load public document scope.',
+                          extra={'error_type': type(error).__name__}, level=logging.ERROR)
+                return jsonify({'error': 'Could not load public documents. Please retry.'}), 503
+        else:
+            settings = get_user_settings(user_id)
+            public_directory_settings = settings.get('settings', {}).get('publicDirectorySettings', {})
+            workspace_ids = [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
         
         if not workspace_ids:
+            if selection is not None:
+                return jsonify({'documents': [], 'workspace_name': 'Public workspaces'}), 200
             return jsonify({
                 'documents': [],
                 'workspace_name': 'All Public Workspaces',
@@ -538,7 +549,7 @@ def register_route_backend_public_documents(bp):
         # Get page_size parameter for pagination
         try:
             page_size = int(request.args.get('page_size', 1000))
-        except:
+        except (TypeError, ValueError):
             page_size = 1000
         if page_size < 1:
             page_size = 1000
@@ -554,7 +565,7 @@ def register_route_backend_public_documents(bp):
                 extra={'workspace_count': len(workspace_ids), 'error': str(e)},
                 level=logging.ERROR,
             )
-            return jsonify({'error': f'Error fetching documents: {str(e)}'}), 500
+            return jsonify({'error': 'Could not load public documents. Please retry.'}), 500
 
         docs = docs[:page_size]
 
@@ -1341,13 +1352,25 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         ws_ids_param = request.args.get('workspace_ids', '')
+        selection = request.args.get('public_workspace_selection')
+        if selection is not None:
+            try:
+                eligible_ids = resolve_public_chat_workspace_ids(user_id, selection)
+            except PublicChatScopeError as error:
+                return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+            except Exception as error:
+                log_event('[PUBLIC_CHAT_SCOPE] Could not load public tag scope.',
+                          extra={'error_type': type(error).__name__}, level=logging.ERROR)
+                return jsonify({'error': 'Could not load public tags. Please retry.'}), 503
+        else:
+            eligible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
 
         if ws_ids_param:
             workspace_ids = [wid.strip() for wid in ws_ids_param.split(',') if wid.strip()]
         else:
-            workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            workspace_ids = eligible_ids
 
-        visible_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id))
+        visible_ids = set(eligible_ids)
         validated_ids = list(dict.fromkeys(wid for wid in workspace_ids if wid in visible_ids))
 
         from functions_documents import build_workspace_tags_from_counts, normalize_tag

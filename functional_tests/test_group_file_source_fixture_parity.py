@@ -1,7 +1,7 @@
 # test_group_file_source_fixture_parity.py
 """
 Per-route shape parity between the M5B group file source UI fixture and the real routes.
-Version: 0.261.172
+Version: 0.261.310
 Implemented in: 0.261.147
 Credentials block compared: 0.261.156
 Sync fields and browse paths compared by value: 0.261.171
@@ -85,7 +85,7 @@ ENTRY_UI_KEYS = {"name", "path", "type"}
 FILE_ENTRY_UI_KEYS = ENTRY_UI_KEYS | {"remote_path"}
 IGNORE_ITEM_UI_KEYS = {"id", "remote_path", "status", "ignored"}
 CONNECTION_UI_KEYS = {"success", "entries_checked", "files_seen", "folders_seen"}
-OPTIONS_UI_KEYS = {"source_types", "eligible_identity_ids", "schedule", "limits", "recursive_allowed"}
+OPTIONS_UI_KEYS = {"source_types", "eligible_identity_ids", "schedule", "limits", "recursive_allowed", "default_remote_delete_policy"}
 # The credential fields the editor's draftFromSource reads. A key the server omits would open blank
 # and be sent back blank, which clears the stored value (the 0.261.156 tenant fix).
 CREDENTIALS_UI_KEYS = {

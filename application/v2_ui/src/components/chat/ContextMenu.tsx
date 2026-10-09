@@ -19,6 +19,8 @@ import {
 } from '../../lib/contextMentions';
 import type { ContextKind } from '../../lib/chatContext';
 import type { WorkspaceRef } from '../../lib/types';
+import type { PublicWorkspaceSelection } from '../../lib/publicChatScope';
+import { toast } from '../../stores/toastStore';
 
 /** How long to wait after a keystroke before asking the server for candidates. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -36,6 +38,7 @@ const GROUP_LABEL: Record<ContextKind, string> = {
 };
 
 export interface ContextSearchScope {
+    publicWorkspaceSelection?: PublicWorkspaceSelection | null;
     groups: WorkspaceRef[];
     publicWorkspaces: WorkspaceRef[];
     groupsEnabled: boolean;
@@ -83,6 +86,7 @@ export function useContextSuggestions(
 
         const timer = window.setTimeout(() => {
             searchContextCandidates({
+                publicWorkspaceSelection: scopeRef.current.publicWorkspaceSelection,
                 query,
                 groups: scopeRef.current.groups,
                 publicWorkspaces: scopeRef.current.publicWorkspaces,
@@ -100,6 +104,7 @@ export function useContextSuggestions(
                 })
                 .catch(() => {
                     if (!controller.signal.aborted) {
+                        if (scopeRef.current.publicWorkspaceSelection) toast.error('Could not load public search sources. Please retry.');
                         // Every individual request is already settled independently, so
                         // reaching here means the fan-out itself failed. Offering nothing is
                         // better than an error banner over the message box.
@@ -113,7 +118,7 @@ export function useContextSuggestions(
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [query, groupIds, publicIds, scope.documentsOnly, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled]);
+    }, [query, groupIds, publicIds, scope.documentsOnly, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled, scope.publicWorkspaceSelection]);
 
     return { candidates, loading };
 }

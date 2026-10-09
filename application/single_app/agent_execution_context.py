@@ -171,13 +171,14 @@ def agent_execution(frame):
 
 
 def capture_execution_identity(user_id, conversation_id=None):
-    """Capture only server-authenticated identity, never parent prompt or workspace state.
+    """Capture authenticated identity and admitted retrieval limits, never workspace preferences.
 
     Flask is imported here because workers use the context types without a Flask
     dependency. The closure creates a distinct app/request context for every
     invocation; concurrent children never share ``g`` or a mutable session.
     """
     from flask import current_app, g, has_request_context, request, session
+    from public_chat_scope_state import current_public_chat_scope, public_chat_scope_context
 
     if not has_request_context():
         return ExecutionIdentity(user_id, conversation_id)
@@ -187,6 +188,7 @@ def capture_execution_identity(user_id, conversation_id=None):
     app = current_app._get_current_object()
     origin = request.host_url
     identity_session = {"user": deepcopy(authenticated_user)}
+    public_scope = deepcopy(current_public_chat_scope(user_id))
     root_session = session._get_current_object()
     if session.get("token_cache"):
         identity_session["token_cache"] = session["token_cache"]
@@ -223,7 +225,15 @@ def capture_execution_identity(user_id, conversation_id=None):
             }
             if group_id:
                 g.conversation_group_id = group_id
-            yield
+            scope_context = (
+                public_chat_scope_context(
+                    user_id, public_scope["selection"], public_scope["workspace_ids"],
+                    public_scope.get("resolve_public_chat_workspace_ids"),
+                )
+                if public_scope else nullcontext()
+            )
+            with scope_context:
+                yield
 
     return ExecutionIdentity(
         user_id, conversation_id, bridge,

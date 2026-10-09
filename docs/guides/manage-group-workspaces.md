@@ -42,6 +42,21 @@ description, like the group directory. A selected group stays selected when
 searching or changing result pages.
 Section URLs include the group ID, so a bookmark opens the intended group.
 
+### Read overview counts
+
+From version **0.261.310**, the overview shows a count beside each available
+resource card, including **Members**, like My workspace. Counts belong to the
+selected group and cover the complete visible collection, not just the first
+page. Tags count distinct labels; Members counts current members, not pending
+join requests. When Actions offers only Call agent tools, its count covers those
+tools rather than the full action collection.
+
+A zero means the collection is empty. Counts stay blank while loading; a small
+red circled X means that count could not be loaded, without hiding the other
+counts or blocking navigation. Returning to Overview or refreshing workspace
+access reloads the counts. Locked cards and Settings, Activity, and Statistics
+do not show resource counts.
+
 ### Find, join, or create a group
 
 From version **0.261.150**, choose **Browse all groups** in the header, or

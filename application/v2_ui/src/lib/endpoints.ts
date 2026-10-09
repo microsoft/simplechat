@@ -10,6 +10,7 @@ import { buildDocumentListParams } from './documentExplorer';
 import { artifactDownloadPath, artifactFileName } from './generatedArtifacts';
 import { ANALYSIS_PAGE_SIZE, analysisResultContext, validateAnalysisPage } from './savedAnalysis';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
+import type { PublicWorkspaceSelection } from './publicChatScope';
 import type { ExportVisualAsset } from './exportVisuals';
 import type { GeneratedArtifact, GeneratedRunStatus } from './generatedArtifacts';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
@@ -1571,9 +1572,12 @@ export function fetchGroupDocuments(
 export function fetchPublicWorkspaceDocuments(
     query: Partial<DocumentQuery> = {},
     signal?: AbortSignal,
+    selection?: PublicWorkspaceSelection | null,
 ) {
+    const params = new URLSearchParams(buildDocumentListParams(query));
+    if (selection) params.set('public_workspace_selection', selection);
     return api.get<DocumentListResponse>(
-        `/api/public_workspace_documents?${buildDocumentListParams(query)}`,
+        `/api/public_workspace_documents?${params}`,
         signal,
     );
 }
@@ -1587,8 +1591,15 @@ export const fetchGroupDocument = (documentId: string, signal?: AbortSignal) =>
         signal,
     );
 
-export const fetchPublicWorkspaceDocumentTags = (signal?: AbortSignal) =>
-    api.get<{ tags?: WorkspaceTag[] }>('/api/public_workspace_documents/tags', signal);
+export const fetchPublicWorkspaceDocumentTags = (
+    signal?: AbortSignal,
+    selection?: PublicWorkspaceSelection | null,
+) => api.get<{ tags?: WorkspaceTag[] }>(
+    selection
+        ? `/api/public_workspace_documents/tags?public_workspace_selection=${encodeURIComponent(selection)}`
+        : '/api/public_workspace_documents/tags',
+    signal,
+);
 
 /* --- Tags ---------------------------------------------------------------- */
 

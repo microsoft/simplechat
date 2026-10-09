@@ -1,7 +1,7 @@
 // WorkspaceOverview.tsx
 
 import { Link } from 'react-router-dom';
-import { ArrowRight, Lock } from 'lucide-react';
+import { ArrowRight, CircleX, Lock } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
 import { SectionIntro } from './primitives';
 import type { WorkspaceNavigationSection } from './WorkspaceShell';
@@ -14,12 +14,13 @@ export interface WorkspaceOverviewSection extends WorkspaceNavigationSection {
 }
 
 export function WorkspaceOverview({
-    resolved, basePath, description, counts = {}, showRelationships = true, groupBlurbs = {},
+    resolved, basePath, description, counts = {}, failedCounts, showRelationships = true, groupBlurbs = {},
 }: {
     resolved: ResolvedWorkspaceSection<WorkspaceOverviewSection>[];
     basePath: string;
     description: string;
     counts?: Record<string, number | undefined>;
+    failedCounts?: ReadonlySet<string>;
     showRelationships?: boolean;
     /** A scope's own wording for a group's blurb; a group not named here keeps the shared one. */
     groupBlurbs?: Partial<Record<WorkspaceSectionGroup, string>>;
@@ -60,7 +61,12 @@ export function WorkspaceOverview({
                                         <div className="min-w-0 flex-1">
                                             <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-text-1">
                                                 {section.label}
-                                                {typeof count === 'number' ? <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] leading-none text-text-3">{count}</span> : null}
+                                                {typeof count === 'number' ? <span aria-label={`${section.label} count: ${count}`} className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] leading-none text-text-3">{count}</span> : null}
+                                                {failedCounts?.has(section.id) ? (
+                                                    <span role="img" aria-label={`${section.label} count unavailable`} title={`${section.label} count unavailable`}>
+                                                        <CircleX size={13} className="text-danger" aria-hidden="true" />
+                                                    </span>
+                                                ) : null}
                                                 {section.availabilityLabel ? <span className="text-xs font-normal text-text-3">{section.availabilityLabel}</span> : null}
                                             </p>
                                             <p className="mt-0.5 text-xs text-text-3">{section.blurb}</p>

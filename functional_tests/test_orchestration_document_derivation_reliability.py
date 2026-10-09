@@ -1,10 +1,10 @@
 # test_orchestration_document_derivation_reliability.py
 """Source-grounded schema correction and producer-aware document generation recovery.
 
-Version: 0.261.310
+Version: 0.261.314
 Implemented in: 0.261.309
 
-Literal source annotations reach Word publication without correction as of 0.261.310.
+Literal source annotations reach Word publication without correction as of 0.261.314.
 
 Real collectors, producers, checkpoints, orchestration and renderers run offline.
 Malformed metadata must not erase uncertainty or rewrite accepted source findings.

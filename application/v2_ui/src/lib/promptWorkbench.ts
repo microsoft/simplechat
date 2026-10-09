@@ -250,6 +250,26 @@ function publicPromptsUrl(workspaceId: string, promptId?: string, params?: URLSe
     return query ? `${path}?${query}` : path;
 }
 
+export async function fetchSharedPromptCount(
+    scope: Exclude<PromptScope, { kind: 'personal' }>, signal?: AbortSignal,
+): Promise<number> {
+    const params = new URLSearchParams({ page: '1', page_size: '1' });
+    const url = scope.kind === 'group'
+        ? groupPromptsUrl(scope.id, undefined, params)
+        : publicPromptsUrl(scope.id, undefined, params);
+    const response = await api.get<unknown>(url, signal);
+    if (!isRecord(response) || !Array.isArray(response.prompts)
+        || typeof response.total_count !== 'number' || !Number.isSafeInteger(response.total_count)
+        || response.total_count < response.prompts.length) {
+        throw new Error('The workspace returned an invalid prompt count.');
+    }
+    response.prompts.forEach((prompt) => {
+        if (scope.kind === 'group') assertGroupPromptScope(prompt, scope.id);
+        else assertPublicPromptScope(prompt, scope.id);
+    });
+    return response.total_count;
+}
+
 /** Prove a returned prompt belongs to the requested public workspace, as the public reader does. */
 function assertPublicPromptScope(prompt: WorkspacePrompt, workspaceId: string, id?: string): void {
     if (!prompt || typeof prompt.id !== 'string' || !prompt.id
