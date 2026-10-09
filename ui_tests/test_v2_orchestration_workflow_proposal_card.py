@@ -1,7 +1,7 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.302
+Version: 0.261.315
 Implemented in: 0.261.207; merge task wording added in 0.261.241; merge kinds in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 Next and last run on a created card: 0.261.251 (microsoft/simplechat#1546)
 Microsoft 365 links stay in V2 Settings and V2 Approvals: 0.261.302
@@ -482,6 +482,32 @@ def wait_for(page, predicate, message):
 
 def text_of(locator):
     return locator.evaluate("(element) => element.textContent")
+
+
+@pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 390)])
+def test_native_alert_attention_options_are_disclosed_before_approval(card_ui, theme, width):
+    page, api = card_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.proposal["summary"]["alerts"] = {"mode": "rules", "rules": [{
+        "name": "<b>Active fault</b>", "enabled": True,
+        "condition": "Actual active faults; exclude healthy results and no active alerts.",
+        "scope": "Read telemetry", "severity": "critical", "delivery": "popup",
+        "require_acknowledgment": True, "sound": "repeat", "size": "large",
+    }]}
+    mount(page, api, theme=theme)
+    article = card(page)
+    for text in (
+        "<b>Active fault</b>", "Severity: critical", "Pop-up alert",
+        "Requires acknowledgment; returns until acknowledged",
+        "Sound repeats until acknowledged", "Full-screen size", "Looks at: Read telemetry",
+        "Sound follows each device's preferences.",
+    ):
+        expect(article).to_contain_text(text)
+    expect(article).not_to_contain_text("never pops up")
+    expect(article.locator("b")).to_have_count(0)
+    expect(article.get_by_role("button", name="Create paused", exact=True)).to_be_enabled()
+    assert api.writes() == []
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 @pytest.mark.parametrize("theme,width", [("light", 1440), ("dark", 390)])

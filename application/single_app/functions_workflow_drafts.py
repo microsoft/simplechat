@@ -69,7 +69,15 @@ from functions_personal_workflows import (
 )
 from functions_settings import is_user_workflows_enabled_for_user, read_user_settings_snapshot
 from functions_workflow_bindings import authorize_workflow_reference
+from functions_workflow_alert_authoring import alert_rule_properties
+from functions_workflow_alerts import (
+    WORKFLOW_ALERT_MAX_RULES,
+    describe_alert_condition,
+    normalize_alert_rule,
+    resolve_alert_delivery,
+)
 from functions_workflow_definitions import (
+    WorkflowAlertValidationError,
     WorkflowCadenceError,
     WorkflowDefinitionConflict,
     WorkflowDefinitionError,
@@ -620,9 +628,24 @@ def _build_blueprint_schema():
                 'type': 'object',
                 'additionalProperties': False,
                 'properties': {
-                    'mode': {'enum': list(BLUEPRINT_ALERT_MODES)},
+                    'mode': {'enum': [*BLUEPRINT_ALERT_MODES, 'rules']},
                     'severity': {'enum': list(BLUEPRINT_ALERT_SEVERITIES)},
+                    'rules': {
+                        'type': 'array', 'minItems': 1, 'maxItems': WORKFLOW_ALERT_MAX_RULES,
+                        'items': {
+                            'type': 'object', 'additionalProperties': False,
+                            'required': ['severity', 'condition'],
+                            'properties': alert_rule_properties(
+                                {'type': 'integer', 'minimum': 1, 'maximum': BLUEPRINT_MAX_TASKS},
+                            ),
+                        },
+                    },
                 },
+                'allOf': [
+                    _when('mode', 'rules', {'required': ['rules'], 'allOf': _forbid('severity')}),
+                    {'if': {'not': {'required': ['mode'], 'properties': {'mode': {'const': 'rules'}}}},
+                     'then': {'allOf': _forbid('rules')}},
+                ],
             },
             'run_as': {'enum': list(BLUEPRINT_RUN_AS)},
             'durable': {'const': True},
@@ -782,6 +805,8 @@ def _prepare_blueprint(blueprint, *, validator=None, map_error=None):
     validator = validator or _BLUEPRINT_VALIDATOR
     map_error = map_error or _map_schema_error
     errors = [mapped for error in validator.iter_errors(candidate) for mapped in map_error(error)]
+    if not errors and validator is _BLUEPRINT_VALIDATOR:
+        errors.extend(_blueprint_alert_errors(candidate))
     return (None, errors) if errors else (candidate, [])
 
 
@@ -1061,7 +1086,71 @@ def _alert_rule(workflow_id, key, name, severity, statuses):
     }
 
 
-def _alert_fields(alerts, workflow_id):
+def _blueprint_alert_rules(alerts, workflow_id, task_ids):
+    rules = []
+    for index, raw in enumerate(alerts['rules']):
+        rule = copy.deepcopy(raw)
+        scope = rule.get('scope', {'type': 'final'})
+        task = scope.get('task')
+        if scope['type'] == 'task' and task > len(task_ids):
+            raise WorkflowAlertValidationError('The alert scope names a task that is not in the blueprint.')
+        if rule['condition']['type'] in ('run_status', 'file_sync', 'agent_signal') and scope['type'] != 'final':
+            raise WorkflowAlertValidationError('This alert condition must watch the whole run.')
+        rule['scope'] = {
+            'type': scope['type'], 'task_id': task_ids[task - 1] if scope['type'] == 'task' else '',
+        }
+        rule['id'] = _derived_id(workflow_id, 'alert', index)
+        rules.append(normalize_alert_rule(rule, task_ids=set(task_ids), index=index, workflow_scope='personal'))
+    return rules
+
+
+def _blueprint_alert_errors(blueprint):
+    alerts = blueprint.get('alerts') or {}
+    if alerts.get('mode') != 'rules':
+        return []
+    try:
+        _blueprint_alert_rules(alerts, 'validation', [str(index) for index in range(len(blueprint['tasks']))])
+    except WorkflowAlertValidationError:
+        return [draft_error(
+            'blueprint_invalid', ('alerts', 'rules'),
+            'Check alert task scopes and conditions. Acknowledgment, sound and size require pop-up delivery; '
+            'repeating sound also requires acknowledgment.',
+        )]
+    return []
+
+
+def blueprint_alert_summary(blueprint):
+    """Review disclosures from the same native rules used to build the workflow."""
+    alerts = blueprint.get('alerts') or {}
+    if alerts.get('mode') != 'rules':
+        return {'mode': alerts.get('mode') or 'every_run', 'severity': alerts.get('severity') or 'info'}
+    tasks = blueprint['tasks']
+    rules = _blueprint_alert_rules(alerts, 'summary', [str(index) for index in range(len(tasks))])
+    return {'mode': 'rules', 'rules': [{
+        'name': rule['name'], 'enabled': rule['enabled'],
+        'condition': (
+            f"{describe_alert_condition(rule['condition'])} (minimum severity: {rule['condition']['min_severity']})"
+            if rule['condition']['type'] == 'agent_signal'
+            else f"{describe_alert_condition(rule['condition'])} (case-sensitive)"
+            if rule['condition'].get('case_sensitive') else describe_alert_condition(rule['condition'])
+        ),
+        'scope': (
+            tasks[int(rule['scope']['task_id'])]['title'] if rule['scope']['type'] == 'task'
+            else 'Any task output' if rule['scope']['type'] == 'any_task' else 'Final output / whole run'
+        ),
+        'severity': rule['severity'], 'delivery': resolve_alert_delivery(rule['severity'], rule['delivery']),
+        'require_acknowledgment': rule.get('require_acknowledgment', False),
+        'sound': rule.get('sound', 'off'), 'size': rule.get('size', 'small'),
+    } for rule in rules]}
+
+
+def _alert_fields(alerts, workflow_id, task_ids=()):
+    if alerts.get('mode') == 'rules':
+        return {
+            'alert_mode': 'rules', 'alert_priority': 'none',
+            'alert_rules': _blueprint_alert_rules(alerts, workflow_id, task_ids),
+            'alert_evaluation': {'on_error': 'skip'},
+        }
     # The stored every_run mode always opens a pop-up, so a digest uses rules delivered to the bell.
     rules = []
     if alerts.get('mode', 'every_run') == 'every_run':
@@ -1222,7 +1311,7 @@ def _blueprint_payload(blueprint, handles, *, workflow_id, user_id, settings, en
         'tasks': tasks,
         'reference_inputs': references,
         **_trigger_fields(trigger, handles),
-        **_alert_fields(blueprint.get('alerts') or {}, workflow_id),
+        **_alert_fields(blueprint.get('alerts') or {}, workflow_id, [task['id'] for task in tasks]),
         'm365_run_as_user_id': str(user_id) if blueprint.get('run_as') == 'self' else '',
     }
 

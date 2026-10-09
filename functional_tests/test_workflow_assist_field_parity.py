@@ -2,7 +2,7 @@
 # test_workflow_assist_field_parity.py
 """
 Functional test for the parity of the AI workflow assistant's field lists with the V2 editor.
-Version: 0.261.208
+Version: 0.261.315
 Implemented in: 0.261.208
 
 The assistant (functions_workflow_assist_editor.py) keeps its own copy of the lists that decide
@@ -239,11 +239,8 @@ def test_alert_operation_vocabulary_is_the_editors():
     assert list(operations.ASSIST_ALERT_TEXT_MODES) == _const_list(source, "WORKFLOW_ALERT_TEXT_MATCH_MODES")
     assert set(operations.ASSIST_ALERT_RUN_STATUSES) == set(_const_list(source, "WORKFLOW_ALERT_RUN_STATUSES"))
     assert set(operations.ASSIST_ALERT_TASK_STATUSES) == set(_const_list(source, "WORKFLOW_ALERT_TASK_STATUSES"))
-    # Every condition but File Sync's. Phase 4 (#1547) made personal File Sync editable, but the
-    # assistant has no File Sync operations yet.
     conditions = _const_list(source, "WORKFLOW_ALERT_CONDITION_TYPES")
-    assert set(conditions) - set(operations.ASSIST_ALERT_CONDITIONS) == {"file_sync"}
-    assert set(operations.ASSIST_ALERT_CONDITIONS) <= set(conditions)
+    assert set(operations.ASSIST_ALERT_CONDITIONS) == set(conditions)
     scopeless = _string_set(source, "WORKFLOW_ALERT_SCOPELESS_CONDITIONS")
     assert set(operations.ASSIST_SCOPELESS_CONDITIONS) == scopeless & set(operations.ASSIST_ALERT_CONDITIONS)
     # An every-run alert names a real priority; 'none' is what "off" stores.

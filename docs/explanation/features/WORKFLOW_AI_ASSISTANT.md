@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.213)
+# Workflow AI Assistant (v0.261.315)
 
 ## Overview
 
@@ -45,6 +45,31 @@ Dependencies:
   `assistThreadStore`, see [V2 shared assist thread](V2_SHARED_ASSIST_THREAD.md)), Track A2's
   `#` references in `lib/planReferences.ts`, and 3a's `applyAssist`, `revertTurn` and **Changes**
   tab.
+
+## Native alert editing
+
+Implemented in version: **0.261.315**, tracked in `application/single_app/config.py`.
+
+Ask AI can read and change a rule's **Require acknowledgment**, **Sound**, and **Size**,
+as well as its condition, scope, severity and delivery. For example, “Require acknowledgment
+on Rule 2” updates that rule without recreating it or changing other rules. Alert acknowledgment
+is a notification receipt requirement, not a task approval.
+
+An explicit request for the strongest available attention guides the model to propose critical
+severity, pop-up delivery, acknowledgment, repeating sound and full-screen size. These are not
+the default for ordinary alerts; explicit constraints such as “keep sound off” still apply.
+The reply describes the consequences, and the changes remain undoable drafts until saved.
+Sound continues to respect each device's preferences.
+
+Native SimpleChat alerts do not require an email task or a Microsoft 365 connection. A task
+can read external telemetry and a rule can alert on actual problems in its output, even when
+the task completed successfully. This does not modify the external system's own alarm settings.
+Semantic conditions should exclude healthy and negated findings such as “no active alerts”;
+literal text matching is appropriate only for defined signals.
+
+Pop-up options require pop-up delivery, and repeating sound requires acknowledgment. Personal
+workflows still alert their owner: this does not add group broadcasts or recipients.
+See [the capability parity fix](../fixes/WORKFLOW_AI_ALERT_CAPABILITY_PARITY_FIX.md).
 
 ## What it does and doesn't do
 
@@ -252,7 +277,7 @@ properties) before anything is applied. At most 64 operations are accepted per r
 | --- | --- |
 | Name and description | `set_name`, `set_description` |
 | Trigger and schedule | `set_trigger_manual`, `set_schedule_interval` (seconds, minutes or hours), `set_schedule_calendar` (daily, weekdays, weekly or monthly, at a local `HH:MM`) |
-| Alerts | `set_alert_mode` (`off`, `every_run` with a priority, or `rules`), `add_alert_rule`, `remove_alert_rule` |
+| Alerts | `set_alert_mode` (`off`, `every_run` with a priority, or `rules`), `add_alert_rule`, `update_alert_rule`, `remove_alert_rule`; rules support acknowledgment, sound and size |
 | Runner | `set_workflow_runner`, `set_task_runner` (inherit, an agent handle or a model handle) |
 | Tasks | `add_task`, `remove_task`, `move_task`, `set_task_name`, `set_task_instructions`, `set_task_inputs` |
 | Documents | `bind_reference`, `set_task_references`, `unbind_reference`, `set_task_document_target`, `clear_task_document_target` |

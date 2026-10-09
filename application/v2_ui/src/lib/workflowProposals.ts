@@ -9,6 +9,13 @@
 
 import { api } from './apiClient';
 import { WORKFLOW_LINK_PARAM } from './workflowRunLink';
+import {
+    WORKFLOW_ALERT_MAX_RULES,
+    WORKFLOW_ALERT_SEVERITIES,
+    WORKFLOW_ALERT_SIZES,
+    WORKFLOW_ALERT_SOUNDS,
+} from './workflowAlerts';
+import type { WorkflowAlertSeverity, WorkflowAlertSize, WorkflowAlertSound } from './workflowAlerts';
 
 /** The orchestration capability whose completed step leaves a proposal on its answer. */
 export const WORKFLOW_PROPOSE_CAPABILITY = 'workflow_propose';
@@ -96,9 +103,25 @@ export interface WorkflowProposalSummary {
     };
     tasks: WorkflowProposalTask[];
     file_sync_sources: string[];
-    alerts: { mode: typeof ALERT_MODES[number]; severity: typeof ALERT_SEVERITIES[number] };
+    alerts: WorkflowProposalAlerts;
     durable: boolean;
 }
+
+export interface WorkflowProposalAlertRule {
+    name: string;
+    enabled: boolean;
+    condition: string;
+    scope: string;
+    severity: WorkflowAlertSeverity;
+    delivery: 'notify_only' | 'popup';
+    require_acknowledgment: boolean;
+    sound: WorkflowAlertSound;
+    size: WorkflowAlertSize;
+}
+
+export type WorkflowProposalAlerts =
+    | { mode: typeof ALERT_MODES[number]; severity: typeof ALERT_SEVERITIES[number] }
+    | { mode: 'rules'; rules: WorkflowProposalAlertRule[] };
 
 export interface WorkflowProposalM365 {
     required: boolean;
@@ -239,6 +262,36 @@ function taskOf(value: unknown): WorkflowProposalTask {
     };
 }
 
+function alertsOf(value: unknown): WorkflowProposalAlerts {
+    if (!isRecord(value)) invalid();
+    if (value.mode !== 'rules') {
+        return { mode: oneOf(ALERT_MODES, value.mode), severity: oneOf(ALERT_SEVERITIES, value.severity) };
+    }
+    if (!Array.isArray(value.rules) || value.rules.length < 1 || value.rules.length > WORKFLOW_ALERT_MAX_RULES) invalid();
+    return {
+        mode: 'rules',
+        rules: value.rules.map((raw): WorkflowProposalAlertRule => {
+            if (!isRecord(raw)) invalid();
+            const rule: WorkflowProposalAlertRule = {
+                name: textOf(raw.name),
+                enabled: flagOf(raw.enabled),
+                condition: textOf(raw.condition),
+                scope: textOf(raw.scope),
+                severity: oneOf(WORKFLOW_ALERT_SEVERITIES, raw.severity),
+                delivery: oneOf(['notify_only', 'popup'] as const, raw.delivery),
+                require_acknowledgment: flagOf(raw.require_acknowledgment),
+                sound: oneOf(WORKFLOW_ALERT_SOUNDS, raw.sound),
+                size: oneOf(WORKFLOW_ALERT_SIZES, raw.size),
+            };
+            if (rule.delivery !== 'popup' && (rule.require_acknowledgment || rule.sound !== 'off' || rule.size !== 'small')) {
+                invalid();
+            }
+            if (rule.sound === 'repeat' && !rule.require_acknowledgment) invalid();
+            return rule;
+        }),
+    };
+}
+
 function summaryOf(value: unknown): WorkflowProposalSummary | null {
     if (value === null) return null;
     if (!isRecord(value) || !isRecord(value.runs_per_month) || !isRecord(value.alerts) || !Array.isArray(value.tasks)) {
@@ -258,10 +311,7 @@ function summaryOf(value: unknown): WorkflowProposalSummary | null {
         },
         tasks: value.tasks.map(taskOf),
         file_sync_sources: textsOf(value.file_sync_sources),
-        alerts: {
-            mode: oneOf(ALERT_MODES, value.alerts.mode),
-            severity: oneOf(ALERT_SEVERITIES, value.alerts.severity),
-        },
+        alerts: alertsOf(value.alerts),
         durable: flagOf(value.durable),
     };
 }

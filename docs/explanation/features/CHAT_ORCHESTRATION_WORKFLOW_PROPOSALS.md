@@ -4,6 +4,8 @@ Implemented in version: **0.261.207**.
 
 Application version tracking: `application\single_app\config.py`.
 
+Native alert authoring implemented in version: **0.261.315**.
+
 Related issue: #1547, part of #1543. Builds on the
 [Workflow draft service](WORKFLOW_DRAFT_SERVICE.md) (#1545) and
 [Workflow calendar schedules](WORKFLOW_CALENDAR_SCHEDULES.md) (#1544). The
@@ -22,6 +24,34 @@ personal workflow for the runs to come. The V2 chat shows the proposal as a card
 under the answer, with everything the workflow would do. Nothing is created until
 the requester chooses **Create & start**, **Create paused**, **Create** or
 **Edit** on the card.
+
+### Monitoring with native alerts
+
+Chat can propose conditional SimpleChat alerts, not just quiet run-completion notifications.
+For example, a scheduled task can read telemetry through an available read-only agent and
+alert when its output reports an actual active fault. Workflow execution failures and faults
+in the monitored system are different conditions; successful data acquisition does not mean
+the source is healthy. Creating this workflow does not configure the source system's alarms.
+
+For an explicit strongest-attention request, planner guidance proposes critical severity,
+pop-up delivery, acknowledgment, repeating sound and full-screen size, unless other requested
+constraints contradict those options. The approval card discloses each rule's condition,
+scope and attention options before creation. Nothing is saved until you approve it, and
+**Edit** retains those options. Sound still follows device preferences.
+
+Other requests retain quieter defaults. Email is a separate task requiring the appropriate
+agent and account connection, not a prerequisite for native alerts. These proposals remain
+personal workflows and alert their owner, not arbitrary recipients or everyone in a group.
+Missing monitoring cadence should be clarified rather than invented.
+
+The closed blueprint accepts `alerts: {mode: "rules", rules: [...]}` with up to 20 rules.
+Rules use native severities, conditions and pop-up options; a task scope uses its 1-based
+position in the blueprint, never a stored task ID. The server checks native alert validation
+and maps positions to deterministic saved IDs. Existing `every_run`/`failures_only` blueprint
+shapes retain their quiet, bell-only behavior. One-shot large-work hand-offs are unchanged.
+
+See [the capability parity fix](../fixes/WORKFLOW_AI_ALERT_CAPABILITY_PARITY_FIX.md) for
+regression coverage and the distinction between contract tests and live model evaluation.
 
 What this version adds:
 

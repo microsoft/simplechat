@@ -1485,7 +1485,10 @@ CAPABILITY_REGISTRY = (
         ),
         'when_to_use': (
             'Use one step when the user asks for work to repeat on a schedule, run when File Sync '
-            'finds changes, or be saved to run later. Write the blueprint from the request and the '
+            'finds changes, or be saved to run later, including monitoring external data and issuing '
+            'native SimpleChat alerts on findings. Native alerts can pop up with critical severity, '
+            'require acknowledgment, repeat sound and use full-screen size; they are not email or '
+            'changes to the external source alarm configuration. Write the blueprint from the request and the '
             'workflow_planning catalog alone: this step takes no depends_on and no inputs, and no '
             'other step may bind its output. When the request also wants a result now, answer it '
             'once with the usual steps and select that answer as final_response.'

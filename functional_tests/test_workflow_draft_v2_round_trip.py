@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for opening and re-saving workflows created from chat in the V2 editor.
-Version: 0.261.207
+Version: 0.261.315
 Implemented in: 0.261.202
 
 This test ensures that each workflow the draft service creates from a blueprint (a weekly
@@ -85,6 +85,18 @@ GROUP_SOURCE_HANDLES = {
     "sources": {"finance": {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"}},
 }
 
+CRITICAL_MONITOR = {
+    "name": "Telemetry fault monitor",
+    "trigger": {"type": "interval", "unit": "hours", "value": 1},
+    "tasks": [{"title": "Read telemetry", "instructions": "Read telemetry and report actual active faults."}],
+    "alerts": {"mode": "rules", "rules": [{
+        "name": "Actual faults", "severity": "critical", "delivery": "popup",
+        "scope": {"type": "task", "task": 1},
+        "condition": {"type": "model_evaluation", "prompt": "Actual faults, not healthy or negated findings."},
+        "require_acknowledgment": True, "sound": "repeat", "size": "large",
+    }]},
+}
+
 CASES = {
     "weekly_agent_digest": (EMAIL_DIGEST, EMAIL_HANDLES),
     "interval_model_check": (INTERVAL_CHECK, {}),
@@ -92,6 +104,7 @@ CASES = {
     "personal_file_sync_review": (DOCUMENT_REVIEW, REVIEW_HANDLES),
     "monthly_model_report": (MONTHLY_REPORT, {}),
     "personal_file_sync_group_source": (GROUP_SOURCE_WATCH, GROUP_SOURCE_HANDLES),
+    "critical_monitor": (CRITICAL_MONITOR, {}),
 }
 # A save always records when it happened (both timestamps) and gets a new container etag; nothing
 # else may change when nothing was edited.
@@ -157,6 +170,18 @@ def test_the_application_version_includes_the_draft_service():
 def test_a_workflow_created_from_chat_opens_editable_in_v2(round_trip, name):
     client, _saves = round_trip
     assert client[name]["readonly"] == ""
+
+
+def test_critical_monitor_retains_pop_up_options_and_task_scope_after_save(round_trip):
+    _client, saves = round_trip
+    before, after, error = saves["critical_monitor"]
+    assert error is None, error
+    assert after["alert_rules"] == before["alert_rules"]
+    rule = after["alert_rules"][0]
+    assert (rule["severity"], rule["delivery"], rule["require_acknowledgment"], rule["sound"], rule["size"]) == (
+        "critical", "popup", True, "repeat", "large",
+    )
+    assert rule["scope"]["task_id"] == after["tasks"][0]["id"]
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

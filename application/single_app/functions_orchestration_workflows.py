@@ -62,6 +62,7 @@ from functions_orchestration_workflow_context import (
 from functions_workflow_drafts import (
     BLUEPRINT_TASK_TITLE_MAX_LENGTH,
     WORKFLOW_ORIGIN_SOURCE_ORCHESTRATION,
+    blueprint_alert_summary,
     check_workflow_blueprint,
     dry_run_workflow_blueprint,
     validate_workflow_blueprint,
@@ -500,7 +501,6 @@ def _proposal_summary(blueprint, task_actions, planning, used, request_time_zone
         m365_sources.update(entry.get('m365_sources') or ())
         can_send = can_send or entry.get('can_send') is True
         required = required or entry.get('needs_run_as') is True
-    alerts = blueprint.get('alerts') if isinstance(blueprint.get('alerts'), dict) else {}
     return {
         'name': clean_catalog_text(blueprint.get('name'), NAME_MAX_LENGTH * 2),
         'description': clean_catalog_text(blueprint.get('description'), 1000),
@@ -516,7 +516,7 @@ def _proposal_summary(blueprint, task_actions, planning, used, request_time_zone
             'run_as': blueprint.get('run_as') or 'none',
             'required': required,
         },
-        'alerts': {'mode': alerts.get('mode') or 'every_run', 'severity': alerts.get('severity') or 'info'},
+        'alerts': blueprint_alert_summary(blueprint),
         'durable': True,
     }, stored_type, normalized
 
