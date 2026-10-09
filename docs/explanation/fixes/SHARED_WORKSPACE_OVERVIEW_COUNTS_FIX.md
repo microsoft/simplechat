@@ -3,9 +3,9 @@
 Fixed in version: **0.261.310**, recorded in
 `application/single_app/config.py`.
 
-Current application version: **0.261.312** after integrating the base branch's
-file-source configuration changes; the original implementation version remains
-**0.261.310**.
+Current application version: **0.261.313** after integrating the base branch's
+file-source configuration changes and correcting review fixture initialization;
+the original implementation version remains **0.261.310**.
 
 ## Issue and root cause
 
@@ -75,6 +75,13 @@ service look like an empty workspace. There are no new routes, settings,
 dependencies, storage migrations, or classic-UI changes.
 
 ### Validation results
+
+The **0.261.313** review follow-up passes the initial group/public selection
+through optional keyword-only base fixture constructor arguments rather than
+overwriting inherited attributes in the overview fixture constructors. Omitted
+arguments retain the existing unselected defaults. The focused overview suite
+passes **24** cases, including six constructor/bootstrap checks for default,
+explicitly empty, and selected scopes.
 
 - The production-reader count test passed, as did the existing personal section
   and group/public context runtime contracts.

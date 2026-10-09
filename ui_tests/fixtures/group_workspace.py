@@ -1207,11 +1207,11 @@ def group_search_matches(workspace, term):
 
 
 class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
-    def __init__(self, page):
+    def __init__(self, page, *, active_group=None):
         super().__init__(page)
         self.group_enabled = True
         self.viewer_id = OWNER_ID
-        self.active_group = None
+        self.active_group = active_group
         self.groups = {
             "group-a": group_context("group-a", "Research group"),
             "group-b": group_context("group-b", "Read-only group", role="User"),

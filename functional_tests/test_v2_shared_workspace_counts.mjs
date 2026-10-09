@@ -1,5 +1,5 @@
 // test_v2_shared_workspace_counts.mjs
-// Version: 0.261.312
+// Version: 0.261.313
 // Implemented in: 0.261.310
 // Executes the real scoped readers, pagination totals, partial failures and cancellation.
 

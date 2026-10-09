@@ -324,11 +324,11 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
 
 
 class PublicWorkspaceFixture(WorkspaceAuthoringFixture):
-    def __init__(self, page):
+    def __init__(self, page, *, active_workspace=None):
         super().__init__(page)
         self.public_enabled = True
         self.viewer_id = OWNER_ID
-        self.active_workspace = None
+        self.active_workspace = active_workspace
         self.workspaces = {
             "pub-a": public_context("pub-a", "Research library"),
             "pub-b": public_context("pub-b", "Read-only library"),

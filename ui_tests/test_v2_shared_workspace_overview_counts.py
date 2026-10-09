@@ -1,7 +1,7 @@
 # test_v2_shared_workspace_overview_counts.py
 """
 Real-SPA regression tests for group/public overview counts.
-Version: 0.261.312
+Version: 0.261.313
 Implemented in: 0.261.310
 
 Uses the established Azure Playwright-compatible connection fixture and closed
@@ -120,8 +120,7 @@ class GroupOverviewFixture(OverviewCounts, GroupWorkspaceFixture):
     second_id = "group-b"
 
     def __init__(self, page):
-        super().__init__(page)
-        self.active_group = self.first_id
+        super().__init__(page, active_group=self.first_id)
         self._init_counts("group")
 
 
@@ -130,10 +129,28 @@ class PublicOverviewFixture(OverviewCounts, PublicWorkspaceFixture):
     second_id = "pub-b"
 
     def __init__(self, page):
-        super().__init__(page)
+        super().__init__(page, active_workspace=self.first_id)
         self.workspaces[self.first_id] = public_context(self.first_id, "Research library", role="Owner", file_sync=True)
-        self.active_workspace = self.first_id
         self._init_counts("public")
+
+
+@pytest.mark.parametrize("fixture_class,attribute,scope_key,selected_id", [
+    (GroupWorkspaceFixture, "active_group", "active_group_id", "group-b"),
+    (PublicWorkspaceFixture, "active_workspace", "active_public_workspace_id", "pub-b"),
+])
+@pytest.mark.parametrize("initial_selection", ["default", "none", "selected"])
+def test_workspace_fixture_initial_selection(page, fixture_class, attribute, scope_key, selected_id, initial_selection):
+    options = {} if initial_selection == "default" else {
+        attribute: selected_id if initial_selection == "selected" else None,
+    }
+    ui = fixture_class(page, **options)
+    try:
+        expected = selected_id if initial_selection == "selected" else None
+        bootstrap = ui._bootstrap()
+        assert getattr(ui, attribute) == expected
+        assert bootstrap["scope"][scope_key] == expected
+    finally:
+        ui.assert_clean()
 
 
 @pytest.fixture(params=["group", "public"])
