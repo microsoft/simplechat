@@ -1,8 +1,10 @@
 # test_orchestration_document_derivation_reliability.py
 """Source-grounded schema correction and producer-aware document generation recovery.
 
-Version: 0.261.309
+Version: 0.261.310
 Implemented in: 0.261.309
+
+Literal source annotations reach Word publication without correction as of 0.261.310.
 
 Real collectors, producers, checkpoints, orchestration and renderers run offline.
 Malformed metadata must not erase uncertainty or rewrite accepted source findings.
@@ -385,3 +387,51 @@ def test_recovery_revisits_malformed_producer_but_does_not_offer_pointless_uncer
     else:
         assert not projection['eligible'], projection
         assert projection['reason_code'] == 'input_partial_not_recoverable'
+
+
+@pytest.mark.parametrize('annotation', [
+    '<!-- PageFooter: Example report - Test Data Only -->',
+    '<!-- This report contains test data. -->',
+])
+def test_literal_source_annotation_reaches_composition_and_published_word_without_repairs(
+    harness, narrative_io, monkeypatch, annotation,
+):
+    search = importlib.import_module('functions_search_service')
+    original_read = search.get_ordered_document_chunks
+
+    def read_chunks(*args, **kwargs):
+        chunks = original_read(*args, **kwargs)
+        chunks[0]['chunk_text'] += f'\n{annotation}'
+        return chunks
+
+    monkeypatch.setattr(search, 'get_ordered_document_chunks', read_chunks)
+
+    def reply():
+        prompt = harness.model_calls[-1]['messages'][-1]['content']
+        if '<DocumentSlice>' in prompt:
+            payload = json.loads(narrative_io['reply']())
+            if '[Page 1, Chunk 1]' in prompt:
+                payload['findings'][0]['evidence'].append({'chunk_sequence': 1, 'quote': annotation})
+            return json.dumps(payload)
+        return '# Source-backed report\n\nComplete finding 006. This report contains test data.'
+
+    harness.create(
+        document_steps('docx'), replies=[reply] * 3,
+        seeds={'document_ids': ['document-1'], 'doc_scope': 'personal'},
+        original_seeds={'document_ids': ['document-1'], 'doc_scope': 'personal'},
+    )
+    execution = harness.prepare()
+    frames = execution.execute()
+    done = decoded_frames(frames)[-1]
+    assert done['status'] == 'completed', done
+    analysis = execution.context.task_results['analyze']
+    assert analysis.status == 'complete'
+    assert analysis.output('findings').item_count == 7
+    outputs, artifacts, payloads = download_outputs(harness)
+    assert len(outputs) == len(artifacts) == harness.blobs.file_uploads == 1
+    text = '\n'.join(paragraph.text for paragraph in Document(io.BytesIO(payloads['report.docx'])).paragraphs)
+    assert 'Complete finding 006.' in text and 'This report contains test data.' in text
+    calls = harness.model_calls
+    assert len(calls) == 3
+    assert sum('<DocumentSlice>' in str(call['messages']) for call in calls) == 2
+    assert all('<ResponseShapeCorrection>' not in str(call['messages']) for call in calls)

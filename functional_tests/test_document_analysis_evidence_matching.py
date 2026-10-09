@@ -1,8 +1,10 @@
 # test_document_analysis_evidence_matching.py
 """
 Functional tests for general Analyze evidence matching, caveats, notes and validation logging.
-Version: 0.261.191
+Version: 0.261.310
 Implemented in: 0.261.191
+
+Literal source matching precedes lossy normalization as of 0.261.310.
 
 Refs #1540. A model quoting table-heavy or formatted source text must be located in its
 original chunk when the only differences are presentation: markup, table rules, entities,
@@ -115,6 +117,10 @@ def real_logger_extra(message, extra):
 
 def test_evidence_matching_fix_is_in_the_application_version():
     assert_app_version_at_least('0.261.191')
+
+
+def test_literal_evidence_fix_is_in_the_application_version():
+    assert_app_version_at_least('0.261.310')
 
 
 @pytest.mark.parametrize('chunk_text,quote,expected_text,tier', [
@@ -233,6 +239,76 @@ def test_presentation_only_differences_locate_the_verbatim_source_span(chunk_tex
     assert result['evidence_matching'] == match_counts(**{tier: 1})
 
 
+@pytest.mark.parametrize('quote', [
+    'Test Data Only',
+    '<!-- PageFooter: Example report - Test Data Only -->',
+    '<!-- PageHeader: Internal report -->',
+    '<!-- This example is not audited financial data. -->',
+    '<settings mode="preview" />',
+    '<td></td>',
+    '[Page 1, Chunk 1]',
+    '---',
+])
+def test_literal_source_content_is_matched_before_normalization(quote, monkeypatch):
+    text = f'Source begins here.\n{quote}\nSource ends here.'
+    with document_analysis_runtime({}) as runtime:
+        def normalization_must_not_run(*args):
+            raise AssertionError('An exact source match must not depend on presentation normalization.')
+
+        monkeypatch.setattr(runtime.results, '_evidence_forms', normalization_must_not_run)
+        result = collect(runtime, window_chunks(text), supported_finding({'chunk_sequence': 1, 'quote': quote}))
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'candidate'
+    assert candidate['issues'] == []
+    [passage] = result['evidence']
+    location = passage['location']
+    assert passage['text'] == quote
+    assert (location['start_char'], location['end_char']) == (text.index(quote), text.index(quote) + len(quote))
+    assert location['match'] == 'exact'
+    assert candidate['evidence_refs'] == [passage['evidence_id']]
+    assert result['evidence_matching'] == match_counts(exact=1)
+
+
+@pytest.mark.parametrize('quote', ['<!-- Internal test data -->', '<settings mode="preview" />'])
+@pytest.mark.parametrize('selectors,reason', [
+    ({}, 'missing_location'),
+    ({'chunk_sequence': 9}, 'not_in_cited_location'),
+    ({'chunk_sequence': 2, 'page_number': 2}, 'not_in_cited_location'),
+    ({'page_number': 1}, 'ambiguous'),
+])
+def test_literal_source_content_still_requires_an_unambiguous_cited_chunk(quote, selectors, reason):
+    with document_analysis_runtime({}) as runtime:
+        result = collect(
+            runtime, window_chunks(quote, quote, pages=[1, 1]),
+            supported_finding({**selectors, 'quote': quote}),
+        )
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'unresolved'
+    assert candidate['evidence_refs'] == []
+    assert result['evidence'] == []
+    assert [issue.get('reason') for issue in candidate['issues']] == [reason]
+    assert result['evidence_matching'] == match_counts(**{reason: 1})
+
+
+@pytest.mark.parametrize('quote', [
+    '<!-- Absent source annotation -->',
+    '<td></td>',
+    '[Page 1, Chunk 1]',
+    '---',
+])
+def test_empty_normalized_quotes_cannot_match_unrelated_source_text(quote):
+    with document_analysis_runtime({}) as runtime:
+        result = collect(
+            runtime, window_chunks('Ordinary source text.'),
+            supported_finding({'chunk_sequence': 1, 'quote': quote}),
+        )
+    [candidate] = result['candidates']
+    assert candidate['status'] == 'unresolved'
+    assert candidate['evidence_refs'] == []
+    assert result['evidence'] == []
+    assert result['evidence_matching'] == match_counts(missing_quote=1)
+
+
 @pytest.mark.parametrize('passage,reason', [
     pytest.param({'chunk_sequence': 3, 'quote': 'Early cancellation carries a penalty.'}, 'not_in_window', id='paraphrase'),
     pytest.param({'chunk_sequence': 3, 'quote': 'An exit penalty ... cancellation.'}, 'not_in_window', id='ellipsis'),
@@ -248,6 +324,8 @@ def test_presentation_only_differences_locate_the_verbatim_source_span(chunk_tex
     pytest.param({'quote': 'sole supplier'}, 'missing_location', id='no_selector'),
     pytest.param({'chunk_sequence': 1, 'quote': '   '}, 'missing_quote', id='blank_quote'),
     pytest.param({'chunk_sequence': 1}, 'missing_quote', id='no_quote'),
+    pytest.param({'chunk_sequence': 1, 'quote': None}, 'missing_quote', id='null_quote'),
+    pytest.param({'chunk_sequence': 1, 'quote': ['sole supplier']}, 'missing_quote', id='non_text_quote'),
     pytest.param({'chunk_sequence': 1, 'quote': '<td></td>'}, 'missing_quote', id='markup_only_quote'),
     pytest.param({'chunk_sequence': 1, 'quote': '[Page 1, Chunk 1]'}, 'missing_quote', id='label_only_quote'),
     pytest.param('sole supplier', 'missing_quote', id='passage_is_not_an_object'),
@@ -353,6 +431,37 @@ def test_exact_offsets_are_unchanged_and_one_unsupported_passage_still_unresolve
     assert candidate['status'] == 'unresolved'
     assert [issue.get('reason') for issue in candidate['issues']] == ['not_in_window']
     assert result['evidence_matching'] == match_counts(exact=1, normalized_casefold=1, not_in_window=1)
+
+
+@pytest.mark.parametrize('annotation', [
+    'Example report - Test Data Only',
+    '<!-- PageFooter: Example report - Test Data Only -->',
+    '<!-- Example report - Test Data Only -->',
+])
+def test_source_annotation_and_ordinary_citations_finalize_without_repair_calls(annotation):
+    source = 'The service owner is Mira.'
+    documents = {'example': original_document('example', [f'{source}\n{annotation}'])}
+
+    def response(prompt):
+        payload = json.loads(extract_fixture_findings(prompt))
+        payload['findings'][0]['evidence'].append({'chunk_sequence': 1, 'quote': annotation})
+        return json.dumps(payload)
+
+    with document_analysis_runtime(documents) as runtime:
+        result, client = run_analysis(
+            runtime, documents, FixtureAnalysisClient(response), max_retries_per_window=1,
+        )
+    assert len(client.calls) == 1
+    assert result['coverage']['retries'] == 0
+    validation = result['analysis_validation']
+    assert validation['status'] == 'valid'
+    assert validation['issues'] == []
+    assert validation['unresolved_candidate_count'] == 0
+    [record] = result['authoritative_result']['value']
+    assert record['values'] == {'owner': 'Mira'}
+    assert len(record['evidence_refs']) == 2
+    assert {item['text'] for item in result['analysis_evidence']} == {source, annotation}
+    assert all(item['location']['match'] == 'exact' for item in result['analysis_evidence'])
 
 
 def test_formatted_table_quote_finalizes_with_caveats_and_notes_outside_validation(monkeypatch):

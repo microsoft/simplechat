@@ -584,21 +584,17 @@ def _locate_analysis_evidence(passage, contents, forms):
     quote = passage.get('quote')
     if not isinstance(quote, str) or not quote.strip():
         return None, 'missing_quote'
-    label = _EVIDENCE_PROMPT_LABEL.match(quote)
-    needles = {
-        tier: form[0]
-        for tier, form in _evidence_forms(quote[label.end():] if label else quote).items()
-    }
-    if not needles['normalized']:
-        return None, 'missing_quote'
     if not any(passage.get(key) is not None for key in _EVIDENCE_SELECTORS):
         return None, 'missing_location'
+    needles = {}
 
     def occurrence(index, tier):
         text = contents[index]['text']
         if tier == 'exact':
             offset = text.find(quote)
             return (offset, offset + len(quote)) if offset >= 0 else None
+        if not needles[tier]:
+            return None
         if index not in forms:
             forms[index] = _evidence_forms(text)
         return _evidence_occurrence(forms[index][tier], needles[tier], text)
@@ -611,6 +607,13 @@ def _locate_analysis_evidence(passage, contents, forms):
         )
     }
     for tier in EVIDENCE_MATCH_TIERS:
+        if tier == 'normalized':
+            # Normalization may erase literal source content, such as extraction comments.
+            label = _EVIDENCE_PROMPT_LABEL.match(quote)
+            needles = {
+                name: form[0]
+                for name, form in _evidence_forms(quote[label.end():] if label else quote).items()
+            }
         hits = [
             (index, span) for index in sorted(selected)
             for span in [occurrence(index, tier)] if span is not None
@@ -627,7 +630,7 @@ def _locate_analysis_evidence(passage, contents, forms):
         for tier in EVIDENCE_MATCH_TIERS
     ):
         return None, 'not_in_cited_location'
-    return None, 'not_in_window'
+    return None, 'not_in_window' if needles['normalized'] else 'missing_quote'
 
 
 def collect_analysis_window_candidates(analysis_text, source, work_unit, window_payload):
