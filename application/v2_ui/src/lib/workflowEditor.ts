@@ -2534,6 +2534,16 @@ export async function fetchScopedWorkflows(
         .map((workflow) => normalizeWorkflowDefinition(workflow, scope));
 }
 
+export async function fetchScopedWorkflowCount(scope: WorkflowScope, signal?: AbortSignal): Promise<number> {
+    const response = await api.get<unknown>(workflowUrl(scope), signal);
+    const workflows = Array.isArray(response) ? response : isRecord(response) ? response.workflows : undefined;
+    if (!Array.isArray(workflows) || !workflows.every((workflow) =>
+        isRecord(workflow) && typeof workflow.id === 'string' && workflow.id)) {
+        throw new Error('The workspace returned an invalid workflow list.');
+    }
+    return workflows.length;
+}
+
 export function saveWorkflowDefinition(
     scope: WorkflowScope,
     draft: WorkflowDefinition,

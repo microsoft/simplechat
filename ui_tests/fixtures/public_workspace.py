@@ -1,7 +1,7 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.185
+Version: 0.261.310
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167
@@ -22,6 +22,7 @@ active selection.
 """
 
 import copy
+import re
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -323,11 +324,11 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
 
 
 class PublicWorkspaceFixture(WorkspaceAuthoringFixture):
-    def __init__(self, page):
+    def __init__(self, page, *, active_workspace=None):
         super().__init__(page)
         self.public_enabled = True
         self.viewer_id = OWNER_ID
-        self.active_workspace = None
+        self.active_workspace = active_workspace
         self.workspaces = {
             "pub-a": public_context("pub-a", "Research library"),
             "pub-b": public_context("pub-b", "Read-only library"),
@@ -370,6 +371,38 @@ class PublicWorkspaceFixture(WorkspaceAuthoringFixture):
             # assert_clean() fails rather than the base fixture silently answering it.
             self.unexpected_requests.append(f"{method} {path} ({leak} from a public page)")
             self._json(route, {"error": "Personal-scope reads are not available on public pages."}, 500)
+            return
+        match = re.fullmatch(
+            r"/api/public-workspaces/([^/]+)/(documents/facets|documents/tags|prompts|membership/members|identities|file-sources)",
+            path,
+        )
+        if method == "GET" and match:
+            workspace_id, resource = match.groups()
+            assert workspace_id in self.workspaces
+            if resource == "documents/facets":
+                payload = {
+                    "total": 0, "untagged": 0, "processing": 0, "errors": 0,
+                    "recent": 0, "shared_with_me": 0, "by_tag": {}, "by_classification": {},
+                }
+            elif resource == "documents/tags":
+                payload = {"tags": []}
+            elif resource in ("prompts", "membership/members") and entry.query.get("page_size") == ["1"]:
+                payload = {"page": 1, "page_size": 1, "total_count": 0}
+                if resource == "prompts":
+                    payload["prompts"] = []
+                else:
+                    payload.update({
+                        "members": [],
+                        "membership_management": {"schema_version": 1, "operations": []},
+                    })
+            elif resource == "identities":
+                payload = {"identities": []}
+            elif resource == "file-sources":
+                payload = {"file_sources": []}
+            else:
+                super()._dispatch(route, entry)
+                return
+            self._json(route, payload)
             return
         if path == "/api/public_workspaces/directory" and method == "GET":
             # The V2 picker and settings tab now share the native directory route (M9A commit 4).

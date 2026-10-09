@@ -8,7 +8,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
 import { GroupWorkspacePicker } from '../components/workspace/GroupWorkspacePicker';
 import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
-import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
+import { SharedWorkspaceOverview } from '../components/workspace/SharedWorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
@@ -452,7 +452,7 @@ export function GroupWorkspacePage() {
                                 <div><dt className="text-xs text-text-3">About this group</dt><dd className="break-words">{context.workspace.description || 'No description provided.'}</dd></div>
                                 <div><dt className="text-xs text-text-3">Owner</dt><dd className="break-words">{context.workspace.owner.display_name || 'Owner information unavailable'}{context.workspace.owner.email ? ` · ${context.workspace.owner.email}` : ''}</dd></div>
                             </dl>
-                            <WorkspaceOverview basePath={basePath} resolved={resolved} showRelationships={false}
+                            <SharedWorkspaceOverview context={context} basePath={basePath} resolved={resolved} suspended={accessUnconfirmed}
                                 description="Shared documents, prompts and automation for this group. A locked section shows why it's unavailable to you." />
                         </>
                     ) : !selected ? <EmptyState icon={<LayoutGrid size={28} />} title="Section not found" description="Choose a section from this workspace's navigation." />

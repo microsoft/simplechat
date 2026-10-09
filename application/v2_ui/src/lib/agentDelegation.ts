@@ -113,6 +113,18 @@ export async function fetchDelegationActions(scope: DelegationScope, signal?: Ab
     return actions.filter((action) => action.type === 'agent');
 }
 
+export async function fetchDelegationActionCount(scope: DelegationScope, signal?: AbortSignal): Promise<number> {
+    const response = await api.get<unknown>(delegationResourceUrl(scope, 'plugins'), signal);
+    const actions = Array.isArray(response) ? response
+        : response && typeof response === 'object' && 'actions' in response ? response.actions : undefined;
+    if (!Array.isArray(actions) || !actions.every((action) =>
+        action && typeof action === 'object' && typeof action.id === 'string'
+        && action.id && typeof action.type === 'string')) {
+        throw new Error('The workspace returned an invalid Call agent action list.');
+    }
+    return actions.filter((action) => action.type === 'agent').length;
+}
+
 export async function fetchDelegationAgents(scope: DelegationScope, signal?: AbortSignal) {
     const response = await api.get<WorkspaceAgent[] | { agents: WorkspaceAgent[] }>(
         delegationResourceUrl(scope, 'agents'), signal,
