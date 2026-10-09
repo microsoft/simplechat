@@ -91,6 +91,7 @@ from route_backend_group_actions_scoped import *
 from route_backend_group_agents_scoped import *
 from route_backend_v2_admin_agents_actions import register_route_backend_v2_admin_agents_actions
 from route_backend_group_identities_scoped import *
+from route_backend_personal_identities_scoped import register_route_backend_personal_identities_scoped
 from route_backend_group_endpoints_scoped import *
 from route_backend_group_file_sources_scoped import *
 from route_backend_group_directory import register_route_backend_group_directory
@@ -1544,6 +1545,7 @@ register_route_blueprint('backend_group_agents_scoped', register_route_backend_g
 
 # ------------------- API Group Identities Routes -------
 register_route_blueprint('backend_group_identities_scoped', register_route_backend_group_identities_scoped, user_required_blueprint)
+register_route_blueprint('backend_personal_identities_scoped', register_route_backend_personal_identities_scoped, user_required_blueprint)
 
 # ------------------- API Group Model Endpoints Routes --
 register_route_blueprint('backend_group_endpoints_scoped', register_route_backend_group_endpoints_scoped, user_required_blueprint)

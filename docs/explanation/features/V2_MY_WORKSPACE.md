@@ -22,6 +22,11 @@ the native shared editor; see [V2 File Source Configuration](V2_FILE_SOURCE_CONF
 **Agent/action authoring expanded in version:** 0.261.096, recorded in
 `application/single_app/config.py`.
 
+**Identity authoring expanded in version: 0.261.315**, recorded in
+`application/single_app/config.py`. Personal identities now support native
+creation/editing and conditional writes; see
+[V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md).
+
 **Shared shell extracted in version:** 0.261.127. Personal and group pages now
 reuse `WorkspaceShell` and the presentation-only `WorkspaceOverview`. Personal
 counts, data adapters, routes, and authorization remain personal. See
@@ -178,7 +183,7 @@ What each section supports in this release:
 | Agents | Full-page authoring for all permitted agent types, models, knowledge, actions, instructions, and templates; use in chat |
 | Actions | Unified list and full-page create/edit/delete, with native type-specific configuration |
 | Workflows | List, run, cancel, run history, delete |
-| Identities | List, delete |
+| Identities | Native create, edit and delete, reusable credentials, stale-edit protection |
 | Endpoints | List, enable or disable, delete |
 
 ## Known limitations
@@ -191,7 +196,10 @@ The following separate management surfaces still use their existing editors:
 
 - The workflow designer: tasks, document actions and scheduling.
 - Model endpoint connection details: provider, API versions, authentication, model list.
-- Identity creation with its auth-type-specific fields is separate from file-source configuration.
+
+Identity creation is native in **Identities**, rather than embedded inside
+file-source configuration. Connector editors select an existing eligible
+identity.
 
 ## Testing and validation
 

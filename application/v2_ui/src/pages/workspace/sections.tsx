@@ -143,6 +143,7 @@ export const WORKSPACE_SECTIONS: WorkspaceSectionDefinition[] = [
         blurb: 'Saved sign-ins that file sources and actions use to reach other systems.',
         render: (context) => (
             <IdentitiesSection
+                ownerId={context.ownerId}
                 syncEnabled={context.isEnabled('sync')}
                 actionsEnabled={context.isEnabled('actions')}
             />

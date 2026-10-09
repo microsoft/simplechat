@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.315)**
+
+#### New Features
+
+*   **Create And Edit Workspace Identities In V2**
+    *   Personal users can create and edit reusable identities directly in My Workspace. Group and public workspace identity authoring continues to use the native shared editor, so authorized managers do not need to visit classic pages.
+    *   Personal edits and deletes require the version opened by the editor. A stale save keeps the draft available to rebase, while stored credentials remain server-side and unchanged secrets are preserved.
+    *   (Ref: `functions_personal_identity_access.py`, `route_backend_personal_identities_scoped.py`, `IdentityWorkbenchSection.tsx`, [V2 Workspace Identities](features/V2_WORKSPACE_IDENTITIES.md), [#1722](https://github.com/microsoft/simplechat/issues/1722))
+
 ### **(v0.261.309)**
 
 #### New Features

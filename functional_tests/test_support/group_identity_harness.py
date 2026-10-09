@@ -1,7 +1,7 @@
 # group_identity_harness.py
 """Shared, isolated harness for the native group identity endpoint tests (M5A).
 
-Version: 0.261.161
+Version: 0.261.315
 Implemented in: 0.261.139
 
 Extracted verbatim from ``test_group_identity_apis.py`` so the API suite and the
@@ -60,7 +60,8 @@ class IdentityContainer:
     routes must survive without ever recreating a deleted record.
     """
 
-    def __init__(self):
+    def __init__(self, scope_field="group_id"):
+        self.scope_field = scope_field
         self.records = {}
         self._sequence = 0
         self.before_replace = None
@@ -73,7 +74,7 @@ class IdentityContainer:
     def create_item(self, body):
         doc = deepcopy(body)
         doc["_etag"] = self._next_etag()
-        key = (doc["group_id"], doc["id"])
+        key = (doc[self.scope_field], doc["id"])
         if key in self.records:
             raise CosmosHttpResponseError(409)
         self.records[key] = doc
@@ -94,13 +95,13 @@ class IdentityContainer:
         ]
         scope_id = values.get("@scope_id")
         if scope_id is not None:
-            rows = [record for record in rows if record.get("group_id") == scope_id]
+            rows = [record for record in rows if record.get(self.scope_field) == scope_id]
         rows.sort(key=lambda record: str(record.get("name") or ""))
         return rows
 
     def replace_item(self, item, body, etag=None, match_condition=None):
         assert match_condition is MatchConditions.IfNotModified
-        key = (body.get("group_id"), item)
+        key = (body.get(self.scope_field), item)
         if self.before_replace:
             callback, self.before_replace = self.before_replace, None
             callback(self.records, key)

@@ -1,5 +1,5 @@
 // identityFields.ts
-// The field rules shared by the group identity editor, kept out of the renderer so they can be
+// The field rules shared by workspace identity editors, kept out of the renderer so they can be
 // tested without a DOM.
 //
 // A workspace identity is a saved credential: a name, the SimpleChat capabilities that may use it
@@ -49,8 +49,8 @@ export interface CapabilityConfig {
 
 /**
  * The capability configurations, mirroring `capabilityConfigs` in the classic editor. Group
- * identities support file sync and actions (§10: usage_contexts values are "file_sync" and
- * "action"); the model endpoint capability stays personal/admin, so it is not offered here.
+ * personal/group identities support file sync and actions (usage_contexts values are "file_sync"
+ * and "action"). Model endpoint usage is not supported by the identity backend.
  */
 export const CAPABILITY_CONFIGS: Record<string, CapabilityConfig> = {
     file_sync: {
@@ -255,7 +255,7 @@ function buildCredentialsWrite(credentials: IdentityCredentialsDraft): Record<st
     return write;
 }
 
-/** The strict write body the native group identity routes accept, shaped exactly as classic sends it. */
+/** The strict write body the native identity routes accept, shaped exactly as classic sends it. */
 export function buildIdentityWrite(draft: IdentityDraft): IdentityWrite {
     const payload = capabilityPayload(draft.capabilities);
     return {

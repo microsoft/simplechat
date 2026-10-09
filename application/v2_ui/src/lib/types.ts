@@ -446,6 +446,8 @@ export interface WorkspaceIdentity {
     username?: string;
     scope_type?: string;
     scope_id?: string;
+    /** Native personal identity owner, checked against the authenticated workspace owner. */
+    user_id?: string;
     /** Present on native group identities; the owning group, checked against the page group. */
     group_id?: string;
     /** Present on native public-workspace identities (M10B); checked against the page workspace. */
@@ -458,7 +460,7 @@ export interface WorkspaceIdentity {
     metadata?: Record<string, unknown>;
     /** Masked credential summary; secrets never leave the server. */
     credentials?: Record<string, unknown>;
-    /** Conditional-write marker on native group identities. */
+    /** Conditional-write marker on all native identity scopes. */
     etag?: string;
     /** The operations policy permits on this identity, a subset of ["edit", "delete"]. */
     identity_actions?: string[];

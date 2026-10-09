@@ -59,6 +59,20 @@ before the configuration is saved.
 Coming-soon connectors are not newly enabled by V2. Creating an identity is a
 separate workflow; the source editor selects an existing eligible identity.
 
+### Create a reusable identity in V2
+
+From version **0.261.315**, open the same workspace's **Identities** section
+and choose **New identity** before configuring the source. Select **File Sync**
+under **Used for**, choose the source's supported authentication method, and
+save its credentials. The identity then appears in eligible file-source
+pickers in that workspace, without copying its secret into the source.
+
+Personal users create their own identities; shared-workspace creation requires
+Owner, Admin or DocumentManager permissions and an active workspace. Public
+identities are File-Sync-only. Use **Edit** to replace a credential; a blank
+stored-secret field keeps its current value. Neither creation nor editing
+opens a classic page.
+
 ## Classic workflow
 
 1. Open the workspace that should receive synced documents.
