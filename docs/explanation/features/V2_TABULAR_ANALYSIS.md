@@ -15,6 +15,10 @@ to it, and the reply's own text asserted otherwise, so the failure was invisible
 This change closes that gap and five smaller ones around it. Implemented in version
 **0.261.057**.
 
+Thought-summary progress cards were removed in version **0.261.318**, tracked in
+`application/single_app/config.py`. Activity details remain in the reasoning dropdown;
+background-export status and its run controls remain available on the generated-file card.
+
 ### Dependencies
 
 None added. Every route and payload this uses already existed and is unchanged; the work is
@@ -163,9 +167,14 @@ payloads already describe both. A tabular turn opens with the agent hand-off sen
 more specific lane supersedes the general agent one — otherwise a workbook run would be
 labelled "Agent progress".
 
-A lane can claim steps without drawing a card. Orchestration's lane has `showsCard: false`.
-Its entry still keeps planner and run steps out of the agent and tabular lanes, but the plan
-card and the reasoning toggle already show that progress, and a third display repeated them.
+A lane can claim steps without drawing a card. Since **0.261.318**, agent, tabular, and
+orchestration lanes all use `showsCard: false`. Their classification remains intact, but
+thought-summary headings, percentages, bars, and repeated status text no longer appear
+above the reasoning dropdown or inside a finished answer's expanded reasoning.
+
+The dropdown still exposes the activity details when opened. Orchestration's plan card
+reports its run status, and the separate generated-file card reports durable export
+progress with Continue/Cancel controls. Neither operational surface is removed.
 
 Every activity is emitted at least twice, running then completed, keyed by `activity_key`.
 They are folded into a map so a tool call is counted once rather than once per frame.
@@ -233,8 +242,9 @@ where it was saved, a preview and a download.
 offers Continue or Cancel where the server allows them. It replaces itself with the finished
 files.
 
-**A run being analysed.** The reasoning panel shows a progress card above the steps while the
-run is live, without needing to be expanded.
+**A run being analysed.** Expand **N reasoning steps** to read the agent's tool activity or
+workbook-analysis details. The dropdown starts collapsed, with no extra thought-summary
+progress card. Details remain available on the finished response.
 
 **An uploaded spreadsheet.** Click its name in the thread to see it as a table, with
 **Download original** when the original file is still in storage. The name is inert in a
@@ -251,9 +261,14 @@ states how many rows matched and shows the first few, with controls for 25 or al
 |---|---|
 | `functional_tests/test_v2_tabular_parity.py` | The client reads the metadata keys the server writes; every requested route is registered; the run-control routes carry their decorators; the confirmation thresholds survive sanitization; the thought frame fields are carried; every component is mounted; the confirmation precedes the send; run members are read from the key the server sends; a withheld file offers no download; the upload preview is gated on what the endpoint supports; no remote assets |
 | `functional_tests/test_v2_tabular_parity_logic.ts` | 70 behavioural checks: normalising and de-duplication, download target selection, the compact-layout rule, preview table construction, run progress and polling, artifact set completion and member ordering, approval states, lane detection and counting, the completion rule, the progress ratchet, the confirmation heuristic, row banding, CSV parsing |
+| `functional_tests/test_v2_agent_tabular_progress_cards.mjs` | Agent and tabular markers still claim their lanes without cards during running, completed, and failed activity; agent-to-tabular precedence and thought content remain intact |
+| `ui_tests/test_v2_orchestration_streaming_bubble.py` | Agent/tabular summary cards remain absent on desktop and mobile while mouse/keyboard access to live, finished, and remounted reasoning stays available; orchestration status is unchanged |
 
-Both are run by executing the Python file, which bundles the TypeScript with esbuild and runs
-it under node, skipping that half when `application/v2_ui/node_modules` is absent.
+The tabular parity checks are run by executing the Python file, which bundles the TypeScript
+with esbuild and runs it under node, skipping that half when
+`application/v2_ui/node_modules` is absent. Run the focused card-policy checks with `node`
+and the browser checks with `pytest`; their commands and current validation results are in
+the [duplicate progress card fix](../fixes/V2_AGENT_TABULAR_DUPLICATE_PROGRESS_CARD_FIX.md).
 
 ### Known limitations
 
@@ -269,9 +284,9 @@ it under node, skipping that half when `application/v2_ui/node_modules` is absen
 - **Non-boolean tabular admin settings are still not editable in V2.** That is the general
   "admin settings edits boolean capabilities only" limitation rather than anything specific to
   tabular, and is unchanged by this work.
-- **Progress cards cover tabular and agent work only.** Orchestration has a lane so its steps
-  are claimed, but it draws no card, because the plan card shows a run's progress. Workflow
-  activity emits compatible payloads but is not yet wired end to end, so it has no lane entry.
+- **Thought-summary progress cards are intentionally absent.** Agent and tabular activity
+  is read through the reasoning dropdown rather than an additional top-level card. This
+  does not remove the separate progress and recovery controls for a background export.
 
 ## See also
 
