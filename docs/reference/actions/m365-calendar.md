@@ -4,7 +4,7 @@ title: "Microsoft 365 Calendar"
 description: "Read and search calendar events in any time range and prepare invitations using delegated Microsoft 365 access."
 section: "Reference"
 audience: user
-version: "0.261.305"
+version: "0.261.321"
 ---
 
 <!-- action-slug: m365-calendar -->
@@ -38,6 +38,11 @@ can be shorter than the user's saved preference.
 
 Example: "What meetings do I have tomorrow, and prepare an invitation for the
 project review without sending it yet."
+
+Since **0.261.321**, Orchestrate can use this action directly or through an authorized
+agent. Explicit operation intent allows configured invitation creation and complete
+named inputs from earlier work. Gathering intent remains read-only. Plan approval
+does not replace manual invitation review or change delayed/automatic delivery settings.
 
 ## Find past and future events
 

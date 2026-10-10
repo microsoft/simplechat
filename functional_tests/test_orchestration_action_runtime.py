@@ -1,8 +1,9 @@
 # test_orchestration_action_runtime.py
 """Functional coverage for isolated multi-function action execution.
 
-Version: 0.261.132
+Version: 0.261.321
 Implemented in: 0.261.098; chart sub-step added in 0.261.132
+Operation replay protection added in: 0.261.321
 
 Runs the real Semantic Kernel auto-invocation loop and function filters with a
 scripted model and local plugins. No Azure or external service calls are made.
@@ -172,15 +173,39 @@ def tool_message(*tickets, function='tickets-lookup'):
     )
 
 
-async def execute(state, *, invocation_capture=None, visual_request=None):
+async def execute(state, *, invocation_capture=None, visual_request=None, execution_intent='gather'):
     capture_kwargs = {'invocation_capture': invocation_capture} if invocation_capture is not None else {}
     if visual_request is not None:
         capture_kwargs['visual_request'] = visual_request
     return await state.runtime.invoke_action(
         state.action['action_ref'], 'Look up the tickets.', state.context,
         settings=state.settings, user_id='actor', cancel_requested=lambda: state.cancelled,
+        execution_intent=execution_intent,
         **capture_kwargs,
     )
+
+
+def test_generic_operation_reuses_confirmed_tool_results_without_another_call(runtime):
+    from functions_orchestration_operations import OperationJournal, operation_journal_scope
+    from test_support.m365 import CosmosContainer
+
+    container = CosmosContainer('run_id')
+
+    def journal():
+        return OperationJournal(
+            container, 'root', 'lookup', 'actor', 'conversation',
+            fingerprint='b' * 64, authorize=lambda: None, sanitize=deepcopy,
+        )
+
+    runtime.replies = [tool_message('42')]
+    with operation_journal_scope(journal()):
+        first = asyncio.run(execute(runtime, execution_intent='operate'))
+    runtime.replies = [tool_message('42')]
+    with operation_journal_scope(journal()):
+        second = asyncio.run(execute(runtime, execution_intent='operate'))
+    assert runtime.calls == [('42', 'actor')]
+    assert first['operation_receipts'] == second['operation_receipts']
+    assert first['operation_receipts'][0]['function_name'] == 'tickets.lookup'
 
 
 def test_multiple_function_calls_load_one_action_and_accumulate_findings(runtime):

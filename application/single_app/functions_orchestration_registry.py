@@ -1280,12 +1280,13 @@ CAPABILITY_REGISTRY = (
         'label': 'Use an action',
         'role': ROLE_GATHER,
         'request_gate': _action_request_gate,
-        'summary': "Gather knowledge using one of this user's accessible actions.",
+        'summary': "Gather information or perform requested work using an accessible action.",
         'when_to_use': (
-            "An action in the list reaches the information needed for this task. Prefer "
+            "An action in the list reaches the information or performs the operation needed. Prefer "
             "using it directly when no agent-specific instructions or knowledge are needed. "
             "The step can use the selected action's functions within execution limits. "
-            "Do not duplicate work delegated to an agent or use this to plan output tasks."
+            "Use execution_intent operate for requested operations, following the action's policies. "
+            "Bind earlier research or prepared content as named inputs. Do not duplicate agent work."
         ),
         'settings_gates': (
             'enable_chat_orchestration',
@@ -1306,7 +1307,11 @@ CAPABILITY_REGISTRY = (
                 'task': {
                     'type': 'string',
                     'minLength': 1,
-                    'description': 'The knowledge to gather with this action.',
+                    'description': 'The information to gather or requested operation to perform.',
+                },
+                'execution_intent': {
+                    'type': 'string', 'enum': ['gather', 'operate'], 'default': 'gather',
+                    'description': 'Gather information, or perform the requested operation under existing policies.',
                 },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': [VISUAL_CHART]},
@@ -1324,7 +1329,7 @@ CAPABILITY_REGISTRY = (
         'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
         'result_contract_version': _GATHERED_CONTENT_CONTRACT,
         'result_outputs': {'prepared': 'structured-v1'},
-        'result_input_kinds': {},
+        'result_input_kinds': {'*': ('text-v1', 'markdown-v1', 'structured-v1')},
         'partial_inputs_supported': False,
         'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_MEDIUM,
@@ -1362,6 +1367,10 @@ CAPABILITY_REGISTRY = (
                     'minLength': 1,
                     'description': 'What to ask the agent to do, in a sentence or two.',
                 },
+                'execution_intent': {
+                    'type': 'string', 'enum': ['gather', 'operate'], 'default': 'gather',
+                    'description': 'Gather information, or perform the requested operation under existing policies.',
+                },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
                     'uniqueItems': True, 'maxItems': len(VISUAL_KINDS),
@@ -1378,7 +1387,7 @@ CAPABILITY_REGISTRY = (
         'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
         'result_contract_version': _GATHERED_CONTENT_CONTRACT,
         'result_outputs': {'prepared': 'structured-v1'},
-        'result_input_kinds': {},
+        'result_input_kinds': {'*': ('text-v1', 'markdown-v1', 'structured-v1')},
         'partial_inputs_supported': False,
         'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_HIGH,

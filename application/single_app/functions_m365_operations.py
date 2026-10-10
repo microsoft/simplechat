@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from functions_msgraph_operations import (
     MSGRAPH_CAPABILITY_DEFINITIONS,
+    get_msgraph_enabled_function_names,
     normalize_msgraph_calendar_send_options,
     normalize_msgraph_mail_send_options,
 )
@@ -20,6 +21,54 @@ M365_WRITE_FUNCTIONS = frozenset({
     "create_calendar_invite", "mark_message_as_read", "send_mail",
 })
 M365_DIRECTORY_FUNCTIONS = frozenset({"search_users", "get_user_by_email"})
+
+
+def orchestration_m365_manifest(action):
+    """Saved function bounds shared by metadata discovery and step authorization."""
+    manifest = deepcopy(action)
+    if action.get("type") == "msgraph":
+        fields = action.get("additionalFields") or {}
+        functions = set(get_msgraph_enabled_function_names(
+            fields.get("msgraph_capabilities", action.get("msgraph_capabilities")),
+        ))
+        if action.get("msgraph_capabilities") is not None:
+            functions.intersection_update(get_msgraph_enabled_function_names(action["msgraph_capabilities"]))
+        if action.get("enabled_functions") is not None:
+            functions.intersection_update(action["enabled_functions"])
+        manifest["enabled_functions"] = sorted(functions)
+    else:
+        manifest["enabled_functions"] = get_m365_enabled_function_names(action["type"], action)
+    return manifest
+
+
+def orchestration_m365_capabilities(action):
+    """Secret-free enabled operation descriptions, never a permission grant."""
+    action_type = action.get("type")
+    if action_type != "msgraph" and action_type not in M365_ACTION_DEFINITIONS:
+        return []
+    manifest = orchestration_m365_manifest(action)
+    definitions = (
+        MSGRAPH_CAPABILITY_DEFINITIONS if action_type == "msgraph"
+        else get_m365_function_definitions(action_type)
+    )
+    options = {**(action.get("additionalFields") or {}), **action}
+    if action_type != "msgraph":
+        options = normalize_m365_action_config(action_type, action)["additionalFields"]
+    capabilities = []
+    for definition in definitions:
+        name = definition["function_name"]
+        if name not in manifest["enabled_functions"]:
+            continue
+        entry = {
+            "function_name": name, "description": definition["description"],
+            "execution_intent": "operate" if name in M365_WRITE_FUNCTIONS else "gather",
+        }
+        if name == "send_mail":
+            entry["delivery_mode"] = normalize_msgraph_mail_send_options(options)["msgraph_mail_send_mode"]
+        elif name == "create_calendar_invite":
+            entry["delivery_mode"] = normalize_msgraph_calendar_send_options(options)["msgraph_calendar_send_mode"]
+        capabilities.append(entry)
+    return capabilities
 
 _LEGACY_DEFINITIONS = {
     definition["function_name"]: definition
@@ -470,7 +519,17 @@ def guarded_m365_operation(function):
         if denial:
             return denial
         with self._operation_context(function.__name__):
-            result = function(self, *args, **kwargs)
+            # A journal exists only inside an explicit orchestration operation step.
+            from functions_orchestration_operations import current_operation_journal
+
+            journal = current_operation_journal()
+            if journal is not None and function.__name__ in M365_WRITE_FUNCTIONS:
+                parameters = {key: value for key, value in arguments.items() if key != "self"}
+                result = journal.call_m365(
+                    self, function.__name__, parameters, lambda: function(self, *args, **kwargs),
+                )
+            else:
+                result = function(self, *args, **kwargs)
         source = get_m365_operation_source(function.__name__, self._action_type)
         if source and isinstance(result, dict):
             result.setdefault("source", source)
