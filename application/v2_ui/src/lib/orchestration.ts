@@ -547,6 +547,7 @@ export interface OrchestrationPlanner {
  */
 export interface OrchestrationPlan {
     reasoning_adjustments?: ReasoningResolution[];
+    requires_fresh_review?: boolean;
     plan_id: string;
     run_id: string;
     /** Conditional approval token for a manually held or revised plan. */
@@ -805,6 +806,7 @@ export interface OrchestrationRunRequest {
     conversation_id?: string | null;
     edits?: PlanEdits;
     expected_version?: string;
+    reviewed_regeneration?: boolean;
     [key: string]: unknown;
 }
 

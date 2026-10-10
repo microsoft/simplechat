@@ -18,6 +18,7 @@ interface ScrollInput {
     streaming: boolean;
     content: string;
     completedReply: CompletedReply | null;
+    followLatest?: boolean;
 }
 
 interface ReadingAnchor {
@@ -183,7 +184,12 @@ export function useMessageScroll(input: ScrollInput) {
                 .map((alias) => findMessage(alias.substring(3))).find((node) => node !== null) : null;
             if (replacement) anchor.current.node = replacement;
         }
-        const following = pinnedRef.current || (mode.current === 'reading' && !locked.current && caughtUp.current);
+        if (input.followLatest === false) {
+            pinnedRef.current = false;
+            mode.current = 'manual';
+        }
+        const following = input.followLatest !== false
+            && (pinnedRef.current || (mode.current === 'reading' && !locked.current && caughtUp.current));
         const completedReply = input.completedReply;
         const completion = completedReply && completedReply !== before.completedReply
             && completedReply.conversationId === input.conversationId;

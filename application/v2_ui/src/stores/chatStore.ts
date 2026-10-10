@@ -20,6 +20,7 @@ import {
     markConversationRead,
     maskMessage as maskMessageApi,
     renameConversation as renameConversationApi,
+    regenerateOrchestrationMessage as regenerateOrchestrationMessageApi,
     retryMessage as retryMessageApi,
     setMessageBlockRevision as setMessageBlockRevisionApi,
     setMessageImageRevision as setMessageImageRevisionApi,
@@ -34,6 +35,7 @@ import {
     type ImageRevisionOrigin,
     type ImageRevisionOperation,
     type MessageBlockRevisions,
+    type AttemptChatRequest,
 } from '../lib/endpoints';
 import {
     cancelStream,
@@ -126,7 +128,11 @@ import {
     contextTags,
     type ContextItem,
 } from '../lib/chatContext';
-import { messageThreadId } from '../lib/threads';
+import { currentAttempt, messageThreadId } from '../lib/threads';
+import {
+    adoptRetryQuestion, beginRetryPresentation, insertRetryReply, messageOrchestrationTurn,
+    retryQuestion, retryReplyMetadata, savedResponseAttempt, updateRetryState, type RetryPresentation,
+} from '../lib/chatRetryAttempts';
 import { withoutDeletedMessages } from '../lib/deletedMessages';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
@@ -134,7 +140,7 @@ import { ApiError } from '../lib/apiClient';
 import { normalizeOrchestrationAttempt } from '../lib/orchestration';
 import {
     forgetOrchestrationConversation,
-    openOrchestrationRecovery,
+    planRegeneratedMessage,
     retryOrchestrationPlanning,
 } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
@@ -188,7 +194,7 @@ export type DrawerMode = 'contents' | 'documents' | 'plan' | null;
  * streaming state. `completed` carries the chat-shaped terminal frame (`RunStreamEvent` extends
  * `ChatStreamEvent`) so the final message is built exactly as a chat completion's is.
  */
-export type OrchestrationTurnOutcome =
+export type OrchestrationTurnOutcome = { turnId?: string } & (
     | {
           status: 'completed' | 'failed' | 'cancelled' | 'unknown';
           event: RunStreamEvent;
@@ -199,7 +205,8 @@ export type OrchestrationTurnOutcome =
     | { status: 'cancelled'; accumulated: string }
     | { status: 'failed'; error: string }
     /** Planning produced a plan or a question: leave the thinking state without adding a message. */
-    | { status: 'planned' };
+    | { status: 'planned'; attemptState?: 'awaiting_review' | 'awaiting_clarification' | 'waiting' }
+);
 
 /**
  * Which API family the open conversation belongs to.
@@ -360,6 +367,7 @@ interface ChatState {
     thoughts: ThoughtEntry[];
     streamError: string | null;
     streamAuthUrl: string | null;
+    retryPresentation: RetryPresentation | null;
     /**
      * Where a stream recovery has got to, or null when nothing is being recovered.
      *
@@ -497,7 +505,7 @@ interface ChatState {
         phase?: OrchestrationSurfacePhase,
     ) => string;
     pushOrchestrationThought: (conversationId: string, event: RunStreamEvent) => void;
-    pushOrchestrationContent: (conversationId: string, accumulated: string) => void;
+    pushOrchestrationContent: (conversationId: string, accumulated: string, turnId?: string) => void;
     settleOrchestrationTurn: (
         conversationId: string,
         outcome: OrchestrationTurnOutcome,
@@ -920,7 +928,7 @@ let streamingConversationKind: ConversationKind = 'personal';
  * conversation whose turn is still running in this tab can put it back. The phase comes back with
  * it, so a reopened run still shows its progress on the plan card alone.
  */
-const orchestrationSurfaces = new Map<string, OrchestrationSurfacePhase>();
+const orchestrationSurfaces = new Map<string, { phase: OrchestrationSurfacePhase; turnId: string | null }>();
 
 /**
  * Bumped each time the reader starts a new chat or opens a conversation.
@@ -1316,6 +1324,11 @@ function buildStreamHandlers(
     // message is persisted.
     let streamUserMessageId =
         String(pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
+    const streamRetry = () => {
+        const presentation = getState().retryPresentation;
+        return presentation?.conversationId === conversationId && presentation.userMessageId === streamUserMessageId
+            ? presentation : null;
+    };
     return {
         onM365PendingActions: (event) => {
             // The viewed conversation's id rather than the frame's own: a shared conversation's
@@ -1417,7 +1430,7 @@ function buildStreamHandlers(
                 model_deployment_name: event.model_deployment_name,
                 agent_display_name: event.agent_display_name,
                 augmented: event.augmented,
-                metadata: completionMetadata(event),
+                metadata: retryReplyMetadata(completionMetadata(event) ?? {}, streamRetry()),
                 // Carried onto the finished message so its Microsoft 365 citation chips resolve
                 // without reading the thread again.
                 ...(m365Citations.length > 0 && !event.blocked ? { m365_citations: m365Citations } : {}),
@@ -1432,10 +1445,9 @@ function buildStreamHandlers(
                 // assistant message also arrives as a `collaboration.message.created` event,
                 // and whichever of the two lands second must update the message rather than
                 // add a second copy of it.
-                messages: mergeCollaborationMessage(
-                    state.messages,
-                    finalMessage as CollaborationMessage,
-                ),
+                messages: kind === 'personal'
+                    ? insertRetryReply(updateRetryState(state.messages, streamRetry(), event.blocked ? 'failed' : 'completed'), finalMessage, streamRetry())
+                    : mergeCollaborationMessage(state.messages, finalMessage as CollaborationMessage),
                 completedReply: { conversationId, messageId: finalMessage.id },
                 streaming: false,
                 streamingContent: '',
@@ -1467,19 +1479,19 @@ function buildStreamHandlers(
             const finalContent = resolveStreamContent(_event, accumulated);
             if (finalContent) {
                 set((state) => ({
-                    messages: [
-                        ...state.messages,
+                    messages: insertRetryReply(
+                        updateRetryState(state.messages, streamRetry(), 'interrupted'),
                         {
                             id: `cancelled-${Date.now()}`,
                             conversation_id: conversationId,
                             role: 'assistant',
                             content: finalContent,
                             timestamp: new Date().toISOString(),
-                            metadata: completionMetadata(_event),
+                            metadata: retryReplyMetadata(completionMetadata(_event) ?? {}, streamRetry()),
                             thoughts:
                                 state.thoughts.length > 0 ? [...state.thoughts] : undefined,
-                        },
-                    ],
+                        }, streamRetry(),
+                    ),
                 }));
             }
             set({ streaming: false, streamingContent: '', streamingReasoningAdjustments: [], reconnectPhase: null });
@@ -1492,15 +1504,20 @@ function buildStreamHandlers(
             // the server's fixed wording, and its chip removed: the turn is never answered
             // some other way instead.
             const refusal = workflowResultRefusal(event);
-            set({
+            const failure = refusal?.message ?? message;
+            const presentation = streamRetry();
+            set((state) => ({
                 streaming: false,
                 streamingContent: '',
                 completedReply: null,
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
-                streamError: refusal?.message ?? message,
-                streamAuthUrl: foundryAuthUrl(event),
-            });
+                ...(presentation?.admitted ? {
+                    messages: updateRetryState(state.messages, presentation, event ? 'failed' : 'unknown', failure),
+                    retryPresentation: { ...presentation, error: failure, authUrl: foundryAuthUrl(event) },
+                    streamError: null, streamAuthUrl: null,
+                } : { streamError: failure, streamAuthUrl: foundryAuthUrl(event) }),
+            }));
             const selectedResult = getState().workflowResultContext;
             if (refusal?.clears && selectedResult &&
                 (selectedResult.conversation_id === conversationId || selectedResult.conversation_id === null)) {
@@ -1665,6 +1682,14 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         return false;
     }
 
+    const runningQuestions = getState().messages.filter((message) => message.role === 'user'
+        && savedResponseAttempt(message).kind === 'chat' && savedResponseAttempt(message).state === 'running');
+    const savedQuestionId = typeof status.user_message_id === 'string' ? status.user_message_id : undefined;
+    const runningQuestion = savedQuestionId
+        ? getState().messages.find((message) => message.id === savedQuestionId && message.role === 'user')
+        : runningQuestions.length === 1 ? runningQuestions[0] : undefined;
+    const presentation = runningQuestion && savedResponseAttempt(runningQuestion).kind === 'chat'
+        ? { ...beginRetryPresentation(getState().messages, runningQuestion, 'chat'), admitted: true } : null;
     const controller = new AbortController();
     activeStreamController = controller;
     // Deliberately NOT setting streamingConversationId. That marks a stream this tab
@@ -1678,6 +1703,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
 
     set({
         streaming: true,
+        retryPresentation: presentation,
         orchestrationSurface: null,
         streamingContent: '',
         thoughts: [],
@@ -1687,7 +1713,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         reconnectPhase: 'connecting',
     });
 
-    const reattachedUserMessageId = latestUserMessageId(getState().messages);
+    const reattachedUserMessageId = runningQuestion?.id ?? latestUserMessageId(getState().messages);
     if (reattachedUserMessageId) {
         chatPendingActionsStore
             .getState()
@@ -1696,7 +1722,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
 
     await reattachChatStream(
         conversationId,
-        buildStreamHandlers(conversationId, isCurrent, set, getState),
+        buildStreamHandlers(conversationId, isCurrent, set, getState, reattachedUserMessageId),
         controller.signal,
     );
 
@@ -1708,6 +1734,31 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
     }
 
     return true;
+}
+
+function adoptPreparedRetry(result: Pick<AttemptChatRequest,
+    'user_message' | 'user_message_id' | 'thread_id' | 'new_attempt' | 'available_attempts'
+>, presentation: RetryPresentation): RetryPresentation {
+    const question = result.user_message;
+    const threadId = result.thread_id;
+    const attempt = result.new_attempt;
+    if (!question || question.id !== result.user_message_id || question.role !== 'user'
+        || question.conversation_id !== presentation.conversationId || !threadId || typeof attempt !== 'number'
+        || messageThreadId(question) !== threadId || currentAttempt(question) !== attempt) {
+        throw new Error('The saved retry could not be confirmed. Reload the conversation before retrying.');
+    }
+    const admitted: RetryPresentation = {
+        ...presentation, admitted: true, userMessageId: question.id, threadId, attempt,
+    };
+    useChatStore.setState((state) => ({
+        messages: adoptRetryQuestion(state.messages, presentation, question),
+        retryPresentation: admitted,
+        attemptsByThread: Array.isArray(result.available_attempts) ? {
+            ...state.attemptsByThread, [threadId]: result.available_attempts,
+        } : state.attemptsByThread,
+        metadata: null,
+    }));
+    return admitted;
 }
 
 /**
@@ -2226,6 +2277,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamAuthUrl: null,
     reconnectPhase: null,
     orchestrationSurface: null,
+    retryPresentation: null,
 
     drawerMode: null,
     metadata: null,
@@ -2337,13 +2389,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // thoughts and its settle land here as usual. A chat stream is picked back up by
             // `resumeChatStream` below.
             streaming: conversationId ? orchestrationSurfaces.has(conversationId) : false,
-            orchestrationSurface: conversationId ? orchestrationSurfaces.get(conversationId) ?? null : null,
+            orchestrationSurface: conversationId ? orchestrationSurfaces.get(conversationId)?.phase ?? null : null,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,
+            retryPresentation: null,
             // Metadata belongs to the previous conversation; drop it so the drawer never
             // shows another thread's documents.
             metadata: null,
@@ -2534,6 +2587,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // when someone clicks New Chat and navigates away.
         set({
             activeConversationId: null,
+            retryPresentation: null,
             publicWorkspaceSelection: null,
             analysisResultContext: null,
             workflowResultContext: null,
@@ -3128,6 +3182,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set((state) => ({
                 messages: [...state.messages, optimisticUserMessage],
                 streaming: willStream,
+                retryPresentation: null,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
@@ -3393,6 +3448,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     stopStreaming: () => {
         if (!activeStreamController) {
+            if (get().retryPresentation && !get().retryPresentation?.admitted) {
+                set({ streaming: false, retryPresentation: null, streamingContent: '', thoughts: [] });
+            }
             return;
         }
         // The one place a cancel belongs: the reader asked for the answer to stop being
@@ -3400,6 +3458,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // actually belongs to, which may no longer be the one on screen, through whichever
         // cancel route that conversation uses.
         const stoppedConversationId = streamingConversationId;
+        const presentation = get().retryPresentation;
+        if (presentation?.admitted && presentation.conversationId === stoppedConversationId) {
+            const partial = get().streamingContent;
+            set((state) => {
+                const messages = updateRetryState(state.messages, presentation, 'interrupted');
+                return {
+                    messages: partial ? insertRetryReply(messages, {
+                        id: `cancelled-${Date.now()}`, conversation_id: presentation.conversationId,
+                        role: 'assistant', content: partial, timestamp: new Date().toISOString(),
+                        metadata: retryReplyMetadata({}, presentation),
+                        thoughts: state.thoughts.length ? [...state.thoughts] : undefined,
+                    }, presentation) : messages,
+                    streaming: false, streamingContent: '', retryPresentation: { ...presentation, error: undefined },
+                };
+            });
+        }
         if (stoppedConversationId) {
             // The reply is detached below, so its ending is never seen here. Read the list
             // once the server has the request instead. An action the reply was still saving
@@ -3441,12 +3515,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
         // Recorded whether or not the conversation is on screen, so opening it while this turn
         // is still in flight shows it working.
-        orchestrationSurfaces.set(conversationId, phase);
+        orchestrationSurfaces.set(conversationId, { phase, turnId: turnId ?? null });
         // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
         // started here keeps going after the reader opens another thread, and its question must
         // not appear inside that other thread.
         if (get().activeConversationId === conversationId) {
+            const question = !addUserMessage && turnId
+                ? get().messages.find((message) => message.role === 'user' && messageOrchestrationTurn(message) === turnId)
+                : undefined;
+            const existingRetry = get().retryPresentation;
+            const retryPresentation = question && savedResponseAttempt(question).kind === 'orchestration'
+                ? existingRetry?.userMessageId === question.id ? existingRetry
+                    : { ...beginRetryPresentation(get().messages, question, 'orchestration'), admitted: true }
+                : null;
             set((state) => ({
+                retryPresentation,
                 messages: addUserMessage
                     ? [
                           ...state.messages,
@@ -3485,7 +3568,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     pushOrchestrationThought: (conversationId, event) => {
-        if (get().activeConversationId !== conversationId) {
+        const surface = orchestrationSurfaces.get(conversationId);
+        if (get().activeConversationId !== conversationId || !surface
+            || (surface.turnId && event.turn_id && surface.turnId !== event.turn_id)) {
             return;
         }
         const content =
@@ -3514,14 +3599,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }));
     },
 
-    pushOrchestrationContent: (conversationId, accumulated) => {
-        if (get().activeConversationId !== conversationId) {
+    pushOrchestrationContent: (conversationId, accumulated, turnId) => {
+        const surface = orchestrationSurfaces.get(conversationId);
+        if (get().activeConversationId !== conversationId || !surface
+            || (surface.turnId && turnId && surface.turnId !== turnId)) {
             return;
         }
         set({ streamingContent: accumulated });
     },
 
     settleOrchestrationTurn: (conversationId, outcome) => {
+        const settledTurnId = outcome.turnId ?? ('event' in outcome ? outcome.event.turn_id : undefined);
+        const surface = orchestrationSurfaces.get(conversationId);
+        if (surface?.turnId && settledTurnId && surface.turnId !== settledTurnId) return;
+        const presentation = get().retryPresentation;
+        if (presentation && (presentation.kind !== 'orchestration'
+            || (settledTurnId && messageOrchestrationTurn(get().messages.find(
+                (message) => message.id === presentation.userMessageId,
+            )) !== settledTurnId))) {
+            return;
+        }
+        if (activeStreamController && !get().orchestrationSurface) return;
         // Released whether or not the conversation is on screen, so reopening it later does not
         // bring back a Thinking state for a turn that has already finished.
         orchestrationSurfaces.delete(conversationId);
@@ -3536,26 +3634,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // adding a message. Thoughts are cleared because the planning reasoning is ephemeral —
             // the plan is the artifact worth keeping, and stale thoughts would otherwise flash in
             // the next turn's streaming bubble.
-            set({
+            set((state) => ({
+                messages: outcome.attemptState
+                    ? updateRetryState(state.messages, state.retryPresentation, outcome.attemptState) : state.messages,
                 streaming: false,
                 orchestrationSurface: null,
                 streamingContent: '',
                 thoughts: [],
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
-            });
+            }));
             return;
         }
 
         if (outcome.status === 'failed' && !('event' in outcome)) {
-            set({
+            set((state) => ({
                 streaming: false,
                 orchestrationSurface: null,
                 streamingContent: '',
                 reconnectPhase: null,
-                streamError: outcome.error,
+                messages: updateRetryState(state.messages, state.retryPresentation, 'failed', outcome.error),
+                retryPresentation: state.retryPresentation
+                    ? { ...state.retryPresentation, error: outcome.error } : null,
+                streamError: state.retryPresentation ? null : outcome.error,
                 streamAuthUrl: null,
-            });
+            }));
             return;
         }
 
@@ -3565,19 +3668,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const { accumulated } = outcome;
             set((state) => ({
                 messages: accumulated
-                    ? [
-                          ...state.messages,
+                    ? insertRetryReply(
+                          updateRetryState(state.messages, state.retryPresentation, 'interrupted'),
                           {
                               id: `cancelled-${Date.now()}`,
                               conversation_id: conversationId,
                               role: 'assistant',
                               content: accumulated,
                               timestamp: new Date().toISOString(),
+                              metadata: retryReplyMetadata({}, state.retryPresentation),
                               thoughts:
                                   state.thoughts.length > 0 ? [...state.thoughts] : undefined,
-                          },
-                      ]
-                    : state.messages,
+                          }, state.retryPresentation,
+                      )
+                    : updateRetryState(state.messages, state.retryPresentation, 'interrupted'),
                 streaming: false,
                 orchestrationSurface: null,
                 streamingContent: '',
@@ -3647,9 +3751,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                       )
                     : existing;
             return {
-                messages: mergeCollaborationMessage(
-                    messages,
-                    finalMessage as CollaborationMessage,
+                messages: insertRetryReply(
+                    updateRetryState(messages, state.retryPresentation, outcome.status === 'cancelled' ? 'interrupted' : outcome.status),
+                    { ...finalMessage, metadata: retryReplyMetadata(finalMessage.metadata ?? {}, state.retryPresentation) },
+                    state.retryPresentation,
                 ),
                 ...(outcome.status === 'completed'
                     ? { completedReply: { conversationId, messageId: finalMessage.id } }
@@ -3692,9 +3797,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
         // The turn's claim on the streaming surface follows it to the id the server named.
-        const surfacePhase = orchestrationSurfaces.get(fromConversationId);
-        if (conversationChanged && surfacePhase && orchestrationSurfaces.delete(fromConversationId)) {
-            orchestrationSurfaces.set(toConversationId, surfacePhase);
+        const surface = orchestrationSurfaces.get(fromConversationId);
+        if (surface && (!surface.turnId || surface.turnId === fromTurnId)) {
+            if (conversationChanged) orchestrationSurfaces.delete(fromConversationId);
+            orchestrationSurfaces.set(conversationChanged ? toConversationId : fromConversationId, {
+                ...surface,
+                turnId: turnChanged ? toTurnId : surface.turnId,
+            });
         }
         set((state) => {
             const messages = state.messages.map((message) => {
@@ -3878,7 +3987,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
         const message = get().messages.find((candidate) => candidate.id === messageId);
-        const attempt = normalizeOrchestrationAttempt(message?.metadata?.orchestration);
         const recoveryConversationId = get().activeConversationId;
         if (messageId.startsWith('pending-user-')) {
             const turnId = message?.metadata?.orchestration_turn_id;
@@ -3894,17 +4002,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
             return;
         }
-        if (attempt.run_id && recoveryConversationId) {
-            openOrchestrationRecovery(recoveryConversationId, attempt.run_id);
+        const question = message && retryQuestion(get().messages, message);
+        if (!question || !recoveryConversationId || question.conversation_id !== recoveryConversationId) {
+            set({ streamError: 'The original question is unavailable. Reload the conversation before retrying.', streamAuthUrl: null });
             return;
         }
-        if (message?.metadata?.orchestration) {
-            set({
-                streamError: 'This historical orchestration message has no saved attempt identity. It cannot be resumed; create a new plan deliberately if needed.',
-                streamAuthUrl: null,
-            });
-            return;
-        }
+        const kind = messageOrchestrationTurn(message) || messageOrchestrationTurn(question)
+            || savedResponseAttempt(question).kind === 'orchestration' ? 'orchestration' : 'chat';
+        let presentation = beginRetryPresentation(get().messages, question, kind);
+        const epoch = conversationEpoch;
+        const ownsPresentation = () => get().activeConversationId === recoveryConversationId
+            && conversationEpoch === epoch && get().retryPresentation?.id === presentation.id;
         set({
             streaming: true,
             orchestrationSurface: null,
@@ -3914,13 +4022,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,
+            retryPresentation: presentation,
         });
         try {
             const bootstrap = useBootstrapStore.getState().data;
-            // Same exclusive rule as a fresh send, so a retry cannot reintroduce the
-            // combination the server reads as a model override of the agent. The retry
-            // endpoint takes a flat deployment name, which `buildSelectionFields` has already
-            // resolved from the catalog — the option value is a selection key, not a name.
+            // Overrides are deliberate; without them the server restores the viewed attempt.
             const selection = buildSelectionFields({
                 agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
                 models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
@@ -3928,27 +4034,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 modelDeployment: options?.modelDeployment,
                 reasoningEffort: options?.reasoningEffort,
             });
-            const result = await retryMessageApi(messageId, {
-                model: selection.model_deployment,
-                reasoning_effort: selection.reasoning_effort,
-                agent_info: selection.agent_info,
-            });
-            if (!result?.chat_request) {
+            if (options?.agentSelection && !selection.agent_info) {
+                throw new Error('The selected agent is unavailable. Review your selection.');
+            }
+            if (options?.modelDeployment && !selection.model_deployment) {
+                throw new Error('The selected model is unavailable. Review your selection.');
+            }
+            if (kind === 'orchestration') {
+                const result = await regenerateOrchestrationMessageApi(messageId, selection);
+                if (!ownsPresentation() || !get().streaming) return;
+                if (!result.plan_request || result.requires_fresh_review !== true
+                    || result.plan_request.conversation_id !== recoveryConversationId) {
+                    throw new Error('The server did not return a review-required planning request.');
+                }
+                presentation = adoptPreparedRetry(result, presentation);
+                await planRegeneratedMessage(result);
+                return;
+            }
+            const result = await retryMessageApi(messageId, selection);
+            if (!ownsPresentation() || !get().streaming) return;
+            if (!result?.chat_request || result.chat_request.conversation_id !== recoveryConversationId) {
                 throw new Error('The server did not return a retry request.');
             }
-            // The retry endpoint only creates the next attempt; this second call is what
-            // actually generates the response.
+            presentation = adoptPreparedRetry(result, presentation);
             await runChatStream(
                 result.chat_request,
                 result.chat_request.conversation_id,
-                { reloadOnDone: true },
+                { reloadOnDone: true, pendingUserMessageId: result.user_message_id },
             );
         } catch (error) {
-            set({
+            if (!ownsPresentation()) return;
+            const failure = error instanceof Error ? error.message : 'Retry failed.';
+            set((state) => ({
                 streaming: false,
-                streamError: error instanceof Error ? error.message : 'Retry failed.',
+                messages: presentation.admitted ? updateRetryState(state.messages, presentation, 'unknown', failure) : state.messages,
+                retryPresentation: { ...presentation, hiddenMessageIds: [], error: failure },
+                streamError: null,
                 streamAuthUrl: null,
-            });
+            }));
         }
     },
 
@@ -3962,6 +4085,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
             return;
         }
+        const question = get().messages.find((message) => message.id === messageId && message.role === 'user');
+        const conversationId = get().activeConversationId;
+        if (!question || !conversationId) return;
+        let presentation = beginRetryPresentation(get().messages, question, 'chat');
+        const epoch = conversationEpoch;
+        const ownsPresentation = () => get().activeConversationId === conversationId
+            && conversationEpoch === epoch && get().retryPresentation?.id === presentation.id;
         set({
             streaming: true,
             orchestrationSurface: null,
@@ -3971,29 +4101,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,
+            retryPresentation: presentation,
         });
         try {
             const result = await editMessageApi(messageId, trimmed);
-            if (!result?.chat_request) {
+            if (!ownsPresentation() || !get().streaming) return;
+            if (!result?.chat_request || result.chat_request.conversation_id !== conversationId) {
                 throw new Error('The server did not return an edit request.');
             }
+            presentation = adoptPreparedRetry(result, presentation);
             await runChatStream(
                 result.chat_request,
                 result.chat_request.conversation_id,
-                { reloadOnDone: true },
+                { reloadOnDone: true, pendingUserMessageId: result.user_message_id },
             );
         } catch (error) {
-            set({
+            if (!ownsPresentation()) return;
+            const failure = error instanceof Error ? error.message : 'Edit failed.';
+            set((state) => ({
                 streaming: false,
-                streamError: error instanceof Error ? error.message : 'Edit failed.',
+                messages: presentation.admitted ? updateRetryState(state.messages, presentation, 'unknown', failure) : state.messages,
+                retryPresentation: { ...presentation, hiddenMessageIds: [], error: failure },
+                streamError: null,
                 streamAuthUrl: null,
-            });
+            }));
         }
     },
 
     changeAttempt: async (messageId, direction) => {
+        if (get().streaming) return;
+        const conversationId = get().activeConversationId;
+        const epoch = conversationEpoch;
         try {
             const result = await switchAttemptApi(messageId, direction);
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) return;
+            set({ retryPresentation: null, streamError: null, streamAuthUrl: null });
 
             // The only place the server reports the full attempt set, so it is remembered
             // against the thread rather than discarded.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for V2 model identity and document search scope.
-Version: 0.261.016
+Version: 0.261.317
 Implemented in: 0.261.016
 
 Document search failed in the V2 chat page with "Something went wrong while streaming the
@@ -125,10 +125,10 @@ def test_model_picker_keys_on_selection_key():
     """A deployment name can repeat across endpoints; selection_key cannot."""
     print("Testing model picker keying...")
     try:
-        catalog = read(APP, "route_frontend_chats.py")
+        catalog = read(APP, "functions_chat_model_catalog.py")
         # selection_key is scope:scopeId:endpointId:modelId.
         assert (
-            "selection_key = f\"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name}\""
+            "selection_key = f\"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name or request_model}\""
             in catalog
         ), "selection_key is what makes a catalog entry unique"
 
@@ -227,9 +227,9 @@ def test_retry_resolves_the_model_the_same_way():
             "Retry must resolve the deployment name from the catalog, since the option "
             "value is a selection key rather than a model name"
         )
-        assert "model: selection.model_deployment" in retry, (
-            "The retry endpoint takes a flat deployment name, which the selection rule "
-            "has already resolved"
+        assert "retryMessageApi(messageId, selection)" in retry, (
+            "Retry must send the complete, explicitly selected model identity, not a "
+            "flattened deployment name"
         )
         assert "model: options?.modelDeployment" not in retry, (
             "Sending the selection key as the model name would not resolve"

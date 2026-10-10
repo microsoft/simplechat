@@ -26,6 +26,7 @@ from functions_chat_content_checks import (
     attach_chat_check, check_chat_content, enabled_chat_scanners, orchestration_input_text,
     remember_checked_reply, retract_message_content, strip_private_chat_checks,
 )
+from functions_chat_message_metadata import patch_message_metadata
 
 
 # The messages the unchecked queue holds: allowed through while a required check could not
@@ -128,26 +129,9 @@ def persist_chat_reply(container, message):
 
 def patch_chat_message_metadata(container, message, fields=("thread_info",)):
     """Apply only intended metadata edits to a fresh body, preserving check decisions."""
-    incoming = message.get("metadata") or {}
-    for _attempt in range(3):
-        current = container.read_item(item=message["id"], partition_key=message["conversation_id"])
-        updated = deepcopy(current)
-        metadata = updated.setdefault("metadata", {})
-        for key in fields:
-            if key not in incoming:
-                continue
-            if key == "thread_info":
-                metadata.setdefault("thread_info", {}).update(deepcopy(incoming[key]))
-            else:
-                metadata[key] = deepcopy(incoming[key])
-        try:
-            return container.replace_item(
-                item=current["id"], body=updated, etag=current["_etag"],
-                match_condition=MatchConditions.IfNotModified,
-            )
-        except CosmosAccessConditionFailedError:
-            continue
-    raise ChatContentReviewConflict()
+    return patch_message_metadata(
+        container, message, fields, conflict_error=ChatContentReviewConflict,
+    )
 
 
 def refresh_checked_message(message, *, source=None, stores=None):

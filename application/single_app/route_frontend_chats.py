@@ -12,11 +12,13 @@ from collaboration_models import is_shared_conversation_backing
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
+from functions_chat_model_catalog import (
+    build_chat_model_catalog as _build_chat_model_catalog,
+    filter_chat_model_endpoints_by_governance as _filter_chat_model_endpoints_by_governance,
+    normalize_chat_model_value as _normalize_chat_model_value,
+)
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
-from functions_ai_connections import filter_model_endpoints_by_capability
-from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
-from functions_model_catalog import get_effective_model_profiles, model_profile_projection
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -473,10 +475,6 @@ def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_na
     }
 
 
-def _normalize_chat_model_value(value):
-    return str(value or '').strip()
-
-
 def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
     try:
         if scope_type == 'global':
@@ -493,31 +491,6 @@ def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
         return True
     except PermissionError:
         return False
-
-
-def _filter_chat_model_endpoints_by_governance(user_id, endpoints, feature_key):
-    try:
-        ensure_governance_access(feature_key, user_id)
-    except PermissionError:
-        return []
-
-    allowed_endpoints = []
-    for endpoint in endpoints or []:
-        if not isinstance(endpoint, dict):
-            continue
-        endpoint_id = str(endpoint.get('id') or '').strip()
-        if endpoint_id:
-            try:
-                ensure_governance_access(
-                    feature_key,
-                    user_id,
-                    item_entity_type='global_endpoint',
-                    item_id=endpoint_id,
-                )
-            except PermissionError:
-                continue
-        allowed_endpoints.append(endpoint)
-    return allowed_endpoints
 
 
 def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
@@ -624,114 +597,6 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
     # Legacy/APIM clients historically use the configured first deployment, not alphabetical order.
     default_option = valid_options[0] if not any(option.get('scope_type') for option in valid_options) else sorted_options[0]
     return serialize_option(default_option)
-
-
-def _chat_model_reasoning_metadata(model):
-    model_name = next((
-        model[field].strip() for field in REASONING_IDENTIFIER_FIELDS
-        if isinstance(model.get(field), str) and model[field].strip()
-    ), '')
-    return {
-        'model_name': model_name,
-        'reasoning_capabilities': resolve_model_reasoning_policy(model),
-    }
-
-
-def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
-    profiles = get_effective_model_profiles(settings)
-    if not settings.get('enable_multi_model_endpoints', False):
-        if settings.get('enable_gpt_apim', False):
-            models = [
-                {'deploymentName': name.strip(), 'modelName': name.strip()}
-                for name in str(settings.get('azure_apim_gpt_deployment') or '').split(',')
-                if name.strip()
-            ]
-        else:
-            models = (settings.get('gpt_model') or {}).get('selected', [])
-        catalog = []
-        for model in models:
-            if not isinstance(model, dict):
-                continue
-            deployment = _normalize_chat_model_value(model.get('deploymentName'))
-            if deployment:
-                reasoning_metadata = _chat_model_reasoning_metadata(model)
-                catalog.append({
-                    'selection_key': deployment,
-                    'deployment_name': deployment,
-                    'display_name': reasoning_metadata['model_name'],
-                    **reasoning_metadata,
-                    **model_profile_projection(model, {}, settings, profiles),
-                })
-        return catalog
-
-    catalog = []
-
-    def append_models(endpoints, scope_type, scope_id=None, scope_name=None):
-        sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints, catalog_settings=settings)
-        normalized_endpoints, _ = normalize_model_endpoints(sanitized_endpoints)
-
-        for endpoint in filter_model_endpoints_by_capability(normalized_endpoints):
-            if not endpoint.get('enabled', True):
-                continue
-
-            endpoint_id = endpoint.get('id') or ''
-            provider = endpoint.get('provider') or 'aoai'
-            models = endpoint.get('models') or []
-
-            for model in models:
-                if not isinstance(model, dict) or not model.get('enabled', True):
-                    continue
-
-                model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
-                request_model = resolve_model_endpoint_request_model(endpoint, model)
-                deployment_name = request_model
-                display_name = model.get('displayName') or model.get('modelName') or request_model or deployment_name or model.get('name') or model_id
-                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name or request_model}"
-
-                catalog.append({
-                    'selection_key': selection_key,
-                    'model_id': model_id,
-                    **_chat_model_reasoning_metadata(model),
-                    'display_name': display_name,
-                    'request_model': request_model,
-                    'deployment_name': deployment_name,
-                    'endpoint_id': endpoint_id,
-                    'provider': provider,
-                    'scope_type': scope_type,
-                    'scope_id': scope_id,
-                    'scope_name': scope_name,
-                    'icon': model.get('icon') if isinstance(model.get('icon'), dict) else {},
-                    **model_profile_projection(model, endpoint, settings, profiles),
-                })
-
-    append_models(
-        _filter_chat_model_endpoints_by_governance(user_id, settings.get('model_endpoints', []) or [], 'governance_global_endpoints'),
-        'global',
-        None,
-        'Global'
-    )
-
-    if settings.get('allow_user_custom_endpoints', False):
-        append_models(
-            _filter_chat_model_endpoints_by_governance(user_id, user_settings_dict.get('personal_model_endpoints', []) or [], 'governance_user_endpoints'),
-            'personal',
-            user_id,
-            'Personal'
-        )
-
-    if settings.get('enable_group_workspaces', False) and settings.get('allow_group_custom_endpoints', False):
-        for group_doc in user_groups_raw:
-            group_id = group_doc.get('id')
-            if not group_id:
-                continue
-            append_models(
-                _filter_chat_model_endpoints_by_governance(user_id, get_group_model_endpoints(group_id), 'governance_group_endpoints'),
-                'group',
-                group_id,
-                group_doc.get('name', 'Unnamed Group')
-            )
-
-    return catalog
 
 
 def _build_chat_prompt_catalog(*, user_id, settings, user_groups_raw, user_visible_public_workspaces):

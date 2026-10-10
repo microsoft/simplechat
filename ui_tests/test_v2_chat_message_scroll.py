@@ -1,7 +1,7 @@
 # test_v2_chat_message_scroll.py
 """
 Real-component browser regression for V2 chat message reading positions.
-Version: 0.261.318
+Version: 0.261.319
 Implemented in: 0.261.318
 
 Production MessageList, chat store, completion handling and CSS run in Chromium.
@@ -148,7 +148,11 @@ def scroll_back(page, top=100):
 
 
 def start_stream(page):
-    update(page, {"streaming": True, "streamingContent": ""})
+    page.evaluate(
+        "(id) => window.OrchHarness.stores.chat.useChatStore.getState().beginOrchestrationTurn(id, 'Streaming question', undefined, false, 'scroll-turn')",
+        CHAT,
+    )
+    frames(page)
 
 
 def push_content(page, content):

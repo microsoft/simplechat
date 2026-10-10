@@ -75,6 +75,7 @@ import { ImageEditor } from './ImageEditor';
 import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 import { ImageProposalScope } from './ImageProposalContext';
 import { normalizeFoundryAuthUrl } from '../../lib/foundryAuth';
+import { messageOrchestrationTurn, savedResponseAttempt, selectedAttemptError } from '../../lib/chatRetryAttempts';
 import {
     answerGeneratedImages,
     extractProposalSpecs,
@@ -1322,6 +1323,7 @@ function StreamingBubble() {
         reconnectPhase,
         orchestrationSurface,
         activeConversationId,
+        retryPresentation,
     } = useChatStore();
     const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
     const chatWidth = useUiStore((state) => state.chatWidth);
@@ -1342,7 +1344,8 @@ function StreamingBubble() {
 
     const connecting = reconnectPhase === 'connecting';
     const runShownOnCard = orchestrationSurface === 'running' && runCardShowsProgress;
-    const activityLabel = orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';
+    const activityLabel = retryPresentation && !retryPresentation.admitted ? 'Preparing retry'
+        : orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';
 
     if (runShownOnCard && !streamingContent) {
         return null;
@@ -1523,6 +1526,27 @@ function ActiveOrchestrationCard({ conversationId }: { conversationId: string })
     return null;
 }
 
+function ResponseError({ message, authUrl }: { message: string; authUrl?: string | null }) {
+    const safeAuthUrl = normalizeFoundryAuthUrl(authUrl);
+    return (
+        <GlassPanel role="alert" elevation="flat" className="flex items-start gap-2 p-3 text-sm text-danger">
+            <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+            <div className="min-w-0 space-y-2 break-words">
+                <p>{message}</p>
+                {safeAuthUrl && (
+                    <>
+                        <a href={safeAuthUrl} target="_blank" rel="noopener noreferrer"
+                            className="inline-block text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                            Sign in or grant Foundry access
+                        </a>
+                        <p className="text-text-2">After signing in, return to this chat and retry your message. It will not retry automatically.</p>
+                    </>
+                )}
+            </div>
+        </GlassPanel>
+    );
+}
+
 export function MessageList() {
     const {
         messages,
@@ -1533,12 +1557,15 @@ export function MessageList() {
         streamError,
         streamAuthUrl,
         activeConversationId,
+        retryPresentation,
         completedReply,
     } = useChatStore();
-    const safeStreamAuthUrl = normalizeFoundryAuthUrl(streamAuthUrl);
+    const activeTurnId = useOrchestrationStore((state) => selectActiveTurn(state, activeConversationId ?? ''));
     const appTitle = useBootstrapStore((state) => state.data?.branding?.app_title);
     const chatWidth = useUiStore((state) => state.chatWidth);
 
+    const retryIndex = retryPresentation ? messages.findIndex((message) => message.id === retryPresentation.userMessageId) : -1;
+    const retryingEarlierTurn = retryIndex >= 0 && messages.some((message, index) => index > retryIndex && message.role === 'user');
     const isEmpty = useMemo(
         () => messages.length === 0 && !streaming && !messagesLoading,
         [messages.length, streaming, messagesLoading],
@@ -1565,7 +1592,10 @@ export function MessageList() {
         // resolves. An orchestration attempt a later retry replaced is hidden the same way:
         // the thread shows the latest attempt, and the earlier one stays saved for the record.
         const supersededRuns = supersededOrchestrationRunIds(messages);
-        const shown = messages.filter((message) => !isSupersededByWorkflowReply(message)
+        const shown = messages.filter((message) => !(
+            retryPresentation && !retryPresentation.admitted && message.id !== retryPresentation.userMessageId
+            && retryPresentation.hiddenMessageIds.includes(message.id)
+        ) && !isSupersededByWorkflowReply(message)
             && !isSupersededOrchestrationAttempt(message, supersededRuns));
         const grouped = groupProposalImages(shown);
         if (grouped.size === 0) {
@@ -1592,7 +1622,14 @@ export function MessageList() {
         );
 
         return { threadMessages: visible, proposalImagesByMessage: grouped };
-    }, [messages]);
+    }, [messages, retryPresentation]);
+    const streamingAnchor = streaming && retryPresentation?.conversationId === activeConversationId
+        && threadMessages.some((message) => message.id === retryPresentation.userMessageId)
+        ? retryPresentation.userMessageId : null;
+    const planAnchor = activeTurnId
+        ? threadMessages.find((message) => message.role === 'user' && messageOrchestrationTurn(message) === activeTurnId)?.id
+        : undefined;
+    const tailPlan = !planAnchor && !threadMessages.some((message) => message.role === 'user' && messageOrchestrationTurn(message));
 
     const {
         scrollRef, hasNewMessages, onScroll, onWheel, onKeyDown, onTouchStart, onPointerDown, jumpToNewest, pauseFollowing,
@@ -1603,6 +1640,7 @@ export function MessageList() {
         streaming,
         content: streamingContent,
         completedReply,
+        followLatest: !retryingEarlierTurn,
     });
 
     const messagePane = (
@@ -1650,17 +1688,29 @@ export function MessageList() {
                 <PendingActionPlacementProvider messages={threadMessages}>
                     <PendingActionsConversationSection scrollRef={scrollRef} pauseFollowing={pauseFollowing} />
                     <div aria-live="polite" aria-atomic="false" className="space-y-4">
-                        {threadMessages.map((message) => (
-                            <div key={message.id} data-scroll-message-id={message.id}>
-                                <MessageBubble
-                                    message={message}
-                                    proposalImages={proposalImagesByMessage.get(message.id)}
-                                />
-                            </div>
-                        ))}
-                        {streaming && <StreamingBubble />}
-                        <StreamingPendingActions />
-                        {activeConversationId && (
+                        {threadMessages.map((message) => {
+                            const here = streamingAnchor === message.id;
+                            const localRetry = retryPresentation?.userMessageId === message.id ? retryPresentation : null;
+                            const error = message.role === 'user' && !here
+                                ? localRetry?.error || selectedAttemptError(message, threadMessages) : undefined;
+                            return (
+                                <div key={message.id} data-scroll-message-id={message.id}>
+                                    <MessageBubble message={message} proposalImages={proposalImagesByMessage.get(message.id)} />
+                                    {here && <StreamingBubble />}
+                                    {here && <StreamingPendingActions />}
+                                    {error && <div data-retry-error={message.id}><ResponseError message={error} authUrl={localRetry?.authUrl} /></div>}
+                                    {!here && savedResponseAttempt(message).state === 'prepared' && (
+                                        <p role="status" className="px-1 text-sm text-text-3">This retry is prepared. Select Retry to generate its response.</p>
+                                    )}
+                                    {activeConversationId && planAnchor === message.id && !(localRetry && !localRetry.admitted) && (
+                                        <ActiveOrchestrationCard conversationId={activeConversationId} />
+                                    )}
+                                </div>
+                            );
+                        })}
+                        {streaming && !streamingAnchor && <StreamingBubble />}
+                        {!streamingAnchor && <StreamingPendingActions />}
+                        {activeConversationId && tailPlan && (
                             <ActiveOrchestrationCard conversationId={activeConversationId} />
                         )}
                         <AgentActivityIndicator />
@@ -1668,27 +1718,7 @@ export function MessageList() {
                     </div>
                 </PendingActionPlacementProvider>
 
-                {streamError && (
-                    <GlassPanel
-                        role="alert"
-                        elevation="flat"
-                        className="flex items-start gap-2 p-3 text-sm text-danger"
-                    >
-                        <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-                        <div className="min-w-0 space-y-2 break-words">
-                            <p>{streamError}</p>
-                            {safeStreamAuthUrl ? (
-                                <>
-                                    <a href={safeStreamAuthUrl} target="_blank" rel="noopener noreferrer"
-                                        className="inline-block text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
-                                        Sign in or grant Foundry access
-                                    </a>
-                                    <p className="text-text-2">After signing in, return to this chat and retry your message. It will not retry automatically.</p>
-                                </>
-                            ) : null}
-                        </div>
-                    </GlassPanel>
-                )}
+                {streamError && <ResponseError message={streamError} authUrl={streamAuthUrl} />}
             </div>
         </div>
     );
