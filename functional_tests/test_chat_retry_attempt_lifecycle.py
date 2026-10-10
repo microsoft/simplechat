@@ -1,7 +1,7 @@
 # test_chat_retry_attempt_lifecycle.py
 """
 Functional regression coverage for durable chat retry attempts.
-Version: 0.261.319
+Version: 0.261.320
 Implemented in: 0.261.317
 
 Real replay, route admission, history, and background-worker functions run with
@@ -202,6 +202,31 @@ def test_prepared_agent_reauthorization_failure_is_durable(context, monkeypatch)
     assert saved['code'] == 'forbidden'
     assert saved['error'] == response.get_json()['error']
     assert len(context.messages.items) == 3
+
+
+@pytest.mark.parametrize('error_type', ['submission', 'catalog'])
+@pytest.mark.parametrize('already_prepared', [False, True])
+def test_retry_preparation_never_returns_exception_details(context, monkeypatch, error_type, already_prepared):
+    question = context.prepare() if already_prepared else context.messages.get('q1')
+    sentinel = 'Traceback: private storage endpoint and credential'
+    error = (
+        context.conversations.SubmissionIdError(sentinel) if error_type == 'submission'
+        else context.conversations.ModelCatalogError(sentinel)
+    )
+
+    def refuse(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(context.conversations, '_build_authorized_message_replay_request', refuse)
+    with context.app.test_request_context('/retry', method='POST', json={}):
+        response, status = context.conversations._prepare_message_attempt_response(question['id'])
+    assert status == 400
+    assert response.get_json()['code'] == 'invalid_retry_selection'
+    assert sentinel not in response.get_data(as_text=True)
+    if already_prepared:
+        saved = context.messages.get(question['id'])['metadata']['response_attempt']
+        assert saved['state'] == 'failed'
+        assert saved['error'] == response.get_json()['error']
 
 
 def test_interleaved_reservation_recovers_the_same_question(context):

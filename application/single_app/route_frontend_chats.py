@@ -14,15 +14,11 @@ from functions_content import *
 from functions_settings import *
 from functions_chat_model_catalog import (
     build_chat_model_catalog as _build_chat_model_catalog,
-    chat_model_reasoning_metadata as _chat_model_reasoning_metadata,
     filter_chat_model_endpoints_by_governance as _filter_chat_model_endpoints_by_governance,
     normalize_chat_model_value as _normalize_chat_model_value,
 )
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
-from functions_ai_connections import filter_model_endpoints_by_capability
-from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
-from functions_model_catalog import get_effective_model_profiles, model_profile_projection
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,

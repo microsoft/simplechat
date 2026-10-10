@@ -1863,7 +1863,7 @@ def build_conversation_snapshot(
     rows = list(messages or ())
     superseded = superseded_orchestration_run_ids(rows)
     if logical_order:
-        # Retry ordering depends on initialized application-owned message storage.
+        # Ordering is needed only for retry snapshots; the helper has no bootstrap dependencies.
         from functions_chat_retry import order_retry_messages
 
         rows = order_retry_messages([message for message in rows if isinstance(message, dict)])

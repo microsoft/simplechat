@@ -530,9 +530,10 @@ def _prepare_message_attempt_response(message_id, *, edited=False):
         log_event('[CHAT_RETRY] Retry refused.', extra={'code': error.code, 'user_id': user_id}, level=logging.INFO)
         return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
     except (SubmissionIdError, ModelCatalogError) as error:
-        _refuse_prepared_message_attempt(prepared_question, str(error), 'invalid_retry_selection')
+        message = 'The retry selection or request identifier is invalid. Review your selections.'
+        _refuse_prepared_message_attempt(prepared_question, message, 'invalid_retry_selection')
         log_event('[CHAT_RETRY] Invalid retry selection.', extra={'error_type': type(error).__name__}, level=logging.WARNING)
-        return jsonify({'error': str(error), 'code': 'invalid_retry_selection'}), 400
+        return jsonify({'error': message, 'code': 'invalid_retry_selection'}), 400
     except PermissionError:
         message = 'An original selection is no longer authorized. Review your selections.'
         _refuse_prepared_message_attempt(prepared_question, message, 'forbidden')

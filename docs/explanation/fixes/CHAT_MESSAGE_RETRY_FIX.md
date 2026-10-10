@@ -4,7 +4,7 @@ title: "Chat message retry reliability"
 description: "Canonical saved-input retries, review-first orchestration regeneration, and attempt-scoped progress and errors."
 section: "Explanation"
 audience: developer
-version: "0.261.319"
+version: "0.261.320"
 ---
 
 ## Issue and root cause
@@ -22,6 +22,20 @@ Related config.py update: `VERSION = "0.261.317"` in
 `application/single_app/config.py`.
 
 ## Request reconstruction and durable attempts
+
+The **0.261.320** review follow-up removes raw submission/catalog exception text
+from retry refusal responses. Invalid identifiers receive stable notices rather
+than exception details. Conditional metadata writes now live in
+`functions_chat_message_metadata.py`, below retry and content-review owners,
+removing the retry/context bootstrap cycle while preserving fresh-body merges,
+ETag checks, and explicit exhausted-conflict failures. The existing content-review
+wrapper retains its domain-specific conflict exception.
+
+`test_chat_retry_import_boundaries.py` covers real cold imports in both orders,
+web/scheduler bootstrap, and storage failures in normal and optimized Python.
+Retry lifecycle and regeneration tests also inject private exception details and
+verify that refusal responses do not expose them. The related `config.py` patch
+version is **0.261.320**; the original retry implementation remains **0.261.317**.
 
 `functions_chat_model_catalog.py` shares the authorized chat model catalog.
 `functions_chat_retry.py` reconstructs allowlisted inputs, resolves the viewed

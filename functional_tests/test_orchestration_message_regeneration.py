@@ -1,7 +1,7 @@
 # test_orchestration_message_regeneration.py
 """
 Functional coverage for fresh, review-required orchestration message generations.
-Version: 0.261.319
+Version: 0.261.320
 Implemented in: 0.261.317
 
 The real planning, revision, execution, and retry state machines run against the
@@ -463,6 +463,26 @@ def test_malformed_preparation_does_not_mutate_the_source(context, payload):
     )
     assert response.status_code == 400, response.get_json()
     assert not context.conversations.read_item('conv1', 'conv1').get('retry_threads')
+
+
+@pytest.mark.parametrize('prepared_invocation', [False, True])
+def test_regeneration_submission_errors_never_expose_exception_details(context, monkeypatch, prepared_invocation):
+    original = source_run(context)
+    _, prepared = prepare(context, original['user_message_id'])
+    sentinel = 'Traceback: private storage endpoint and credential'
+
+    def refuse(*args, **kwargs):
+        raise context.route.SubmissionIdError(sentinel)
+
+    if prepared_invocation:
+        monkeypatch.setattr(context.route, '_restore_prepared_regeneration', refuse)
+        response = context.client.post('/api/v2/orchestration/plan', json=prepared['plan_request'])
+    else:
+        monkeypatch.setattr(context.route, 'normalize_submission_id', refuse)
+        response, _ = prepare(context, original['user_message_id'])
+    assert response.status_code == 400
+    assert response.get_json()['code'] == 'invalid_request'
+    assert sentinel not in response.get_data(as_text=True)
 
 
 def test_unsaved_planning_retry_review_floor_cannot_be_overridden_by_auto(context):

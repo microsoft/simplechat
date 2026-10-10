@@ -964,7 +964,7 @@ def _regeneration_error(exc):
     if isinstance(exc, ChatRetryError):
         payload, status = {'error': exc.public_message, 'code': exc.code}, exc.status_code
     elif isinstance(exc, SubmissionIdError):
-        payload, status = {'error': str(exc), 'code': 'invalid_request'}, 400
+        payload, status = {'error': 'The retry request identifier is invalid.', 'code': 'invalid_request'}, 400
     elif isinstance(exc, (ModelCatalogError, ImageReferenceError, PublicChatScopeError)):
         payload, status = {'error': exc.public_message, 'code': exc.code}, getattr(exc, 'status_code', 400)
     else:
@@ -1006,7 +1006,7 @@ def _with_prepared_regeneration(view):
                 )
             return result
         except (
-            ChatRetryError, ConversationContextError, ElicitationContextError, ModelCatalogError,
+            ChatRetryError, SubmissionIdError, ConversationContextError, ElicitationContextError, ModelCatalogError,
             ImageReferenceError, PublicChatScopeError, CatalogResolutionError,
             PermissionError, ScreeningError, AzureError,
         ) as exc:

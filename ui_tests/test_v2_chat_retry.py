@@ -1,7 +1,7 @@
 # test_v2_chat_retry.py
 """
 Browser coverage for saved model, agent, and orchestration retry attempts.
-Version: 0.261.319
+Version: 0.261.320
 Implemented in: 0.261.317
 
 Runs the real message list, composer, stores, and controller with production CSS.
@@ -17,9 +17,12 @@ import pytest
 from playwright.sync_api import expect
 
 import test_v2_orchestration_plan_editor as editor_tests
-from test_v2_orchestration_plan_editor import connect_options, editor_assets, editor_browser  # noqa: F401
 from test_v2_orchestration_planning_retry import CONVERSATION, PLAN, PlanningApi, mount
 
+
+connect_options = editor_tests.connect_options
+editor_assets = editor_tests.editor_assets
+editor_browser = editor_tests.editor_browser
 
 pytestmark = pytest.mark.ui
 THREAD = "saved-retry-thread"

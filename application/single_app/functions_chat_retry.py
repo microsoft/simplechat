@@ -14,7 +14,7 @@ from azure.cosmos.exceptions import (
 
 from collaboration_models import is_shared_conversation_backing
 from functions_assist_submissions import normalize_submission_id
-from functions_chat_content_review import patch_chat_message_metadata
+from functions_chat_message_metadata import patch_message_metadata
 from functions_message_deletion import is_soft_deleted_message
 
 
@@ -422,7 +422,13 @@ def _publish_retry_attempt(messages, conversations, question):
         if message['id'] == question['id']:
             continue
         message.setdefault('metadata', {}).setdefault('thread_info', {})['active_thread'] = False
-        patch_chat_message_metadata(messages, message)
+        patch_message_metadata(
+            messages, message,
+            conflict_error=lambda: ChatRetryError(
+                'The message changed during preparation. Reload before retrying.',
+                code='retry_attempt_changed',
+            ),
+        )
     for _attempt in range(3):
         conversation = conversations.read_item(item=conversation_id, partition_key=conversation_id)
         updated = deepcopy(conversation)
