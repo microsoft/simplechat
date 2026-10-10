@@ -9,12 +9,12 @@ initializes clients. Receipts are private run-step records, removed with their r
 """
 
 import json
+import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from hashlib import sha256
 from threading import RLock
-from uuid import uuid4
 
 from functions_orchestration_result_contracts import ResultContractError, canonical_bytes
 
@@ -213,7 +213,7 @@ class OperationJournal:
         self.fingerprint = fingerprint
         self.authorize = authorize
         self.id = f'operation:{sha256(step_id.encode()).hexdigest()}'
-        self.claim = uuid4().hex
+        self.claim = uuid.uuid4().hex
         self.lock = RLock()
         self.receipts = []
         self.recovered = False

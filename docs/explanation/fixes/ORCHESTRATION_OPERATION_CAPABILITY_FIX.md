@@ -1,6 +1,8 @@
-# Orchestration operation capability fix (v0.261.321)
+# Orchestration operation capability fix (v0.261.322)
 
 Fixed in version: **0.261.321**, tracked in `application/single_app/config.py`.
+
+Review validation follow-up in version: **0.261.322**.
 
 ## Issue and root cause
 
@@ -76,3 +78,28 @@ These overlapping suites are not a unique test-count total.
 Microsoft Graph, tokens, storage, and model replies are doubled in functional regressions.
 No real email or invitation was sent. Live planner-model selection and the original
 deployment still require deployment-level verification.
+
+### Import-cycle review
+
+CodeQL correctly reports cycles in the dependency graph, including
+`functions_m365_operations` -> `functions_orchestration_operations` ->
+`functions_m365_operations`, and the run reader's path through orchestration
+context and the action catalog. Deferred imports do not remove these cycles.
+They are execution-time dependencies: loading the catalog does not load operation
+storage, and operation inputs and delivery require initialized runtime owners.
+Hoisting these imports would introduce startup-order risk.
+
+The review follow-up retains these boundaries rather than attempting a broad
+orchestration/M365 dependency rewrite in this feature change.
+`test_orchestration_operation_imports.py` adds fresh-process checks of both early
+import orders, real web and scheduler bootstrap, normal and optimized Python,
+blocked network access, and claimed-result recovery. This verifies lifecycle
+safety, not an acyclic dependency graph. Separating delivery/run/input readers
+through owner-supplied callbacks remains architectural follow-up work.
+
+Operation claims now resolve `uuid.uuid4` through the module so scoped replacements
+are observed. Test fixture imports are explicitly bound without changing their
+setup/cleanup, and the unused delivery-test tuple unpacking was removed.
+The combined follow-up run passed **187 tests**, including the 11 new import and
+UUID-accessor checks. Web startup is tested before scheduler wiring; scheduler
+startup is also tested independently, matching the separate production processes.

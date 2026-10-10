@@ -1,7 +1,7 @@
 # test_orchestration_operation_planning.py
 """Functional tests for operation intent, research inputs, and capability truth.
 
-Version: 0.261.321
+Version: 0.261.322
 Implemented in: 0.261.321
 """
 
@@ -9,7 +9,11 @@ from copy import deepcopy
 
 import pytest
 
-from test_orchestration_action_planning import ACTION, SETTINGS, binding, modules
+import test_orchestration_action_planning as action_planning
+from test_orchestration_action_planning import ACTION, SETTINGS, binding
+
+
+modules = action_planning.modules
 
 
 def operation_plan(capability='action_invoke'):

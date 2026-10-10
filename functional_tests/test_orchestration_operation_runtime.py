@@ -1,7 +1,7 @@
 # test_orchestration_operation_runtime.py
 """Policy-governed M365 effects and claimed recovery through the real action runner.
 
-Version: 0.261.321
+Version: 0.261.322
 Implemented in: 0.261.321
 Storage, Graph, tokens and the model are doubled; external network access is blocked.
 """
@@ -114,7 +114,6 @@ def test_manual_draft_does_not_send_under_changed_plan(env, world, operations):
 
 
 def test_missing_delivery_binding_fails_before_outlook_draft_creation(env, world, operations):
-    _runtime, delivery, _cards = operations
     world.plan['plan']['steps'][0]['arguments']['execution_intent'] = 'gather'
     world.replies = [send_call()]
     with pytest.raises(env.orchestration.OrchestrationM365Error):

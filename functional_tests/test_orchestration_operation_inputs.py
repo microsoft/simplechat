@@ -1,7 +1,7 @@
 # test_orchestration_operation_inputs.py
 """Complete authorized integration input and source-lineage regressions.
 
-Version: 0.261.321
+Version: 0.261.322
 Implemented in: 0.261.321
 """
 
@@ -13,7 +13,10 @@ import pytest
 from functions_orchestration_operations import IntegrationInputError, integration_inputs, integration_task
 from functions_orchestration_results import NamedOutput
 from test_support.orchestration_results import ResultFixture, complete
-from test_orchestration_action_planning import modules
+import test_orchestration_action_planning as action_planning
+
+
+modules = action_planning.modules
 
 
 def input_world(text='Complete prepared email, including every detail.'):
