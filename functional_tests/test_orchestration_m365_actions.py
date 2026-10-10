@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for Microsoft 365 actions in chat orchestration.
-Version: 0.261.270
+Version: 0.261.321
 Implemented in: 0.261.238
 Shared conversations read for their real audience, with the request as consent, in: 0.261.270
+Policy-governed operation intent and recovery added in: 0.261.321
 
 An orchestration "Use an action" step runs in its own request context, the execution
 identity's bridge. Before 0.261.238 no Microsoft 365 execution context existed there, so
@@ -304,7 +305,9 @@ def tool_call(function="m365_email-get_my_messages", **arguments):
     )
 
 
-def run_step(env, world, *, request_key=REQUEST_KEY, captured=None):
+def run_step(
+    env, world, *, request_key=REQUEST_KEY, captured=None, execution_intent='gather', journal=None, named_inputs=None,
+):
     """Run the action step the way orchestration does: inside the signed-in request."""
     with world.app.test_request_context("/api/v2/orchestration/run", base_url="https://simplechat.example"):
         session["user"] = {"oid": USER, "tid": TENANT, "roles": ["User"], "preferred_username": "user@example.test"}
@@ -323,12 +326,16 @@ def run_step(env, world, *, request_key=REQUEST_KEY, captured=None):
         return None if source is None else {"captured": True}
 
     invocation_capture = env.capture.OrchestrationInvocationCapture(capture)
-    result = asyncio.run(env.actions.invoke_action(
-        ACTION_REF, "Retrieve my latest emails.", context, settings=deepcopy(world.settings),
-        user_id=USER, cancel_requested=lambda: False, invocation_capture=invocation_capture,
-        m365_request_key=request_key,
-        m365_origin={"run_id": "run-2", "attempt_index": 2, "step_id": STEP},
-    ))
+    from functions_orchestration_operations import operation_journal_scope
+
+    with operation_journal_scope(journal, complete_inputs=bool(named_inputs)):
+        result = asyncio.run(env.actions.invoke_action(
+            ACTION_REF, "Complete the requested mail task.", context, settings=deepcopy(world.settings),
+            user_id=USER, cancel_requested=lambda: False, invocation_capture=invocation_capture,
+            m365_request_key=request_key, execution_intent=execution_intent,
+            named_inputs=named_inputs,
+            m365_origin={"run_id": "run-2", "attempt_index": 2, "step_id": STEP},
+        ))
     return result, context
 
 

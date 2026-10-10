@@ -4,7 +4,7 @@ title: "Microsoft 365 Email"
 description: "Read and search mail and prepare or send messages without enabling unrelated Microsoft 365 tools."
 section: "Reference"
 audience: user
-version: "0.261.305"
+version: "0.261.321"
 ---
 
 <!-- action-slug: m365-email -->
@@ -32,6 +32,12 @@ includes mail reads, drafts/read-state changes, sending, and recipient lookup.
 Granting it does not enable disabled action capabilities or approve a send.
 
 Example: "Summarize the recent project emails and draft a reply for me to review."
+
+Since **0.261.321**, Orchestrate can choose an authorized email action directly or use
+an agent with this action. Explicit operation intent allows configured sending or
+read-state changes; gathering intent remains read-only. Research and prepared content
+arrive as complete named inputs. A request to send still follows the configured manual,
+delayed, or automatic delivery mode, and a draft awaiting review is not reported as sent.
 
 In shared conversations, email results can disclose personal information.
 Users acknowledge that disclosure in chat or Approvals. Their source preference

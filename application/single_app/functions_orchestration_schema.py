@@ -1764,13 +1764,21 @@ FAILURE_MESSAGES = {
         "This step's agent or action isn't available to you right now, so it didn't run. Check "
         'that it still exists, is enabled and is shared with you, then retry.'
     ),
+    'operation_recovery_required': (
+        'An operation may already have run, or its material changed. Check its saved outgoing '
+        'action and the external service before creating a new plan. It was not repeated.'
+    ),
+    'integration_input_unavailable': (
+        'The complete prepared input is unavailable, unauthorized, or exceeds the integration '
+        'input budget. No shortened content was substituted. Review the input or choose a larger model.'
+    ),
     'external_session_required': (
         'This step continued in the background, where your sign-in is not available to confirm '
         'access to web search, web pages, deep research, agents or actions, or to start a saved '
         'workflow. Send the request again to use them.'
     ),
     'm365_sign_in_required': (
-        'Microsoft 365 needs you to sign in or grant access before this step can read your data. '
+        'Microsoft 365 needs you to sign in or grant access before this step can use your account. '
         'Select Connect Microsoft 365, then Retry from failed step.'
     ),
     'm365_approval_required': (
@@ -1786,8 +1794,8 @@ FAILURE_MESSAGES = {
         'agents from your own conversation.'
     ),
     'm365_read_only': (
-        "Plans can only read Microsoft 365 data. This action's enabled functions all send or change "
-        'data, so use it from chat instead.'
+        "This step only gathers Microsoft 365 information, but the action only sends or changes "
+        'data. Ask the planner for an explicit operation step if that is what you want.'
     ),
     'm365_model_limits_required': (
         "This step's model has no verified token limits, so SharePoint and OneDrive file content "
@@ -1915,8 +1923,10 @@ M365_STEP_FAILURE_CODES = frozenset({
     'm365_model_limits_required', 'm365_evidence_unavailable',
 })
 # Failures an exception may carry by code, through its ``orchestration_failure_code``.
-EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {'external_session_required'}
-# Steps that hand work to one of the user's agents or actions; they take no retained inputs.
+EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {
+    'external_session_required', 'operation_recovery_required', 'integration_input_unavailable',
+}
+# Steps that hand work to an integration; input-reading failures have their own code.
 INTEGRATION_CAPABILITIES = frozenset({'action_invoke', 'agent_invoke'})
 
 
@@ -2004,9 +2014,8 @@ def failure_from_exception(exc, *, answering=False, _depth=0):
 def access_failure(exc, *, capability_id=None, _depth=0):
     """Explain a refused retained source, naming a missing signed-in session when that was why.
 
-    An agent or action step takes no retained inputs, so a refusal there is about the agent
-    or action itself, not a saved result. Only the refusal's stable reason code is read,
-    never exception text.
+    Input readers report their own failures. A refusal from integration admission concerns
+    the selected agent or action. Only stable reason codes are read, never exception text.
     """
     for reason in (getattr(exc, 'authority_reason', None), getattr(exc, 'code', None)):
         if type(reason) is str and reason == EXTERNAL_SESSION_UNAVAILABLE_REASON:
@@ -2038,7 +2047,9 @@ def failure_is_transient(failure):
 
 # Failures in which a service declined or rejected the planned request itself. A checkpoint
 # retry resends exactly the same request, so it would reproduce them.
-REQUEST_REFUSAL_FAILURE_CODES = frozenset({'image_content_refused', 'image_request_invalid'})
+REQUEST_REFUSAL_FAILURE_CODES = frozenset({
+    'image_content_refused', 'image_request_invalid', 'operation_recovery_required',
+})
 
 
 def failure_repeats_on_retry(failure):
@@ -2073,6 +2084,7 @@ def build_step_result(
     analysis_consumption=None,
     task_result=None,
     wait=None,
+    operation_receipts=None,
 ):
     """The single shape every capability adapter returns.
 
@@ -2110,6 +2122,10 @@ def build_step_result(
         if type(task_result) is not TaskResult:
             raise ResultContractError('result_contract_invalid')
         result['task_result'] = task_result
+    if operation_receipts:
+        if type(operation_receipts) is not list or len(canonical_bytes(operation_receipts)) > 512000:
+            raise ResultContractError('result_contract_invalid')
+        result['operation_receipts'] = deepcopy(operation_receipts)
     if wait is not None:
         if type(wait) is not dict:
             raise ResultContractError('result_wait_invalid')

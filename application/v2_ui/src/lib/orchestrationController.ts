@@ -61,6 +61,7 @@ import { choosePlanSubmissionId, rememberPlanSubmission } from './planSubmission
 import { canonicalPlanReferences, PlanReferenceError, type PlanReference } from './planReferences';
 import { announceCompletedReply } from './replyEvents';
 import { currentConversationEpoch, useChatStore } from '../stores/chatStore';
+import { chatPendingActionsStore } from '../stores/m365PendingActionsStore';
 import {
     selectEdits,
     selectCanEditPlan,
@@ -77,6 +78,13 @@ import {
 /** Mirrors `orchestrationStore`'s own `scopeKey`; the separator has to match to share a key space. */
 function scopeKey(conversationId: string, turnId: string): string {
     return `${conversationId}\u0000${turnId}`;
+}
+
+function refreshOutgoingActions(conversationId: string): void {
+    const pending = chatPendingActionsStore.getState();
+    if (pending.conversationId === conversationId) {
+        void pending.refreshList();
+    }
 }
 
 /**
@@ -847,6 +855,11 @@ async function executeSavedPlan(
                 current.applyStepEvent(conversationId, turnId, event);
                 applyOrchestrationOutputEvent(runId, event);
                 current.mergeReasoningAdjustments(conversationId, turnId, event.reasoning_adjustments);
+                const step = plan.steps.find((item) => item.step_id === event.step_id);
+                if ((step?.capability_id === 'action_invoke' || step?.capability_id === 'agent_invoke')
+                    && (event.status === 'completed' || event.status === 'failed')) {
+                    refreshOutgoingActions(conversationId);
+                }
             },
             // A run reports each step starting and finishing as a `thought`, the same event
             // planning uses, so it lands in the same place a planning thought does — feeding the
@@ -935,6 +948,8 @@ async function executeSavedPlan(
         },
         controller.signal,
     );
+    // A draft may have been saved even when the stream ended without its terminal frame.
+    refreshOutgoingActions(conversationId);
 
     if (activeControllers.get(conversationId) === controller) {
         activeControllers.delete(conversationId);
@@ -1099,6 +1114,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
                     turnId: record.turn_id ?? tracked?.turnId,
                     status, event, accumulated: record.assistant_message_id ? '' : partial,
                 });
+                refreshOutgoingActions(conversationId);
                 // Saved messages own final content, citations and artifact metadata.
                 if (record.assistant_message_id) await useChatStore.getState().reloadMessages();
                 else current.updateRunRecovery(runId, {

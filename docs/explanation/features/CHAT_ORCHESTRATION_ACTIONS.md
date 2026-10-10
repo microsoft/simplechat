@@ -1,23 +1,59 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.132**
+Version: **0.261.321**
 
 Implemented in version: **0.261.098**
 
 Retrieved-data charts added in version: **0.261.132**
 
+Operation intent and named inputs implemented in version: **0.261.321**
+
 Application version tracking remains in `application/single_app/config.py`.
 
 ## Purpose
 
-**Use an action** lets a chat orchestration plan gather information through an existing
+**Use an action** lets a chat orchestration plan gather information or perform requested work through an existing
 integration without loading a configured agent, its instructions or its unrelated actions.
 For example, a ticket-status question can use an existing ticket-system action and pass
 its findings to the normal answer step.
 
-This is an optional Gather capability, not a file-rendering or do-something
-mode. It retains the selected action's existing behavior: Gather placement is
-planning intent, not a promise that the action cannot modify data.
+This is an optional Gather capability, not a file renderer. Gather placement describes
+the integration task's purpose, not a promise that it cannot modify data. Explicit
+operation intent lets the planner represent work such as creating a ticket or preparing
+and sending an email, subject to the integration's existing policies.
+
+## Research, prepare, and act
+
+A request to send an email about a current event can use Web Search for missing facts,
+`compose` to prepare grounded content, an action to deliver it, and another `compose`
+step to report the outcome. Complete supplied content does not require redundant research.
+The planner reasons over available capabilities and the request; there is no event-name,
+email-address, or keyword-routing rule.
+
+`action_invoke` and `agent_invoke` accept `execution_intent`: `gather` or `operate`.
+An omitted value remains `gather`, so old M365 plans remain read-only. An operation
+does not enable a disabled function, override governance, or replace required approval.
+The plan preview labels requested operations; **Ask planner** can revise them before
+execution. The existing narrowing controls can disable eligible work.
+
+Prepared text, Markdown, or structured results reach an integration through explicit
+named inputs. `depends_on` alone supplies no content. Complete authorized readers
+preserve input lineage; incidental sibling notes are not forwarded. Inputs over
+64,000 serialized bytes or outside the verified model budget are rejected, not shortened.
+Retained document results keep their original prepared snapshot and conversation/run
+access rules; current external-source checks still apply.
+
+For M365, `operate` admits only configured email, calendar, or read-state writes:
+manual delivery prepares the existing reviewable card, delayed delivery schedules it,
+and automatic delivery submits it through the existing authorized path. Plan approval
+does not turn manual delivery into automatic sending. A draft or schedule is not reported
+as sent, and Graph acceptance does not prove recipient delivery.
+
+Private claimed receipts recover confirmed tool results without making the same call
+again. A changed payload, an unfinished effect, or new calls beyond the recovered work
+stop for review rather than being blindly replayed. Remote agents without local tool
+interception use a conservative invocation receipt. This is not provider-independent
+exactly-once delivery.
 
 ## Dependencies
 
@@ -37,9 +73,11 @@ direct action selection; agent delegation continues through **Ask an agent**.
 1. **Discover metadata.** The server resolves actions the user may use and projects safe
    identifying metadata and descriptions. Discovery does not initialize plugins or expose
    action manifests, credentials, endpoints or connection settings to the planner or
-   browser.
+   browser. Known M365 function descriptions and configured delivery modes are projected
+   separately as safe capability metadata, not raw configuration.
 2. **Plan and validate.** The capability is `action_invoke`, labeled **Use an action**, in
-   role **Gather**. A step takes `action_ref` and `task`. Its scope-qualified reference
+   role **Gather**. A step takes `action_ref`, `task`, optional `execution_intent`, and
+   optional complete named inputs. Its scope-qualified reference
    distinguishes identically named actions without itself granting access. Named
    dependencies make the findings available to later `compose` or rendering work.
 3. **Review the selected resource.** Optional `plan.inputs.actions` contains only
@@ -197,7 +235,8 @@ checked against the configured integration.
 - One action step can call multiple functions from its selected action, within the
   existing invocation limits, deadlines and cancellation behavior.
 - Existing action function restrictions and confirmation behavior are preserved. This
-  feature does not add a read-only filter or certify an action as incapable of mutation.
+  feature does not certify arbitrary actions as incapable of mutation. M365 gather-intent
+  steps retain their write filter; explicit operation steps follow configured write policies.
 - Personal, group and global access remain governed by the existing rules. Administrator
   enablement does not grant a user additional access.
 - Call agent actions stay outside direct action selection. There is no automatic agent

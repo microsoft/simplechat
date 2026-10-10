@@ -17,6 +17,7 @@ from importlib import import_module
 from functions_action_manifest import bind_action_origin, is_retired_mcp_stdio
 from functions_agent_delegation import AGENT_PLUGIN_TYPE, _identifier
 from functions_control_center_dashboard import CONTROL_CENTER_ACTION_TYPE
+from functions_m365_operations import orchestration_m365_capabilities
 
 
 _SCOPES = frozenset({"personal", "group", "global"})
@@ -280,7 +281,7 @@ def _descriptor(action, scope_type, scope_id, scope_label):
         or name
         or "Action"
     )
-    return {
+    descriptor = {
         "action_ref": _action_ref(scope_type, scope_id, action["id"]),
         "id": action["id"],
         "name": name,
@@ -291,6 +292,10 @@ def _descriptor(action, scope_type, scope_id, scope_label):
         "scope_id": scope_id,
         "scope_label": _safe_text(scope_label, 200, private_values) or scope_type.title(),
     }
+    capabilities = orchestration_m365_capabilities(action)
+    if capabilities:
+        descriptor["operation_capabilities"] = capabilities
+    return descriptor
 
 
 def build_accessible_action_catalog(user_id, *, settings=None, user_groups=None, user_roles=None):
@@ -360,13 +365,24 @@ def build_action_planner_projection(actions):
         ):
             continue
         private_values = _private_values(action)
-        projection.append({
+        entry = {
             "action_ref": action_ref,
             "display_name": _safe_text(action.get("display_name"), 200, private_values) or "Action",
             "description": _safe_text(_description(action), 1000, private_values),
             "type": _safe_text(action_type, 80, private_values),
             "scope_label": _safe_text(action.get("scope_label"), 200, private_values),
-        })
+        }
+        if action.get("operation_capabilities"):
+            entry["operation_capabilities"] = [
+                {
+                    key: _safe_text(value, 1000, private_values)
+                    for key, value in capability.items()
+                    if key in {"function_name", "description", "execution_intent", "delivery_mode"}
+                }
+                for capability in action["operation_capabilities"]
+                if isinstance(capability, dict)
+            ]
+        projection.append(entry)
     return projection
 
 
