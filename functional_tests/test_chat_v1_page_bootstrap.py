@@ -1,7 +1,7 @@
 # test_chat_v1_page_bootstrap.py
 """Runtime regressions for the V1 chat page's initial model selection.
 
-Version: 0.261.327
+Version: 0.261.328
 Implemented in: 0.261.327
 
 Fresh normal/optimized interpreters import the real web app with external I/O
