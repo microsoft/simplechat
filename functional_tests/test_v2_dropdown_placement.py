@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_v2_dropdown_placement.py
 """
 Functional test for V2 composer dropdown placement.
-Version: 0.261.011
+Version: 0.261.327
 Implemented in: 0.261.011
 
 The V2 composer is anchored to the bottom of the viewport, so its Model, Agent,
@@ -107,7 +107,7 @@ def test_height_is_clamped_to_available_space():
         source = read(DROPDOWN)
 
         assert "maxHeight" in source, "The menu does not constrain its own height."
-        assert "style={{ maxHeight }}" in source, (
+        assert "} : { maxHeight }}" in source, (
             "The measured height is never applied to the menu element."
         )
         assert "overflow-y-auto" in source, (

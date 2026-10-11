@@ -1,7 +1,7 @@
 # test_v2_orchestration_model_picker.py
 """
 Browser regressions for the Orchestrate model picker's placement and remembered choice.
-Version: 0.261.137
+Version: 0.261.327
 Implemented in: 0.261.137
 
 In Orchestrate the model picker used to jump out above the input, and its Auto choice lived
@@ -32,7 +32,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "functional_tests"))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from test_v2_orchestration_approval_persistence import (  # noqa: E402, F401
     approval_assets, approval_browser, approval_ui, connect_options,
-    CHAT_PATH, PLAN_PATH, mount, message_box, send_button, settings_response,
+    CHAT_PATH, PLAN_PATH, mount, message_box, send_button, settings_response, open_composer_tools,
 )
 
 pytestmark = pytest.mark.ui
@@ -77,6 +77,7 @@ def picker(page):
 
 
 def open_manual(page):
+    open_composer_tools(page)
     page.get_by_title("Manual controls", exact=True).click()
     expect(picker(page)).to_be_visible()
 

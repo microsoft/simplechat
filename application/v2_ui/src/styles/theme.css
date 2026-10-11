@@ -68,12 +68,18 @@
     .chat-header-actions button,
     .composer-primary-actions button,
     .composer-secondary-tools button,
+    .composer-picker-panel button,
     .explorer-command-bar button,
     .explorer-command-bar select,
     .explorer-command-bar input,
     .explorer-status-bar button,
     .explorer-status-bar select {
         min-height: 44px;
+    }
+
+    .composer-picker-panel {
+        overscroll-behavior: contain;
+        overflow-wrap: anywhere;
     }
 
     .mobile-navigation-controls button,

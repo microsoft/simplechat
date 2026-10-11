@@ -4,7 +4,7 @@ title: "Use V2 on a phone"
 description: "Find navigation, chat tools, and workspace documents without permanent sidebars narrowing your phone screen."
 section: "Guides"
 audience: user
-version: "0.261.325"
+version: "0.261.327"
 ---
 
 ## Find your work
@@ -53,6 +53,19 @@ The composer keeps attachment, voice when enabled, and Send/Stop together.
 **Chat tools** opens the existing model, agent, reasoning, and capability
 controls. Closing this area does not clear your choices. When orchestration is
 active, its approval mode appears in the collapsed summary.
+
+Fixed/Implemented in version: **0.261.327**, recorded in
+`application/single_app/config.py`.
+
+Model, Agent, Prompt, Reasoning, Approval, and Orchestration model choices open
+in floating menus anchored to their buttons, outside the scrolling tools area.
+The menus open above or below according to available space, stay within the
+visible viewport, and scroll long catalogs without cutting off choices. This
+does not change the composer layout or replace the menu with a bottom sheet.
+Tap an option to select it or tap outside to dismiss. Escape returns keyboard
+focus to the opener; arrow keys and Home/End move through choices. Only one
+picker opens at a time. Closing Chat tools or Manual controls closes their
+picker without clearing the saved selection.
 
 ## Browse workspace documents
 
