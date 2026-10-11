@@ -14,7 +14,9 @@ from io import BytesIO
 from flask import make_response
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, ResourceExistsError
+from azure.storage.blob import ContentSettings
 from content_screening.contracts import (
+    ContentUnit,
     SCREENING_EXEMPTION_FIELD,
     SCREENING_FIELD,
     DocumentHeldError,
@@ -90,6 +92,11 @@ from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
 from functions_content import *
 from functions_office_media import extract_office_embedded_images_with_diagnostics
+from functions_document_transform_sources import (
+    OFFICE_REFERENCE_MIME_TYPES,
+    TEMPLATE_EXTENSIONS,
+    native_template_pages,
+)
 from functions_content_understanding import analyze_image_with_content_understanding
 from functions_settings import *
 from functions_search import *
@@ -7960,8 +7967,10 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
 
+        content_type = OFFICE_REFERENCE_MIME_TYPES.get(os.path.splitext(blob_filename)[1].lower())
+        content_options = {"content_settings": ContentSettings(content_type=content_type)} if content_type else {}
         with open(temp_file_path, "rb") as f:
-            blob_client.upload_blob(f, overwrite=True, metadata=metadata)
+            blob_client.upload_blob(f, overwrite=True, metadata=metadata, **content_options)
 
         current_document["blob_container"] = storage_account_container_name
         current_document["blob_path"] = blob_path
@@ -10905,6 +10914,68 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def process_office_template(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Retain validated native templates even when there is no narrative to index."""
+    with open(temp_file_path, "rb") as source:
+        pages, supplemental, structure = native_template_pages(source.read(), file_ext)
+    capture = current_extraction(document_id)
+    if capture is not None:
+        capture.add_text(
+            json.dumps(structure, sort_keys=True), kind="metadata",
+        )
+        # The structure is a screening-only unit and must never become synthetic RAG text.
+        capture.units[-1] = ContentUnit(
+            "office-template-structure", json.dumps(structure, sort_keys=True),
+            {"kind": "metadata", "field": "office_template_structure"},
+        )
+        capture.add_pages(pages, kind="slide" if file_ext == ".potx" else "page")
+        for position, text in enumerate(supplemental, start=1):
+            capture.add_supplement(text, kind="metadata")
+            capture.supplemental_units[-1] = ContentUnit(
+                f"office-template-package-{position}", text,
+                {"kind": "metadata", "field": "office_template_package_text"},
+            )
+    upload_to_blob(
+        temp_file_path, user_id, document_id, original_filename, update_callback,
+        group_id=group_id, public_workspace_id=public_workspace_id,
+        mark_enhanced_citations=enable_enhanced_citations,
+    )
+    chunks = [page for page in pages if page["content"].strip()]
+    settings = get_settings()
+    if file_ext == ".dotx":
+        chunk_config = get_chunk_size_config(settings)
+        chunks = chunk_word_file_into_pages(
+            di_pages=chunks, chunk_size=chunk_config.get("docx", {}).get("value", WORD_CHUNK_SIZE),
+        )
+    image_blocks, _image_count, _image_engine, total_body_words = _build_office_embedded_image_chunks(
+        temp_file_path, settings, update_callback,
+    )
+    if image_blocks:
+        if capture is not None:
+            for image_block in image_blocks:
+                capture.add_supplement(image_block.get("content", ""), kind="figure")
+        chunks, _merged, overflow = _merge_embedded_images_into_chunks(
+            chunks, image_blocks, total_body_words, settings,
+        )
+        chunks = _append_overflow_image_chunks(chunks, overflow)
+        _assert_unique_chunk_page_numbers(chunks, document_id)
+    total_tokens, model_name = 0, None
+    for page in chunks:
+        saved = save_chunks(
+            document_id=document_id, user_id=user_id, page_text_content=page["content"],
+            page_number=page["page_number"], file_name=original_filename,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+        )
+        if isinstance(saved, dict):
+            total_tokens += saved.get("total_tokens", 0) or 0
+            model_name = saved.get("model_deployment_name") or model_name
+    update_callback(
+        office_template_structure=structure, number_of_pages=len(chunks),
+        status="Native Office template retained" if chunks else "Native Office template retained - no narrative content indexed",
+    )
+    return len(chunks), total_tokens, model_name
+
+
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True, extraction_mode_override=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
@@ -12678,6 +12749,8 @@ def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, ena
 
 def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_extensions, tabular_extensions, metadata_extraction_result):
     if total_chunks_saved == 0:
+        if file_ext in TEMPLATE_EXTENSIONS:
+            return "Processing complete - native Office template retained; no narrative content indexed"
         if file_ext in image_extensions:
             return "Processing complete - no text found in image"
         if file_ext in tabular_extensions:
@@ -12897,7 +12970,11 @@ def _process_document_upload_background_impl(
             "auto_extract_metadata": False
         }
 
-        if file_ext == '.xsd':
+        if file_ext in TEMPLATE_EXTENSIONS:
+            total_chunks_saved, total_embedding_tokens, embedding_model_name = process_office_template(
+                **args,
+            )
+        elif file_ext == '.xsd':
             process_xsd(
                 document_id=document_id,
                 user_id=user_id,

@@ -71,8 +71,8 @@ SELECTION_MODES = frozenset({
 TABULAR_SOURCE_EXTENSIONS = frozenset({".csv", ".xls", ".xlsx", ".xlsm"})
 XML_SCHEMA_SOURCE_EXTENSIONS = frozenset({".xsd"})
 NARRATIVE_SOURCE_EXTENSIONS = frozenset({
-    ".txt", ".doc", ".docm", ".docx", ".html", ".htm", ".md", ".markdown",
-    ".json", ".xml", ".yaml", ".yml", ".log", ".pdf", ".ppt", ".pptx",
+    ".txt", ".doc", ".docm", ".docx", ".dotx", ".html", ".htm", ".md", ".markdown",
+    ".json", ".xml", ".yaml", ".yml", ".log", ".pdf", ".ppt", ".pptx", ".potx",
     ".msg", ".vsdx", ".one", ".onepkg", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
     ".heif", ".heic", ".3ga", ".aac", ".ac3", ".aif", ".aifc", ".aiff",
     ".amr", ".ape", ".au", ".caf", ".dts", ".f4a", ".flac", ".m4a",

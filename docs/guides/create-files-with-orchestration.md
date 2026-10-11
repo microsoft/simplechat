@@ -4,7 +4,7 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.139"
+version: "0.261.321"
 ---
 
 ## Availability
@@ -126,12 +126,45 @@ result can be rendered directly into every format.
 | TXT | Prepared plain text rather than an implicit conversion of another document format. |
 | Word (DOCX) or PDF | Prepared text or Markdown report content. Both formats can reuse the same report result. |
 | PowerPoint (PPTX) | A prepared slide deck with explicit slide content and layout. Writing the slides belongs in Reason, not in the binary renderer or retry. |
+| Word or PowerPoint from a reference | An inspected DOCX/DOTX or PPTX/POTX reference and complete prepared edits using `document_transform_v1`. Output stays DOCX or PPTX; this is not automatic PDF conversion. |
 
 Rich document and slide features are limited to the supported profiles and
 authorized assets. A request that needs another data shape or exceeds an output
 limit should be revised, not silently truncated or changed to a different format.
 The renderer cannot turn a preview, incomplete source coverage or pending
 computation into a complete exported dataset.
+
+## Reuse a document or presentation
+
+Since **0.261.321**, select or upload a populated Word/PowerPoint file or an
+actual `.dotx`/`.potx` template and ask for either new content in its formatting
+or selected changes to the existing content. For example:
+
+> Use this presentation's formatting to create a new community-call deck from
+> these release notes. Keep the title and closing-slide styles.
+
+> Update the executive summary and dates in this Word report. Leave the other
+> sections unchanged and disclose any missing figures.
+
+The plan inspects the reference, gathers any new information, prepares the
+changes, then renders a new file. It should not rebuild the reference as a
+generic report or treat a content update as a file merge. The original remains
+unchanged.
+
+Delivery reports what was applied, left unchanged, skipped or unresolved.
+Missing information can leave a useful draft rather than block every change.
+In a refreshed document, an unfilled target keeps its old content. In a newly
+created document, remaining example material is disclosed as reference
+content, not verified new information. Review layout warnings when
+replacement text is longer than the reference.
+
+Refer to the generated file in this conversation to refine it next turn.
+That creates another version; **Retry file** repeats the prepared edits rather
+than collecting new facts. Forms, formatted workbook editing and supplied
+JSON/XML instance editing are not included in this release.
+
+See the [Document Transformation Framework](../explanation/features/DOCUMENT_TRANSFORMATION_FRAMEWORK.md)
+for supported contracts and preservation limits.
 
 ## Follow each file independently
 

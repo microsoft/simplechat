@@ -14,6 +14,8 @@ STEP_TASKS = {
     "deep_research": "reasoning",
     "action_invoke": "tool_use",
     "compose": "general",
+    "document_create_from_reference": "general",
+    "document_refresh": "general",
 }
 MODEL_FIELDS = ("model_deployment", "model_id", "model_endpoint_id", "model_provider")
 ROUTING_INSTRUCTIONS = """

@@ -2021,6 +2021,7 @@ def build_capability_request_context(
     native_bridge_for_step=None, rendering_service=None,
     external_source_admission=None, external_source_authorizer=None, external_source_preflight=None,
     capture_external_source_configuration=None, workflow_planning=None,
+    document_transform_source_reader=None, document_transform_source_resolver=None,
 ):
     """Apply the same caller-specific capability gates to planning, revisions, and execution.
 
@@ -2030,6 +2031,14 @@ def build_capability_request_context(
     """
     if native_bridge_for_step is not None and not callable(native_bridge_for_step):
         raise ValueError('A server native bridge factory is required.')
+    transform_bindings = {
+        'document_transform_source_reader': document_transform_source_reader,
+        'document_transform_source_resolver': document_transform_source_resolver,
+    }
+    if any(callback is not None for callback in transform_bindings.values()) and not all(
+        callable(callback) for callback in transform_bindings.values()
+    ):
+        raise ValueError('Complete server document-transform bindings are required.')
     if rendering_service is not None:
         # Legacy discovery does not depend on the optional initialized output runtime.
         from functions_orchestration_rendering import OrchestrationRenderingService
@@ -2069,6 +2078,8 @@ def build_capability_request_context(
         context['rendering_service'] = rendering_service
     if has_external_bindings:
         context.update(external_bindings)
+    if document_transform_source_reader is not None:
+        context.update(transform_bindings)
     if workflow_planning is not None:
         context['workflow_planning'] = deepcopy(workflow_planning)
     return context
@@ -2136,6 +2147,7 @@ def build_planner_context(
     original_message=None,
     request_resolution=None,
     memory_context=None,
+    document_transform_candidates=None,
 ):
     """Assemble everything the planner is shown, in one place.
 
@@ -2167,6 +2179,10 @@ def build_planner_context(
         ],
         'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
         'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
+        'document_transform_references': deepcopy(
+            document_transform_candidates if document_transform_candidates is not None
+            else seeds.get('document_transform_references') or []
+        ),
         'user_selected': {
             'documents': seeds.get('document_ids') or [],
             'context_references': deepcopy(seeds.get('elicitation_references') or []),

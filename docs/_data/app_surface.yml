@@ -1072,8 +1072,8 @@ chat_controls:
 - id: chat-tutorial-btn
   label: Let us walk you through getting the most out of chat
 - id: choose-file-btn
-  label: Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, msg, xlsx, pptx, html, images,
-    md, json, csv, xml, yaml, yml, log , xsd )
+  label: Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, dotx, msg, xlsx, pptx, potx,
+    html, images, md, json, csv, xml, yaml, yml, log , xsd )
   enabled_by:
   - enable_chat_file_uploads
 - id: clearFiltersBtn

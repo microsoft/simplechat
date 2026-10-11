@@ -30,6 +30,11 @@ from content_screening.contracts import (
     SourceAuthorityUnverifiedError,
 )
 from functions_analysis_access import AnalysisResultUnavailable
+from functions_document_transform import (
+    DOCUMENT_INSPECTION_VERSION,
+    DocumentTransformError,
+    validate_document_transform,
+)
 from functions_export_cleanup import ClosingExportResource
 from functions_generated_export_contracts import (
     GeneratedFileExportError,
@@ -37,7 +42,11 @@ from functions_generated_export_contracts import (
     GeneratedFileExportRequest,
     GeneratedFileExportStream,
 )
-from functions_generated_export_registry import ASSEMBLED_DOCUMENT_PROFILE, resolve_generated_file_export_format
+from functions_generated_export_registry import (
+    ASSEMBLED_DOCUMENT_PROFILE,
+    DOCUMENT_TRANSFORM_PROFILE,
+    resolve_generated_file_export_format,
+)
 from functions_generated_file_exports import build_generated_file_export
 from functions_orchestration_artifacts import (
     OUTPUT_SIGN_IN_REQUIRED,
@@ -590,7 +599,8 @@ class OrchestrationRenderingService:
     def __init__(
         self, store, results, transport, *, authorize_execution,
         max_output_bytes, limits=None, office_limits=None, image_resolver=None,
-        image_asset_reader=None, document_bytes_reader=None, renderer=build_generated_file_export,
+        image_asset_reader=None, document_bytes_reader=None, document_transform_source_reader=None,
+        renderer=build_generated_file_export,
         jitter=random.random, full_check_interval=RENDER_FULL_CHECK_INTERVAL_SECONDS, monotonic=time.monotonic,
     ):
         if (
@@ -603,6 +613,7 @@ class OrchestrationRenderingService:
             or results.access.conversation_id != store.conversation_id
             or (image_asset_reader is not None and not callable(image_asset_reader))
             or (document_bytes_reader is not None and not callable(document_bytes_reader))
+            or (document_transform_source_reader is not None and not callable(document_transform_source_reader))
         ):
             raise OutputError("output_service_required")
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES:
@@ -629,6 +640,9 @@ class OrchestrationRenderingService:
         # ``document_bytes_reader(source)`` returns one workspace document's current bytes with
         # the actor's access; the owner supplies it. Only a merged file's own sources are read.
         self.document_bytes_reader = document_bytes_reader
+        # The retained inspection binds which document/artifact this callback may read.
+        # The owning source resolver must still authorize its exact identity at each read.
+        self.document_transform_source_reader = document_transform_source_reader
         self.renderer = renderer
         self.jitter = jitter
         self.full_check_interval = full_check_interval
@@ -644,7 +658,9 @@ class OrchestrationRenderingService:
         if not entry.rich_media:
             return None
         if self.image_asset_reader is None:
-            return self.image_resolver
+            # A transformation may not bypass retained generate_image lineage with a
+            # generic resolver; unsupported optional edits are reported by the core.
+            return None if record["render_spec"].get("profile") == DOCUMENT_TRANSFORM_PROFILE else self.image_resolver
         source = ResultRef.from_dict(record["source_ref"])
         cache = {}
         # The Office stack loads lazily; its limits decide what an embedded image may be.
@@ -654,13 +670,17 @@ class OrchestrationRenderingService:
 
         def images():
             if "lineage" not in cache:
-                reader = self.results.open_result(
-                    source, require_current_sources=record["render_spec"]["require_current_sources"],
-                )
-                cache["lineage"] = {
-                    parent.producer.step_id: parent for parent in reader.upstream_references()
-                    if parent.kind == IMAGE_ASSET_KIND and parent.producer.capability_id == "generate_image"
-                }
+                try:
+                    reader = self.results.open_result(
+                        source, require_current_sources=record["render_spec"]["require_current_sources"],
+                    )
+                    cache["lineage"] = {
+                        parent.producer.step_id: parent for parent in reader.upstream_references()
+                        if parent.kind == IMAGE_ASSET_KIND and parent.producer.capability_id == "generate_image"
+                    }
+                except Exception as exc:
+                    _raise_source_read_failure(exc)
+                    raise
             return cache["lineage"]
 
         def resolve(reference):
@@ -668,12 +688,16 @@ class OrchestrationRenderingService:
             parent = images().get(asset_id) if asset_id else None
             if parent is None:
                 raise OutputUnavailableError("output_source_unavailable")
-            reader = self.results.open_result(parent, require_current_sources=True)
-            asset = validate_image_asset_value(reader.read_value())
-            if asset["asset_id"] != asset_id:
-                raise OutputUnavailableError("output_source_changed")
-            content = self.image_asset_reader(deepcopy(asset))
-            reader.recheck()
+            try:
+                reader = self.results.open_result(parent, require_current_sources=True)
+                asset = validate_image_asset_value(reader.read_value())
+                if asset["asset_id"] != asset_id:
+                    raise OutputUnavailableError("output_source_changed")
+                content = self.image_asset_reader(deepcopy(asset))
+                reader.recheck()
+            except Exception as exc:
+                _raise_source_read_failure(exc)
+                raise
             if (
                 type(content) is not bytes or len(content) != asset["size_bytes"]
                 or hashlib.sha256(content).hexdigest() != asset["content_sha256"]
@@ -732,6 +756,58 @@ class OrchestrationRenderingService:
                 raise
             if type(content) is not bytes:
                 raise OutputUnavailableError("output_source_unavailable")
+            return content
+
+        return read
+
+    def _document_transform_source_reader_for(self, record):
+        """Bind native reads to an immutable retained document_inspect input, not model ids."""
+        if record["render_spec"].get("profile") != DOCUMENT_TRANSFORM_PROFILE:
+            return None
+        if self.document_transform_source_reader is None:
+            raise OutputError("output_source_configuration_invalid")
+        source = ResultRef.from_dict(record["source_ref"])
+
+        def read(handle):
+            try:
+                reader = self.results.open_result(source, require_current_sources=True)
+                try:
+                    prepared = validate_document_transform(reader.read_value())
+                except DocumentTransformError as exc:
+                    raise OutputError("output_invalid_result") from exc
+                if (
+                    prepared["output_format"] != record["render_spec"]["output_format"]
+                    or handle != prepared["reference"]["handle"]
+                ):
+                    raise OutputUnavailableError("output_source_changed")
+                inspection_readers = []
+                for parent in reader.upstream_references():
+                    if (
+                        parent.kind != "structured-v1" or parent.output_name != "inspection"
+                        or parent.producer.capability_id != "document_inspect"
+                    ):
+                        continue
+                    inspection_reader = self.results.open_result(parent, require_current_sources=True)
+                    inspection = inspection_reader.read_value()
+                    if (
+                        type(inspection) is dict and inspection.get("version") == DOCUMENT_INSPECTION_VERSION
+                        and inspection.get("output_format") == prepared["output_format"]
+                        and inspection.get("reference") == prepared["reference"]
+                    ):
+                        inspection_readers.append(inspection_reader)
+                if not inspection_readers:
+                    raise OutputUnavailableError("output_source_changed")
+                content = self.document_transform_source_reader(deepcopy(prepared["reference"]["handle"]))
+                reader.recheck()
+                for inspection_reader in inspection_readers:
+                    inspection_reader.recheck()
+            except Exception as exc:
+                _raise_source_read_failure(exc)
+                raise
+            if type(content) is not bytes:
+                raise OutputUnavailableError("output_source_unavailable")
+            if hashlib.sha256(content).hexdigest() != prepared["reference"]["content_sha256"]:
+                raise OutputUnavailableError("output_source_changed")
             return content
 
         return read
@@ -1106,6 +1182,10 @@ class OrchestrationRenderingService:
                     check=check, limits=bounded_limits, office_limits=self.office_limits,
                     image_resolver=self._image_resolver_for(record, entry),
                     **({"document_reader": reader} if (reader := self._document_reader_for(record)) else {}),
+                    **(
+                        {"document_transform_source_reader": reader}
+                        if (reader := self._document_transform_source_reader_for(record)) else {}
+                    ),
                 )
             with ClosingExportResource(rendered):
                 with attempt.phase("verify"):
@@ -1115,6 +1195,10 @@ class OrchestrationRenderingService:
                 attempt.full()
                 prepared = self.store.prepare_intent(
                     claim, descriptor, check=lambda current: self._authorize(current, "prepare").recheck(),
+                    **(
+                        {"renderer_metadata": rendered.metadata}
+                        if request.profile == DOCUMENT_TRANSFORM_PROFILE else {}
+                    ),
                 )
                 with attempt.phase("stage"):
                     self._stage(claim, prepared, rendered.file_content, check=check)

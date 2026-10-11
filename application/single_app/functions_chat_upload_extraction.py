@@ -148,6 +148,15 @@ def build_workspace_upload_file_content(filename, document, chunks):
 
     if not body:
         source = document if isinstance(document, dict) else {}
+        native_template_ready = (
+            str(source.get("file_name") or filename).lower().endswith((".dotx", ".potx"))
+            and isinstance(source.get("office_template_structure"), dict)
+            and not is_workspace_upload_failed(source) and not is_workspace_upload_processing(source)
+        )
+        if native_template_ready:
+            body = "Native Office template retained for structural inspection. No narrative content was indexed."
+    if not body:
+        source = document if isinstance(document, dict) else {}
         if is_workspace_upload_failed(source):
             message = PROCESSING_FAILED_MESSAGE
         elif is_workspace_upload_processing(source):

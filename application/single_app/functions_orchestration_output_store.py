@@ -32,6 +32,9 @@ MAX_AUTOMATIC_ATTEMPTS = 3
 MAX_MANUAL_ATTEMPTS = 16
 MAX_OUTPUTS_PER_RUN = 32
 MAX_OUTPUT_DOCUMENT_BYTES = 384 * 1024
+MAX_TRANSFORMATION_REPORT_DETAILS = 32
+MAX_TRANSFORMATION_REPORT_TEXT = 512
+_TRANSFORMATION_OUTCOMES = ("applied", "unchanged", "skipped", "unresolved")
 MAX_STAGING_GUARDS = 2 * (MAX_AUTOMATIC_ATTEMPTS + MAX_MANUAL_ATTEMPTS)
 OUTPUT_STATES = frozenset({
     "waiting", "rendering", "retry_scheduled", "completed", "failed", "cancelled",
@@ -177,6 +180,97 @@ class OutputClaim:
     recovering: bool = False
 
 
+def _report_text(value, private=()):
+    if type(value) is not str:
+        return ""
+    for token in private:
+        value = value.replace(token, "[reference]")
+    return "".join(char for char in value if ord(char) >= 32 or char in "\n\t")[:MAX_TRANSFORMATION_REPORT_TEXT]
+
+
+def _retained_transformation_report(value):
+    """Retain actual outcomes with bounded detail, never native source handles or digests."""
+    if (
+        type(value) is not dict or value.get("version") != "document-transformation-report-v1"
+        or value.get("mode") not in ("create_from_reference", "refresh")
+        or value.get("output_format") not in ("docx", "pptx")
+        or value.get("status") not in ("draft", "transformed")
+        or any(type(value.get(name)) is not list for name in (*_TRANSFORMATION_OUTCOMES, "warnings"))
+    ):
+        raise OutputError("output_invalid_result")
+    reference = value.get("reference") or {}
+    output = value.get("output") or {}
+    if type(reference) is not dict or type(output) is not dict:
+        raise OutputError("output_invalid_result")
+    handle = reference.get("handle") or {}
+    if type(handle) is not dict:
+        raise OutputError("output_invalid_result")
+    private = [
+        token for token in (
+            reference.get("content_sha256"), output.get("content_sha256"),
+            *(handle.get(name) for name in ("document_id", "conversation_id", "message_id")),
+        ) if type(token) is str and token
+    ]
+    report = {name: value[name] for name in ("version", "mode", "output_format", "status")}
+    for name in _TRANSFORMATION_OUTCOMES:
+        entries = value[name]
+        report[f"{name}_count"] = len(entries)
+        report[name] = []
+        for entry in entries[:MAX_TRANSFORMATION_REPORT_DETAILS]:
+            if type(entry) is not dict or type(entry.get("target")) is not str:
+                raise OutputError("output_invalid_result")
+            detail = {"target": _report_text(entry["target"], private)}
+            for field in ("op", "reason"):
+                if field in entry:
+                    detail[field] = _report_text(entry[field], private)
+            if type(entry.get("op_index")) is int:
+                detail["op_index"] = entry["op_index"]
+            report[name].append(detail)
+    report["warnings"] = [_report_text(item, private) for item in value["warnings"][:MAX_TRANSFORMATION_REPORT_DETAILS]]
+    report["warning_count"] = len(value["warnings"])
+    return report
+
+
+def public_transformation_report(metadata):
+    """Project only the bounded persisted outcome fields; omit all private renderer data."""
+    value = metadata.get("transformation_report") if type(metadata) is dict else None
+    if (
+        type(value) is not dict or value.get("version") != "document-transformation-report-v1"
+        or value.get("mode") not in ("create_from_reference", "refresh")
+        or value.get("output_format") not in ("docx", "pptx")
+        or value.get("status") not in ("draft", "transformed")
+    ):
+        return None
+    report = {name: value[name] for name in ("version", "mode", "output_format", "status")}
+    for name in _TRANSFORMATION_OUTCOMES:
+        entries, count = value.get(name), value.get(f"{name}_count")
+        if (
+            type(entries) is not list or len(entries) > MAX_TRANSFORMATION_REPORT_DETAILS
+            or type(count) is not int or not len(entries) <= count <= 10_000
+            or any(type(entry) is not dict or type(entry.get("target")) is not str for entry in entries)
+        ):
+            return None
+        report[f"{name}_count"] = count
+        report[name] = []
+        for entry in entries:
+            detail = {"target": _report_text(entry["target"])}
+            for field in ("op", "reason"):
+                if field in entry:
+                    detail[field] = _report_text(entry[field])
+            if type(entry.get("op_index")) is int:
+                detail["op_index"] = entry["op_index"]
+            report[name].append(detail)
+    warnings, count = value.get("warnings"), value.get("warning_count")
+    if (
+        type(warnings) is not list or len(warnings) > MAX_TRANSFORMATION_REPORT_DETAILS
+        or type(count) is not int or not len(warnings) <= count <= 10_000
+        or any(type(item) is not str for item in warnings)
+    ):
+        return None
+    report.update(warnings=[_report_text(item) for item in warnings], warning_count=count)
+    return report
+
+
 def public_output(record, *, unavailable_code=None, withhold_details=False):
     """The single wire projection; never copy arbitrary stored keys."""
     if type(withhold_details) is not bool or (
@@ -230,6 +324,14 @@ def public_output(record, *, unavailable_code=None, withhold_details=False):
         projected.update({
             "error_code": unavailable_code, "message": OUTPUT_UNAVAILABLE_MESSAGES[unavailable_code],
         })
+    if available and committed and not withhold_details:
+        report = public_transformation_report(record.get("renderer_metadata"))
+        if report is not None:
+            projected["transformation_report"] = report
+            if not report["applied_count"]:
+                projected["message"] = "This unchanged reference draft is ready; no changes applied."
+            elif report["skipped_count"] or report["unresolved_count"]:
+                projected["message"] = "This draft is ready with skipped or unresolved changes."
     return projected
 
 
@@ -492,6 +594,16 @@ class OrchestrationOutputStore:
             record["state"] != "cancelled" or not record.get("deleted_at")
         ):
             raise OutputUnavailableError("output_record_invalid")
+        if "renderer_metadata" in record:
+            metadata = record["renderer_metadata"]
+            if (
+                type(metadata) is not dict or set(metadata) != {"intent_id", "transformation_report"}
+                or not record.get("intent") or metadata["intent_id"] != record["intent"]["intent_id"]
+                or record["render_spec"].get("profile") != "document_transform_v1"
+                or public_transformation_report(metadata) != metadata["transformation_report"]
+                or metadata["transformation_report"]["output_format"] != record["render_spec"]["output_format"]
+            ):
+                raise OutputUnavailableError("output_record_invalid")
         return record
 
     def get(self, output_id):
@@ -790,17 +902,36 @@ class OrchestrationOutputStore:
 
         return self._mutate(claim.output_id, change, claim=claim)
 
-    def prepare_intent(self, claim, descriptor, *, check):
+    def prepare_intent(self, claim, descriptor, *, check, renderer_metadata=None):
+        metadata = None
+        if renderer_metadata is not None:
+            if type(renderer_metadata) is not dict:
+                raise OutputError("output_invalid_result")
+            metadata = {
+                "intent_id": descriptor["intent_id"],
+                "transformation_report": _retained_transformation_report(
+                    renderer_metadata.get("transformation_report"),
+                ),
+            }
+
         def change(record):
             if descriptor["attempt_number"] != claim.attempt_number:
                 raise OutputError("output_intent_invalid")
             existing = record.get("intent")
             if existing == descriptor:
+                if metadata is not None and metadata != record.get("renderer_metadata"):
+                    raise OutputError("output_intent_changed")
                 return None
             if existing and existing["attempt_number"] == claim.attempt_number:
                 raise OutputError("output_intent_changed")
             record["intent"] = deepcopy(descriptor)
             record["intents"].append(deepcopy(descriptor))
+            if metadata is not None:
+                if record["render_spec"]["profile"] != "document_transform_v1":
+                    raise OutputError("output_invalid_result")
+                record["renderer_metadata"] = deepcopy(metadata)
+            else:
+                record.pop("renderer_metadata", None)
             return record
 
         return self._mutate(claim.output_id, change, claim=claim, check=check)

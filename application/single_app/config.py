@@ -101,7 +101,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.322"
+VERSION = "0.261.323"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -195,7 +195,7 @@ ENHANCED_CITATIONS_STORAGE_STATUS = {}
 
 # Base allowed extensions (always available)
 BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
-DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
+DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'dotx', 'pptx', 'potx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
 SCHEMA_EXTENSIONS = {'xsd'}
 VISIO_EXTENSIONS = {'vsdx'}

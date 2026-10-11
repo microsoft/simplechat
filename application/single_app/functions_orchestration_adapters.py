@@ -2279,6 +2279,10 @@ def get_adapter(name, *, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION):
         from functions_orchestration_composition import adapter_compose
 
         return adapter_compose
+    if name in ('document_inspect', 'document_create_from_reference', 'document_refresh'):
+        from functions_orchestration_document_transform import adapter_document_inspect, adapter_document_transform
+
+        return adapter_document_inspect if name == 'document_inspect' else adapter_document_transform
     if name == 'generate_image':
         from functions_orchestration_images import adapter_generate_image
 

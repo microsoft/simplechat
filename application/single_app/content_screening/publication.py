@@ -21,6 +21,7 @@ from content_screening.contracts import (
 )
 from content_screening.exports import build_clean_artifact, structured_sheets, table_schema_text
 from content_screening.extraction import heartbeat_publication, is_publication, publication_chunks
+from functions_document_transform_sources import OFFICE_REFERENCE_MIME_TYPES, TEMPLATE_EXTENSIONS, native_template_pages
 
 
 def _document_helpers():
@@ -185,7 +186,8 @@ def publish_document(document, units, scan, actor_id, *, storage):
     else:
         file_name = document.get("file_name") or scan["original_file_name"]
         content = storage.read_bytes(scan["source_ref"], subject)
-        content_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+        extension = "." + file_name.rsplit(".", 1)[-1].lower()
+        content_type = OFFICE_REFERENCE_MIME_TYPES.get(extension) or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
     metadata = _metadata_from_units(units, file_name)
     settings = helpers.get_settings()
     max_characters = min(
@@ -199,7 +201,14 @@ def publish_document(document, units, scan, actor_id, *, storage):
     else:
         chunks = publication_chunks(units, max_characters)
     if not chunks:
-        raise ScreeningValidationError("No reviewed content is available to publish.")
+        extension = "." + file_name.rsplit(".", 1)[-1].lower()
+        if extension not in TEMPLATE_EXTENSIONS or scan.get("sanitized") or not scan.get("source_ref"):
+            raise ScreeningValidationError("No reviewed content is available to publish.")
+        # An empty native template can be released, but only after the normal review and
+        # original-byte binding. Never fabricate a searchable narrative to clear the hold.
+        pages, _supplemental, _structure = native_template_pages(content, extension)
+        if any(page["content"].strip() for page in pages):
+            raise ScreeningValidationError("Reviewed template content is missing.")
     scope_args = {
         "group_id": subject.scope_id if subject.scope_type == "group" else None,
         "public_workspace_id": subject.scope_id if subject.scope_type == "public" else None,
