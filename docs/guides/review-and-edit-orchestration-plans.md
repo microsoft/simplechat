@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.317"
+version: "0.261.321"
 ---
 
 ## Decide what should run
@@ -52,6 +52,17 @@ because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
 
 ## Review versus Edit
+
+Since **0.261.321**, integration steps show whether they **Gather information** or perform
+a **Requested operation**. For example, an email request can research missing event facts,
+prepare the email, and pass that content as a named input to an email action. Use
+**Ask planner** before running to change the intended operation or destination.
+
+Existing integration policies still apply. A manual-delivery email action creates a draft
+and outgoing-action card for review; running the plan does not automatically send it.
+Delayed and automatic delivery follow their configured modes. Check the step summary and
+card for the actual outcome: a pending draft or schedule is not a completed send.
+Old M365 plans without explicit operation intent remain read-only until replanned.
 
 **Review** opens the existing drawer. You can inspect steps and their rationales,
 switch off eligible steps, and remove documents from a step. These controls

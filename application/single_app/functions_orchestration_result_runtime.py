@@ -331,6 +331,11 @@ def retain_gather_result(step, context, result, *, source_manifest):
         'evidence': evidence, 'notes': notes, 'citations': citations,
         'limitations': limitations,
     }
+    if result.get('operation_receipts'):
+        prepared['operation_receipts'] = deepcopy(result['operation_receipts'])
+    readers = getattr(context, 'integration_input_readers', {})
+    for reader in readers.values():
+        reader.recheck()
     outputs = []
     external_sources = ()
     if capability_id == 'document_search':
@@ -379,5 +384,6 @@ def retain_gather_result(step, context, result, *, source_manifest):
         outputs=outputs, sources=sources, origin='grounded' if sources or external_sources else 'generated',
         guard_token=context.result_guard_token_for_step(step['step_id']),
         input_fingerprint=context.result_input_fingerprint_for_step(step['step_id']),
+        upstream=tuple(dict.fromkeys(reader.reference for reader in readers.values())),
         **({'external_sources': external_sources} if external_sources else {}),
     )

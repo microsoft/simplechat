@@ -1913,6 +1913,9 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
     visual_request = _step_visuals(context, settings, task, step=step)
     task = _with_conversation_reference(task, context)
     try:
+        from functions_orchestration_operations import integration_inputs, operation_step_scope
+
+        named_inputs = integration_inputs(step, context)
         # The step trusts the signed-in session, like classic chat: current access to the
         # conversation, the run's step and this exact action is rechecked here, and the action
         # then runs without configuration attestation.
@@ -1926,12 +1929,18 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         if visual_request:
             invocation_kwargs['visual_request'] = visual_request
         invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)
+        if named_inputs or arguments.get('execution_intent') == 'operate':
+            invocation_kwargs.update(
+                named_inputs=named_inputs, execution_intent=arguments.get('execution_intent', 'gather'),
+            )
         from functions_orchestration_actions import invoke_action
         from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
         from functions_m365_citations import m365_display_time_zone
 
         # Microsoft 365 email and event times are shown in the turn's browser time zone.
-        with m365_display_time_zone(_ctx(context, 'time_zone')):
+        with m365_display_time_zone(_ctx(context, 'time_zone')), operation_step_scope(
+            step, context, user_id, named_inputs,
+        ):
             result = asyncio.run(invoke_action(
                 action_ref, task, context, settings=settings, user_id=user_id,
                 cancel_requested=lambda: _is_cancelled(cancel_requested),
@@ -1968,10 +1977,15 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
     ]
     chart_count = result.get('charts') or 0
     summary = f'Used {display_name} ({result["calls"]} function calls).'
+    if arguments.get('execution_intent') == 'operate':
+        from functions_orchestration_operations import operation_summary
+
+        summary = operation_summary(result.get('operation_receipts') or [], summary)
     if chart_count:
+        chart_summary = f'Created {chart_count} chart{"" if chart_count == 1 else "s"}.'
         summary = (
-            f'Used {display_name} ({result["calls"]} function calls) and created '
-            f'{chart_count} chart{"" if chart_count == 1 else "s"}.'
+            f'{summary} {chart_summary}' if arguments.get('execution_intent') == 'operate'
+            else f'Used {display_name} ({result["calls"]} function calls) and {chart_summary[0].lower()}{chart_summary[1:]}'
         )
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
@@ -1979,6 +1993,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         notes=[f'Action "{display_name}" findings:\n{result["findings"]}', *_m365_sources_notes(citations)],
         citations=citations,
         artifacts=result['artifacts'],
+        operation_receipts=result.get('operation_receipts'),
     )
 
 
@@ -2064,6 +2079,14 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
 
     try:
         from functions_agent_delegation import agent_reference
+        from functions_orchestration_operations import (
+            integration_inputs, integration_task, operation_step_scope, operation_summary,
+        )
+
+        named_inputs = integration_inputs(step, context)
+        intent = arguments.get('execution_intent', 'gather')
+        if named_inputs or intent == 'operate':
+            task = integration_task(task, named_inputs, intent)
 
         reference = agent_reference(agent_cfg, user_id)
         selector = agent_cfg.get('catalog_key')
@@ -2101,14 +2124,26 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
                 return agent_step_scope(
                     agent_cfg, user_id=user_id, conversation_id=conversation_id,
                     request_key=m365_request_key, origin=m365_origin,
+                    execution_intent=intent,
                 )
         from functions_m365_citations import m365_display_time_zone
 
-        with m365_display_time_zone(_ctx(context, 'time_zone')):
-            result = asyncio.run(invoke_scoped_agent(
-                agent_cfg, task, identity=execution_identity, budget=budget,
-                cancel_requested=cancel_requested, scope=scope,
-            ))
+        with m365_display_time_zone(_ctx(context, 'time_zone')), operation_step_scope(
+            step, context, user_id, named_inputs,
+        ) as journal:
+            async def invoke():
+                return await invoke_scoped_agent(
+                    agent_cfg, task, identity=execution_identity, budget=budget,
+                    cancel_requested=cancel_requested, scope=scope,
+                )
+
+            if journal is not None and agent_cfg.get('agent_type', 'local') != 'local':
+                result = asyncio.run(journal.opaque_call(agent_name, {'task': task}, invoke))
+            else:
+                result = asyncio.run(invoke())
+            if journal is not None:
+                journal.require_valid()
+            operation_receipts = deepcopy(journal.receipts) if journal is not None else []
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Agent execution was cancelled.')
     except (
@@ -2141,12 +2176,16 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     ))
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
-        summary=_first_line(result['response']),
+        summary=(
+            operation_summary(operation_receipts, 'The agent returned operation results.')
+            if intent == 'operate' else _first_line(result['response'])
+        ),
         notes=[
             f'Agent "{agent_cfg.get("display_name") or agent_name}" replied:\n{result["response"]}',
             *_m365_sources_notes(citations),
         ],
         citations=citations,
+        operation_receipts=operation_receipts,
     )
 
 

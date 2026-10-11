@@ -336,8 +336,23 @@ async def execute_target(target, task, context, frame, *, scope=None):
         try:
             if agent_type == "local":
                 kernel, agent = _build_local_agent(target, settings)
+                from functions_orchestration_operations import (
+                    current_operation_journal, integration_inputs_require_budget, require_integration_model_budget,
+                )
+                from semantic_kernel.filters import FilterTypes
+
+                journal = current_operation_journal()
+                if journal is not None:
+                    kernel.add_filter(FilterTypes.FUNCTION_INVOCATION, journal.function_filter)
+                if integration_inputs_require_budget():
+                    require_integration_model_budget(
+                        getattr(agent, "model_token_budget", None), messages,
+                        [metadata.model_dump(mode="json") for metadata in kernel.get_full_list_of_function_metadata()],
+                    )
                 _check_cancelled(frame)
                 result = await _invoke_local(agent, messages)
+                if journal is not None:
+                    journal.require_valid()
                 text = str(result) if result is not None else ""
                 model = getattr(agent, "deployment_name", None)
             else:

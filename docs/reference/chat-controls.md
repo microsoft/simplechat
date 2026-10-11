@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.319"
+version: "0.261.321"
 ---
 
 ## How to use this reference
@@ -156,6 +156,11 @@ being presented as a model answer that no documents exist.
 | `chat-tutorial-btn` | Launches the guided chat walkthrough. | Use it when onboarding users or when you want a reminder of the main chat workflow. | Always available |
 
 ## Microsoft 365 outgoing action cards
+
+Since **0.261.321**, these same cards also show manual or delayed outgoing actions
+prepared by Orchestrate. They are recovered from the authorized conversation list after
+an integration step or interrupted run. Opening, refreshing, or approving a plan does
+not send a manual draft; use the existing owner-only Send/Cancel controls.
 
 Implemented in version: **0.261.038** (`application/single_app/config.py`).
 Manual and delayed email/invitation tools display a saved review card separately

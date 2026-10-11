@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.140"
+version: "0.261.321"
 ---
 
 
@@ -48,6 +48,13 @@ of work, and they are enforced regardless of what a plan asks for.
 a plan use an existing action without loading a configured agent. Its focused function
 loop can still make model calls, and the action retains its existing behavior and
 governance; this is not a read-only mode.
+
+Since **0.261.321**, action and agent steps can declare explicit operation intent and
+consume complete named results from research or content preparation. This uses the
+existing action-access and integration policies, not a new admin toggle. M365 gather
+steps remain read-only; operation steps use only configured writes. Manual, delayed,
+and automatic delivery behavior is unchanged, and plan approval does not replace
+outgoing-message review. See the [action access contract](../explanation/features/CHAT_ORCHESTRATION_ACTIONS.md).
 
 ## Before you change anything
 

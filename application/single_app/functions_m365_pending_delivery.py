@@ -36,12 +36,14 @@ DELIVERY_RECOVERY_GRACE_SECONDS = 120
 def configure_m365_pending_delivery(
     *, container, context_scope, log_event, transport_factory=M365Transport, notification_sender=None,
     capture_agent_reference=None, view_authorizer=None, conversation_authorizer=None,
+    capture_step_reference=None,
 ):
     _dependencies.update(
         container=container, context_scope=context_scope, log_event=log_event,
         transport_factory=transport_factory,
         notification_sender=notification_sender,
         capture_agent_reference=capture_agent_reference,
+        capture_step_reference=capture_step_reference,
         view_authorizer=view_authorizer,
         conversation_authorizer=conversation_authorizer,
     )
@@ -106,6 +108,11 @@ def capture_workflow_delivery(user_id, action_id, workflow_id, run_id):
             "id": context.workflow_id, "user_id": context.actor_user_id, "group_id": context.group_id,
         }
     else:
+        capture_step = _dependencies.get("capture_step_reference")
+        step = capture_step(context, action_id) if capture_step is not None else None
+        if step is not None:
+            delivery.update(kind="orchestration", step_ref=step)
+            return delivery
         capture = _dependencies.get("capture_agent_reference")
         if capture is None or not context.conversation_id or not context.request_id:
             raise M365PolicyError("m365_delivery_context_invalid", "A selected conversation agent is required for action review.")
@@ -138,7 +145,13 @@ def has_verified_delivery_binding(action):
     }
     return bool(
         delivery.get("version") == DELIVERY_BINDING_VERSION
-        and delivery.get("kind") in {"chat", "workflow"} and delivery.get("action_id")
+        and delivery.get("kind") in {"chat", "workflow", "orchestration"} and delivery.get("action_id")
+        and (
+            delivery.get("kind") != "orchestration"
+            or isinstance(delivery.get("step_ref"), dict)
+            and delivery["step_ref"].get("run_id") and delivery["step_ref"].get("step_id")
+            and isinstance(delivery["step_ref"].get("selection"), dict)
+        )
         and delivery.get("action_type") in {"msgraph", "m365_email", "m365_calendar"}
         and action.get("operation") in allowed_operations[delivery["action_type"]]
         and snapshot.get("data_user_id") == action.get("user_id")
@@ -263,7 +276,7 @@ def dispatch_m365_pending_delivery(
         due = datetime.fromisoformat(action["auto_send_at_utc"].replace("Z", "+00:00"))
         if due > now:
             return action, _delivery_error("delivery_not_due", "The scheduled delivery time has not arrived.")
-        if (action["m365_execution"].get("kind") == "chat"
+        if (action["m365_execution"].get("kind") in {"chat", "orchestration"}
                 and now > due + timedelta(seconds=DELIVERY_RECOVERY_GRACE_SECONDS)):
             return action, _delivery_error("delivery_schedule_expired", "The delivery window expired. Review and send it manually.")
     delivery = action["m365_execution"]
@@ -431,7 +444,7 @@ def dispatch_due_m365_deliveries(*, limit=25):
             continue
         delivery = action.get("m365_execution")
         delivery = delivery if isinstance(delivery, dict) else {}
-        if delivery.get("kind") == "chat":
+        if delivery.get("kind") in {"chat", "orchestration"}:
             due = datetime.fromisoformat(action["auto_send_at_utc"].replace("Z", "+00:00"))
             if due + timedelta(seconds=DELIVERY_RECOVERY_GRACE_SECONDS) > now:
                 continue

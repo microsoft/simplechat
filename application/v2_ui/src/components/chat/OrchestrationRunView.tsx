@@ -131,7 +131,20 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     ]);
     const entries: Array<[string, string]> = [];
     const args = step.arguments as Json;
+    if (step.capability_id === 'action_invoke' || step.capability_id === 'agent_invoke') {
+        entries.push([
+            'execution',
+            args.execution_intent === 'operate'
+                ? 'Requested operation; existing integration policies apply'
+                : args.execution_intent === undefined || args.execution_intent === 'gather'
+                  ? 'Gather information'
+                  : 'Unknown execution intent; review this plan',
+        ]);
+    }
     for (const [key, value] of Object.entries(args)) {
+        if (key === 'execution_intent') {
+            continue;
+        }
         // Action identity is named from validated inputs below, not from planner arguments.
         if (
             step.capability_id === 'action_invoke'

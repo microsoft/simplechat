@@ -1,6 +1,31 @@
-# Microsoft 365 actions and conversation evidence (v0.261.129)
+# Microsoft 365 actions and conversation evidence (v0.261.321)
 
 Implemented in version: **0.261.029**
+
+Orchestration operations implemented in version: **0.261.321**, tracked in
+`application/single_app/config.py`.
+
+## Operations in orchestration
+
+An explicit operation-intent action or agent step can use enabled M365 write functions.
+Sending mail, creating invitations, and changing read state keep their existing delegated
+permissions, sharing policies, and delivery settings. Old plans without operation intent
+remain read-only until replanned.
+
+Research and prepared email content can be bound as complete named inputs. Manual and
+delayed outgoing actions have a durable orchestration origin rather than an invented
+chat-agent or workflow binding. Review/send rechecks the original owned plan, selected
+action or agent, current permissions, conversation audience, and reviewed material.
+Changed or cancelled plans cannot silently revive an outgoing operation.
+
+The V2 conversation recovers saved cards after integration steps and interrupted streams.
+Confirmed operation receipts prevent a retry from recreating an existing draft or
+resending an accepted operation. Uncertain writes require review of Microsoft 365 before
+new work. Interactive delayed-delivery recovery keeps its existing grace window rather
+than becoming an unattended workflow.
+
+See [orchestration action access](CHAT_ORCHESTRATION_ACTIONS.md) and the
+[operation capability fix](../fixes/ORCHESTRATION_OPERATION_CAPABILITY_FIX.md).
 
 Authorization bootstrap and workflow diagnostic handling updated in **0.261.030**.
 See the [CodeQL remediation](../fixes/M365_CODEQL_REMEDIATION_FIX.md).

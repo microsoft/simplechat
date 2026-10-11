@@ -44,6 +44,7 @@ from functions_m365_operations import (
     M365_LEGACY_OPERATION_SOURCES,
     M365_WRITE_FUNCTIONS,
     get_m365_enabled_function_names,
+    orchestration_m365_manifest,
 )
 from functions_msgraph_operations import get_msgraph_enabled_function_names
 from functions_m365_connections import preflight_m365_chat_authentication
@@ -550,20 +551,7 @@ def validate_m365_workflow_execution(context):
 
 def _step_action_manifest(action):
     """A saved action's own enabled functions, with no agent overlay."""
-    manifest = dict(action)
-    if action.get("type") == "msgraph":
-        fields = action.get("additionalFields") or {}
-        functions = set(get_msgraph_enabled_function_names(
-            fields.get("msgraph_capabilities", action.get("msgraph_capabilities")),
-        ))
-        if action.get("msgraph_capabilities") is not None:
-            functions.intersection_update(get_msgraph_enabled_function_names(action["msgraph_capabilities"]))
-        if action.get("enabled_functions") is not None:
-            functions.intersection_update(action["enabled_functions"])
-        manifest["enabled_functions"] = sorted(functions)
-    else:
-        manifest["enabled_functions"] = get_m365_enabled_function_names(action["type"], action)
-    return manifest
+    return orchestration_m365_manifest(action)
 
 
 def step_selected_m365_manifests(selection, actor_user_id):
@@ -616,6 +604,14 @@ def _readable_m365_manifests(manifests):
         if functions:
             readable.append({**manifest, "enabled_functions": functions})
     return readable
+
+
+def _step_m365_manifests(selection, actor_user_id):
+    manifests = step_selected_m365_manifests(selection, actor_user_id)
+    intent = selection.get("execution_intent", "gather")
+    if intent not in {"gather", "operate"}:
+        raise M365PolicyError("m365_action_selection_unavailable", "The step intent is invalid.")
+    return manifests if intent == "operate" else _readable_m365_manifests(manifests)
 
 
 def _begin_step_m365_request(context, origin):
@@ -719,8 +715,8 @@ def step_m365_context(*, user_id, conversation_id, request_id, selection, origin
 
     A plan step runs in a fresh request context, so the chat request's Microsoft 365
     context never reaches it. This context uses the signed-in user as actor and data user,
-    selects only the step's own action or agent, and never enables send, invite or
-    read-state functions. In a shared conversation it carries that conversation's real
+    selects only the step's own action or agent. Only explicit operate intent admits
+    configured send, invite or read-state functions. In a shared conversation it carries that conversation's real
     audience; the user's own request is their consent to share the sources it reads there.
     Delegated sign-in is checked here, before any model call or Microsoft Graph request. An
     agent step whose agent loads no Microsoft 365 action gets no context and leaves no
@@ -747,10 +743,10 @@ def step_m365_context(*, user_id, conversation_id, request_id, selection, origin
             shared_by_request=shared is not None,
         )
         install_m365_context(context)
-        manifests = _readable_m365_manifests(selected)
+        manifests = _step_m365_manifests(selection, user_id)
         if not manifests:
             if selected:
-                raise M365PolicyError("m365_read_only_step", "Plans can only read Microsoft 365 data.")
+                raise M365PolicyError("m365_read_only_step", "This step only gathers Microsoft 365 information.")
             raise M365PolicyError("m365_action_not_selected", "No Microsoft 365 action is selected for this step.")
         _begin_step_m365_request(context, origin)
         status, approval_id = "failed", None
@@ -796,6 +792,55 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
             for key in ("id", "name", "is_global", "is_group", "group_id")
             if key in selection
         }
+
+    def validate_step_reference(reference, context):
+        # The stored origin is a locator, not authority; reload its exact owned plan.
+        from functions_orchestration_runs import get_orchestration_run
+
+        if not isinstance(reference, dict) or not isinstance(reference.get("selection"), dict):
+            raise M365PolicyError("m365_delivery_context_invalid", "The orchestration origin is unavailable.")
+        run = get_orchestration_run(
+            reference.get("run_id"), context.actor_user_id,
+            conversation_id=context.conversation_id, strict=True,
+        )
+        selection = reference["selection"]
+        step = next((
+            item for item in (run or {}).get("plan", {}).get("steps", [])
+            if item.get("step_id") == reference.get("step_id")
+        ), None)
+        arguments = (step or {}).get("arguments") or {}
+        selected_agent = selection.get("agent") or {}
+        matches = (
+            step and step.get("enabled", True) and arguments.get("execution_intent") == "operate"
+            and selection.get("execution_intent") == "operate"
+            and (
+                step.get("capability_id") == "action_invoke" and selection.get("kind") == "action"
+                and arguments.get("action_ref") == selection.get("action_ref")
+                or step.get("capability_id") == "agent_invoke" and selection.get("kind") == "agent"
+                and arguments.get("agent_name") == selected_agent.get("name")
+            )
+        )
+        if not matches or run.get("status") == "cancelled" or run.get("superseded_by_run_id"):
+            raise M365PolicyError("m365_context_changed", "The originating plan changed or stopped.")
+        return deepcopy(selection)
+
+    def capture_step_reference(context, action_id):
+        selection = getattr(g, M365_STEP_SELECTION_KEY, None) if has_request_context() else None
+        if selection is None:
+            return None
+        if action_id not in resolve_m365_action_selection(context):
+            raise M365PolicyError("m365_action_not_selected", "The outgoing action is not selected.")
+        record = cosmos_m365_execution_runs_container.read_item(
+            context.request_id, partition_key=context.data_user_id,
+        )
+        origin = record.get("orchestration") or {}
+        if record.get("actor_user_id") != context.actor_user_id or record.get("conversation_id") != context.conversation_id:
+            raise M365PolicyError("m365_delivery_context_invalid", "The step's request binding changed.")
+        reference = {
+            "run_id": origin.get("run_id"), "step_id": origin.get("step_id"), "selection": deepcopy(selection),
+        }
+        validate_step_reference(reference, context)
+        return reference
 
     def authorize_conversation(viewer, conversation_id):
         return resolve_m365_audit_conversation_id(viewer, conversation_id)
@@ -885,7 +930,10 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
                     conversation, _access, shared = _conversation_access(context.actor_user_id, context.conversation_id)
                     if conversation is None or _audience_version(conversation, shared) != context.audience_version:
                         raise M365PolicyError("m365_context_changed", "The conversation or audience changed. Prepare the action again.")
-                    g.m365_selected_agent_ref = deepcopy(delivery.get("agent_ref") or {})
+                    if delivery.get("kind") == "orchestration":
+                        g.m365_step_selection = validate_step_reference(delivery.get("step_ref"), context)
+                    else:
+                        g.m365_selected_agent_ref = deepcopy(delivery.get("agent_ref") or {})
                 with m365_execution_context(context):
                     if context.workflow_id and not validate_m365_workflow_execution(context):
                         raise M365PolicyError("m365_workflow_changed", "The workflow or destination changed after this delivery was prepared.")
@@ -913,6 +961,7 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
         container=cosmos_msgraph_pending_actions_container,
         context_scope=delivery_context, log_event=log_event, notification_sender=notify_delivery,
         capture_agent_reference=capture_agent_reference, view_authorizer=authorize_view,
+        capture_step_reference=capture_step_reference,
         conversation_authorizer=authorize_conversation,
     )
 
@@ -948,7 +997,7 @@ def resolve_m365_selected_manifests(context):
         return manifests
     step = getattr(g, M365_STEP_SELECTION_KEY, None) if has_request_context() else None
     if step is not None:
-        return _readable_m365_manifests(step_selected_m365_manifests(step, context.actor_user_id))
+        return _step_m365_manifests(step, context.actor_user_id)
     selection = getattr(g, "m365_selected_agent_ref", None) if has_request_context() else None
     if not selection:
         return []

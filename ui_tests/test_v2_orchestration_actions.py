@@ -1,8 +1,9 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.139
+Version: 0.261.321
 Implemented in: 0.261.098
+Operation intent added in: 0.261.321
 
 Use the existing orchestration harness and real stores/components. Serve its
 local bundle through request interception so local and Azure Playwright browsers
@@ -142,6 +143,37 @@ def _action_row(page):
     return page.get_by_role("listitem").filter(
         has=page.get_by_text("Look up the ticket", exact=True)
     )
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_operation_intent_and_named_content_are_visible_and_round_trip(action_page, width):
+    action_page.set_viewport_size({"width": width, "height": 900})
+    plan = _plan()
+    step = plan["steps"][0]
+    step["arguments"]["execution_intent"] = "operate"
+    step["arguments"]["task"] = "Create the requested ticket."
+    step["inputs"] = {"content": {"binding": {
+        "version": "orchestration-input-binding-v1", "step_id": "draft",
+        "output_name": "content", "existing_result": None,
+    }, "allow_partial": False}}
+    plan["steps"].insert(0, {
+        "step_id": "draft", "capability_id": "compose", "role": "reason",
+        "title": "Prepare ticket content", "arguments": {},
+        "depends_on": [], "outputs": [{"name": "content", "kind": "markdown-v1"}],
+        "enabled": True, "status": "pending", "estimated_cost": "low",
+    })
+    _seed(action_page, plan)
+    expect(action_page.get_by_text(
+        "Requested operation; existing integration policies apply", exact=True,
+    )).to_be_visible()
+    expect(action_page.get_by_role("region", name="Result bindings for Look up the ticket")
+           .get_by_text("content", exact=True)).to_be_visible()
+    intent = action_page.evaluate("""({conversation, turn}) => {
+        const api = window.OrchHarness.stores.orchestration;
+        return api.selectPlan(api.useOrchestrationStore.getState(), conversation, turn)
+            .steps.find(step => step.step_id === 'lookup').arguments.execution_intent;
+    }""", {"conversation": CONVERSATION, "turn": TURN})
+    assert intent == "operate"
 
 
 @pytest.mark.parametrize("action", ACTIONS, ids=["personal", "group", "global"])

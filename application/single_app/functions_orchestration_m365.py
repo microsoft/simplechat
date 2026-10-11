@@ -14,10 +14,11 @@ SharePoint and OneDrive file functions also need the model's token budget, and d
 analysis needs a model. Chat supplies both through the selected agent. An action step has no
 agent, so ``file_step_filter`` binds the step's own model around each of its function calls.
 
-Version: 0.261.300
+Version: 0.261.321
 Implemented in: 0.261.238
 Agent steps get their own Microsoft 365 scope in: 0.261.270
 File action steps get their model's token budget and analysis model in: 0.261.300
+Explicit operation intent preserves configured write policies in: 0.261.321
 """
 
 import hashlib
@@ -239,11 +240,15 @@ def _step_scope(*, user_id, conversation_id, request_key, selection, origin):
         raise stop from error
 
 
-def action_step_scope(action_ref, *, user_id, conversation_id, request_key, user_groups=None, origin=None):
+def action_step_scope(
+    action_ref, *, user_id, conversation_id, request_key, user_groups=None, origin=None,
+    execution_intent='gather',
+):
     """Authorize one approved Microsoft 365 action step, selecting only that action."""
     selection = {
         'kind': 'action', 'action_ref': action_ref,
         'user_groups': [group for group in user_groups or () if isinstance(group, str)],
+        'execution_intent': execution_intent,
     }
     return _step_scope(
         user_id=user_id, conversation_id=conversation_id, request_key=request_key,
@@ -257,7 +262,7 @@ def agent_loads_actions(agent):
     return isinstance(actions, list) and any(isinstance(action, str) and action for action in actions)
 
 
-def agent_step_scope(agent, *, user_id, conversation_id, request_key, origin=None):
+def agent_step_scope(agent, *, user_id, conversation_id, request_key, origin=None, execution_intent='gather'):
     """Authorize one approved agent step's Microsoft 365 actions, selecting only that agent's.
 
     The agent's actions and their overrides resolve from current storage as a chat-selected
@@ -265,6 +270,7 @@ def agent_step_scope(agent, *, user_id, conversation_id, request_key, origin=Non
     """
     selection = {
         'kind': 'agent',
+        'execution_intent': execution_intent,
         'agent': {
             key: agent.get(key) for key in ('id', 'name', 'is_global', 'is_group', 'group_id')
             if isinstance(agent, dict) and key in agent
