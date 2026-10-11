@@ -21,6 +21,7 @@ export function PublicWorkspacePicker({
     onSelect: (id: string) => void;
 }) {
     const [search, setSearch] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
     const labels = usePublicWorkspaceLabels();
     const [term, setTerm] = useState('');
     const [page, setPage] = useState(1);
@@ -54,7 +55,7 @@ export function PublicWorkspacePicker({
     const items = result?.items ?? [];
     return (
         <div className="min-w-0 space-y-2">
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-2 sm:gap-3">
                 <label className="min-w-0 space-y-1 text-xs text-text-2">
                     <span>{labels.singular}</span>
                     <select aria-label={labels.singular} className={INPUT_CLASS} value={value ?? ''}
@@ -67,7 +68,13 @@ export function PublicWorkspacePicker({
                         {items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                     </select>
                 </label>
-                <label className="min-w-0 space-y-1 text-xs text-text-2">
+                <button type="button" aria-label={`Search ${labels.lower_plural}`} aria-expanded={searchOpen}
+                    aria-controls="public-workspace-search" disabled={disabled}
+                    onClick={() => setSearchOpen((open) => !open)}
+                    className="min-h-11 rounded-xl border border-edge px-3 text-sm text-text-2 sm:hidden">
+                    Search
+                </button>
+                <label id="public-workspace-search" className={`min-w-0 space-y-1 text-xs text-text-2 ${searchOpen ? 'col-span-2 sm:col-span-1' : 'hidden sm:block'}`}>
                     <span>Search {labels.lower_plural}</span>
                     <input type="search" className={INPUT_CLASS} value={search} disabled={disabled}
                         placeholder={`Search all ${labels.lower_plural}`} onChange={(event) => setSearch(event.target.value)} />

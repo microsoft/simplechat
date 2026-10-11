@@ -1,7 +1,7 @@
 # test_v2_sidebar_conversation_scroll.py
 """
 Browser regressions for the V2 chat rail scrolling as one panel.
-Version: 0.261.236
+Version: 0.261.323
 Implemented in: 0.261.236
 
 On the chat page, the rail kept its whole height for the navigation and the administrator's
@@ -87,6 +87,8 @@ GEOMETRY = r"""
         },
         footer: box(nav.querySelector('button[aria-label^="Switch to"]')),
         rows: rows.length,
+        rowPitch: rows.length > 1
+            ? rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top : 0,
         visible,
         scrollers: scrollers.length,
         regionScrolls: scrollers.length === 1 && scrollers[0] === region,
@@ -297,8 +299,8 @@ def geometry(page):
 
 def wheel_rail(page, delta):
     """Scroll with the wheel over the conversation list, the way a reader does."""
-    box = header(page).bounding_box()
-    page.mouse.move(box["x"] + 80, box["y"] + box["height"] + 40)
+    box = page.locator("[data-rail-scroll-region]").bounding_box()
+    page.mouse.move(box["x"] + 80, box["y"] + box["height"] / 2)
     page.mouse.wheel(0, delta)
     page.evaluate(SETTLE)
 
@@ -517,7 +519,7 @@ def test_the_phone_drawer_holds_search_under_new_chat(open_page):
     mount(page, api, rows=0)
     expect(search_box(page)).to_have_count(0)
 
-    page.get_by_role("button", name="Expand navigation", exact=True).click()
+    page.get_by_role("button", name="Open navigation", exact=True).click()
     expect(row_items(page)).to_have_count(PAGE_SIZE)
     wheel_rail(page, 900)
     expect(header(page)).to_have_attribute("data-stuck", "")
@@ -525,10 +527,15 @@ def test_the_phone_drawer_holds_search_under_new_chat(open_page):
     assert held["regionScrolls"], held
     assert held["chats"]["bottom"] <= held["region"]["top"]
     assert held_under_new_chat(held), held
-    assert held["visible"] >= 10, held["visible"]
+    row_buttons = row_items(page).first.get_by_role("button", name="Conversation 00", exact=True)
+    assert row_buttons.bounding_box()["height"] >= 44
+    available_height = held["region"]["bottom"] - held["header"]["bottom"]
+    # Touch targets are larger than desktop rows; only an edge row may be partial.
+    capacity = int(available_height // held["rowPitch"])
+    assert held["visible"] >= capacity - 1 and capacity >= 8, held
 
     page.keyboard.press("Escape")
-    expect(page.get_by_role("button", name="Expand navigation", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_focused()
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

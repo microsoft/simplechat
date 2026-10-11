@@ -1,13 +1,13 @@
 // AppShell.tsx
-// Two-column application frame: the collapsible rail on the left, all content on the
-// right. The classification banner, when configured, is the only element allowed to span
-// the full width, matching the server-rendered interface.
+// Desktop rail and content frame, with a shared header/drawer on phones.
+// The classification banner spans the frame, matching the server-rendered interface.
 //
 // The banner carries the same `classification-banner` id the classic layout uses, so a
 // deployment styling or asserting against it does not have to know which interface it is
 // looking at.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { MobileNavigation, MobileNavigationContext } from './MobileNavigation';
 import { Sidebar } from './Sidebar';
 import { Toaster } from '../ui/Toaster';
 import { SafetyWarningDialogHost } from '../notifications/SafetyWarningDialog';
@@ -28,7 +28,7 @@ function ClassificationBanner() {
         <div
             id="classification-banner"
             role="note"
-            className="flex h-8 shrink-0 items-center justify-center text-sm font-bold tracking-wide"
+            className="flex min-h-8 shrink-0 items-center justify-center px-3 py-1 text-center text-sm font-bold tracking-wide break-words"
             style={{ background: banner.color, color: banner.text_color }}
         >
             {banner.text}
@@ -42,6 +42,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     const setMobileNavOpen = useUiStore((state) => state.setMobileNavOpen);
     const participantsOpen = useCollaborationStore((state) => state.panelTarget !== null);
     const contentRef = useRef<HTMLElement>(null);
+    const [headerCount, setHeaderCount] = useState(0);
+    const register = useCallback((change: number) => setHeaderCount((count) => count + change), []);
+    const title = useBootstrapStore((state) => state.data?.branding?.app_title || 'SimpleChat');
 
     useEffect(() => {
         const query = window.matchMedia('(max-width: 767px)');
@@ -63,26 +66,35 @@ export function AppShell({ children }: { children: ReactNode }) {
     }, [mobileNavOpen, participantsOpen, setMobileNavOpen]);
 
     return (
-        <div className="flex h-full flex-col">
-            <ClassificationBanner />
-            <div className="relative flex min-h-0 min-w-0 flex-1">
-                {mobile && <div className="w-[68px] shrink-0" aria-hidden="true" />}
-                {mobile && mobileNavOpen && (
-                    <button
-                        type="button"
-                        tabIndex={-1}
-                        aria-label="Close navigation"
-                        className="absolute inset-0 z-40 bg-black/40"
-                        onClick={() => setMobileNavOpen(false)}
-                    />
-                )}
-                <Sidebar mobile={mobile} />
-                <main ref={contentRef} className="flex min-w-0 flex-1 flex-col">{children}</main>
-            </div>
-            <Toaster />
-            <WorkflowAlertCardHost />
-            <WorkflowAlertLiveRegion />
-            <SafetyWarningDialogHost />
+        <MobileNavigationContext.Provider value={{ mobile, register }}>
+            <div className="app-shell flex h-full min-h-0 flex-col">
+                    <ClassificationBanner />
+                    <div className="relative flex min-h-0 min-w-0 flex-1">
+                        {mobile && mobileNavOpen && (
+                            <button
+                                type="button"
+                                tabIndex={-1}
+                                aria-label="Close navigation"
+                                className="absolute inset-0 z-40 bg-black/40"
+                                onClick={() => setMobileNavOpen(false)}
+                            />
+                        )}
+                        {(!mobile || mobileNavOpen) && <Sidebar mobile={mobile} />}
+                        <main ref={contentRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+                            {mobile && headerCount === 0 && (
+                                <header className="glass flex min-h-14 shrink-0 items-center gap-2 px-2">
+                                    <MobileNavigation register={false} />
+                                    <span className="truncate text-sm font-semibold">{title}</span>
+                                </header>
+                            )}
+                            {children}
+                        </main>
+                    </div>
+                    <Toaster />
+                    <WorkflowAlertCardHost />
+                    <WorkflowAlertLiveRegion />
+                    <SafetyWarningDialogHost />
         </div>
+        </MobileNavigationContext.Provider>
     );
 }

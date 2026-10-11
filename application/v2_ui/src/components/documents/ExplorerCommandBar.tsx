@@ -11,6 +11,7 @@
 // nothing selected rather than hidden, so the bar keeps its shape and the capability stays
 // discoverable.
 
+import { useState } from 'react';
 import { clsx } from 'clsx';
 import {
     ArrowDown,
@@ -103,6 +104,7 @@ export function ExplorerCommandBar({
     onSort: (field: DocumentSortField) => void;
     onShowFilters?: () => void;
 }) {
+    const [viewOptionsOpen, setViewOptionsOpen] = useState(false);
     const hasSelection = selectionCount > 0;
     const canReview = Boolean(onReview && selectedDocuments.length === 1 && availability.canReview?.(selectedDocuments[0]));
     const compactActions = Boolean(onShowFilters && (
@@ -119,7 +121,7 @@ export function ExplorerCommandBar({
     ].filter((action) => action.visible);
 
     return (
-        <div className="flex flex-wrap items-center gap-2 border-b border-edge px-1 pb-2">
+        <div className="explorer-command-bar flex flex-wrap items-center gap-2 border-b border-edge px-1 pb-2">
             {availability.upload ? (
                 <>
                     <GlassButton variant="primary" size="sm" onClick={onUpload} disabled={uploading || !availability.allows('upload')}>
@@ -238,8 +240,18 @@ export function ExplorerCommandBar({
                         className="h-8 w-full rounded-lg border border-edge bg-surface-1 pr-2 pl-7 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none"
                     />
                     </div>
+                    <button type="button" aria-label="Document view options"
+                        aria-expanded={viewOptionsOpen} aria-controls="document-view-options"
+                        onClick={() => setViewOptionsOpen((open) => !open)}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-edge bg-surface-1 text-text-2 md:hidden">
+                        <Columns3 size={16} />
+                    </button>
                 </div>
 
+                <div id="document-view-options" className={clsx(
+                    'min-w-0 flex-wrap items-center gap-2 md:contents',
+                    viewOptionsOpen ? 'flex' : 'hidden',
+                )}>
                 {canSaveView ? (
                     <GlassButton
                         variant="ghost"
@@ -340,6 +352,7 @@ export function ExplorerCommandBar({
                 >
                     <PanelRight size={15} />
                 </button>
+                </div>
             </div>
         </div>
     );
@@ -446,7 +459,7 @@ export function ExplorerStatusBar({
     const items = paginationItems(page, range.pageCount);
 
     return (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-edge px-1 pt-2 text-xs text-text-3">
+        <div className="explorer-status-bar flex flex-wrap items-center justify-between gap-2 border-t border-edge px-1 pt-2 text-xs text-text-3">
             <p>
                 {range.total === 0
                     ? 'No documents'

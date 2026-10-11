@@ -11,6 +11,20 @@ and deleting — so that browsing by tag and administering tags are no longer co
 same toolbar.
 
 **Implemented in version:** `0.261.048`
+
+**Responsive rows implemented in version: 0.261.323**
+(`application/single_app/config.py`). Below 768px, the existing details table
+fits the content pane rather than enforcing its desktop minimum width. Names
+wrap, selection remains visible, and status, classification, provenance, and
+restriction information stay available in the row. Open a document's name to
+inspect secondary metadata in **Document details**. Desktop column preferences
+are not overwritten by the phone layout. **Document view options** discloses
+sorting and the existing view controls; Tiles view remains available.
+
+This presentation is shared by personal, group, and public documents; each
+scope retains its own reader, operations, and permissions. Compact filter and
+details dialogs and the existing selection-aware **Actions** picker are reused.
+
 **Dependencies**
 
 | Requirement | Why |

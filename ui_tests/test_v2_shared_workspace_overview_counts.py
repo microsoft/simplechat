@@ -1,7 +1,7 @@
 # test_v2_shared_workspace_overview_counts.py
 """
 Real-SPA regression tests for group/public overview counts.
-Version: 0.261.313
+Version: 0.261.323
 Implemented in: 0.261.310
 
 Uses the established Azure Playwright-compatible connection fixture and closed
@@ -171,6 +171,9 @@ def badge(ui, section, count):
 
 
 def nav(ui, label):
+    opener = ui.page.get_by_role("button", name="Workspace sections", exact=True)
+    if opener.is_visible():
+        opener.click()
     ui.page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role("link", name=label, exact=True).click()
 
 

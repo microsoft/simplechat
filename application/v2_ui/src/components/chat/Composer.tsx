@@ -20,6 +20,7 @@ import {
     Reply,
     Search,
     ShieldCheck,
+    SlidersHorizontal,
     Square,
     Telescope,
     Workflow,
@@ -170,6 +171,7 @@ function ToolToggle({
 }
 
 export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
+    const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
     const publicWorkspaceSelection = useChatStore((state) => state.publicWorkspaceSelection);
     const setPublicWorkspaceSelection = useChatStore((state) => state.setPublicWorkspaceSelection);
     const publicLabels = usePublicWorkspaceLabels();
@@ -1527,7 +1529,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     };
 
     return (
-        <div className="shrink-0 px-4 pb-4">
+        <div className="chat-composer shrink-0 px-2 pb-2 md:px-4 md:pb-4">
             {largeRun && (
                 <LargeRunDialog
                     estimate={largeRun.estimate}
@@ -1797,6 +1799,17 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     )}
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1" data-tour="composer-tools">
+                        <button type="button" aria-label="Chat tools" aria-expanded={mobileToolsOpen}
+                            aria-controls="composer-secondary-tools"
+                            onClick={() => setMobileToolsOpen((open) => !open)}
+                            className="mobile-tools-toggle flex min-h-11 min-w-0 items-center gap-2 rounded-xl px-2 text-sm text-text-2 hover:bg-surface-2 md:hidden">
+                            <SlidersHorizontal size={18} className="shrink-0" />
+                            <span className="min-w-0 truncate">{orchestrating
+                                ? `Orchestrate · ${effectiveApprovalMode}`
+                                : activeAgentLabel || modelOptions.find((model) => model.value === options.modelDeployment)?.label || 'Tools'}</span>
+                        </button>
+                        <div id="composer-secondary-tools" data-open={mobileToolsOpen}
+                            className="composer-secondary-tools flex flex-wrap items-center gap-1.5 md:contents">
                         {orchestrationAvailable && (
                             <ToolToggle
                                 active={orchestrating}
@@ -2044,7 +2057,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             </>
                         )}
 
-                        <div className="ml-auto flex items-center gap-1.5">
+                        </div>
+                        <div className="composer-primary-actions ml-auto flex shrink-0 items-center gap-1.5">
                             {features.enable_speech_to_text_input && (
                                 <VoiceInput
                                     onTranscribed={(transcript) =>

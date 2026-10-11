@@ -1,7 +1,7 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.271
+Version: 0.261.323
 Implemented in: 0.261.153
 A workflow's resource segment is its editor page, no longer a redirect to the workflow query: 0.261.271
 
@@ -31,6 +31,9 @@ CLASSIC_BUTTON = "Open classic group workspace"
 
 
 def section(page, label):
+    opener = page.get_by_role("button", name="Workspace sections", exact=True)
+    if opener.is_visible():
+        opener.click()
     page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role("link", name=label, exact=True).click()
 
 

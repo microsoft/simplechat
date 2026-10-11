@@ -374,7 +374,7 @@ export function GroupWorkspacePage() {
                         <Compass size={14} />Browse all groups
                     </GlassButton>
                 )} />
-            <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
+            <div className="shrink-0 space-y-2 border-b border-edge px-2 py-2 md:space-y-3 md:px-4 md:py-3">
                 <GroupWorkspacePicker key={viewerId} value={state.pendingGroupId ?? groupId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.groups?.find((group) => group.id === groupId)?.name}
                     disabled={dirty || resourceBusy || state.loading || state.activating || Boolean(externalTarget) || state.needsReconciliation}

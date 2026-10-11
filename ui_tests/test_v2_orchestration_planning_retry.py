@@ -1,7 +1,7 @@
 # test_v2_orchestration_planning_retry.py
 """
 Browser regressions for failed, unpersisted orchestration planning turns.
-Version: 0.261.317
+Version: 0.261.323
 Implemented in: 0.261.115
 Leaving a planning turn for a new chat also releases its Thinking state and Stop: 0.261.226
 
@@ -388,35 +388,38 @@ def test_analysis_shell_responsive_navigation_does_not_widen_the_page(planning_u
         }""",
         CONVERSATION,
     )
-    expect(page.get_by_role("navigation", name="Primary")).to_be_visible()
-    expand = page.get_by_role("button", name="Expand navigation", exact=True)
+    expand = page.get_by_role("button", name="Open navigation" if width < 768 else "Expand navigation", exact=True)
     if expand.is_visible():
         expand.click()
-    expect(page.get_by_role("button", name="Collapse navigation", exact=True)).to_be_visible()
+    close_name = "Close navigation" if width < 768 else "Collapse navigation"
+    close = page.get_by_role("navigation", name="Primary").get_by_role("button", name=close_name, exact=True)
+    expect(close).to_be_visible()
     dimensions = page.evaluate("({viewport: innerWidth, document: document.documentElement.scrollWidth})")
     assert dimensions["document"] <= width + 1, dimensions
-    page.get_by_role("button", name="Collapse navigation", exact=True).click()
+    close.click()
     button = page.get_by_role("button", name="Download CSV", exact=True)
     button.scroll_into_view_if_needed()
     box = button.bounding_box()
     assert box and box["x"] >= 0 and box["x"] + box["width"] <= width + 1
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    if width < 768:
+        page.get_by_role("button", name="Conversation actions", exact=True).click()
     page.get_by_role("button", name="Open used documents", exact=True).click()
     expect(page.get_by_role("complementary", name="Conversation details")).to_be_visible()
     expect(page.get_by_role("button", name="Close panel", exact=True)).to_be_in_viewport()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     page.get_by_role("button", name="Close panel", exact=True).click()
     if width == 390:
-        expand = page.get_by_role("button", name="Expand navigation", exact=True)
+        expand = page.get_by_role("button", name="Open navigation", exact=True)
         expand.focus()
         expand.press("Enter")
-        expect(page.get_by_role("button", name="Collapse navigation", exact=True)).to_be_focused()
+        expect(page.get_by_role("navigation", name="Primary").get_by_role("button", name="Close navigation", exact=True)).to_be_focused()
         assert page.evaluate("document.querySelector('nav[aria-label=\"Primary\"]').parentElement.querySelector('main').inert")
         page.keyboard.press("Escape")
         expect(expand).to_be_focused()
-        assert not page.evaluate("document.querySelector('nav[aria-label=\"Primary\"]').parentElement.querySelector('main').inert")
+        assert not page.evaluate("document.querySelector('.app-shell main').inert")
         expand.click()
-        page.get_by_role("button", name="Close navigation", exact=True).click(position={"x": width - 10, "y": 100})
+        page.locator(".app-shell > div > button[aria-label='Close navigation']").click(position={"x": width - 10, "y": 100})
         expect(expand).to_be_visible()
         assert not [
             call for call in api.calls("/api/user/settings")
@@ -439,12 +442,12 @@ def test_mobile_share_dialog_does_not_remain_inside_inert_chat(planning_ui):
         H.unmount('mount-a');
         H.mount('mount-a', 'ChatExperience', {}, {initialEntries: ['/chat']});
     }""", api.conversations)
-    page.get_by_role("button", name="Expand navigation", exact=True).click()
+    page.get_by_role("button", name="Open navigation", exact=True).click()
     page.get_by_role("button", name="Actions for Shared review", exact=True).click()
     page.get_by_role("button", name="Share", exact=True).click()
     panel = page.get_by_role("dialog", name="Conversation participants")
     expect(panel).to_be_visible()
-    expect(page.get_by_role("button", name="Expand navigation", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_visible()
     search = panel.get_by_role("searchbox", name="Search for people to add")
     search.focus()
     expect(search).to_be_focused()

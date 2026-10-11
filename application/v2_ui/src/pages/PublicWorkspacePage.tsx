@@ -245,7 +245,7 @@ export function PublicWorkspacePage() {
         <>
             <PageHeader title={labels.plural} description="Read-only shared knowledge published for everyone" leading={<Globe size={20} className="text-accent" />}
                 actions={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/public/directory')}><LayoutGrid size={14} />Public directory</GlassButton>} />
-            <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
+            <div className="shrink-0 space-y-2 border-b border-edge px-2 py-2 md:space-y-3 md:px-4 md:py-3">
                 <PublicWorkspacePicker key={viewerId} value={state.pendingWorkspaceId ?? workspaceId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.public_workspaces?.find((workspace) => workspace.id === workspaceId)?.name}
                     disabled={state.loading}

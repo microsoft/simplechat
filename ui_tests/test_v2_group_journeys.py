@@ -1,7 +1,7 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.271
+Version: 0.261.323
 Implemented in: 0.261.161
 The workflow editor is a routed page whose draft freezes the group switcher, as Settings does: 0.261.271
 
@@ -114,6 +114,9 @@ STATUS_LABELS = {
 
 
 def section(page, label):
+    opener = page.get_by_role("button", name="Workspace sections", exact=True)
+    if opener.is_visible():
+        opener.click()
     page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role(
         "link", name=label, exact=True).click()
 

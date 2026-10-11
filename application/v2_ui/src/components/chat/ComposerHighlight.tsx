@@ -26,7 +26,7 @@ import { parseContextTokens } from '../../lib/chatContextTokens';
  * defect this constant exists to prevent.
  */
 export const COMPOSER_TEXT_CLASS =
-    'w-full px-3 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words';
+    'w-full px-3 py-2.5 text-base md:text-[15px] leading-relaxed whitespace-pre-wrap break-words';
 
 /**
  * Caret and selection have to be set explicitly once the text is transparent.
