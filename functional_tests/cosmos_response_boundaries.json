@@ -12490,10 +12490,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "809037c25bcd0d4c4392bc931c33fcb5d265dc252b0bea2b95ef9c9980294894"
+        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
       },
       "classification": "sdk-compatible",
-      "contract": "Execution receives the normalized lease record; direct point message reads use fields/fingerprints, while strict settings and event checks are domain values.",
+      "contract": "Saved snapshot point responses are consumed through Mapping fields and normalize_history_message before strict snapshot validation; publication metadata enrichment does not alter this boundary.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12511,10 +12511,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "809037c25bcd0d4c4392bc931c33fcb5d265dc252b0bea2b95ef9c9980294894"
+        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
       },
       "classification": "sdk-compatible",
-      "contract": "Execution receives the normalized lease record; direct point message reads use fields/fingerprints, while strict settings and event checks are domain values.",
+      "contract": "Delivery metadata point responses are read through Mapping fields and projected into plain model/reasoning dictionaries; restored publication retains SDK ETags and conditional guards.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12532,10 +12532,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "809037c25bcd0d4c4392bc931c33fcb5d265dc252b0bea2b95ef9c9980294894"
+        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
       },
       "classification": "sdk-compatible",
-      "contract": "Execution receives the normalized lease record; direct point message reads use fields/fingerprints, while strict settings and event checks are domain values.",
+      "contract": "Regeneration reads the question's Mapping role and nested plain thread metadata; no exact top-level dictionary contract consumes the SDK point response.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
@@ -12553,18 +12553,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "809037c25bcd0d4c4392bc931c33fcb5d265dc252b0bea2b95ef9c9980294894"
+        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
       },
       "classification": "sdk-compatible",
-      "contract": "Execution receives the normalized lease record; direct point message reads use fields/fingerprints, while strict settings and event checks are domain values.",
+      "contract": "The bootstrap supplies a normalized owned conversation; conditional replace responses go to the Mapping-compatible cache invalidator. New readable citation metadata is merged into nested plain document records.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery"
       ]
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._finalize": {
       "boundary": {
-        "sha256": "5e58999e21d9ff52aa15f3ec083c53ad13fedd2a027251d353478f6cffa9d2f6",
+        "sha256": "82d887da7806a9fef3ee21004f3de469ce8305cb55ebb07870e42951fc576469",
         "points": [
           {
             "method": "read_item",
@@ -12574,13 +12575,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "809037c25bcd0d4c4392bc931c33fcb5d265dc252b0bea2b95ef9c9980294894"
+        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
       },
       "classification": "sdk-compatible",
-      "contract": "Execution receives the normalized lease record; direct point message reads use fields/fingerprints, while strict settings and event checks are domain values.",
+      "contract": "Finalization reads the already-published SDK message through Mapping fields and publishes a plain message DTO. Display metadata is copied only from authorized source manifests, outside strict retained-result identity descriptors.",
       "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery"
       ]
     },
     "application/single_app/functions_orchestration_operations.py::OperationJournal._change": {

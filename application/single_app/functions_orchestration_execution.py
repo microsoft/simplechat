@@ -1283,13 +1283,13 @@ class HarnessExecution:
             _log_failure("Microsoft 365 citations could not be read for the answer.", self.record, exc)
             return []
 
-    def _validate_citations(self, citations):
+    def _validate_citations(self, citations, *, enrich_display=False):
         document_ids = sorted({
             citation["document_id"] for citation in citations
             if isinstance(citation, dict) and citation.get("document_id")
         })
         if not document_ids:
-            return
+            return citations
         manifest = resolve_context_source_manifest(
             self.context, document_ids, settings=self._bootstrap.get_settings(),
             user_id=self.record["user_id"],
@@ -1299,6 +1299,27 @@ class HarnessExecution:
             if source.get("authorization_status") == "authorized"
         }:
             raise HarnessExecutionError("context_unavailable")
+        if not enrich_display:
+            return citations
+        sources = {
+            source["document_id"]: source for source in manifest
+            if source.get("authorization_status") == "authorized"
+        }
+        enriched = deepcopy(citations)
+        for citation in enriched:
+            if not isinstance(citation, dict) or not citation.get("document_id"):
+                continue
+            source = sources[citation["document_id"]]
+            # Lineage-only Analyze/Compare references have identity, but no display metadata.
+            # Keep strict retained-result descriptors unchanged; name only the published copy.
+            for field, source_field in (("title", "display_name"), ("file_name", "file_name")):
+                value = source.get(source_field)
+                if isinstance(value, str) and value.strip():
+                    citation[field] = value.strip()
+            extension = source.get("extension")
+            if isinstance(extension, str) and extension.strip():
+                citation["file_type"] = extension.strip().lstrip(".").lower()
+        return enriched
 
     def _touch_conversation(self, documents, message=None):
         # Cache/citation integrations belong after application initialization and
@@ -1425,7 +1446,7 @@ class HarnessExecution:
                         citations = read_result_document_citations(self.context, reference)
                 if not self._delivery_only:
                     citations = result.get("citations") or []
-                self._validate_citations(citations)
+                citations = self._validate_citations(citations, enrich_display=True)
                 if prepared:
                     # The answer is published only while every result it read is still the user's.
                     workflow_result_contexts = self._workflow_result_lineage(current)

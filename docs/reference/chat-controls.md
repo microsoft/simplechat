@@ -490,6 +490,16 @@ These controls exist only in the V2 interface, so they are not part of the gener
 
 These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. The drawer's **Documents** tab gathers what a conversation used and what it produced, in personal and shared conversations alike, so a file or source is not lost in a long thread. See [Documents drawer generated files fix]({{ '/explanation/fixes/DOCUMENTS_DRAWER_GENERATED_FILES_FIX/' | relative_url }}) for how generated files are found.
 
+Since **0.261.327**, workspace document cards show the title, a separate filename
+when it differs, and a file-type icon using the same visual vocabulary as the
+workspace document explorer. The source line says **Personal workspace**, or the
+group/public workspace name when available; it never substitutes a workspace ID
+for a missing name. Citation indicators and page/sheet locations remain available.
+New Orchestrate answers retain readable source metadata even when Analyze or
+Compare supplies document references without individual chunk citations. Existing
+conversations are not backfilled. See [Chat document metadata and notification
+alignment fix]({{ '/explanation/fixes/CHAT_DOCUMENT_METADATA_AND_NOTIFICATION_ALIGNMENT_FIX/' | relative_url }}).
+
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
 | Documents button badge | Counts the documents answers used plus every file and document the conversation produced, each once. Media is not counted. | Use it to see at a glance that a reply produced a file, even with the drawer closed. | Always available |
