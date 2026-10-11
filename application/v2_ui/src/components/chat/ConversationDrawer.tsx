@@ -10,7 +10,6 @@ import { useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import {
     CalendarDays,
-    FileText,
     Files,
     ListOrdered,
     ListTree,
@@ -28,6 +27,12 @@ import {
 import { collectConversationMedia } from '../../lib/conversationMedia';
 import { mergeGeneratedEntries } from '../../lib/conversationGeneratedFiles';
 import { m365SecondaryLine, readUsedM365Items } from '../../lib/m365Citations';
+import {
+    conversationDocuments,
+    conversationDocumentName,
+    conversationDocumentSource,
+} from '../../lib/conversationDocuments';
+import { DocumentIcon } from '../documents/documentPresentation';
 import { EmptyState, Skeleton } from '../ui/primitives';
 import {
     GeneratedSection,
@@ -93,26 +98,6 @@ function ContentsMode() {
     );
 }
 
-function scopeLabel(document: UsedDocument): string {
-    const scope = document.scope;
-    if (!scope?.type) {
-        return '';
-    }
-    if (scope.name) {
-        return scope.name;
-    }
-    if (scope.type === 'personal') {
-        return 'Personal workspace';
-    }
-    if (scope.type === 'group') {
-        return 'Group workspace';
-    }
-    if (scope.type === 'public') {
-        return 'Public workspace';
-    }
-    return scope.type;
-}
-
 /** Summarize where in a document the citations landed. */
 function locationLabel(document: UsedDocument): string {
     const pages = (document.page_numbers ?? []).filter(
@@ -129,22 +114,34 @@ function locationLabel(document: UsedDocument): string {
 }
 
 function DocumentRow({ document }: { document: UsedDocument }) {
-    const name =
-        document.title || document.file_name || document.document_id || 'Untitled document';
+    const { title, filename } = conversationDocumentName(document);
+    const workspaces = useBootstrapStore((state) => state.data?.scope);
     // A document can be attached to the conversation without having been cited yet, so
     // the badge distinguishes "used as grounding" from "actually referenced".
     const isCited = (document.citation_ids ?? []).length > 0;
-    const scope = scopeLabel(document);
+    const scope = conversationDocumentSource(
+        document, workspaces?.groups ?? [], workspaces?.public_workspaces ?? [],
+    );
     const location = locationLabel(document);
 
     return (
-        <li className="glass-flat rounded-xl p-3">
+        <li className="glass-flat rounded-xl p-3" data-used-document={document.document_id}>
             <div className="flex items-start gap-2.5">
-                <FileText size={16} className="mt-0.5 shrink-0 text-text-3" />
+                <DocumentIcon document={document} size={16} className="mt-0.5" />
                 <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-text-1" title={name}>
-                        {name}
+                    <p className="truncate text-sm text-text-1" title={title}>
+                        {title}
                     </p>
+                    {filename && (
+                        <p className="mt-0.5 truncate text-xs text-text-3" title={filename}>
+                            {filename}
+                        </p>
+                    )}
+                    {scope && (
+                        <p className="mt-0.5 truncate text-xs text-text-3" title={scope}>
+                            {scope}
+                        </p>
+                    )}
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-3">
                         {isCited && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-accent">
@@ -153,7 +150,6 @@ function DocumentRow({ document }: { document: UsedDocument }) {
                             </span>
                         )}
                         {location && <span>{location}</span>}
-                        {scope && <span>{scope}</span>}
                         {document.classification && <span>{document.classification}</span>}
                     </div>
                 </div>
@@ -253,28 +249,7 @@ function DocumentsMode() {
         }
     }, [activeConversationId, metadata, metadataLoading, metadataError, loadMetadata]);
 
-    const documents = useMemo(() => {
-        if (!metadata) {
-            return [] as UsedDocument[];
-        }
-        // Three sources, all document-shaped: current aggregates, the pre-v2 tracking
-        // list, and files uploaded straight into the conversation. De-duplicated by id so
-        // a document present in more than one does not appear twice.
-        const merged = new Map<string, UsedDocument>();
-        for (const list of [
-            metadata.used_documents,
-            metadata.legacy_used_documents,
-            metadata.linked_workspace_documents,
-        ]) {
-            for (const document of list ?? []) {
-                const id = String(document?.document_id ?? '').trim();
-                if (id && !merged.has(id)) {
-                    merged.set(id, document);
-                }
-            }
-        }
-        return [...merged.values()];
-    }, [metadata]);
+    const documents = useMemo(() => conversationDocuments(metadata), [metadata]);
     // Microsoft 365 items are listed only to their owner; the server sends no others.
     const m365 = useMemo(() => readUsedM365Items(metadata), [metadata]);
 

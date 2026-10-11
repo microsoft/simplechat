@@ -676,6 +676,7 @@ export interface UsedDocument {
     document_id: string;
     title?: string;
     file_name?: string;
+    file_type?: string;
     classification?: string;
     scope?: UsedDocumentScope;
     chunk_ids?: string[];

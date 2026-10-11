@@ -1,7 +1,7 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.321
+Version: 0.261.327
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
@@ -20,6 +20,7 @@ Their exact durable-state baseline is captured at metadata-read entry, after any
 legitimate step-start/input-checkpoint writes, without normalizing missing fields.
 Selected-answer citations retain their exact lineage during initial publication
 and model-free delivery, without adopting ambient or stale citation metadata.
+Readable source titles, filenames and file types survive publication in: 0.261.327
 CSV/JSON delivery reopens authorized committed bytes and checks complete records,
 including the final row, rather than relying only on file-card counts.
 The four private external bindings include the actual invocation preflight.
@@ -366,6 +367,7 @@ def citation_execution(harness, monkeypatch):
     monkeypatch.setattr(search, "hybrid_search", search_documents)
     with harness.native_io(row_count=2) as source:
         source.document["file_name"] = "Original source.pdf"
+        source.document["title"] = "Source document title"
         try:
             yield SimpleNamespace(prepare=prepare, queries=queries, source=source)
         finally:
@@ -3388,6 +3390,12 @@ def test_selected_result_citations_reach_headless_message_cache_and_delivery(
         assert all(citation["document_id"] == "document-1" for citation in citations)
         assert all(citation["scope"] == {"type": "personal", "id": "owner"} for citation in citations)
         assert len(used) == 1 and used[0]["document_id"] == "document-1"
+        assert used[0]["title"] == "Source document title"
+        assert used[0]["file_name"] == "Original source.pdf"
+        assert used[0]["file_type"] == "pdf"
+        assert all(citation["title"] == "Source document title" for citation in citations)
+        assert all(citation["file_name"] == "Original source.pdf" for citation in citations)
+        assert all(citation["file_type"] == "pdf" for citation in citations)
         if selected == "prepared":
             assert [citation["citation_id"] for citation in citations] == [
                 "first-selected-chunk", "last-selected-chunk",

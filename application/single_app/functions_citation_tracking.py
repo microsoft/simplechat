@@ -510,6 +510,7 @@ def _merge_document_record(
     for field_name in (
         "title",
         "file_name",
+        "file_type",
         "classification",
         "scope",
     ):
@@ -583,6 +584,7 @@ def build_used_documents(
         incoming_metadata = {
             "title": citation.get("title") or citation.get("file_name"),
             "file_name": citation.get("file_name") or citation.get("title"),
+            "file_type": citation.get("file_type"),
             "classification": (
                 citation.get("classification")
                 or citation.get("document_classification")
