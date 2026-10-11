@@ -1,7 +1,7 @@
 # test_v2_orchestration_approval_persistence.py
 """
 Browser regressions for account-level orchestration approval persistence.
-Version: 0.261.139
+Version: 0.261.327
 Implemented in: 0.261.101
 
 Drive the real Composer, router and settings store. Only HTTP is replaced: the
@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures"))
 sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures" / "orchestration"))
 
 import harness_build as hb  # noqa: E402
+from composer_helpers import open_composer_tools  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402, F401
 from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
@@ -257,6 +258,7 @@ def mount(page, api):
         api.bootstrap,
     )
     expect(message_box(page)).to_be_visible()
+    open_composer_tools(page)
 
 
 def message_box(page):

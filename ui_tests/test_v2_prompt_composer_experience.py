@@ -1,7 +1,7 @@
 # test_v2_prompt_composer_experience.py
 """
 Focused browser regressions for the approved V2 prompt composer experience.
-Version: 0.261.139
+Version: 0.261.327
 Implemented in: 0.261.096
 Single orchestration contract updated in: 0.261.139
 
@@ -45,6 +45,7 @@ sys.path.insert(0, str(REPO_ROOT / "application" / "single_app"))
 import harness_build as hb  # noqa: E402
 from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E402
 from test_v2_chat_context_selection import ContextApi, open_picker, pick_context  # noqa: E402
+from composer_helpers import open_composer_tools  # noqa: E402
 from v2_admin_settings import connect_options  # noqa: E402, F401
 from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
 
@@ -460,6 +461,7 @@ def pick_prompt(page, name="Weekly brief", *, method="dropdown"):
         expect(menu.get_by_role("option", name=re.compile(re.escape(name)))).to_be_visible()
         draft.press("Enter")
     else:
+        open_composer_tools(page)
         picker = page.locator('button[aria-haspopup="listbox"]').filter(
             has_text=re.compile(r"^(Prompt|Weekly brief|Alternate)$")
         ).last
@@ -674,7 +676,8 @@ def test_saved_prompt_editor_uses_the_same_caret_picker_without_inventing_chat_v
     page.set_viewport_size({"width": width, "height": 844})
     mount(page, api)
     message_box(page).fill("Hello TARGET.")
-    page.get_by_role("button", name="Save as prompt", exact=True).click()
+    open_composer_tools(page)
+    page.get_by_title("Save as prompt", exact=True).click()
     dialog = page.get_by_role("dialog", name="New prompt", exact=True)
     editor = dialog.locator("#prompt-content")
     editor.evaluate("element => { element.focus(); element.setSelectionRange(6, 12); }")
@@ -1169,11 +1172,11 @@ def test_late_fill_cannot_mutate_a_newer_draft(prompt_ui, change):
     }
     lookup(page, api, hold=True)
     expect(page.get_by_role("button", name="Cancel lookup", exact=True)).to_be_visible()
-    expect(page.get_by_role("status")).to_contain_text("Searching knowledge")
+    expect(page.get_by_role("status").filter(has_text="Searching knowledge")).to_contain_text("Searching knowledge")
 
     if change == "cancel":
         page.get_by_role("button", name="Cancel lookup", exact=True).click()
-        expect(page.get_by_role("status")).to_contain_text("cancelled")
+        expect(page.get_by_role("status").filter(has_text="Knowledge lookup cancelled")).to_contain_text("cancelled")
     elif change == "field-edit":
         variable(page, "customer").fill("Human wins")
     elif change == "template-edit":

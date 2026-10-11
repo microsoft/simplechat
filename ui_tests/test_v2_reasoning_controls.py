@@ -1,7 +1,7 @@
 # test_v2_reasoning_controls.py
 """
 Real-Composer reasoning, capability selections, and saved-plan notice regressions.
-Version: 0.261.256
+Version: 0.261.327
 Implemented in: 0.261.104; Image requests orchestration image proposals since 0.261.132
 
 Reuse the local/Azure Playwright fixtures without live model, Azure or retrieval calls.
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 from functions_model_capabilities import resolve_model_reasoning_policy  # noqa: E402
 from test_v2_orchestration_approval_persistence import (  # noqa: E402, F401
     approval_assets, approval_browser, approval_ui, connect_options,
-    CHAT_PATH, PLAN_PATH, mount, message_box, send_button, settings_response,
+    CHAT_PATH, PLAN_PATH, mount, message_box, send_button, settings_response, open_composer_tools,
 )
 
 pytestmark = pytest.mark.ui
@@ -51,6 +51,7 @@ def configure(api, *, orchestrating=True):
 
 
 def open_manual(page):
+    open_composer_tools(page)
     page.get_by_title("Manual controls", exact=True).click()
 
 

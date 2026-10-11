@@ -108,6 +108,7 @@ import {
     type ReasoningEffortSettings,
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
+import { DropdownScope } from '../ui/DropdownScope';
 import { suggestPromptName } from '../../lib/promptSlash';
 import { readPromptParam, readPromptScope } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
@@ -1808,8 +1809,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 ? `Orchestrate · ${effectiveApprovalMode}`
                                 : activeAgentLabel || modelOptions.find((model) => model.value === options.modelDeployment)?.label || 'Tools'}</span>
                         </button>
-                        <div id="composer-secondary-tools" data-open={mobileToolsOpen}
-                            className="composer-secondary-tools flex flex-wrap items-center gap-1.5 md:contents">
+                        <DropdownScope mobileOpen={mobileToolsOpen} closeKey={activeConversationId}>
                         {orchestrationAvailable && (
                             <ToolToggle
                                 active={orchestrating}
@@ -1821,6 +1821,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
                         {orchestrating && approvalOverridable && (
                             <Dropdown
+                                floating
                                 options={approvalOptions}
                                 value={settingsLoaded && !invalidApprovalPreference ? effectiveApprovalMode : undefined}
                                 placeholder="Approval"
@@ -1868,6 +1869,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     using one, so it stays usable rather than disabled. */}
                                 {gating.showModelPicker && !orchestrating && (
                                     <Dropdown
+                                        floating
                                         options={modelOptions}
                                         value={options.modelDeployment}
                                         placeholder="Model"
@@ -1898,6 +1900,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     toolbar does not change shape when Orchestrate is switched on. */}
                                 {gating.showModelPicker && orchestrating && (
                                     <Dropdown
+                                        floating
                                         options={[
                                             ...(orchestrationModelChoice.autoAvailable
                                                 ? [{ value: AUTO_MODEL_VALUE, label: 'Auto - choose per step' }]
@@ -1913,6 +1916,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
                                 {agentOptions.length > 0 && (
                                     <Dropdown
+                                        floating
                                         options={agentOptions}
                                         value={options.agentSelection}
                                         placeholder="Agent"
@@ -1932,6 +1936,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
                                 {promptOptions.length > 0 && (
                                     <Dropdown
+                                        floating
                                         options={promptOptions}
                                         value={attachedPrompt?.id}
                                         placeholder="Prompt"
@@ -2046,6 +2051,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     where "no level" is a state to get back to. */}
                                 {gating.showReasoning && !(orchestrating && autoModelRouting) && reasoningLevels.length > 0 && (
                                     <Dropdown
+                                        floating
                                         options={reasoningLevels}
                                         value={options.reasoningEffort}
                                         placeholder="Reasoning"
@@ -2057,7 +2063,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             </>
                         )}
 
-                        </div>
+                        </DropdownScope>
                         <div className="composer-primary-actions ml-auto flex shrink-0 items-center gap-1.5">
                             {features.enable_speech_to_text_input && (
                                 <VoiceInput
