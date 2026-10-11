@@ -63,6 +63,9 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
     const fullReview = pendingActionNeedsFullReview(action);
     const route = pendingActionSendRoute(action);
     const actionable = isActionableStatus(action.status);
+    const emailStatusLabel = action.graph_resource_type === 'mail' || action.operation === 'send_mail'
+        ? action.status === 'sent' ? 'Accepted for sending' : action.status === 'pending' ? 'Ready to review' : undefined
+        : undefined;
     const canChange = canChangeEntry(entry);
     const webLink = safeWebLinkUrl(action.web_link);
     const approvalId = (() => {
@@ -242,7 +245,7 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
             <DetailShell
                 title={actionSubject(action)}
                 subtitle={pendingActionHeading(action)}
-                badge={<StatusBadge status={action.status} />}
+                badge={<StatusBadge status={action.status} label={emailStatusLabel} />}
             >
                 {content}
             </DetailShell>
@@ -262,7 +265,7 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
                     <p className="text-sm font-semibold break-words text-text-1">{actionSubject(action)}</p>
                     <p className="mt-0.5 text-xs text-text-3">{pendingActionHeading(action)}</p>
                 </div>
-                <StatusBadge status={action.status} />
+                <StatusBadge status={action.status} label={emailStatusLabel} />
             </header>
             {content}
         </article>

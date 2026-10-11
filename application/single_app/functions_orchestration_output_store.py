@@ -17,6 +17,7 @@ from itertools import islice
 from azure.core.exceptions import AzureError
 from azure.cosmos import exceptions
 
+from cosmos_document_utils import normalize_cosmos_document
 from functions_orchestration_result_contracts import (
     ProducerIdentity,
     ResultRef,
@@ -497,7 +498,7 @@ class OrchestrationOutputStore:
             raise OutputStorageError() from exc
         if not isinstance(record, dict):
             raise OutputError("output_record_invalid")
-        return dict(record)
+        return normalize_cosmos_document(record)
 
     def _validate(self, record):
         if (

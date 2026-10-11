@@ -1,5 +1,5 @@
 // test_v2_m365_pending_actions_stream.mjs
-// Version: 0.261.307
+// Version: 0.261.324
 // Implemented in: 0.261.307
 // Executes the live paths that put a Microsoft 365 outgoing-action card in front of someone in V2
 // chat: the notification hand-off that asks the page to bring a card into view, the SSE reader that
@@ -16,6 +16,10 @@ import './test_support/tsResolve.mjs';
 // The repository resolver must be registered before extensionless TypeScript imports load.
 const { useChatStore } = await import('../application/v2_ui/src/stores/chatStore.ts');
 const { chatPendingActionsStore } = await import('../application/v2_ui/src/stores/m365PendingActionsStore.ts');
+const { useOrchestrationStore } = await import('../application/v2_ui/src/stores/orchestrationStore.ts');
+const { approveAndRunPlan } = await import('../application/v2_ui/src/lib/orchestrationController.ts');
+const { runOrchestration } = await import('../application/v2_ui/src/lib/orchestration.ts');
+const { normalizePlan } = await import('../application/v2_ui/src/lib/orchestrationPlan.ts');
 const { carriesPendingActions, streamChat } = await import('../application/v2_ui/src/lib/sse.ts');
 const { dispatchCollaborationEvent, subscribeToCollaborationEvents } = await import(
     '../application/v2_ui/src/lib/collaborationEvents.ts'
@@ -129,6 +133,7 @@ function anchorOf(id) {
         visibleMessageIds: new Set(anchorable.map((message) => message.id)),
         lastMessageByRequestId: lastMessageByRequestId(anchorable),
         streamingUserMessageId: live && live.conversationId === pending.conversationId ? live.userMessageId : '',
+        streamingAtUserTurn: live?.placement === 'turn',
     });
 }
 
@@ -163,6 +168,7 @@ function holdStreams(answers = {}) {
                         } catch {
                             // The stream had already ended.
                         }
+
                     },
                     { once: true },
                 );
@@ -196,6 +202,175 @@ function holdStreams(answers = {}) {
         },
     };
 }
+
+const RUN_PATH = '/api/v2/orchestration/run';
+
+/** Execute the real controller and SSE reader; only the HTTP boundary is synthetic. */
+async function withEmailRun(name, run) {
+    const conversationId = `email-${name}`;
+    const turnId = `turn-${name}`;
+    const userMessageId = `user-${name}`;
+    const runId = `run-${name}`;
+    openConversation(conversationId, { messages: [{
+        id: userMessageId, role: 'user', conversation_id: conversationId, content: 'Prepare the email',
+        metadata: { orchestration_turn_id: turnId },
+    }] });
+    useOrchestrationStore.setState({ ...useOrchestrationStore.getInitialState() }, true);
+    const plan = normalizePlan({
+        plan_id: `plan-${name}`, run_id: runId, turn_id: turnId, conversation_id: conversationId,
+        planner_contract_version: 2, intent: { summary: 'Prepare the email', complexity: 'simple' },
+        steps: [{
+            step_id: 'draft', capability_id: 'compose', title: 'Prepare the email',
+            arguments: {}, role: 'reason', estimated_cost: 'low',
+        }],
+        assumptions: [], status: 'awaiting_approval', approval: { mode: 'manual', state: 'pending' },
+        validation: { valid: true, errors: [], warnings: [], repairs: [] },
+    });
+    useOrchestrationStore.getState().setPlan(conversationId, turnId, plan);
+    const cards = ['email-1', 'email-2'].map((id) => action(id, {
+        conversation_id: conversationId, request_id: `orch-${runId}-draft`, action_mode: 'manual',
+    }));
+    const streams = holdStreams({
+        [LIST_PATH]: { pending_actions: [], continuation_token: '' },
+        [`/api/v2/orchestration/runs/${runId}`]: { run: {
+            run_id: runId, conversation_id: conversationId, turn_id: turnId, plan,
+            status: 'failed', outcome: 'failed', finalization_status: 'failed', message_saved: false,
+        } },
+        [`/api/v2/orchestration/runs/${runId}/steps`]: { steps: [] },
+        ...Object.fromEntries(cards.map((card) => [`${LIST_PATH}/${card.id}`, { pending_action: card }])),
+    });
+    const opened = streams.opened(RUN_PATH);
+    const running = approveAndRunPlan({ conversationId, turnId });
+    await opened;
+    const creation = (card = cards[0], overrides = {}) => ({
+        type: 'm365_pending_action', conversation_id: conversationId, run_id: runId,
+        step_id: 'draft', user_message_id: userMessageId, request_id: `orch-${runId}-draft`,
+        pending_action: card, ...overrides,
+    });
+    const terminal = (overrides = {}) => ({
+        type: 'orchestration_done', done: true, conversation_id: conversationId, run_id: runId,
+        turn_id: turnId, user_message_id: userMessageId, message_id: `answer-${name}`,
+        status: 'completed', outcome: 'completed', message_saved: true, full_content: 'Email prepared; review before sending.',
+        metadata: { m365_pending_action_ids: cards.map((card) => card.id) },
+        m365_pending_actions: cards, ...overrides,
+    });
+    try {
+        await run({ streams, running, cards, creation, terminal, conversationId, userMessageId });
+    } finally {
+        try {
+            streams.emit(RUN_PATH, terminal());
+        } catch {
+            // The test already closed this held reader.
+        }
+        streams.end(RUN_PATH);
+        await running;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        streams.restore();
+        resetStores();
+        useOrchestrationStore.setState({ ...useOrchestrationStore.getInitialState() }, true);
+    }
+}
+
+test('orchestration publishes two review cards beside the original request, then beneath its final reply', async () => {
+    await withEmailRun('complete', async ({ streams, running, cards, creation, terminal, userMessageId }) => {
+        assert.equal(store().liveStream.userMessageId, userMessageId);
+        for (const card of cards) streams.emit(RUN_PATH, creation(card));
+        await settled(() => Object.keys(store().entries).length === 2, 'both draft cards');
+        assert.equal(anchorOf('email-1'), userMessageId);
+        assert.equal(anchorOf('email-2'), userMessageId);
+        streams.emit(RUN_PATH, terminal());
+        streams.end(RUN_PATH);
+        await running;
+        assert.equal(anchorOf('email-1'), 'answer-complete');
+        assert.equal(anchorOf('email-2'), 'answer-complete');
+        assert.equal(store().liveStream, null);
+        assert.equal(Object.keys(store().entries).length, 2);
+        assert.deepEqual(chat().messages.at(-1).metadata.m365_pending_action_ids, ['email-1', 'email-2']);
+        assert.deepEqual(chat().messages.at(-1).m365_pending_actions, cards);
+        assert.ok(streams.listRequests().length > 0, 'finish refresh remains a recovery fallback');
+        assert.equal(streams.requests.filter((request) => request.path.match(/send-now|approve|cancel/)).length, 0);
+    });
+});
+
+test('a failed report keeps the prepared draft and a distinct failed result; history restores authoritative references', async () => {
+    await withEmailRun('report-failed', async ({ streams, running, cards, creation, terminal, conversationId }) => {
+        streams.emit(RUN_PATH, creation());
+        await settled(() => store().entries['email-1'], 'the prepared email');
+        streams.emit(RUN_PATH, terminal({
+            status: 'failed', outcome: 'failed', full_content: 'The email is prepared. The later report failed.',
+            m365_pending_actions: [cards[0]], metadata: { m365_pending_action_ids: ['email-1'] },
+        }));
+        streams.end(RUN_PATH);
+        await running;
+        assert.equal(store().entries['email-1'].action.status, 'pending');
+        assert.equal(anchorOf('email-1'), 'answer-report-failed');
+        assert.equal(chat().messages.at(-1).metadata.orchestration.outcome, 'failed');
+        const history = chat().messages.map(({ m365_pending_actions, ...message }) => message);
+        store().reset();
+        store().setConversation(conversationId);
+        store().ingestMessages(history);
+        await settled(() => store().entries['email-1'], 'history reference to fetch current card');
+        assert.equal(anchorOf('email-1'), 'answer-report-failed');
+    });
+});
+
+test('orchestration drops cross-conversation, stale-run and wrong-turn cards without adopting them', async () => {
+    await withEmailRun('scope', async ({ streams, cards, creation }) => {
+        streams.emit(RUN_PATH, creation(cards[0], { conversation_id: 'other' }));
+        streams.emit(RUN_PATH, creation(cards[0], { run_id: 'old-run' }));
+        streams.emit(RUN_PATH, creation(cards[0], { user_message_id: 'other-user-turn' }));
+        streams.emit(RUN_PATH, creation(cards[0], { step_id: 'not-in-plan' }));
+        streams.emit(RUN_PATH, { content: 'scope-checked' });
+        await settled(() => chat().streamingContent === 'scope-checked');
+        assert.deepEqual(Object.keys(store().entries), []);
+        useChatStore.setState({ activeConversationId: 'elsewhere', messages: [] });
+        streams.emit(RUN_PATH, creation());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.deepEqual(Object.keys(store().entries), []);
+    });
+});
+
+test('a dropped orchestration stream keeps its saved card beside the request and refreshes without replay', async () => {
+    await withEmailRun('disconnect', async ({ streams, running, creation, userMessageId }) => {
+        streams.emit(RUN_PATH, creation());
+        await settled(() => store().entries['email-1']);
+        // The attempt-read fallback is HTTP only, not an execution retry.
+        streams.end(RUN_PATH);
+        await settled(() => store().liveStream === null, 'the live surface to finish');
+        assert.equal(anchorOf('email-1'), userMessageId);
+        assert.equal(store().entries['email-1'].action.status, 'pending');
+        assert.ok(streams.listRequests().length);
+        await running;
+        assert.equal(streams.requests.filter((request) => request.path === RUN_PATH).length, 1);
+    });
+});
+
+test('the real orchestration SSE reader treats card creation as an action frame, not answer text', async () => {
+    const streams = holdStreams();
+    const events = [];
+    try {
+        const opened = streams.opened(RUN_PATH);
+        const running = runOrchestration({ conversation_id: 'reader', run_id: 'reader-run', plan_id: 'reader-plan' }, {
+            onM365PendingActions: () => events.push('card'),
+            onContent: () => events.push('content'),
+            onDone: () => events.push('done'),
+        });
+        await opened;
+        streams.emit(RUN_PATH, {
+            type: 'm365_pending_action', conversation_id: 'reader', run_id: 'reader-run',
+            step_id: 'draft', user_message_id: 'user-reader', pending_action: action(),
+            content: 'This progress summary is not the final answer.',
+        });
+        streams.emit(RUN_PATH, { content: 'Final reply.' });
+        streams.emit(RUN_PATH, { done: true, status: 'completed' });
+        streams.end(RUN_PATH);
+        const result = await running;
+        assert.equal(result.accumulated, 'Final reply.');
+        assert.deepEqual(events, ['card', 'content', 'done']);
+    } finally {
+        streams.restore();
+    }
+});
 
 /** Run a test against a real send in `conversationId` whose reply stream the test controls. */
 async function withLiveReply(conversationId, run, { answers = {}, text = 'Email Dana the numbers' } = {}) {

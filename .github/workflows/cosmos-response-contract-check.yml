@@ -1,0 +1,44 @@
+name: Cosmos Response Contracts
+
+on:
+  pull_request:
+    paths:
+      - 'application/**/*.py'
+      - 'scripts/**/*.py'
+      - 'deployers/**/*.py'
+      - 'functional_tests/**/*.py'
+      - 'functional_tests/cosmos_response_boundaries.json'
+      - 'ui_tests/**/*.py'
+      - '**/requirements*.txt'
+      - '.github/instructions/cosmos-response-boundaries.instructions.md'
+      - '.github/workflows/cosmos-response-contract-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cosmos-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: application/single_app:functional_tests
+      PYTHONDONTWRITEBYTECODE: '1'
+      TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cosmos-contract-assets/tiktoken
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            application/single_app/requirements.txt
+            requirements-dev.txt
+      - name: Install pinned application and test dependencies
+        run: python -m pip install -r application/single_app/requirements.txt -r requirements-dev.txt
+      - name: Prepare pinned tokenizer dependency assets before network blocking
+        run: python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); tiktoken.get_encoding('o200k_base')"
+      - name: Require reviewed storage owners and doubles
+        run: python scripts/check_cosmos_response_boundaries.py
+      - name: Run contracts with external network blocked before collection
+        run: python scripts/check_cosmos_response_boundaries.py --run-contracts

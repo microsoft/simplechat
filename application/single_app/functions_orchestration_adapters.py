@@ -479,6 +479,19 @@ def _m365_step_identity(step, context):
     return f'{root}\x00{step_id}', origin
 
 
+def _m365_card_callback(step, context, emit):
+    def publish(reference):
+        if not callable(emit):
+            return
+        # The producer logs a failed callback while retaining the saved reference.
+        emit({
+            'type': 'm365_pending_action_reference', 'reference': reference,
+            'step_id': step.get('step_id'), 'run_id': _ctx(context, 'run_id', None),
+            'user_message_id': _ctx(context, 'user_message_id', None),
+        })
+    return publish
+
+
 def _progress(step, capability_id, label, status='running'):
     step = step or {}
     return {
@@ -1936,10 +1949,13 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         from functions_orchestration_actions import invoke_action
         from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
         from functions_m365_citations import m365_display_time_zone
+        from functions_orchestration_m365 import orchestration_action_card_events
 
         # Microsoft 365 email and event times are shown in the turn's browser time zone.
-        with m365_display_time_zone(_ctx(context, 'time_zone')), operation_step_scope(
-            step, context, user_id, named_inputs,
+        with (
+            orchestration_action_card_events(_m365_card_callback(step, context, emit)),
+            m365_display_time_zone(_ctx(context, 'time_zone')),
+            operation_step_scope(step, context, user_id, named_inputs),
         ):
             result = asyncio.run(invoke_action(
                 action_ref, task, context, settings=settings, user_id=user_id,
@@ -2103,7 +2119,9 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
         invocation_settings = deepcopy(settings)
         access('agent', settings=invocation_settings, selector=selector)
         from agent_delegation_runtime import delegation_citations, invoke_scoped_agent
-        from functions_orchestration_m365 import agent_loads_actions, agent_step_scope
+        from functions_orchestration_m365 import (
+            agent_loads_actions, agent_step_scope, orchestration_action_card_events,
+        )
         from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 
         budget = _ctx(context, 'delegation_budget', None)
@@ -2128,9 +2146,11 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
                 )
         from functions_m365_citations import m365_display_time_zone
 
-        with m365_display_time_zone(_ctx(context, 'time_zone')), operation_step_scope(
-            step, context, user_id, named_inputs,
-        ) as journal:
+        with (
+            orchestration_action_card_events(_m365_card_callback(step, context, emit)),
+            m365_display_time_zone(_ctx(context, 'time_zone')),
+            operation_step_scope(step, context, user_id, named_inputs) as journal,
+        ):
             async def invoke():
                 return await invoke_scoped_agent(
                     agent_cfg, task, identity=execution_identity, budget=budget,

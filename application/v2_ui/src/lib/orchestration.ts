@@ -887,6 +887,8 @@ export interface PlanStreamResult {
 }
 
 export interface RunStreamHandlers {
+    /** A durably saved outgoing action, before the final assistant reply exists. */
+    onM365PendingActions?: (event: RunStreamEvent) => void;
     /** A step changed status (`type: "orchestration_step"`). */
     onStep?: (event: RunStreamEvent) => void;
     /**
@@ -1442,6 +1444,16 @@ export async function runOrchestration(
     }
 
     const onEvent = (event: RunStreamEvent): boolean => {
+        if ((event.conversation_id && event.conversation_id !== body.conversation_id)
+            || (event.run_id && event.run_id !== body.run_id)) return false;
+        if (event.type === 'm365_pending_action') {
+            if (event.conversation_id === body.conversation_id && event.run_id === body.run_id
+                && typeof event.step_id === 'string' && event.step_id
+                && typeof event.user_message_id === 'string' && event.user_message_id) {
+                handlers.onM365PendingActions?.(event);
+            }
+            return false;
+        }
         if (hasPendingOrchestrationOutputs(normalizeOrchestrationAttempt(event).outputs)) {
             requiresExecutionOutcome = true;
         }

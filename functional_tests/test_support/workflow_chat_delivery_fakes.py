@@ -2,6 +2,9 @@
 """
 Reusable fakes for the workflow chat delivery tests.
 
+Version: 0.261.324
+Implemented in: 0.261.324 (SDK-shaped Cosmos point defaults)
+
 The fakes stand in for Cosmos containers, the durable runtime store, the result
 reader, the chat model and the notification helpers. The delivery contract and the
 worker under test stay real. Checks inside this module raise explicitly so they
@@ -19,6 +22,7 @@ from azure.cosmos.exceptions import (
     CosmosResourceExistsError,
     CosmosResourceNotFoundError,
 )
+from azure.cosmos._cosmos_responses import CosmosDict
 
 from functions_workflow_chat_delivery import (
     build_chat_delivery_seed,
@@ -94,8 +98,9 @@ class FakeClock:
 class FakeContainer:
     """An in-memory container with ETag, 404, 409 and 412 semantics."""
 
-    def __init__(self, name, items=None, query_handler=None, clock=None):
+    def __init__(self, name, items=None, query_handler=None, clock=None, *, sdk_responses=True):
         self.name = name
+        self.sdk_responses = sdk_responses
         self.items = {}
         self.calls = []
         self.query_calls = []
@@ -109,8 +114,12 @@ class FakeContainer:
     def _key(self, item_id):
         return str(item_id)
 
+    def _response(self, body):
+        value = copy.deepcopy(dict(body))
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def _stamp(self, body):
-        stored = copy.deepcopy(body)
+        stored = copy.deepcopy(dict(body))
         stored["_etag"] = f"etag-{self.name}-{next(self._etags)}"
         if self.clock is not None:
             stored["_ts"] = int(parse_iso(self.clock()).timestamp())
@@ -146,7 +155,7 @@ class FakeContainer:
         stored = self.items.get(self._key(item))
         if stored is None:
             raise cosmos_error(404, "not found")
-        return copy.deepcopy(stored)
+        return self._response(stored)
 
     def replace_item(self, item=None, body=None, etag=None, match_condition=None, **kwargs):
         item_id = item.get("id") if isinstance(item, dict) else item
@@ -159,19 +168,19 @@ class FakeContainer:
             raise cosmos_error(412, "precondition failed")
         updated = self._stamp(body)
         self.items[self._key(item_id)] = updated
-        return copy.deepcopy(updated)
+        return self._response(updated)
 
     def create_item(self, body=None, **kwargs):
         self.calls.append(("create_item", body.get("id")))
         self._maybe_fail("create_item")
         if self._key(body.get("id")) in self.items:
             raise cosmos_error(409, "conflict")
-        return self.put(body)
+        return self._response(self.put(body))
 
     def upsert_item(self, body=None, **kwargs):
         self.calls.append(("upsert_item", body.get("id")))
         self._maybe_fail("upsert_item")
-        return self.put(body)
+        return self._response(self.put(body))
 
     def delete_item(self, item=None, partition_key=None, **kwargs):
         item_id = item.get("id") if isinstance(item, dict) else item
@@ -193,7 +202,7 @@ class FakeContainer:
             raise FakeCheckFailed(f"{self.name}: unexpected query {query!r}")
         params = {entry["name"]: entry["value"] for entry in parameters or []}
         rows = self.query_handler(self, query, params, partition_key)
-        return iter([copy.deepcopy(row) for row in rows])
+        return iter([copy.deepcopy(dict(row)) for row in rows])
 
     def writes(self, operation=None):
         names = ("replace_item", "create_item", "upsert_item", "delete_item")

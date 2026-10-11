@@ -1,11 +1,11 @@
 # test_workflow_result_store.py
 """
 Functional tests for durable, scoped workflow task-result persistence.
-Version: 0.261.305
+Version: 0.261.324
 Implemented in: 0.261.106
 HNS directory cleanup implemented in: 0.261.305
 
-JSON-copying Cosmos and byte-copying Blob fakes exercise immutable writes,
+SDK-shaped point responses, plain query rows and byte-copying Blob fakes exercise immutable writes,
 backend selection, bounded range reads, identity/integrity checks, quota
 enforcement, and cleanup beyond a history page. No deployed app is imported.
 """
@@ -29,6 +29,7 @@ from azure.core.exceptions import (
     ServiceRequestError,
 )
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
+from azure.cosmos._cosmos_responses import CosmosDict
 
 
 STORE_PATH = Path(__file__).resolve().parents[1].joinpath(
@@ -48,7 +49,10 @@ def canonical_bytes(value):
 
 
 class FakeCosmosContainer:
-    def __init__(self):
+    """Plain point responses require the explicit compatibility option."""
+
+    def __init__(self, *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.records = {}
         self.reads = []
         self.creates = []
@@ -61,6 +65,10 @@ class FakeCosmosContainer:
         self.delete_error = None
         self.query_error = None
 
+    def _response(self, record):
+        value = json_copy(record)
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def create_item(self, *, body):
         self.creates.append(body["id"])
         if self.fail_create_at == len(self.creates):
@@ -69,7 +77,7 @@ class FakeCosmosContainer:
         if key in self.records:
             raise CosmosResourceExistsError(status_code=409, message="Fake provider conflict.")
         self.records[key] = json_copy(body)
-        return json_copy(self.records[key])
+        return self._response(self.records[key])
 
     def read_item(self, *, item, partition_key):
         self.reads.append((partition_key, item))
@@ -77,7 +85,7 @@ class FakeCosmosContainer:
             raise self.read_error
         if (partition_key, item) not in self.records:
             raise CosmosResourceNotFoundError(status_code=404, message="Fake provider item details.")
-        return json_copy(self.records[(partition_key, item)])
+        return self._response(self.records[(partition_key, item)])
 
     def delete_item(self, *, item, partition_key):
         if self.delete_error is not None:

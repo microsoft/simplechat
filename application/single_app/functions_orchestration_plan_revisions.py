@@ -22,6 +22,7 @@ from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos import exceptions
 
+from cosmos_document_utils import normalize_cosmos_document
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event
 from functions_assist_references import (
@@ -293,7 +294,7 @@ def read_revision_run(run_id, user_id, conversation_id, *, follow_current=False,
             if not allow_legacy and is_legacy_plan(record.get('plan')):
                 raise legacy_plan_error()
             # CosmosDict carries SDK metadata outside the JSON document. Keep the ETag.
-            return dict(record)
+            return normalize_cosmos_document(record)
         target = record['superseded_by_run_id']
         if not _valid_id(target):
             raise _not_found()

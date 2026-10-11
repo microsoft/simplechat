@@ -168,10 +168,15 @@ being presented as a model answer that no documents exist.
 
 ## Microsoft 365 outgoing action cards
 
-Since **0.261.321**, these same cards also show manual or delayed outgoing actions
-prepared by Orchestrate. They are recovered from the authorized conversation list after
-an integration step or interrupted run. Opening, refreshing, or approving a plan does
-not send a manual draft; use the existing owner-only Send/Cancel controls.
+Since **0.261.324**, newly prepared Orchestrate email cards appear beside the
+originating request as soon as the draft is saved, then beneath its final reply.
+**Ready to review — not sent** means preparation succeeded, not that delivery
+occurred. A later reporting failure keeps the prepared card available and remains
+a separate failed run result. Reload restores placement from saved action references;
+the authorized conversation list remains a recovery fallback after interruption.
+Older unlinked actions are not matched to messages by date or subject.
+Opening, refreshing, or approving a plan does not send a manual draft; use the
+existing owner-only Send/Cancel controls.
 
 Implemented in version: **0.261.038** (`application/single_app/config.py`).
 Manual and delayed email/invitation tools display a saved review card separately
@@ -194,13 +199,14 @@ replacement when delivery has an unknown outcome. Immediate operations keep
 their existing tool-result receipts without a second Send button.
 
 For email, Send submits the reviewed content and leaves the original Outlook
-draft. **Do not send the retained draft again.** See
+draft. **Accepted for sending** means Microsoft 365 accepted the request;
+recipient delivery is not confirmed. **Do not send the retained draft again.** See
 [Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
 
 The React V2 chat draws the same card with the same controls, under the reply that
 saved it, including while that reply is still streaming. A saved action whose reply
 is not on screen appears in a **Microsoft 365 outgoing actions for this
-conversation** section at the foot of the thread, which also offers **Load more
+conversation** section, which also offers **Load more
 outgoing actions** and **Refresh outgoing actions**. A notification about a saved
 action opens its conversation and scrolls to the card. See
 [V2 Microsoft 365 pending-action cards]({{ '/explanation/features/V2_M365_PENDING_ACTION_CARDS/' | relative_url }}).

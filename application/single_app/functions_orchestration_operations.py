@@ -16,6 +16,7 @@ from copy import deepcopy
 from hashlib import sha256
 from threading import RLock
 
+from cosmos_document_utils import normalize_cosmos_document
 from functions_orchestration_result_contracts import ResultContractError, canonical_bytes
 
 
@@ -116,9 +117,9 @@ def _caller_identity():
 def operation_summary(receipts, fallback):
     outcomes = []
     labels = {
-        'sent': 'Microsoft 365 accepted the send.',
-        'pending_review': 'Draft prepared; awaiting review.',
-        'pending': 'Draft prepared; awaiting review.',
+        'sent': 'Accepted for sending; recipient delivery is not confirmed.',
+        'pending_review': 'Ready to review — not sent.',
+        'pending': 'Ready to review — not sent.',
         'scheduled_pending': 'Delivery scheduled; not yet sent.',
         'scheduled': 'Delivery scheduled; not yet sent.',
     }
@@ -230,7 +231,9 @@ class OperationJournal:
         self.authorize()
         for _ in range(8):
             try:
-                stored = self.container.read_item(self.id, partition_key=self.run_id)
+                stored = normalize_cosmos_document(
+                    self.container.read_item(self.id, partition_key=self.run_id),
+                )
             except CosmosResourceNotFoundError:
                 stored = None
             if stored is not None and any(stored.get(key) != value for key, value in {
@@ -285,17 +288,17 @@ class OperationJournal:
         with self.lock:
             try:
                 cached = self._change(claim)
-            except Exception:
+            except Exception as error:
                 self.failure = OperationRecoveryError()
-                raise
+                raise self.failure from error
         return key, cached
 
     def finish(self, key, result, *, refused=False):
         try:
             safe = self.sanitize(result)
-        except Exception:
+        except Exception as error:
             self.failure = OperationRecoveryError()
-            raise
+            raise self.failure from error
 
         def complete(body):
             prior = body['calls'].get(key)
@@ -307,9 +310,9 @@ class OperationJournal:
         with self.lock:
             try:
                 name = self._change(complete)
-            except Exception:
+            except Exception as error:
                 self.failure = OperationRecoveryError()
-                raise
+                raise self.failure from error
         self.receipts.append({'function_name': name, 'result': deepcopy(safe)})
 
     def call_m365(self, plugin, name, parameters, invoke):

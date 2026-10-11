@@ -1,7 +1,7 @@
 # test_m365_approvals_execution.py
 """
 Functional tests for subject-owned Microsoft 365 approvals and scoped execution.
-Version: 0.261.029
+Version: 0.261.324
 Implemented in: 0.261.029
 
 Validates real policy modules against conditional, paginated Cosmos fakes:
@@ -54,17 +54,27 @@ def _module(name, **members):
 
 
 def load_real_legacy_approvals(container):
+    def unexpected_safety_callback(*args, **kwargs):
+        raise AssertionError("Legacy group approval coverage must not execute safety remediation.")
+
     dependencies = {
-        "config": _module("config", cosmos_approvals_container=container, cosmos_groups_container=container),
+        "config": _module(
+            "config", cosmos_approvals_container=container, cosmos_groups_container=container,
+            cosmos_safety_container=container,
+        ),
         "functions_appinsights": _module("functions_appinsights", log_event=lambda *args, **kwargs: None),
         "functions_notifications": _module(
             "functions_notifications",
             create_notification=lambda **kwargs: None,
             delete_notifications_by_metadata=lambda **kwargs: None,
             create_m365_approval_notification=lambda approval: {"id": approval["id"]},
+            mark_notification_read=unexpected_safety_callback,
         ),
         "functions_group": _module("functions_group", find_group_by_id=lambda value: None),
-        "functions_settings": _module("functions_settings", get_settings=lambda: {}),
+        "functions_settings": _module(
+            "functions_settings", get_settings=lambda: {},
+            get_user_settings=unexpected_safety_callback, update_user_settings=unexpected_safety_callback,
+        ),
         "functions_debug": _module("functions_debug", debug_print=lambda *args, **kwargs: None),
     }
     spec = importlib.util.spec_from_file_location(

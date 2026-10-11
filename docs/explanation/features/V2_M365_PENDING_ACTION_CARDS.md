@@ -4,6 +4,8 @@
 
 Implemented in version: **0.261.307**
 
+Email review flow updated in version: **0.261.324** (`application/single_app/config.py`).
+
 Tracking issue: [#1722](https://github.com/microsoft/simplechat/issues/1722), gap 2 (Chat, "M365 pending-action card").
 
 An agent that prepares a Microsoft 365 email or calendar invitation for review saves it as a pending action. The action waits until its owner sends or cancels it, and a notification tells the owner it is waiting. Only the classic chat page drew that card, so every such notification opened classic chat.
@@ -12,7 +14,7 @@ The React V2 chat now draws the card itself, with the same controls and safeguar
 
 Dependencies:
 
-* [Microsoft Graph Pending Actions](MSGRAPH_PENDING_ACTIONS.md): the backend this reads and writes. No route, schema, or setting changed.
+* [Microsoft Graph Pending Actions](MSGRAPH_PENDING_ACTIONS.md): the backend this reads and writes. The email review repair adds orchestration stream/history references, not a new delivery policy or setting.
 * [V2 Terms of Use and Approval Requests](V2_TERMS_AND_APPROVALS.md): the Approvals page uses the same card.
 * [V2 Notification Bell and Desktop Notifications](V2_NOTIFICATIONS_BELL.md): the notices that link to the card.
 * [React V2 UI](REACT_V2_UI.md): the shell and chat page the card lives in.
@@ -24,7 +26,7 @@ Dependencies:
 A card sits under the reply that saved it, as it does in classic chat. Placement is worked out once for the whole thread, in this order:
 
 1. The message the action names, when that message is on screen.
-2. While the reply that saved it is still streaming, under the streaming bubble.
+2. While a new Orchestrate run prepares the email, beside its originating user turn; ordinary chat uses the streaming bubble.
 3. Otherwise the user turn that caused it, when that turn is on screen. This is also where a card sits if its reply was never saved.
 4. The last message of the same request, when the action carries a request id.
 5. Otherwise the conversation-level section, **Microsoft 365 outgoing actions for this conversation**, so a pending send is never hidden.
@@ -36,6 +38,7 @@ That section also carries the things that belong to the conversation rather than
 * **Opening a conversation.** The conversation's saved actions are listed with `GET /api/msgraph/pending-actions?conversation_id=<id>&limit=30`, following the continuation token for more. The list is read again when the browser window regains focus or comes back online.
 * **History.** Messages loaded from history carry their cards and the ids of any that were not loaded with them. Ids without a card are fetched one at a time with `GET /api/msgraph/pending-actions/<id>?conversation_id=<id>`.
 * **A live reply.** The `m365_pending_action` stream frame puts a card on screen while the reply is still streaming. The finishing frame can carry the final cards, which then sit under the saved reply, or `m365_pending_actions_error` when the server could not attach them, in which case the list is read again.
+* **A live Orchestrate run.** Creation frames identify the conversation, run, producing step, original user message and request. The run reader rejects stale or cross-conversation frames; its controller gives valid cards to the existing store immediately. Terminal cards and `metadata.m365_pending_action_ids` promote the same cards beneath the final reply. History uses those saved references, not timestamps, subjects, or the newest message. Existing unlinked records keep their fallback section; this does not relink old attempts.
 * **After a reply ends.** The conversation's list is read again when a reply finishes or fails, when the reader stops it (once the stop request has been sent, so an action the server saves after that shows on the next read, such as window focus or **Refresh outgoing actions**), and when a reply that was still running is picked up again. An action that the live frames did not deliver, for example after a dropped connection, is on screen before anyone repeats the request.
 * **A shared conversation.** Other participants are told which action ids a reply saved, and read the list again. When the server could not list them, the thread says "Microsoft 365 actions were saved, but their cards could not be loaded. Reload the conversation to recover them. Do not repeat the request."
 
@@ -44,6 +47,8 @@ A card taken from message history is checked against the server before Send is a
 ### The card
 
 The same `PendingActionCard` is used inline in chat and in the Approvals detail pane, so a card behaves the same wherever it is drawn. It shows recipients, times, location, a body preview that is always plain text, and a status. Its controls match the [classic card](../../reference/chat-controls.md#microsoft-365-outgoing-action-cards):
+
+An email awaiting review says **Ready to review — not sent**. Preparation and sending are separate outcomes: a later failed report does not discard the draft or mark it sent. After the owner sends, **Accepted for sending — recipient delivery is not confirmed** is the primary result. The original Outlook-draft warning stays visible; a redundant generic successful send-check notice is omitted. Conflict and unknown-outcome warnings remain, and nothing is sent or replayed automatically by the browser.
 
 * **Send** or **Send now** (for a delayed action) submits the version of the action the reader reviewed, so the server can refuse it if the action changed in the meantime.
 * **Cancel** stops an unclaimed delivery.
@@ -80,6 +85,7 @@ Paths are relative to `application/v2_ui/src`.
 * `components/chat/MessageList.tsx`: mounts the placement, the section, and a slot under each bubble.
 * `lib/approvalsApi.ts`: `fetchConversationPendingActions` is new, `fetchPendingAction` takes a conversation id, and `PendingAction` carries the extra fields the chat endpoints return.
 * `lib/sse.ts`, `lib/types.ts`, `lib/collaborationEvents.ts`, `stores/chatStore.ts`: the stream and shared-conversation wiring, and keeping the store pointed at the open conversation.
+* `lib/orchestration.ts`, `lib/orchestrationController.ts`: run-stream creation events, original-turn placement, terminal reconciliation and finish refresh.
 * `lib/conversationUrl.ts`, `lib/notificationLinks.ts`, `lib/notificationNavigation.ts`, `pages/ChatPage.tsx`: the `m365_pending_action` parameter, routing, and the one-shot focus.
 * `scripts/check_xss_sinks.py`: `chatHrefForPendingAction` is listed as a reviewed same-origin link builder.
 
@@ -89,7 +95,7 @@ Nothing new to enable. Cards appear whenever an agent uses a Microsoft Graph act
 
 * Review the card under the reply, open **Review message body** to read the body, then choose **Send** or **Cancel**.
 * Choose a notification in the bell to land on the card in its conversation. The card is outlined for a moment so you can find it in a long thread.
-* If a card is missing from a thread, use **Refresh outgoing actions** at the foot of the conversation-level section.
+* If a card is missing from a thread, use **Refresh outgoing actions** in the conversation-level section.
 
 ## Testing and Validation
 
@@ -98,12 +104,12 @@ Functional tests:
 * `functional_tests/test_v2_m365_pending_actions.py`: the wiring across the chat page, stores, stream, collaboration events, routing, and shared card, and a run of the three Node tests below.
 * `functional_tests/test_v2_m365_pending_actions_logic.mjs`: snapshot trust, placement, stream and history references, and countdown rules.
 * `functional_tests/test_v2_m365_pending_actions_store.mjs`: the store's state machine, including late responses, version safety, polling, and focus.
-* `functional_tests/test_v2_m365_pending_actions_stream.mjs`: stream frames and shared-conversation events reaching the store.
+* `functional_tests/test_v2_m365_pending_actions_stream.mjs`: real chat and orchestration SSE readers/controllers, multiple live cards, saved-reply promotion, failed reports, dropped streams, scoped stale-frame rejection and history recovery.
 * `functional_tests/test_v2_workflow_run_link_routing.mjs`, `functional_tests/test_v2_notifications_bell.py`, `functional_tests/test_v2_user_settings_memory_m365.py`: updated for the new routing and files.
 
 UI tests:
 
-* `ui_tests/test_v2_m365_pending_action_cards.py`: the real message list with inline, streaming, and conversation-level cards, Send and Cancel, and focus.
+* `ui_tests/test_v2_m365_pending_action_cards.py`: the real message list with inline, streaming, and conversation-level cards, Send and Cancel, and focus; desktop/mobile Orchestrate preparation, report failure, reference-only reload, keyboard body review and explicit mocked Send/Cancel.
 * `ui_tests/test_v2_notifications_bell.py`: a notice for a saved action opens its card in V2 chat from another page, from the chat page, for an action the list does not show, and for one that is gone.
 * `ui_tests/test_v2_approvals_and_terms_pages.py` and `ui_tests/test_v2_approvals_dashboard.py`: the Approvals page, which keeps its test ids on the shared card.
 
@@ -111,4 +117,4 @@ UI tests:
 
 * A chat request that pauses for Microsoft 365 sign-in or a sharing approval (`m365_sign_in_required`, `m365_approval_required`) still shows as an ordinary stream error in V2 chat, as it did before. This change adds no pause interface for it. The list is read again when the request ends, so any action the request had already saved still gets its card. V2's orchestration notices for Microsoft 365 (`OrchestrationM365Notice.tsx`) are separate and unchanged.
 * Notices about an action inside a workflow run open the classic workflow-activity page.
-* The backend is unchanged: delayed auto-send still uses the in-process timer described in [Microsoft Graph Pending Actions](MSGRAPH_PENDING_ACTIONS.md).
+* Delivery policy is unchanged: delayed auto-send still uses the in-process timer described in [Microsoft Graph Pending Actions](MSGRAPH_PENDING_ACTIONS.md).

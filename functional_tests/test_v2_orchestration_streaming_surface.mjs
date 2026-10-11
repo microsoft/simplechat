@@ -1,5 +1,5 @@
 // test_v2_orchestration_streaming_surface.mjs
-// Version: 0.261.256
+// Version: 0.261.324
 // Implemented in: 0.261.256
 // Executes the real chat store, orchestration store and orchestration controller to check who
 // owns the streaming surface during an orchestrated turn. While a plan runs, the plan card is the
@@ -306,7 +306,7 @@ test('a turn re-keyed to the server conversation id keeps its phase', () => {
 test('every write that takes the streaming flag says who owns it', () => {
     const store = readFileSync(new URL('../application/v2_ui/src/stores/chatStore.ts', import.meta.url), 'utf8');
     const takes = store.match(/streaming: true,/g) ?? [];
-    const owners = [...store.matchAll(/streaming: true,\s*\n\s*orchestrationSurface: (null|phase),/g)]
+    const owners = [...store.matchAll(/streaming: true,\s*(?:retryPresentation: presentation,\s*)?orchestrationSurface: (null|phase),/g)]
         .map((match) => match[1]);
     assert.ok(takes.length >= 5, 'the chat starters and the orchestration seam are all present');
     assert.equal(owners.length, takes.length, 'a stream that takes `streaming` must name its owner');
@@ -316,5 +316,5 @@ test('every write that takes the streaming flag says who owns it', () => {
         new URL('../application/v2_ui/src/lib/orchestrationController.ts', import.meta.url), 'utf8',
     );
     const runs = controller.match(/beginOrchestrationTurn\([^)]*'running'\)/g) ?? [];
-    assert.deepEqual(runs, ["beginOrchestrationTurn(conversationId, '', false, undefined, undefined, 'running')"]);
+    assert.deepEqual(runs, ["beginOrchestrationTurn(conversationId, '', false, turnId, undefined, 'running')"]);
 });

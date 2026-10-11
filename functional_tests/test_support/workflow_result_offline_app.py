@@ -1,8 +1,9 @@
 # workflow_result_offline_app.py
 """
 Offline application harness for the workflow-results-in-chat route tests.
-Version: 0.261.214
+Version: 0.261.324
 Implemented in: 0.261.214
+SDK-shaped point response defaults added in: 0.261.324
 
 Boots the real application with only storage, the chat model and the network
 faked, so a test can drive the real JSON, SSE, history, export and collaboration
@@ -61,8 +62,8 @@ def field_value(row, path):
 class Container(OfflineContainer):
     """Partition-aware offline storage that answers the queries these routes issue."""
 
-    def __init__(self, partition_field="id"):
-        super().__init__()
+    def __init__(self, partition_field="id", *, sdk_responses=True):
+        super().__init__(sdk_responses=sdk_responses)
         self.partition_field = partition_field
 
     def read_item(self, item, partition_key, **kwargs):

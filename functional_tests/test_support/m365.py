@@ -1,5 +1,11 @@
 # m365.py
-"""Scoped cloud fakes for Microsoft 365 behavior tests (version 0.261.031)."""
+"""Scoped cloud fakes for Microsoft 365 behavior tests.
+
+Version: 0.261.324
+Implemented in: 0.261.031
+SDK-shaped point responses are the default; sdk_responses=False is an explicit
+legacy compatibility probe. Query rows remain plain JSON dictionaries.
+"""
 
 import copy
 import threading
@@ -7,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 from azure.cosmos import exceptions
+from azure.cosmos._cosmos_responses import CosmosDict
 
 
 WORKFLOW_REVIEW = {
@@ -64,8 +71,9 @@ class Query:
 class CosmosContainer:
     """Implements conditional replace/batches, partitions, and native paging."""
 
-    def __init__(self, partition_field="group_id"):
+    def __init__(self, partition_field="group_id", *, sdk_responses=True):
         self.partition_field = partition_field
+        self.sdk_responses = sdk_responses
         self.items = {}
         self.lock = threading.RLock()
         self.revision = 0
@@ -78,20 +86,24 @@ class CosmosContainer:
         self.revision += 1
         return {**copy.deepcopy(body), "_etag": str(self.revision)}
 
+    def _response(self, body):
+        value = copy.deepcopy(dict(body))
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def create_item(self, body=None, **kwargs):
         with self.lock:
             key = self._key(body)
             if key in self.items:
                 raise exceptions.CosmosResourceExistsError(status_code=409, message="Already exists.")
             self.items[key] = self._saved(body)
-            return copy.deepcopy(self.items[key])
+            return self._response(self.items[key])
 
     def read_item(self, item, partition_key):
         with self.lock:
             key = partition_key, item
             if key not in self.items:
                 raise exceptions.CosmosResourceNotFoundError(status_code=404, message="Not found.")
-            return copy.deepcopy(self.items[key])
+            return self._response(self.items[key])
 
     def replace_item(self, item, body, *, etag, match_condition):
         """Match Cosmos replace semantics: partition routing comes from the body."""
@@ -103,12 +115,12 @@ class CosmosContainer:
             if self._key(body) != (partition_key, item):
                 raise ValueError("Partition or id changed.")
             self.items[(partition_key, item)] = self._saved(body)
-            return copy.deepcopy(self.items[(partition_key, item)])
+            return self._response(self.items[(partition_key, item)])
 
     def upsert_item(self, body):
         with self.lock:
             self.items[self._key(body)] = self._saved(body)
-            return copy.deepcopy(self.items[self._key(body)])
+            return self._response(self.items[self._key(body)])
 
     def delete_item(self, item, partition_key):
         with self.lock:
