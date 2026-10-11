@@ -369,11 +369,8 @@ export function GroupWorkspacePage() {
         <>
             <PageHeader title="Group workspaces" description="Shared knowledge and tools for your team"
                 leading={<Users size={20} className="text-accent" />}
-                actions={(
-                    <GlassButton size="sm" variant="subtle" onClick={() => navigate('/groups/directory')}>
-                        <Compass size={14} />Browse all groups
-                    </GlassButton>
-                )} />
+                actions={[{ id: 'directory', label: 'Browse all groups', icon: <Compass size={14} />,
+                    variant: 'subtle', onClick: () => navigate('/groups/directory') }]} />
             <div className="shrink-0 space-y-2 border-b border-edge px-2 py-2 md:space-y-3 md:px-4 md:py-3">
                 <GroupWorkspacePicker key={viewerId} value={state.pendingGroupId ?? groupId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.groups?.find((group) => group.id === groupId)?.name}

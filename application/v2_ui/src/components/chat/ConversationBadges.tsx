@@ -31,8 +31,10 @@ const TONE_TITLE: Record<WorkspaceBadgeTone, string> = {
 
 export function ConversationBadges({
     metadata,
+    className,
 }: {
     metadata: ConversationMetadata | null | undefined;
+    className?: string;
 }) {
     const classificationEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_document_classification),
@@ -53,7 +55,7 @@ export function ConversationBadges({
     }
 
     return (
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className={clsx('flex shrink-0 items-center gap-1.5', className)}>
             {lock !== 'hidden' && (
                 <span
                     title={

@@ -13,8 +13,9 @@ import { CircleHelp } from 'lucide-react';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { consumeTourRequest, findTour, isTourEnabled } from '../../lib/tours';
 import { GuidedTour } from './GuidedTour';
+import type { HeaderAction } from '../layout/HeaderActions';
 
-export function TourLauncher({ tourId, className }: { tourId: string; className?: string }) {
+export function useTourLauncher(tourId: string, available = true) {
     const tour = findTour(tourId);
     const [open, setOpen] = useState(false);
     const settingsLoading = useUserSettingsStore((state) => state.loading);
@@ -23,6 +24,7 @@ export function TourLauncher({ tourId, className }: { tourId: string; className?
     );
 
     useEffect(() => {
+        if (!available) return;
         // Gives the page a moment to draw the controls the tour points at. The request is
         // consumed inside the timer so a mount that is torn down early leaves it in place.
         const timer = window.setTimeout(() => {
@@ -31,29 +33,39 @@ export function TourLauncher({ tourId, className }: { tourId: string; className?
             }
         }, 400);
         return () => window.clearTimeout(timer);
-    }, [tourId]);
+    }, [tourId, available]);
 
-    if (!tour) {
-        return null;
-    }
+    const label = tour ? `Take the ${tour.title.toLowerCase()}` : '';
+    const action: HeaderAction | null = tour && available && enabled && !settingsLoading ? {
+        id: `tour-${tourId}`, label, icon: <CircleHelp size={17} />,
+        onClick: () => setOpen(true), iconOnly: true,
+    } : null;
+    return {
+        action,
+        dialog: tour && open ? <GuidedTour tour={tour} onClose={() => setOpen(false)} /> : null,
+    };
+}
+
+export function TourLauncher({ tourId, className }: { tourId: string; className?: string }) {
+    const { action, dialog } = useTourLauncher(tourId);
 
     return (
         <>
-            {enabled && !settingsLoading && (
+            {action && (
                 <button
                     type="button"
-                    onClick={() => setOpen(true)}
-                    title={`Take the ${tour.title.toLowerCase()}`}
-                    aria-label={`Take the ${tour.title.toLowerCase()}`}
+                    onClick={action.onClick}
+                    title={action.label}
+                    aria-label={action.label}
                     className={clsx(
-                        'rounded-lg p-2 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                        'shrink-0 rounded-lg p-2 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 max-md:min-h-11 max-md:min-w-11',
                         className,
                     )}
                 >
                     <CircleHelp size={17} />
                 </button>
             )}
-            {open && <GuidedTour tour={tour} onClose={() => setOpen(false)} />}
+            {dialog}
         </>
     );
 }

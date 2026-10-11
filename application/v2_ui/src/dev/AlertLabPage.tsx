@@ -244,18 +244,11 @@ export function AlertLabPage() {
                 title="Alert lab"
                 description="Dev only. Sample workflow alerts in the real shell; nothing reaches the server."
                 leading={<FlaskConical size={18} className="text-accent" aria-hidden="true" />}
-                actions={(
-                    <>
-                        <GlassButton type="button" size="sm" variant="subtle" onClick={() => lastFeed.current?.()} disabled={!lastFeed.current}>
-                            <RotateCcw size={14} aria-hidden="true" />
-                            Replay
-                        </GlassButton>
-                        <GlassButton type="button" size="sm" variant="subtle" onClick={clear}>
-                            <Eraser size={14} aria-hidden="true" />
-                            Clear
-                        </GlassButton>
-                    </>
-                )}
+                actions={[
+                    { id: 'replay', label: 'Replay', icon: <RotateCcw size={14} />, variant: 'subtle',
+                        onClick: () => lastFeed.current?.(), disabled: !lastFeed.current },
+                    { id: 'clear', label: 'Clear', icon: <Eraser size={14} />, variant: 'subtle', onClick: clear },
+                ]}
             />
             <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
                 <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-2">

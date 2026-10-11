@@ -28,7 +28,6 @@ import { GenericApprovalsPanel } from '../components/approvals/GenericApprovalsP
 import { PausedRequestsPanel } from '../components/approvals/PausedRequestsPanel';
 import { PendingActionsPanel } from '../components/approvals/PendingActionsPanel';
 import { CategoryRailPage } from '../components/layout/CategoryRail';
-import { GlassButton } from '../components/ui/primitives';
 import {
     CONTENT_SCREENING_TYPE,
     GROUP_REQUEST_TYPES,
@@ -172,12 +171,8 @@ export function ApprovalsPage() {
             testId="v2-approvals-page"
             title="Approval requests"
             description="Review requests waiting on you, see what you have already decided, and act on the selected request."
-            actions={
-                <GlassButton size="sm" variant="ghost" onClick={() => setReloadKey((value) => value + 1)} data-testid="v2-approvals-refresh">
-                    <RefreshCw size={14} aria-hidden="true" />
-                    Refresh
-                </GlassButton>
-            }
+            actions={[{ id: 'refresh', label: 'Refresh', icon: <RefreshCw size={14} />,
+                onClick: () => setReloadKey((value) => value + 1), testId: 'v2-approvals-refresh' }]}
             railLabel="Approval categories"
             railTestId="v2-approvals-rail"
             itemTestIdPrefix="v2-approvals-category-"

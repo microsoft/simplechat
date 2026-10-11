@@ -44,6 +44,9 @@ import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
 import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
+import { PageHeader } from '../../../application/v2_ui/src/components/layout/PageHeader';
+import type { HeaderAction } from '../../../application/v2_ui/src/components/layout/HeaderActions';
+import { RefreshCw } from 'lucide-react';
 import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
 import { OrchestrationPlannerModelPicker } from '../../../application/v2_ui/src/components/admin/OrchestrationPlannerModelPicker';
 import { WorkflowEditorDialog } from '../../../application/v2_ui/src/components/workflows/WorkflowEditorDialog';
@@ -54,6 +57,29 @@ import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields'
 
 function ChatExperience() {
     return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
+}
+
+function HeaderExperience({ count = 2, loading = false, saving = false, secondary = true, disabled = false }: {
+    count?: number; loading?: boolean; saving?: boolean; secondary?: boolean; disabled?: boolean;
+}) {
+    const [activated, setActivated] = useState('');
+    const actions: (HeaderAction | false)[] = Array.from({ length: count }, (_, index) =>
+        (index === 0 || secondary) && {
+            id: `action-${index}`, label: `Action ${index + 1}`, icon: <RefreshCw size={14} />,
+            loading: index === 0 && loading,
+            disabled: disabled || (index === 2 && loading),
+            onClick: () => setActivated(`Action ${index + 1}`),
+        });
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell>
+                <PageHeader title={'Long page title '.repeat(12)} description={'Long subtitle '.repeat(12)}
+                    actions={actions} status={saving ? <span>Saving</span> : undefined} />
+                <output aria-label="Activated action">{activated}</output>
+                <button type="button" className="mt-auto self-start">Outside control</button>
+            </AppShell>
+        </div>
+    );
 }
 
 /** The landing page and the chat page behind one shell, so its call to action can be followed. */
@@ -172,6 +198,7 @@ type ComponentName =
     | 'PromptExperience'
     | 'ChatExperience'
     | 'HomeExperience'
+    | 'HeaderExperience'
     | 'ApprovalPreferenceWorkflow'
     | 'PlannerModelWorkflow'
     | 'PlanEditorExperience'
@@ -198,6 +225,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     PromptExperience,
     ChatExperience,
     HomeExperience,
+    HeaderExperience,
     ApprovalPreferenceWorkflow,
     PlannerModelWorkflow,
     PlanEditorExperience,
