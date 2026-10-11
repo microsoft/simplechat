@@ -22,6 +22,13 @@ workspace headers integrate the trigger; pages without a shared header receive
 a compact branded header. Notifications remain available beside the trigger.
 Desktop rail preferences are unaffected.
 
+**Single-row mobile headers fixed/implemented in version: 0.261.325**
+(`application/single_app/config.py`). One or two available page actions remain
+direct icons beside the ellipsized title/subtitle block; only more than two use
+an anchored **More actions** overlay. Saving status is not an action. Chat's
+conversation-actions overlay no longer adds a header row. Desktop labels and
+permission/disabled guards remain unchanged.
+
 Chat keeps tools access, attachment, voice when enabled, and Send/Stop in a
 stable mobile action row. Secondary controls remain reachable through **Chat
 tools**. Workspace sections use a labelled disclosure rather than a second

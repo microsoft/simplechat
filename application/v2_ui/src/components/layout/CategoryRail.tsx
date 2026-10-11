@@ -11,6 +11,7 @@ import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 import { PageHeader } from './PageHeader';
+import type { HeaderActionItems } from './HeaderActions';
 
 export interface RailItem {
     id: string;
@@ -61,7 +62,7 @@ export function CategoryRailPage({
     testId: string;
     title: string;
     description: string;
-    actions?: ReactNode;
+    actions?: HeaderActionItems;
     /** The rail's accessible name, such as "Approval categories". */
     railLabel: string;
     railTestId: string;

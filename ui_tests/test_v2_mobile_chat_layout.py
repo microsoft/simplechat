@@ -1,7 +1,7 @@
 # test_v2_mobile_chat_layout.py
 """
 Real-component regressions for V2 mobile composer and conversation actions.
-Version: 0.261.324
+Version: 0.261.325
 Implemented in: 0.261.323
 
 Only HTTP is stubbed; the production ChatExperience, stores, composer and CSS run
@@ -81,10 +81,36 @@ def test_mobile_conversation_actions_and_new_chat_keep_existing_semantics(open_p
         });
     }""")
     expect(page.get_by_role("button", name="Open used documents", exact=True)).not_to_be_visible()
-    page.get_by_role("button", name="Conversation actions", exact=True).click()
+    trigger = page.get_by_role("button", name="Conversation actions", exact=True)
+    height_before = page.locator(".chat-header").bounding_box()["height"]
+    trigger.click()
+    panel = page.get_by_role("group", name="Conversation actions", exact=True)
+    expect(panel).to_be_visible()
+    expect(page.get_by_role("button", name="View conversation details", exact=True)).to_be_focused()
+    bounds = panel.bounding_box()
+    assert bounds and bounds["x"] >= 8 and bounds["x"] + bounds["width"] <= 393 - 8 + 1
+    assert page.locator(".chat-header").bounding_box()["height"] == height_before
+    page.keyboard.press("Escape")
+    expect(trigger).to_be_focused()
+    expect(panel).to_have_count(0)
+    trigger.click()
     page.get_by_role("button", name="Open used documents", exact=True).click()
+    expect(panel).to_have_count(0)
     expect(page.get_by_role("complementary", name="Conversation details")).to_be_visible()
     page.get_by_role("button", name="Close panel", exact=True).click()
+    page.evaluate("""() => {
+        window.OrchHarness.stores.userSettings.useUserSettingsStore.setState({
+            settings: {showTutorialButtons: true},
+        });
+    }""")
+    trigger.click()
+    page.get_by_role("button", name="Take the chat tour", exact=True).click()
+    expect(panel).to_have_count(0)
+    expect(page.get_by_role("dialog")).to_have_count(1)
+    expect(page.get_by_role("dialog")).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    expect(trigger).to_be_focused()
     page.get_by_role("button", name="Start a new chat", exact=True).click()
     expect(page.get_by_role("heading", name="New chat", exact=True)).to_be_visible()
     assert page.evaluate("window.OrchHarness.stores.chat.useChatStore.getState().activeConversationId") is None

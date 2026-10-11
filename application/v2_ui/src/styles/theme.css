@@ -18,6 +18,44 @@
 }
 
 @media (max-width: 767px) {
+    .page-header,
+    .chat-header {
+        min-height: 56px;
+        gap: 8px;
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+
+    .page-header {
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    .page-header-actions {
+        gap: 8px;
+    }
+
+    .mobile-navigation-controls {
+        gap: 4px;
+    }
+
+    .mobile-navigation-controls button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .mobile-navigation-controls button,
+    .page-header .header-action,
+    .chat-header > button,
+    .chat-header .header-action {
+        height: 44px;
+        width: 44px;
+        min-height: 44px;
+        min-width: 44px;
+        padding: 8px;
+    }
+
     #primary-navigation li[class~='group/row'] > div {
         padding-top: 0;
         padding-bottom: 0;
@@ -47,18 +85,20 @@
         min-width: 44px;
     }
 
-    .page-header-actions {
-        flex-basis: 100%;
+    .header-action {
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+        padding: 8px;
     }
 
-    .chat-header-actions {
-        flex-basis: 100%;
-        flex-wrap: wrap;
-        padding-bottom: 8px;
-    }
-
-    .chat-header-actions[data-open='false'] {
+    .header-action-label {
         display: none;
+    }
+
+    .chat-header-actions button {
+        min-width: 44px;
+        min-height: 44px;
     }
 
     [data-tour='composer-tools'] {
@@ -100,6 +140,24 @@
     select[aria-label='Group workspace'] {
         font-size: max(16px, 1rem);
     }
+}
+
+.header-action-icon-only .header-action-label {
+    display: none;
+}
+
+@media (min-width: 768px) {
+    .header-action-icon-only {
+        height: auto;
+        padding: 0.5rem;
+        border-radius: 0.5rem;
+        color: var(--text-3);
+    }
+}
+
+.header-action-popover .header-action {
+    min-height: 44px;
+    justify-content: flex-start;
 }
 
 @media (max-height: 600px) {

@@ -192,14 +192,10 @@ export function GroupDirectoryPage() {
     const header = (
         <PageHeader title="Group directory" description="Find, join and create group workspaces"
             leading={<Users size={20} className="text-accent" />}
-            actions={(
-                <>
-                    <GlassButton size="sm" onClick={() => navigate('/groups')}><ArrowLeft size={14} />Your groups</GlassButton>
-                    {canCreate ? (
-                        <GlassButton size="sm" variant="primary" onClick={openCreate}><Plus size={14} />Create group</GlassButton>
-                    ) : null}
-                </>
-            )} />
+            actions={[
+                { id: 'back', label: 'Your groups', icon: <ArrowLeft size={14} />, onClick: () => navigate('/groups') },
+                canCreate && { id: 'create', label: 'Create group', icon: <Plus size={14} />, variant: 'primary', onClick: openCreate },
+            ]} />
     );
 
     return (

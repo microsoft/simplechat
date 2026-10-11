@@ -127,7 +127,7 @@ export function SettingsPage() {
                 leading={<UserAvatar size={36} />}
                 title="User Settings"
                 description="Preferences for your account in this interface."
-                actions={
+                status={
                     saving ? (
                         <span className="flex items-center gap-1.5 text-xs text-text-3">
                             <Loader2 size={13} className="animate-spin" />

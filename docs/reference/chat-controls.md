@@ -43,11 +43,17 @@ destination or conversation also closes it without changing the desktop preferen
 | --- | --- | --- |
 | Open navigation | Reaches conversations, workspaces, account, support, and theme controls without permanently narrowing the page. | Mobile page header |
 | Start a new chat | Resets the current draft/conversation using the same behavior as the rail's New chat. | Mobile chat header |
-| Conversation actions | Discloses people, details, documents, contents, and plan controls offered for this conversation. | Mobile header with an active conversation |
+| Conversation actions | Opens an anchored overlay of people, details, documents, contents, and plan controls offered for this conversation, without expanding the header. | Mobile header with an active conversation |
 | Chat tools | Opens the existing model, agent, capability, and reasoning controls; when orchestrating, the collapsed summary includes approval mode. | Mobile composer |
 
 Attachment, voice when enabled, and Send/Stop remain beside **Chat tools**.
 The tools disclosure does not clear selected options or change capability gates.
+
+Since **0.261.325** (`application/single_app/config.py`), the mobile conversation
+header stays one horizontal band. **Start a new chat** and **Conversation actions**
+remain direct icons; the latter opens above the page content. Choosing an action
+closes the overlay before opening its panel. Escape closes it and returns focus
+to **Conversation actions**; tapping outside also dismisses it.
 
 Conversation drawers overlay the chat below the wide-desktop breakpoint rather
 than leaving the message pane too narrow to read. **Close panel** returns to the

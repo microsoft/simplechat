@@ -1,7 +1,7 @@
 # test_v2_mobile_navigation.py
 """
 Real-component regression tests for the space-saving V2 mobile navigation.
-Version: 0.261.324
+Version: 0.261.325
 Implemented in: 0.261.323
 
 Reuses production components/CSS and the closed HTTP rail harness. Local Chromium

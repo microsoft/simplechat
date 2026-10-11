@@ -100,7 +100,7 @@ export function GuidedTour({
         [],
     );
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const previous = document.activeElement;
         return () => {
             if (previous instanceof HTMLElement && previous.isConnected) {
@@ -149,9 +149,12 @@ export function GuidedTour({
         };
     }, [reposition]);
 
-    useEffect(() => {
-        cardRef.current?.focus();
-    }, [index]);
+    const cardVisible = !step || cardPosition !== null;
+    useLayoutEffect(() => {
+        if (cardVisible) {
+            cardRef.current?.focus();
+        }
+    }, [index, cardVisible]);
 
     const last = index >= steps.length - 1;
     const next = useCallback(() => {
