@@ -1,7 +1,7 @@
 # test_v2_mobile_layout.py
 """
 Functional contracts for the shared V2 responsive layout.
-Version: 0.261.323
+Version: 0.261.325
 Implemented in: 0.261.323
 
 Pins shared components, preference isolation, local assets, and responsive
@@ -9,6 +9,7 @@ document presentation. Geometry and interactions are covered by the mobile UI te
 """
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -67,6 +68,33 @@ def test_viewport_support_preserves_zoom_and_local_assets():
     assert "100dvh" in css
     assert "safe-area-inset-bottom" in css
     assert "min-height: 44px" in css
+
+
+def test_headers_count_explicit_actions_and_keep_mobile_overlays_out_of_flow():
+    header = read("components/layout/PageHeader.tsx")
+    assert "shrink-0 flex-wrap" not in header
+    assert "md:flex-wrap" in header
+    assert "actions?: HeaderActionItems" in header
+    assert 'role="status"' in header
+    actions = read("components/layout/HeaderActions.tsx")
+    assert "visible.length > 2" in actions
+    assert "visible.slice(0, 1)" in actions
+    assert "action.disabled || action.loading" in actions
+    assert "aria-label={action.label}" in actions
+    overlay = read("components/ui/ActionPopover.tsx")
+    assert "createPortal" in overlay
+    assert "document.body" in overlay
+    assert "pointerdown" in overlay
+    assert "focusin" in overlay
+    assert "onClose(true)" in overlay
+    chat = read("pages/ChatPage.tsx")
+    assert "anchorRef={actionsTrigger}" in chat
+    assert "(!mobile || actionsOpen)" in chat
+    css = read("styles/theme.css")
+    assert not re.search(r"\.(?:page|chat)-header-actions\s*\{[^}]*flex-basis:\s*100%", css)
+    workspace = read("pages/workspace/WorkspacePage.tsx")
+    assert "actions={[tour.action]}" in workspace
+    assert "{tour.dialog}" in workspace
 
 
 if __name__ == "__main__":

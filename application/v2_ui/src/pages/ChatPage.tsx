@@ -1,7 +1,7 @@
 // ChatPage.tsx
 // Chat surface: header, message thread, composer, and the right-hand drawer.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -51,7 +51,10 @@ import { ConversationBadges } from '../components/chat/ConversationBadges';
 import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
 import { InviteBanner } from '../components/chat/InviteBanner';
 import { FileApprovals } from '../components/chat/FileApprovals';
-import { TourLauncher } from '../components/tour/TourLauncher';
+import { useTourLauncher } from '../components/tour/TourLauncher';
+import { ActionPopover } from '../components/ui/ActionPopover';
+import { HeaderActionControl } from '../components/layout/HeaderActions';
+import { useMobileViewport } from '../lib/useMobileViewport';
 import { panelTargetForConversation, canShareConversation } from '../lib/sharing';
 import {
     readWorkspaceAgentLaunch, workspaceAgentForLaunch, workspaceAgentLaunchUnavailableMessage,
@@ -225,9 +228,16 @@ function useConversationUrlSync() {
 
 function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const [actionsOpen, setActionsOpen] = useState(false);
+    const mobile = useMobileViewport();
+    const actionsTrigger = useRef<HTMLButtonElement>(null);
+    const tour = useTourLauncher('chat');
+    const closeActions = useCallback((returnFocus: boolean) => {
+        setActionsOpen(false);
+        if (returnFocus) actionsTrigger.current?.focus();
+    }, []);
     const { activeConversationId, conversations, drawerMode, setDrawerMode, metadata } =
         useChatStore();
-    useEffect(() => setActionsOpen(false), [activeConversationId]);
+    useEffect(() => setActionsOpen(false), [activeConversationId, mobile]);
     const contentsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_conversation_contents_drawer),
     );
@@ -301,7 +311,7 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     return (
         <header
             data-tour="chat-header"
-            className="chat-header glass glass-edge relative flex min-h-14 shrink-0 flex-wrap items-center gap-2 rounded-none border-t-0 border-r-0 px-2 md:gap-3 md:px-5"
+            className="chat-header glass glass-edge relative flex min-h-14 shrink-0 items-center gap-2 rounded-none border-t-0 border-r-0 px-2 md:flex-wrap md:gap-3 md:px-5"
         >
             <MobileNavigation />
             <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-1">
@@ -309,30 +319,27 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
             </h1>
             {/* Derived from this conversation's own metadata. Reading the user's active
                 group here instead made every conversation show the same badge. */}
-            <ConversationBadges metadata={metadata} />
+            <ConversationBadges metadata={metadata} className="min-w-0 max-md:max-w-[20%] max-md:overflow-hidden" />
             <button type="button" aria-label="Start a new chat"
                 onClick={() => useChatStore.getState().startNewConversation()}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-2 hover:bg-surface-2 md:hidden">
                 <MessageSquarePlus size={18} />
             </button>
-            {activeConversationId && <button type="button" aria-label="Conversation actions"
+            {activeConversationId && <button ref={actionsTrigger} type="button" aria-label="Conversation actions"
                 aria-expanded={actionsOpen} aria-controls="mobile-conversation-actions"
                 onClick={() => setActionsOpen((open) => !open)}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-2 hover:bg-surface-2 md:hidden">
                 <MoreHorizontal size={20} />
             </button>}
 
-            {activeConversationId && (
-                <div id="mobile-conversation-actions" data-open={actionsOpen}
-                    onKeyDown={(event) => {
-                        if (event.key === 'Escape') {
-                            setActionsOpen(false);
-                            event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(
-                                '[aria-controls="mobile-conversation-actions"]',
-                            )?.focus();
-                        }
-                    }}
-                    className="chat-header-actions ml-auto flex items-center gap-1">
+            {activeConversationId && (!mobile || actionsOpen) && (
+                <ActionPopover id="mobile-conversation-actions" label="Conversation actions"
+                    anchorRef={actionsTrigger} onClose={closeActions} inline={!mobile}>
+                <div onClick={(event) => {
+                    if (mobile && event.target instanceof Element && event.target.closest('button')) {
+                        closeActions(true);
+                    }
+                }} className={clsx('chat-header-actions ml-auto flex items-center gap-1', mobile && 'flex-wrap')}>
                     {shareable && (
                         <button
                             type="button"
@@ -461,12 +468,14 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                             ) : null}
                         </button>
                     )}
-                    <TourLauncher tourId="chat" />
+                    {tour.action && <HeaderActionControl action={tour.action} inPopover={mobile} />}
                 </div>
+                </ActionPopover>
             )}
 
             {/* Pushed right on its own when there is no conversation and so no tool row. */}
-            {!activeConversationId && <TourLauncher tourId="chat" className="ml-auto" />}
+            {!activeConversationId && tour.action && <div className="ml-auto"><HeaderActionControl action={tour.action} /></div>}
+            {tour.dialog}
         </header>
     );
 }

@@ -127,12 +127,8 @@ export function ReviewCenterPage() {
             testId="v2-review-center"
             title="Review center"
             description="Review user feedback and safety violations, alone or many at a time."
-            actions={editing ? undefined : (
-                <GlassButton size="sm" variant="ghost" onClick={() => setReloadKey((value) => value + 1)} data-testid="v2-review-refresh">
-                    <RefreshCw size={14} aria-hidden="true" />
-                    Refresh
-                </GlassButton>
-            )}
+            actions={[!editing && { id: 'refresh', label: 'Refresh', icon: <RefreshCw size={14} />,
+                onClick: () => setReloadKey((value) => value + 1), testId: 'v2-review-refresh' }]}
             railLabel="Review center pages"
             railTestId="v2-review-rail"
             itemTestIdPrefix="v2-review-rail-"

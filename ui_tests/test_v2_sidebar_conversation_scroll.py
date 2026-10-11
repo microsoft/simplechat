@@ -1,7 +1,7 @@
 # test_v2_sidebar_conversation_scroll.py
 """
 Browser regressions for the V2 chat rail scrolling as one panel.
-Version: 0.261.323
+Version: 0.261.325
 Implemented in: 0.261.236
 
 On the chat page, the rail kept its whole height for the navigation and the administrator's
@@ -248,7 +248,7 @@ def open_page(editor_browser, editor_assets):
         assert not api.errors, f"Unexpected browser errors: {api.errors}"
 
 
-def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SIZE):
+def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SIZE, props=None):
     page.goto(editor_tests.ORIGIN + editor_tests.HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     for url in api.assets:
@@ -273,9 +273,9 @@ def mount(page, api, *, experience="ChatExperience", entry="/chat", rows=PAGE_SI
                     ],
                 }},
             }});
-            H.mount('mount-a', spec.experience, {}, {initialEntries: [spec.entry]});
+            H.mount('mount-a', spec.experience, spec.props, {initialEntries: [spec.entry]});
         }""",
-        {"experience": experience, "entry": entry},
+        {"experience": experience, "entry": entry, "props": props or {}},
     )
     if rows:
         expect(row_items(page)).to_have_count(rows)

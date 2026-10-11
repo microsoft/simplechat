@@ -1,7 +1,7 @@
 # test_v2_mobile_workspace_documents.py
 """
 Production-SPA mobile workspace/document layout and permission regressions.
-Version: 0.261.324
+Version: 0.261.325
 Implemented in: 0.261.323
 
 Reuses closed group/public HTTP fixtures and the shared Azure Playwright connection.

@@ -2,7 +2,7 @@
 # test_v2_user_settings_tutorials_latest_features.py
 """
 Functional test for V2 guided tours and the Latest Features shortcut.
-Version: 0.261.296
+Version: 0.261.325
 Implemented in: 0.261.280
 URL sink hardening updated in: 0.261.281
 Support menu pages updated in: 0.261.296
@@ -93,8 +93,10 @@ def test_tours_are_launchable_and_configurable():
     print("Testing tour launchers and preferences...")
     chat_page = _read(V2_SRC / "pages" / "ChatPage.tsx")
     workspace_page = _read(V2_SRC / "pages" / "workspace" / "WorkspacePage.tsx")
-    assert '<TourLauncher tourId="chat"' in chat_page
-    assert '<TourLauncher tourId="workspace"' in workspace_page
+    assert "useTourLauncher('chat')" in chat_page
+    assert "useTourLauncher('workspace'" in workspace_page
+    assert "{tour.dialog}" in chat_page
+    assert "{tour.dialog}" in workspace_page
 
     preferences = _read(PREFERENCES_TSX)
     guidance = _read(GUIDANCE_TSX)
@@ -120,7 +122,8 @@ def test_tours_are_launchable_and_configurable():
         "The Preferences card must open the V2 Latest Features page, not the classic one"
     )
     assert "candidate.dataset.tour === step.target" in guided_tour
-    assert "href={safeStreamAuthUrl}" in message_list
+    assert "const safeAuthUrl = normalizeFoundryAuthUrl(authUrl)" in message_list
+    assert "href={safeAuthUrl}" in message_list
     assert "normalizeWorkspaceUrl(" in workspace_shell
 
 

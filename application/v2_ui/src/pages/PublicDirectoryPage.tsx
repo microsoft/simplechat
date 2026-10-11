@@ -386,18 +386,11 @@ export function PublicDirectoryPage() {
     const header = (
         <PageHeader title="Public directory" description={`Browse ${labels.lower_plural} and choose which appear in chat`}
             leading={<Globe size={20} className="text-accent" />}
-            actions={(
-                <>
-                    <GlassButton size="sm" onClick={() => navigate('/public')}><ArrowLeft size={14} />{labels.plural}</GlassButton>
-                    {canCreate ? (
-                        <GlassButton size="sm" variant="primary" aria-label={`Create ${labels.lower_singular}`} onClick={openCreate}>
-                            <Plus size={14} />
-                            <span className="hidden sm:inline">Create {labels.lower_singular}</span>
-                            <span className="sm:hidden">Create</span>
-                        </GlassButton>
-                    ) : null}
-                </>
-            )} />
+            actions={[
+                { id: 'back', label: labels.plural, icon: <ArrowLeft size={14} />, onClick: () => navigate('/public') },
+                canCreate && { id: 'create', label: `Create ${labels.lower_singular}`, icon: <Plus size={14} />,
+                    variant: 'primary', onClick: openCreate },
+            ]} />
     );
 
     return (
