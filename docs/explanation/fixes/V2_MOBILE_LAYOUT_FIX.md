@@ -39,6 +39,14 @@ mobile routes, new settings, dependencies, or authorization changes are added.
 
 ## Validation
 
+### Explicit fixture registration (0.261.324)
+
+The mobile UI tests reuse pytest fixtures that pytest discovers by module-level
+name, not by direct calls. PR #1750's unused-import feedback is addressed by
+explicit `pytest_plugins` registration, retaining standalone fixture discovery
+without unused `from` imports. This test-maintenance follow-up is recorded in
+`application/single_app/config.py`; mobile application behavior is unchanged.
+
 Regression coverage is in `functional_tests/test_v2_mobile_layout.py` and
 `ui_tests/test_v2_mobile_navigation.py`,
 `ui_tests/test_v2_mobile_chat_layout.py`, and

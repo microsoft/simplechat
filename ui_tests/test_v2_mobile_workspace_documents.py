@@ -1,7 +1,7 @@
 # test_v2_mobile_workspace_documents.py
 """
 Production-SPA mobile workspace/document layout and permission regressions.
-Version: 0.261.323
+Version: 0.261.324
 Implemented in: 0.261.323
 
 Reuses closed group/public HTTP fixtures and the shared Azure Playwright connection.
@@ -17,9 +17,11 @@ from playwright.sync_api import expect
 # Legacy shared fixtures import their connection helpers as top-level modules.
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 
-from ui_tests.fixtures.group_documents import group_documents_ui, connect_options  # noqa: E402, F401
-from ui_tests.fixtures.public_documents import public_documents_ui  # noqa: E402, F401
-from test_v2_personal_document_scope import personal_documents  # noqa: E402, F401
+pytest_plugins = (
+    "ui_tests.fixtures.group_documents",
+    "ui_tests.fixtures.public_documents",
+    "test_v2_personal_document_scope",
+)
 
 
 pytestmark = pytest.mark.ui

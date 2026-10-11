@@ -1,7 +1,7 @@
 # test_v2_mobile_navigation.py
 """
 Real-component regression tests for the space-saving V2 mobile navigation.
-Version: 0.261.323
+Version: 0.261.324
 Implemented in: 0.261.323
 
 Reuses production components/CSS and the closed HTTP rail harness. Local Chromium
@@ -11,9 +11,9 @@ and the shared Azure Playwright connection fixture are supported.
 import pytest
 from playwright.sync_api import expect
 
-from test_v2_sidebar_conversation_scroll import (
-    editor_assets, editor_browser, connect_options, mount, open_page,  # noqa: F401
-)
+from test_v2_sidebar_conversation_scroll import mount
+
+pytest_plugins = ("test_v2_sidebar_conversation_scroll",)
 
 
 pytestmark = pytest.mark.ui

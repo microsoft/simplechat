@@ -1,7 +1,7 @@
 # test_v2_mobile_chat_layout.py
 """
 Real-component regressions for V2 mobile composer and conversation actions.
-Version: 0.261.323
+Version: 0.261.324
 Implemented in: 0.261.323
 
 Only HTTP is stubbed; the production ChatExperience, stores, composer and CSS run
@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
-from test_v2_sidebar_conversation_scroll import (
-    editor_assets, editor_browser, connect_options, mount, open_page,  # noqa: F401
-)
+from test_v2_sidebar_conversation_scroll import mount
+
+pytest_plugins = ("test_v2_sidebar_conversation_scroll",)
 
 
 pytestmark = pytest.mark.ui
