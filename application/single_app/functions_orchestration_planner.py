@@ -535,6 +535,12 @@ later representations instead of drafting it again. Do not add a separate finali
 Only when render_file is offered, bind its required source input to complete prepared content,
 declare outputs:[], and select an explicit file_name, output_format, profile, and supported
 options. It delivers a file through the server's output service, not a named data result.
+For template reuse or selective updates, use document_inspect with one exact handle from
+document_transform_references, then document_create_from_reference or document_refresh with
+its required inspection input and named information inputs. The fixed transformation output
+renders with document_transform_v1 in docx or pptx. Do not recreate the reference through the
+generic prepared-report/deck profile or confuse a content refresh with file merging. These
+tools deliver useful drafts with omissions disclosed; no extra approval wizard is needed.
 Do not bind a later data consumer or final_response to a Render step.
 final_response selects exactly one prepared text/Markdown result to publish as the chat
 answer. Without it, the server reports actual delivery/work status deterministically. It is

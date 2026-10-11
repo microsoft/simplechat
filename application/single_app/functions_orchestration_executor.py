@@ -363,6 +363,8 @@ class RunContext:
         external_source_preflight=None,
         capture_external_source_configuration=None,
         rendering_service=None,
+        document_transform_source_reader=None,
+        document_transform_source_resolver=None,
         export_catalog=None,
         workflow_planning=None,
         time_zone=None,
@@ -415,6 +417,11 @@ class RunContext:
         self.external_source_preflight = external_source_preflight
         self.capture_external_source_configuration = capture_external_source_configuration
         self.rendering_service = rendering_service
+        for callback in (document_transform_source_reader, document_transform_source_resolver):
+            if callback is not None and not callable(callback):
+                raise ResultContractError('result_adapter_unavailable')
+        self.document_transform_source_reader = document_transform_source_reader
+        self.document_transform_source_resolver = document_transform_source_resolver
         self.export_catalog = deepcopy(export_catalog)
         # The server-only workflow proposal context stored with the turn, including the map
         # from each planner handle to the record it names, and the user's validated browser
@@ -797,6 +804,8 @@ def _dependency_request_context(context):
             getattr(context.result_service, 'access', None), 'external_source_authorizer', None,
         ),
         'rendering_service': context.rendering_service,
+        'document_transform_source_reader': context.document_transform_source_reader,
+        'document_transform_source_resolver': context.document_transform_source_resolver,
         'message_urls': context.allowed_user_urls if context.allowed_user_urls is not None else re.findall(
             r'https?://[^\s<>"]+', context.user_message,
         ),

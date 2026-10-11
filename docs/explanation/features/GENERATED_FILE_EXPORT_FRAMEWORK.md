@@ -2,7 +2,7 @@
 
 Implemented in version: **0.250.072**
 
-Updated through version: **0.261.239**
+Updated through version: **0.261.321**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
@@ -67,6 +67,28 @@ replace original records, gather missing evidence, or decide workflow control fl
 - The existing `openpyxl`, `python-pptx`, `markdown2`, Beautiful Soup and Pillow dependencies for headless Office work
 
 ## Technical Specifications
+
+### Reference-based Word and PowerPoint transformations
+
+Implemented in version: **0.261.321**, tracked in
+`application/single_app/config.py`.
+
+The `document_transform_v1` DOCX/PPTX profile applies complete prepared edits to
+an authorized inspected reference package. It shares the export facade,
+artifact delivery and per-file recovery with existing serializers, but does
+not rebuild reference formatting through `prepared_report_v1` or
+`prepared_slide_deck_v1`. DOTX/POTX references become new DOCX/PPTX artifacts.
+
+The dedicated create-from-reference and refresh orchestration tasks prepare
+edits through the existing composition service. Missing facts and unsupported
+targets are disclosed in an outcome report; they are not permission to read a
+partial retained result. Source access, inspection lineage and the exact
+reference digest are checked independently of model output.
+
+See [Document Transformation Framework](DOCUMENT_TRANSFORMATION_FRAMEWORK.md)
+for the two user workflows, safety boundaries and future adapter distinctions.
+Existing generic exports, file merges, JSON/XML generation and exact
+saved-record publication are unchanged.
 
 ### Existing Response and Specialized Renderers
 

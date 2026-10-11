@@ -1,7 +1,7 @@
 # orchestration_harness_execution.py
 """Initialized headless harness fixtures; only external storage/model I/O is doubled.
 
-Version: 0.261.130
+Version: 0.261.321
 Implemented in: 0.261.127
 Publication-only admission guard updated in: 0.261.129
 Direct result-store binding guard updated in: 0.261.130
@@ -218,6 +218,7 @@ class HarnessEnvironment:
         self.results = ResultFixture()
         self.blobs = HarnessBlobIO()
         self.model_calls, self.clients, self.replies = [], [], []
+        self.run_id = "run-1"
         self.conversation = {"id": "conversation-1", "user_id": "owner", "title": "Harness test"}
         self.conversations.create_item(self.conversation)
         self.turn = {
@@ -248,9 +249,12 @@ class HarnessEnvironment:
         self.clients.append(client)
         return client
 
-    def create(self, steps=None, *, replies=(), final_response=None, history=(), **turn_updates):
+    def create(
+        self, steps=None, *, replies=(), final_response=None, history=(),
+        run_id="run-1", plan_id="plan-1", turn_id="turn-1", **turn_updates,
+    ):
         raw = {
-            "run_id": "run-1", "plan_id": "plan-1", "turn_id": "turn-1",
+            "run_id": run_id, "plan_id": plan_id, "turn_id": turn_id,
             "steps": steps or [compose_step()],
         }
         if final_response is not None:
@@ -260,13 +264,16 @@ class HarnessEnvironment:
             available_capability_ids=[
                 "compose", "render_file", "tabular_analyze", "document_search", "web_search", "url_fetch",
                 "document_analyze", "document_compare",
+                "document_inspect", "document_create_from_reference", "document_refresh",
             ],
+            composition_profiles=self.service_bindings.composition_profiles(),
+            seeds=turn_updates.get("seeds"),
         )
         for message in history:
             self.messages.create_item(message)
         normalized = normalize_history_message(self.turn)
         turn_context = {
-            "turn_id": "turn-1", "user_message": self.turn["content"],
+            "turn_id": turn_id, "user_message": self.turn["content"],
             "user_message_id": self.turn["id"], "user_message_fingerprint": normalized["fingerprint"],
             "resolved_message": self.turn["content"], "seeds": {}, "original_seeds": {},
             "answered_questions": [], "planning_token_usage": {},
@@ -275,12 +282,13 @@ class HarnessEnvironment:
             "memory_scope": None, **turn_updates,
         }
         self.replies = list(replies)
+        self.run_id = run_id
         return self.run_store.create_orchestration_run(
             plan, "owner", "conversation-1", turn_index=1, turn_context=turn_context,
         )
 
     def read(self):
-        return self.runs.read_item("run-1", "conversation-1")
+        return self.runs.read_item(self.run_id, "conversation-1")
 
     def claim(self):
         record = self.read()

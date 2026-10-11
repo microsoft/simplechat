@@ -16,7 +16,7 @@ import { useOrchestrationStore } from '../stores/orchestrationStore';
 // The /upload route supports these formats, not the workspace-only audio/video processors.
 export const CHAT_UPLOAD_ACCEPT = [
     'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log',
-    'pdf', 'docx', 'pptx', 'ppt', 'csv', 'xlsx', 'xls', 'xlsm', 'msg',
+    'pdf', 'docx', 'dotx', 'pptx', 'potx', 'ppt', 'csv', 'xlsx', 'xls', 'xlsm', 'msg',
     'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic',
 ].map((extension) => `.${extension}`).join(',');
 

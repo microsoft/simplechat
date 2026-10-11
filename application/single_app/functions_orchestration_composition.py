@@ -400,6 +400,16 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 ),
             )
         outputs = step['outputs']
+        transform_context = None
+        transform_policy = ''
+        if step['capability_id'] in ('document_create_from_reference', 'document_refresh'):
+            # Native reference contracts load only when preparing a document transformation.
+            from functions_orchestration_document_transform import (
+                TRANSFORM_POLICY, transform_preparation_context, validate_transform_preparation,
+            )
+
+            transform_context = transform_preparation_context(step, readers, inputs, images)
+            transform_policy = f'{TRANSFORM_POLICY} Required mode: {transform_context["mode"]}.'
         plain_text = len(outputs) == 1 and outputs[0]['kind'] in ('text-v1', 'markdown-v1')
         unavailable = _missing_optional_inputs(step, context)
         missing_images = [item for item in unavailable if item['capability_id'] == CAPABILITY_GENERATE_IMAGE]
@@ -412,7 +422,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         markdown_names = [output['name'] for output in outputs if output['kind'] == 'markdown-v1']
         memory = _answer_memory(context)
         policy = ' '.join(part for part in (
-            COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], MISSING_INPUT_POLICY if missing else '',
+            COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], transform_policy, MISSING_INPUT_POLICY if missing else '',
             MISSING_IMAGE_POLICY if missing_images else '',
             CITATION_POLICY if _carries_citation_values(inputs) else '',
             'Return only the prepared text.' if plain_text else ' '.join((
@@ -462,7 +472,11 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     {'name': item['name'], 'reason': item['reason']} for item in missing
                 ]} if missing else {}),
                 **({'images': [
-                    {'token': f"[[image:{image['asset_id']}]]", 'title': image['title']} for image in images
+                    {
+                        'token': f"asset:{image['asset_id']}" if transform_context is not None
+                        else f"[[image:{image['asset_id']}]]",
+                        'title': image['title'],
+                    } for image in images
                 ]} if images else {}),
                 **({'unavailable_images': [
                     {'name': item['name'], 'reason': item['reason']} for item in missing_images
@@ -517,6 +531,12 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     )
                 except ResultContractError as error:
                     error.output_name = specification['name']
+                    raise
+            if transform_context is not None:
+                try:
+                    validate_transform_preparation(values, transform_context)
+                except ResultContractError as error:
+                    error.output_name = 'transformation'
                     raise
             return values
 

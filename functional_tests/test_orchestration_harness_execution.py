@@ -1,7 +1,7 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.232
+Version: 0.261.321
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
@@ -1430,6 +1430,7 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
     build_services = harness.bootstrap.build_orchestration_services
     build_context = harness.execution.build_capability_request_context
     discovery_calls = []
+    transform_bindings = {}
     complete = has_preflight and has_admission and has_authorizer and has_capture
 
     def observe_discovery(*args, **kwargs):
@@ -1438,6 +1439,11 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
 
     def initialized_services(*args, **kwargs):
         services = build_services(*args, **kwargs)
+        transform_bindings.update({
+            name: getattr(services, name) for name in (
+                "document_transform_source_reader", "document_transform_source_resolver",
+            )
+        })
         preflight = services.external_source_preflight
         assert preflight.__func__ is sources.OrchestrationExternalSourceProvider.preflight_gather_invocation
         callbacks["external_source_preflight"] = Mock(wraps=preflight)
@@ -1487,10 +1493,15 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
         assert len(harness.clients) == 1 and all(client.closed for client in harness.clients)
         assert lease.stopped.is_set()
     saved = harness.read()
-    expected_keywords = {"allowed_user_urls", "native_bridge_for_step", "rendering_service"}
+    expected_keywords = {
+        "allowed_user_urls", "native_bridge_for_step", "rendering_service",
+        "document_transform_source_reader", "document_transform_source_resolver",
+    }
     if complete:
         expected_keywords.update(callbacks)
     assert len(discovery_calls) == 1 and set(discovery_calls[0]) == expected_keywords
+    for name, callback in transform_bindings.items():
+        assert discovery_calls[0][name] is callback and callable(callback)
     if complete:
         for name, callback in callbacks.items():
             assert discovery_calls[0][name] is callback

@@ -48,6 +48,7 @@ from functions_orchestration_source_access import (
     read_orchestration_source_metadata,
     resolve_orchestration_source_manifest,
 )
+from functions_document_transform_sources import DocumentTransformSources
 from functions_settings import get_settings, get_user_settings
 from functions_simplechat_operations import (
     delete_staged_orchestration_chat_artifact_for_user,
@@ -318,6 +319,37 @@ def build_image_asset_reader(user_id, conversation_id):
     return read
 
 
+def build_document_transform_sources(user_id, conversation_id):
+    """Bind transform inputs to fresh document and existing generated-file authorization."""
+    # The citation boundary imports this composition root indirectly; load it only for
+    # actual reference consumption, after application bootstrap has finished.
+    def authorize_artifact(actor, cid, mid):
+        from route_enhanced_citations import _get_authorized_chat_artifact_message
+
+        return _get_authorized_chat_artifact_message(actor, cid, mid)
+
+    def read_document(document_id):
+        from content_screening.access import read_available_document_bytes, strict_source_authority
+
+        with strict_source_authority():
+            return read_available_document_bytes(document_id, user_id=user_id, purpose="native")
+
+    def list_artifacts(cid):
+        read_owned_conversation(user_id, cid)
+        return config.cosmos_messages_container.query_items(
+            query="SELECT TOP 30 * FROM c WHERE c.role = 'file' AND c.metadata.is_generated_chat_artifact = true ORDER BY c.timestamp DESC",
+            partition_key=cid,
+        )
+
+    return DocumentTransformSources(
+        user_id=user_id, conversation_id=conversation_id,
+        read_conversation=lambda cid: read_owned_conversation(user_id, cid),
+        read_document_metadata=lambda document_id: read_orchestration_source_metadata(document_id, user_id),
+        read_document_bytes=read_document, authorize_artifact=authorize_artifact,
+        open_artifact_stream=open_generated_chat_artifact_stream, list_artifacts=list_artifacts,
+    )
+
+
 def build_orchestration_services(user_id, conversation_id, *, settings=None):
     """Supply the initialized private result, run and chat-artifact resources."""
     read_owned_conversation(user_id, conversation_id)
@@ -406,6 +438,7 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
             record, operation=operation, rendering_service=services.rendering,
         )
 
+    transform_sources = build_document_transform_sources(user_id, conversation_id)
     services = OrchestrationServices(
         user_id=user_id, conversation_id=conversation_id, result_store=result_store,
         run_container=config.cosmos_orchestration_runs_container,
@@ -420,6 +453,9 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         native_bridge_for_step=native_bridge_for_step,
         image_asset_reader=build_image_asset_reader(user_id, conversation_id),
         document_bytes_reader=build_merge_document_reader(user_id),
+        document_transform_source_reader=transform_sources.read_reference,
+        document_transform_source_resolver=transform_sources.resolve_reference,
+        document_transform_candidate_reader=transform_sources.planning_candidates,
     )
     return services
 

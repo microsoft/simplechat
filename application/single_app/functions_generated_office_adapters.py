@@ -5,12 +5,19 @@ import io
 import math
 import re
 from contextlib import ExitStack
+from copy import deepcopy
 from dataclasses import fields, replace
 from typing import Any, Callable, Optional
 
 from jsonschema import Draft202012Validator, ValidationError
 
 import functions_office_file_renderers as office
+from functions_document_transform import (
+    DocumentTransformError,
+    DocumentTransformLimits,
+    transform_document,
+    validate_document_transform,
+)
 from functions_export_cleanup import ClosingExportResource
 from functions_generated_export_contracts import (
     GeneratedFileExportError,
@@ -19,6 +26,7 @@ from functions_generated_export_contracts import (
 )
 from functions_generated_export_registry import (
     ASSEMBLED_DOCUMENT_PROFILE,
+    DOCUMENT_TRANSFORM_PROFILE,
     EXACT_TABULAR_DEFAULT_SHEET_NAME,
     EXACT_TABULAR_WORKBOOK_PROFILE,
     GENERATED_IMAGE_REFERENCE_PATTERN,
@@ -291,13 +299,23 @@ def _render_assembled_document(source, request, entry, *, max_output_bytes, chec
 
 def _render_generated_office_source(
     source, request, *, max_output_bytes, check=None, limits=None, office_limits=None,
-    image_resolver=None, document_reader=None,
+    image_resolver=None, document_reader=None, document_transform_source_reader=None,
 ):
     entry = resolve_generated_file_export_format(request, getattr(source, 'kind', None))
     if entry.renderer_id != 'office':
         raise GeneratedFileExportError('unsupported_format', 'This Office export format is not supported.')
     if image_resolver is not None and (not entry.rich_media or not callable(image_resolver)):
         raise GeneratedFileExportError('invalid_options', 'This export does not accept the supplied image resolver.')
+    if document_transform_source_reader is not None and request.profile != DOCUMENT_TRANSFORM_PROFILE:
+        raise GeneratedFileExportError('invalid_options', 'Only a transformed file reads a reference document.')
+    if request.profile == DOCUMENT_TRANSFORM_PROFILE:
+        if document_reader is not None:
+            raise GeneratedFileExportError('invalid_options', 'A transformed file requires its reference reader.')
+        return _render_document_transform(
+            source, request, entry, max_output_bytes=max_output_bytes, check=check,
+            limits=limits, office_limits=office_limits, image_resolver=image_resolver,
+            document_transform_source_reader=document_transform_source_reader,
+        )
     if request.profile == ASSEMBLED_DOCUMENT_PROFILE:
         return _render_assembled_document(
             source, request, entry, max_output_bytes=max_output_bytes, check=check, limits=limits,
@@ -365,6 +383,71 @@ def _render_generated_office_source(
             profile=request.profile, source_kind=source.kind, file_extension=entry.file_extension,
             character_count=expected_count if source.kind in ('text', 'markdown') else None,
             metadata={**rendered.metadata, 'renderer_profile': rendered.profile},
+        )
+        resources.pop_all()
+        return result
+
+
+def _render_document_transform(
+    source, request, entry, *, max_output_bytes, check, limits, office_limits,
+    image_resolver, document_transform_source_reader,
+):
+    """Apply retained operations to authorized native bytes, with no content preparation."""
+    if not callable(document_transform_source_reader):
+        raise GeneratedFileExportError('unsupported_source', 'A transformed file needs its reference document.')
+    limits = GeneratedFileExportLimits() if limits is None else limits
+    _validate_source_limits(source, limits, max_output_bytes, check)
+    renderer_limits = _office_limits(office_limits, limits, max_output_bytes)
+    defaults = DocumentTransformLimits()
+    transform_limits = replace(
+        defaults,
+        max_source_bytes=min(defaults.max_source_bytes, renderer_limits.max_input_bytes),
+        max_output_bytes=renderer_limits.max_output_bytes,
+        max_json_bytes=min(defaults.max_json_bytes, limits.max_value_bytes),
+        max_json_nodes=min(defaults.max_json_nodes, limits.max_value_nodes),
+        max_json_depth=min(defaults.max_json_depth, limits.max_depth),
+    )
+    checks = _SourceChecks(source, check)
+    boundary = _SourceFailureBoundary()
+    with ExitStack() as resources:
+        try:
+            boundary.call(checks.run)
+            value = boundary.call(source.read_value)
+            prepared = validate_document_transform(
+                value, limits=transform_limits, check=lambda: boundary.call(checks.run),
+            )
+            if prepared['output_format'] != entry.format_id:
+                raise GeneratedFileExportError('invalid_data', 'The prepared transformation has a different output format.')
+            content = boundary.call(document_transform_source_reader, deepcopy(prepared['reference']['handle']))
+            boundary.call(checks.run)
+            rendered = resources.enter_context(ClosingExportResource(transform_document(
+                content, prepared, limits=transform_limits,
+                check=lambda: boundary.call(checks.run),
+                image_resolver=_image_resolver(image_resolver, checks, boundary),
+            )))
+            boundary.call(checks.run)
+        except DocumentTransformError as exc:
+            if boundary.failure is not None:
+                raise boundary.failure.with_traceback(boundary.traceback)
+            code, message = {
+                'reference_changed': ('source_changed', 'The reference document changed; prepare the edits again.'),
+                'invalid_limits': ('invalid_limit', 'Positive transformation limits are required.'),
+                'resource_limit': ('value_limit', 'The document transformation exceeds its resource limits.'),
+                'source_too_large': ('size_limit', 'The reference document exceeds its size limit.'),
+                'input_too_large': ('size_limit', 'The reference document exceeds its size limit.'),
+                'output_too_large': ('size_limit', 'The transformed document exceeds its size limit.'),
+                'active_content': ('unsupported_content', 'The reference document contains unsafe active content.'),
+                'unsafe_xml': ('unsupported_content', 'The reference document contains unsafe XML.'),
+                'encrypted_document': ('unsupported_content', 'Encrypted reference documents cannot be transformed.'),
+                'adapter_unavailable': ('unsupported_format', 'This document transformation format is unavailable.'),
+                'cancelled': ('cancelled', 'Document transformation was cancelled.'),
+            }.get(exc.code, ('invalid_data', 'The document transformation data or package is invalid.'))
+            raise GeneratedFileExportError(code, message) from exc
+        result = GeneratedFileExportStream(
+            file_content=rendered.file_content, output_format=entry.format_id, media_type=rendered.media_type,
+            size_bytes=rendered.size_bytes, content_sha256=rendered.content_sha256, record_count=0,
+            profile=request.profile, source_kind=source.kind, file_extension=entry.file_extension,
+            character_count=None, metadata={**rendered.metadata, 'renderer_profile': request.profile},
         )
         resources.pop_all()
         return result

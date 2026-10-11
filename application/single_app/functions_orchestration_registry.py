@@ -102,6 +102,10 @@ CAPABILITY_TABULAR_ANALYZE = 'tabular_analyze'
 CAPABILITY_TABULAR_INSPECT = 'tabular_inspect'
 CAPABILITY_TABULAR_MERGE = 'tabular_merge'
 CAPABILITY_DOCUMENT_MERGE = 'document_merge'
+CAPABILITY_DOCUMENT_INSPECT = 'document_inspect'
+CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE = 'document_create_from_reference'
+CAPABILITY_DOCUMENT_REFRESH = 'document_refresh'
+DOCUMENT_TRANSFORM_CAPABILITIES = (CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE, CAPABILITY_DOCUMENT_REFRESH)
 CAPABILITY_WEB_SEARCH = 'web_search'
 CAPABILITY_URL_FETCH = 'url_fetch'
 CAPABILITY_DEEP_RESEARCH = 'deep_research'
@@ -638,7 +642,85 @@ _MERGE_HEADER_ROW_INPUT = {
 # named results a step retains for later steps. The parts owned by other services -- the
 # native tabular argument contract and the export catalog -- are resolved by
 # `_build_capabilities` when the registry is read, so importing this module stays cheap.
+def _document_transform_descriptor(capability_id, label, instruction):
+    return {
+        'id': capability_id, 'label': label, 'role': ROLE_REASON,
+        'result_contract_version': 'document-transform-v1',
+        'summary': instruction,
+        'when_to_use': (
+            instruction + ' Bind inspection to a document_inspect inspection output and bind every '
+            'information source by name. Prepare literal changes, not a file. Unsupported or '
+            'unfilled targets remain disclosed in a useful draft. Render the transformation output '
+            'with render_file profile document_transform_v1 in the inspected docx or pptx format. '
+            'Do not use this for fresh generic exports or file merging.'
+        ),
+        'settings_gates': (), 'settings_gates_any': (), 'gate': None, 'request_gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object', 'additionalProperties': False,
+            'properties': {
+                'instruction': {'type': 'string', 'minLength': 1},
+                'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
+            },
+            'required': ['instruction'],
+        },
+        'result_input_kinds': {'inspection': ('structured-v1',), '*': tuple(sorted(RESULT_KINDS))},
+        'required_result_inputs': ('inspection',),
+        'partial_inputs_supported': False, 'optional_inputs_supported': True,
+        'result_outputs': {'transformation': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,), 'cost_class': COST_CLASS_LOW,
+        'max_per_plan': None, 'adapter': capability_id,
+    }
+
+
 CAPABILITY_REGISTRY = (
+    {
+        'id': CAPABILITY_DOCUMENT_INSPECT, 'label': 'Inspect reference document', 'role': ROLE_GATHER,
+        'result_contract_version': 'document-inspection-v1',
+        'summary': 'Inspect the native structure and editable targets of a Word or PowerPoint reference.',
+        'when_to_use': (
+            'Use before creating from or refreshing an existing DOCX/DOTX/PPTX/POTX file. Name one '
+            'reference from document_transform_references: its document handle, or the artifact '
+            'handle of a generated file in this conversation. Inspection is not evidence gathering '
+            'or text search. Use its target IDs for subsequent edits; populated example content '
+            'does not become evidence for new facts.'
+        ),
+        'settings_gates': (), 'settings_gates_any': (), 'gate': None, 'request_gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object', 'additionalProperties': False, 'required': ['reference'],
+            'properties': {'reference': {
+                'oneOf': [
+                    {
+                        'type': 'object', 'additionalProperties': False,
+                        'required': ['kind', 'document_id'],
+                        'properties': {'kind': {'const': 'document'}, 'document_id': {'type': 'string', 'minLength': 1}},
+                    },
+                    {
+                        'type': 'object', 'additionalProperties': False,
+                        'required': ['kind', 'conversation_id', 'message_id'],
+                        'properties': {
+                            'kind': {'const': 'artifact'}, 'conversation_id': {'type': 'string', 'minLength': 1},
+                            'message_id': {'type': 'string', 'minLength': 1},
+                        },
+                    },
+                ],
+            }},
+        },
+        'runtime_bindings': ('document_transform_source_reader', 'document_transform_source_resolver'),
+        'runtime_binding_unavailable_reason': 'document_reference_reader_unavailable',
+        'result_outputs': {'inspection': 'structured-v1'}, 'result_input_kinds': {},
+        'partial_inputs_supported': False, 'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW, 'max_per_plan': 4, 'adapter': CAPABILITY_DOCUMENT_INSPECT,
+    },
+    _document_transform_descriptor(
+        CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE, 'Create from reference',
+        'Prepare new content using the formatting and reusable structures of the inspected reference.',
+    ),
+    _document_transform_descriptor(
+        CAPABILITY_DOCUMENT_REFRESH, 'Refresh document content',
+        'Update selected content in the inspected document while preserving unrelated content.',
+    ),
     {
         'id': CAPABILITY_DOCUMENT_SEARCH,
         'label': 'Search documents',

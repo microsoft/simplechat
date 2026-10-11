@@ -47,6 +47,9 @@ from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_DOCUMENT_MERGE,
+    CAPABILITY_DOCUMENT_INSPECT,
+    CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE,
+    CAPABILITY_DOCUMENT_REFRESH,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
     CAPABILITY_TABULAR_INSPECT,
@@ -399,6 +402,24 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 'xlsx for a workbook. Never compose a merged document.'
             )})
             facts.append('document_merge copies files exactly; it never summarizes, translates or rewrites them.')
+        if CAPABILITY_DOCUMENT_INSPECT in available and any(
+            capability in available for capability in (
+                CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE, CAPABILITY_DOCUMENT_REFRESH,
+            )
+        ):
+            recipes.append({'for': 'Reuse or refresh a Word or PowerPoint reference', 'steps': (
+                'document_inspect with an authorized document_transform_references handle; gather any '
+                'new information in parallel; document_create_from_reference for new content in the '
+                'reference formatting, or document_refresh for selected updates, binding inspection '
+                'and named evidence; render_file binding "transformation" with document_transform_v1 '
+                'and the inspected docx or pptx format. Do not recreate the file through a generic '
+                'report or deck profile, and do not use document_merge for content updates.'
+            )})
+            facts.append(
+                'Reference transformations produce useful drafts with applied, unchanged, skipped and '
+                'unresolved outcomes. Unfilled targets do not require another approval before delivery; '
+                'they remain disclosed rather than invented.'
+            )
         if CAPABILITY_TABULAR_MERGE in available and CAPABILITY_DOCUMENT_MERGE in available:
             # Only when the plan could deliver either layout is it worth asking which one.
             facts.append(MERGE_LAYOUT_FACT)
@@ -1438,12 +1459,58 @@ def explicit_image_shortfalls(plan, statuses):
     return shortfalls
 
 
-def delivery_notes(plan, statuses, *, file_steps_with_outputs=(), visual_states=()):
+def transformation_delivery_notes(file_outputs):
+    """Describe committed applied outcomes, never prepared intentions or reference identities."""
+    lines = []
+    for output in file_outputs or ():
+        if (
+            type(output) is not dict or output.get('state') != 'completed'
+            or output.get('available') is not True
+        ):
+            continue
+        report = output.get('transformation_report')
+        if (
+            type(report) is not dict or report.get('version') != 'document-transformation-report-v1'
+            or any(type(report.get(f'{name}_count')) is not int for name in (
+                'applied', 'unchanged', 'skipped', 'unresolved',
+            ))
+        ):
+            continue
+        name = _safe_markdown_text(output.get('file_name'))
+        applied = report['applied_count']
+        summary = (
+            f"Applied {applied} {'change' if applied == 1 else 'changes'}" if applied
+            else "No changes applied; unchanged reference draft"
+        )
+        lines.append(
+            f"- {name}: {summary}; {report['unchanged_count']} unchanged targets; "
+            f"{report['skipped_count']} skipped; {report['unresolved_count']} unresolved."
+        )
+        for outcome in ('applied', 'skipped', 'unresolved', 'unchanged'):
+            entries = report.get(outcome) or ()
+            details = []
+            for entry in entries[:5]:
+                target = _safe_markdown_text(entry.get('target'))
+                reason = _safe_markdown_text(entry.get('reason'))[:160]
+                details.append(f'{target}: {reason}' if reason else target)
+            remaining = report[f'{outcome}_count'] - min(5, len(entries))
+            if remaining > 0:
+                details.append(f'{remaining} more')
+            if details:
+                lines.append(f"  - {outcome.capitalize()}: {'; '.join(details)}.")
+        for warning in (report.get('warnings') or ())[:3]:
+            lines.append(f"  - {_safe_markdown_text(warning)[:200]}")
+    return lines
+
+
+def delivery_notes(plan, statuses, *, file_steps_with_outputs=(), visual_states=(), file_outputs=()):
     """A deterministic note for explicit deliverables that were not delivered or are unavailable.
 
     ``statuses`` maps step ids to their final status. Files that reached the output service
     are already described by the files summary, so only files that never started are named.
     ``visual_states`` are the chart and diagram states from ``visual_delivery``.
+    ``file_outputs`` contains only authorized public output projections; committed
+    transformation reports add actual changes and draft limitations after the answer.
     """
     lines = []
     steps = {step['step_id']: step for step in plan.get('steps') or ()}
@@ -1492,6 +1559,7 @@ def delivery_notes(plan, statuses, *, file_steps_with_outputs=(), visual_states=
             ]
             if missing:
                 lines.append(f'- Not delivered: {description}. The file was not created.')
+    lines.extend(transformation_delivery_notes(file_outputs))
     return 'Delivery notes:\n' + '\n'.join(lines) if lines else ''
 
 

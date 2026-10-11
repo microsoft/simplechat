@@ -289,6 +289,21 @@ feature's prerequisite. Orchestration still publishes truthful delivery status
 when composition is not requested, including file-only plans that consume already
 retained results.
 
+Since **0.261.321**, **Inspect reference document** (`document_inspect`),
+**Create from reference** (`document_create_from_reference`) and **Refresh
+document content** (`document_refresh`) support populated Word/PowerPoint files
+and actual DOTX/POTX templates. Inspection supplies the available structures;
+the create task prepares new content in that formatting, while refresh changes
+selected content and preserves unrelated material. **Create a file** applies
+the prepared edits and delivers a new DOCX or PPTX, leaving the reference alone.
+These capabilities do not depend on **Enable Merge**.
+
+A narrowed capability list needs inspection, the appropriate preparation task,
+**Create a file** and any gathering tasks the request requires. Missing figures
+or unsupported targets can leave a useful draft with disclosed omissions;
+source access, screening and unsafe-package restrictions still apply. See
+[Reuse a document or presentation]({{ '/guides/create-files-with-orchestration/' | relative_url }}#reuse-a-document-or-presentation).
+
 #### How a plan is ordered
 
 Gather, Reason and Render are roles, not mandatory phase buckets. Named result

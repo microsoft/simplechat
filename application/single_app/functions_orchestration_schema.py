@@ -463,6 +463,11 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
     required, optional = get_capability_result_outputs(capability, arguments)
     fixed = [{'name': name, 'kind': kind} for name, kind in required.items()]
     outputs = raw.get('outputs', fixed)
+    if capability['id'] in ('document_create_from_reference', 'document_refresh'):
+        prepared = [{'name': 'transformation', 'kind': 'structured-v1', 'profile': 'document_transform_v1'}]
+        if outputs not in (fixed, prepared) or 'document_transform_v1' not in (composition_profiles or {}):
+            raise PlanValidationError('The document transformation output profile is unavailable or invalid.')
+        return prepared
     if capability['role'] == 'render':
         if outputs != []:
             raise PlanValidationError('Render delivers files, not named retained data outputs.')
@@ -575,7 +580,8 @@ def _apply_image_input_policy(steps, existing_results):
                 continue
             binding = InputBinding.from_dict(value['binding'])
             if (
-                step['capability_id'] == CAPABILITY_COMPOSE and binding.step_id is not None
+                step['capability_id'] in (CAPABILITY_COMPOSE, 'document_create_from_reference', 'document_refresh')
+                and binding.step_id is not None
                 and produced.get((binding.step_id, binding.output_name)) == IMAGE_ASSET_KIND
             ):
                 value['optional'] = True
@@ -668,6 +674,36 @@ def _require_assembled_render_sources(steps, existing_results):
                 f'{expected} for a {kind} merge.',
                 code='result_kind_incompatible', rule='assembled_render_format',
             )
+
+
+def _require_document_transform_sources(steps, existing_results):
+    by_id = {step['step_id']: step for step in steps}
+    transformations = ('document_create_from_reference', 'document_refresh')
+    for step in steps:
+        transform = step['capability_id'] in transformations
+        rendering = step['capability_id'] == 'render_file' and step['arguments'].get('profile') == 'document_transform_v1'
+        if not transform and not rendering:
+            continue
+        name = 'inspection' if transform else 'source'
+        spec = next((item for item in step_input_specs(step) if item.name == name), None)
+        if spec is None:
+            raise PlanValidationError('A document transformation requires its inspected reference.')
+        binding = spec.binding
+        if binding.existing_result is not None:
+            reference = (existing_results or {}).get(binding.existing_result)
+            producer = getattr(getattr(reference, 'producer', None), 'capability_id', None)
+            output = getattr(reference, 'output_name', None)
+        else:
+            producer = (by_id.get(binding.step_id) or {}).get('capability_id')
+            output = binding.output_name
+        expected = ('document_inspect',) if transform else transformations
+        if producer not in expected or output != ('inspection' if transform else 'transformation'):
+            raise PlanValidationError(
+                'Bind the document inspection to preparation, and its transformation to rendering.',
+                code='result_kind_incompatible', rule='document_transform_source',
+            )
+        if spec.optional or spec.allow_partial:
+            raise PlanValidationError('The inspected document and prepared edits must be complete.')
 
 
 def _reject_workflow_proposal_consumers(steps, final_response):
@@ -1018,6 +1054,15 @@ def validate_dependency_plan(
                 _validate_reference_id_list(arguments['reference_message_ids'], 'Reference message IDs')
             if capability_id == CAPABILITY_GENERATE_IMAGE:
                 _validate_generate_image_references(arguments, seeds, settings)
+            if capability_id == 'document_inspect':
+                reference = arguments['reference']
+                if reference['kind'] == 'document' and authorized_document_ids is not None:
+                    if reference['document_id'] not in authorized_document_ids:
+                        raise PlanValidationError('The reference document is unavailable.')
+                if reference['kind'] == 'artifact':
+                    candidates = (seeds or {}).get('document_transform_references') or []
+                    if not any(item.get('handle') == reference for item in candidates if isinstance(item, dict)):
+                        raise PlanValidationError('The reference artifact is not available in this conversation.')
             if (
                 'left_document_id' in arguments
                 and arguments['left_document_id'] != arguments['left_document_id'].strip()
@@ -1113,6 +1158,7 @@ def validate_dependency_plan(
             raise PlanValidationError('The plan contains no enabled work.')
         _require_merge_mapping_producers(accepted)
         _require_assembled_render_sources(accepted, existing_results)
+        _require_document_transform_sources(accepted, existing_results)
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
         # Whether a run step waits is the server's decision: computed from the server-side planning
@@ -1236,6 +1282,10 @@ def plan_document_ids(plan, *, include_disabled=False):
             continue
         for field in ('document_ids', 'right_document_ids', 'left_document_id', 'reference_document_ids'):
             document_ids.extend(_string_list(arguments.get(field)))
+        if step.get('capability_id') == 'document_inspect':
+            reference = arguments.get('reference') or {}
+            if reference.get('kind') == 'document':
+                document_ids.extend(_string_list(reference.get('document_id')))
     return list(dict.fromkeys(document_ids))
 
 
@@ -1898,6 +1948,10 @@ FAILURE_MESSAGES = {
         'workflow to merge them.'
     ),
     'document_merge_failed': "The selected files couldn't be merged into one file.",
+    'document_transform_unsafe': 'This reference contains active content that cannot be safely reused.',
+    'document_transform_limit': 'The reference document exceeds the available transformation limits.',
+    'document_transform_invalid': 'The reference is not a readable, supported Word or PowerPoint document.',
+    'document_transform_unavailable': 'The reference document could not be inspected right now.',
     'step_failed': 'This operation could not complete.',
     'file_sign_in_required': (
         'A file could not be created because the results it uses can only be checked with your '

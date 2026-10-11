@@ -341,6 +341,7 @@ def _plan_result_options(record, user_id, settings):
         'result_alias_resolver': lambda current: admitted_result_aliases(current, services.results),
         'export_catalog': services.export_catalog(),
         'composition_profiles': composition_profiles(),
+        'document_transform_candidate_reader': services.document_transform_candidate_reader,
         **services.capability_request_bindings(),
     }
 
@@ -2803,6 +2804,12 @@ def register_route_backend_orchestration(bp):
                 services = _orchestration_services(
                     user_id, resolved_conversation_id, settings=settings,
                 )
+                if services.document_transform_candidate_reader is not None:
+                    seeds['document_transform_references'] = services.document_transform_candidate_reader(
+                        [candidate['document_id'] for candidate in candidates],
+                    )
+                    turn_context['seeds'] = deepcopy(seeds)
+                    context['document_transform_references'] = deepcopy(seeds['document_transform_references'])
                 retained_runs = list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True)
                 if context_ids is not None:
                     retained_runs = [record for record in retained_runs if record.get('user_message_id') in context_ids]
