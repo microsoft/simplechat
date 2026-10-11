@@ -1,7 +1,7 @@
 # test_v2_m365_pending_action_cards.py
 """
 UI test for Microsoft 365 pending-action cards in the V2 chat.
-Version: 0.261.324
+Version: 0.261.325
 Implemented in: 0.261.307
 
 This test ensures that a saved outgoing Microsoft 365 email or calendar action is drawn in the V2
@@ -322,6 +322,7 @@ def test_orchestrated_email_review_stays_with_its_turn_and_requires_explicit_key
     page.set_viewport_size(viewport)
     draft_warning = "The original Outlook draft remains. Do not send the retained draft again."
     action = pending_action("act-orchestrated", action_mode="manual", delivery_note=draft_warning)
+    action["summary"]["body_preview"] = "\n".join(f"Review line {index}" for index in range(8))
     user_message = {
         "id": "u-orchestrated", "conversation_id": CONVERSATION_ID, "role": "user", "content": USER_TEXT,
         "metadata": {"orchestration_turn_id": "email-turn"},
@@ -355,9 +356,11 @@ def test_orchestrated_email_review_stays_with_its_turn_and_requires_explicit_key
         expect(root.get_by_test_id("v2-pending-actions-section")).to_have_count(0)
         user = root.locator('[id="message-u-orchestrated"]')
         expect(user.get_by_test_id("v2-pending-action-card")).to_have_count(1)
-        summary = card.locator("summary")
-        summary.focus()
-        summary.press("Enter")
+        expect(card.get_by_test_id("v2-pending-action-body")).to_be_visible()
+        more = card.get_by_role("button", name="Show More", exact=True)
+        more.focus()
+        more.press("Enter")
+        expect(card.get_by_role("button", name="Show Less", exact=True)).to_have_attribute("aria-expanded", "true")
         expect(card.get_by_test_id("v2-pending-action-body")).to_be_visible()
         assert not _posts_to_actions(page)
 

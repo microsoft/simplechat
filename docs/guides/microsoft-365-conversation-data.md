@@ -4,7 +4,7 @@ title: "Microsoft 365 data and approvals"
 description: "Choose how Microsoft 365 data is retrieved, analyzed, and shared in conversations and workflows."
 section: "Guides"
 audience: user
-version: "0.261.038"
+version: "0.261.325"
 ---
 
 ## Choose the right action
@@ -125,15 +125,41 @@ time, timezone, location, and Teams status. Only the data owner sees private
 recipient/body details and can select **Send**, **Send now**, or **Cancel**.
 Other authorized participants receive a read-only summary.
 
+Since **0.261.325** (`application/single_app/config.py`), the V2 card shows the
+first five rendered body lines immediately. **Show More** expands a long body;
+shortened content is fetched through the authorized detail API before sending.
+For a manual-review action, the owner can choose **Edit** to change email
+To/Cc/Bcc, subject and body, or meeting title, attendees, start/end, timezone,
+location, body and the existing Teams option.
+
+The popup places **Ask AI & history** beside the draft (a separate panel on
+mobile). Ask for a wording or field change, review the resulting working copy,
+and choose **Save changes**. AI suggestions never send anything. Cancel or
+Escape asks before discarding unsaved edits. Saved revisions and AI history
+return when you reopen the action; **Load older history** retrieves another
+bounded page. Unsaved suggestions list their changed fields and offer
+**Apply suggestion** to reuse eligible changes in the working copy. Fields
+edited since the original suggestion are preserved, with a visible warning.
+Applying never saves or sends; review the result before Save.
+**Undo this change** affects only fields unchanged since that
+revision and still requires Save. History ends when the action is sent or
+cancelled. Scheduled and automatic actions do not gain this editor.
+
 If the card needs sign-in, reconnect and return to that card. Sign-in and
 sharing approval alone do not send it or repeat the original agent request.
 Changed content, permissions, audience, or an older unbound record can require
 preparing a new action instead.
 
-For email, SimpleChat checks the Outlook draft version and sends the immutable
-content reviewed on the card. The original draft remains after both Send and
-Cancel. Do not send it again. Successful email submission means Microsoft 365
-accepted it for sending; it is not a recipient-delivery receipt.
+For newly prepared draft-send email actions, Send submits the actual Outlook
+draft. Before sending, **Open draft in Outlook** points to that draft; afterward,
+**Open sent message in Outlook** appears only when the sent copy is verified.
+Until then the card reports that the link is pending. A pre-send version check
+cannot make external Outlook editing atomic: Send submits the current draft.
+Older retained-draft actions keep their compatibility path and label that link
+explicitly; do not send their retained draft again. Calendar invitations are
+created only on Send, and their link points to the created event. Successful
+email submission means Microsoft 365 accepted it for sending; it is not a
+recipient-delivery receipt.
 
 Delayed chat uses a short in-process timer. A browser countdown is informational
 only. After a lost timer, review and send manually; after an uncertain remote

@@ -526,6 +526,12 @@ interface ChatState {
         fromTurnId: string;
         toTurnId: string;
     }) => void;
+    reconcileOrchestrationUserMessage: (params: {
+        conversationId: string;
+        turnId: string;
+        optimisticId: string;
+        savedId: string;
+    }) => void;
 
     setDrawerMode: (mode: DrawerMode) => void;
     loadMetadata: (conversationId: string) => Promise<void>;
@@ -3783,6 +3789,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // "No documents yet" under an answer that plainly used one.
         if (event.augmented) {
             void get().loadMetadata(conversationId);
+        }
+    },
+
+    reconcileOrchestrationUserMessage: ({ conversationId, turnId, optimisticId, savedId }) => {
+        if (!savedId || !optimisticId || savedId === optimisticId) return;
+        set((state) => {
+            if (state.activeConversationId !== conversationId) return state;
+            const matches = (message: ChatMessage) => message.conversation_id === conversationId
+                && message.role === 'user' && message.metadata?.orchestration_turn_id === turnId;
+            const optimistic = state.messages.find((message) => matches(message) && message.id === optimisticId);
+            if (!optimistic) return state;
+            const saved = state.messages.find((message) => message.id === savedId);
+            if (saved && !matches(saved)) return state;
+            return {
+                messages: state.messages.flatMap((message) =>
+                    message === optimistic ? saved ? [] : [{ ...message, id: savedId }] : [message]),
+                retryPresentation: state.retryPresentation?.userMessageId === optimisticId
+                    ? { ...state.retryPresentation, userMessageId: savedId } : state.retryPresentation,
+            };
+        });
+        const pending = chatPendingActionsStore.getState();
+        if (pending.conversationId === conversationId
+            && pending.liveStream?.userMessageId === optimisticId) {
+            pending.setLiveStream({ ...pending.liveStream, userMessageId: savedId });
         }
     },
 

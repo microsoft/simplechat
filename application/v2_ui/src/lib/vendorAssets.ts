@@ -106,6 +106,7 @@ export async function loadDomPurify(): Promise<DomPurifyStatic> {
     await loadVendorScript(VENDOR_PATHS.domPurify);
     const purify = window.DOMPurify;
     if (!purify) {
+        pending.delete(vendorUrl(VENDOR_PATHS.domPurify));
         throw new Error('DOMPurify did not register a global after loading');
     }
     return purify;

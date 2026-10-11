@@ -1,9 +1,33 @@
-# Microsoft 365 actions and conversation evidence (v0.261.321)
+# Microsoft 365 actions and conversation evidence (v0.261.325)
 
 Implemented in version: **0.261.029**
 
 Orchestration operations implemented in version: **0.261.321**, tracked in
 `application/single_app/config.py`.
+
+## Manual review editing and draft delivery
+
+Implemented in version: **0.261.325**, tracked in
+`application/single_app/config.py`.
+
+Manual-review email and invitation cards support owner-only saved edits and
+durable AI suggestions. Direct/AI revision history survives reopening the editor
+within its bounded history window, until send/cancel. The assistant proposes
+only supported fields and never approves or sends.
+
+New manual email approvals send the actual immutable-ID Outlook draft rather
+than a second saved snapshot. Saving patches that draft; external Outlook edits
+are refreshed rather than blindly overwritten. Calendar edits remain local
+until explicit approval creates the event and sends invitations.
+
+Accepted email sends hide the obsolete draft link until a read-only lookup finds
+the current sent-message link. Up to five lookups are spaced with persisted
+backoff within a five-minute window; rapid refreshes do not spend more retries.
+If the link remains unavailable, the card directs the owner to Outlook Sent
+Items without suggesting another send. Existing retained-draft actions keep their
+compatibility behavior, and automatic/delayed delivery is unchanged. See the
+[review and draft lifecycle fix](../fixes/M365_PENDING_REVIEW_DRAFT_LIFECYCLE_FIX.md)
+for API contracts, history limits and validation.
 
 ## Operations in orchestration
 

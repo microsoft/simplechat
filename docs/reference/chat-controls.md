@@ -194,6 +194,12 @@ through **Approvals** and workflow activity.
 | Send | Sends a manually prepared message or invitation after checking the current owner, permissions, and reviewed revision. |
 | Send now | Claims an eligible delayed action before its scheduled delivery. It is not a retry for an uncertain remote outcome. |
 | Cancel | Stops an unclaimed delivery without mailbox authentication. It leaves Outlook drafts and does not recall sent messages. |
+| Edit (V2, 0.261.325) | Opens the complete owner-only manual-review draft, with email recipients/subject/body or calendar attendees/time/timezone/location/body and the existing Teams option. It is unavailable for shared viewers, timed delivery, or claimed/terminal actions. |
+| Show More / Show Less (V2) | Expands an overflowing body beyond its first five rendered lines; short bodies need no toggle. HTML prose and links pass through the locally vendored sanitizer. Full shortened bodies require an authorized server read. |
+| Ask AI & history (V2) | Suggests changes to the current draft's editable fields and shows persistent saved revisions and AI turns. Nothing is sent; proposals need review and Save. Mobile exposes Draft and Ask AI & history panels. |
+| Apply suggestion (V2) | Reuses an unsaved suggestion from persistent history in the working copy. Only changed fields still matching the suggestion's original values are applied; newer edits are kept. Applying does not save or send. |
+| Save changes (V2) | Persists direct or AI-assisted edits against the displayed version and refreshes the card. Conflicts keep the working copy for review; reloading fetches the latest saved material. |
+| Undo this change / Load older history (V2) | Undo reverts fields still holding that revision's values without overwriting later edits; Save is required. History loads in bounded server pages, remains across reopening, and ends on send/cancel. |
 | Full review | Loads the complete owner-only body when the initial preview is truncated. Send stays unavailable until that detail is loaded. |
 | Reconnect | Renews sign-in and returns to the same saved card. It does not resend the agent request or automatically confirm the action. |
 | Refresh | Retrieves current server state after an interrupted request or a change in another tab. It never sends merely by refreshing. |
@@ -204,9 +210,14 @@ loading an overdue card never submits a send. Check Outlook before preparing a
 replacement when delivery has an unknown outcome. Immediate operations keep
 their existing tool-result receipts without a second Send button.
 
-For email, Send submits the reviewed content and leaves the original Outlook
-draft. **Accepted for sending** means Microsoft 365 accepted the request;
-recipient delivery is not confirmed. **Do not send the retained draft again.** See
+For new draft-send emails, Send submits the actual Outlook draft. Its link is
+**Open draft in Outlook** before Send and **Open sent message in Outlook** only
+when the sent copy is verified; propagation delay leaves the link pending.
+Older retained-draft actions keep their compatibility behavior and explicitly
+label the retained draft. **Accepted for sending** means Microsoft 365 accepted
+the request; recipient delivery is not confirmed. **Do not send a retained draft
+again.** A calendar link points to its created event. Review editing was
+implemented in **0.261.325** (`application/single_app/config.py`). See
 [Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
 
 The React V2 chat draws the same card with the same controls, under the reply that

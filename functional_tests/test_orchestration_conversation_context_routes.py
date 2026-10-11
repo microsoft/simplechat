@@ -1,7 +1,7 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across current orchestration HTTP/SSE routes.
-Version: 0.261.139
+Version: 0.261.325
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
 Direct action integration: 0.261.098
@@ -9,6 +9,7 @@ Resolver response compatibility and bounded recovery: 0.261.103
 Authorized model routing and completion metadata: 0.261.103
 Atomic plan revision persistence: 0.261.102
 Single orchestration contract updated in: 0.261.139
+Scoped saved planning identity added in: 0.261.325
 
 Uses the production Flask orchestration Blueprint through the initialized offline
 Gather / Reason / Render harness. The tests keep the route-level conversation
@@ -420,7 +421,14 @@ class ConversationRouteTests(unittest.TestCase):
         response, events = self.plan(**overrides)
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertFalse(any(event.get("error") for event in events), events)
-        return next(event["plan"] for event in events if event.get("type") == "orchestration_plan")
+        event = next(event for event in events if event.get("type") == "orchestration_plan")
+        plan = event["plan"]
+        saved = self.runs.read_item(plan["run_id"], plan["conversation_id"])
+        self.assertEqual(event["turn_identity"], {
+            "conversation_id": plan["conversation_id"], "turn_id": plan["turn_id"],
+            "run_id": plan["run_id"], "user_message_id": saved["user_message_id"],
+        })
+        return plan
 
     def run_plan(self, plan):
         return self.client.post("/api/v2/orchestration/run", json={
@@ -541,7 +549,14 @@ def _plan(runtime, message_text=LATEST, **overrides):
 def _planned(runtime, *args, **kwargs):
     events = _plan(runtime, *args, **kwargs)
     assert not any(event.get("error") for event in events), events
-    return next(event["plan"] for event in events if event.get("type") == "orchestration_plan")
+    event = next(event for event in events if event.get("type") == "orchestration_plan")
+    plan = event["plan"]
+    saved = runtime.harness.runs.read_item(plan["run_id"], plan["conversation_id"])
+    assert event["turn_identity"] == {
+        "conversation_id": plan["conversation_id"], "turn_id": plan["turn_id"],
+        "run_id": plan["run_id"], "user_message_id": saved["user_message_id"],
+    }
+    return plan
 
 
 def _run(runtime, plan):

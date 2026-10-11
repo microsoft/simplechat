@@ -297,11 +297,12 @@ def build_conversation_metadata_event(conversation_id, title=''):
     })
 
 
-def build_plan_event(plan, *, export_catalog=None):
+def build_plan_event(plan, *, export_catalog=None, turn_identity=None):
     """Terminal frame of the plan endpoint: here is what I intend to do."""
     return serialize_sse({
         'type': EVENT_TYPE_PLAN, 'plan': plan, 'done': True,
         **({'export_catalog': export_catalog} if export_catalog is not None else {}),
+        **({'turn_identity': turn_identity} if turn_identity is not None else {}),
     })
 
 

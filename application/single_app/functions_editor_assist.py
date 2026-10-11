@@ -50,7 +50,7 @@ from functions_rate_limit import build_rate_limit_error_payload
 # Limits
 # ---------------------------------------------------------------------------
 
-EDITOR_ASSIST_KINDS = ('agent', 'action')
+EDITOR_ASSIST_KINDS = ('agent', 'action', 'pending_email', 'pending_calendar')
 EDITOR_ASSIST_SCOPES = ('personal', 'group', 'global')
 
 EDITOR_ASSIST_MAX_BODY_BYTES = 1024 * 1024
@@ -96,7 +96,11 @@ _ACTION_PATH = re.compile(
     r'^/(?:displayName|description|type|endpoint|deployment|api_version|auth/type'
     r'|additionalFields/[A-Za-z0-9_]{1,80}|metadata/[A-Za-z0-9_]{1,80})$'
 )
-_PATH_RULES = {'agent': _AGENT_PATH, 'action': _ACTION_PATH}
+_PATH_RULES = {
+    'agent': _AGENT_PATH, 'action': _ACTION_PATH,
+    'pending_email': re.compile(r'^/(?:subject|body|content_type|to_recipients|cc_recipients|bcc_recipients)$'),
+    'pending_calendar': re.compile(r'^/(?:subject|body|content_type|attendee_recipients|start_datetime|end_datetime|timezone|location|teams_meeting_requested)$'),
+}
 _SECRET_SEGMENT = re.compile(r'secret|password|passwd|credential|connection|private|sas_?url|cookie|bearer', re.IGNORECASE)
 
 _REQUEST_FIELDS = frozenset({
@@ -737,7 +741,15 @@ def system_prompt(request):
         prompt = prompt.replace('__CREATE_OPERATION__', create + '\n')
     else:
         prompt = prompt.replace('__CREATE_OPERATION__\n', '')
-    guidance = _AGENT_GUIDANCE if request.kind == 'agent' else _ACTION_GUIDANCE
+    if request.kind.startswith('pending_'):
+        guidance = (
+            'Edit only the described email or calendar fields. Never send, approve, cancel, '
+            'schedule delivery, change ownership, or claim that a suggestion was saved. '
+            'Recipients and attendees must be explicit email addresses. '
+            'Keep calendar end time after start time in the selected timezone.'
+        )
+    else:
+        guidance = _AGENT_GUIDANCE if request.kind == 'agent' else _ACTION_GUIDANCE
     return prompt.replace('__GUIDANCE__', guidance)
 
 

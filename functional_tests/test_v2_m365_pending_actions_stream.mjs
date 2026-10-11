@@ -1,5 +1,5 @@
 // test_v2_m365_pending_actions_stream.mjs
-// Version: 0.261.324
+// Version: 0.261.325
 // Implemented in: 0.261.307
 // Executes the live paths that put a Microsoft 365 outgoing-action card in front of someone in V2
 // chat: the notification hand-off that asks the page to bring a card into view, the SSE reader that
@@ -17,7 +17,7 @@ import './test_support/tsResolve.mjs';
 const { useChatStore } = await import('../application/v2_ui/src/stores/chatStore.ts');
 const { chatPendingActionsStore } = await import('../application/v2_ui/src/stores/m365PendingActionsStore.ts');
 const { useOrchestrationStore } = await import('../application/v2_ui/src/stores/orchestrationStore.ts');
-const { approveAndRunPlan } = await import('../application/v2_ui/src/lib/orchestrationController.ts');
+const { approveAndRunPlan, startOrchestrationPlan } = await import('../application/v2_ui/src/lib/orchestrationController.ts');
 const { runOrchestration } = await import('../application/v2_ui/src/lib/orchestration.ts');
 const { normalizePlan } = await import('../application/v2_ui/src/lib/orchestrationPlan.ts');
 const { carriesPendingActions, streamChat } = await import('../application/v2_ui/src/lib/sse.ts');
@@ -204,6 +204,125 @@ function holdStreams(answers = {}) {
 }
 
 const RUN_PATH = '/api/v2/orchestration/run';
+
+function identityPlan(conversationId, turnId) {
+    return normalizePlan({
+        plan_id: 'plan-identity', run_id: 'run-identity', turn_id: turnId,
+        conversation_id: conversationId, planner_contract_version: 2,
+        intent: { summary: 'Prepare the email', complexity: 'simple' },
+        steps: [{
+            step_id: 'draft', capability_id: 'compose', title: 'Prepare the email',
+            arguments: {}, role: 'reason', estimated_cost: 'low',
+        }],
+        assumptions: [], status: 'awaiting_approval', approval: { mode: 'manual', state: 'pending' },
+        validation: { valid: true, errors: [], warnings: [], repairs: [] },
+    });
+}
+
+for (const field of ['conversation_id', 'turn_id', 'run_id']) {
+    test(`planning cannot rekey the request using foreign ${field}`, async () => {
+        const conversationId = `email-foreign-${field}`;
+        const planPath = '/api/v2/orchestration/plan';
+        openConversation(conversationId);
+        useOrchestrationStore.setState({ ...useOrchestrationStore.getInitialState() }, true);
+        const streams = holdStreams({ [LIST_PATH]: { pending_actions: [] } });
+        try {
+            const opened = streams.opened(planPath);
+            const planning = startOrchestrationPlan({
+                conversationId, message: 'Prepare the email', approvalMode: 'manual', seeds: {},
+            });
+            const request = await opened;
+            const optimistic = chat().messages[0].id;
+            const plan = identityPlan(conversationId, request.turn_id);
+            streams.emit(planPath, {
+                type: 'orchestration_plan', done: true, plan,
+                turn_identity: {
+                    conversation_id: conversationId, turn_id: request.turn_id, run_id: plan.run_id,
+                    user_message_id: 'foreign-user-message', [field]: 'foreign-scope',
+                },
+            });
+            streams.end(planPath);
+            await planning;
+            assert.equal(chat().messages[0].id, optimistic);
+            assert.match(chat().streamError, /invalid plan/);
+            assert.equal(streams.requests.some((item) => item.path === RUN_PATH), false);
+        } finally {
+            streams.restore();
+            resetStores();
+            useOrchestrationStore.setState({ ...useOrchestrationStore.getInitialState() }, true);
+        }
+    });
+}
+
+test('full planning reconciles distinct saved identity before list-first discovery and keeps the card mounted', async () => {
+    const conversationId = 'email-plan-identity';
+    const savedId = 'user_orchestration_saved-identity';
+    const planPath = '/api/v2/orchestration/plan';
+    openConversation(conversationId);
+    useOrchestrationStore.setState({ ...useOrchestrationStore.getInitialState() }, true);
+    const listed = { pending_actions: [], continuation_token: '' };
+    const streams = holdStreams({ [LIST_PATH]: listed });
+    let running;
+    let plan;
+    try {
+        const opened = streams.opened(planPath);
+        const planning = startOrchestrationPlan({
+            conversationId, message: 'Prepare the email', approvalMode: 'manual', seeds: {},
+        });
+        const request = await opened;
+        const optimistic = chat().messages[0].id;
+        assert.notEqual(optimistic, savedId);
+        plan = identityPlan(conversationId, request.turn_id);
+        streams.emit(planPath, {
+            type: 'orchestration_plan', done: true, plan,
+            turn_identity: {
+                conversation_id: conversationId, turn_id: request.turn_id,
+                run_id: plan.run_id, user_message_id: savedId,
+            },
+        });
+        streams.end(planPath);
+        await planning;
+        assert.equal(chat().messages[0].id, savedId);
+        assert.equal(chat().messages.length, 1);
+        const card = action('identity-card', {
+            conversation_id: conversationId, producing_user_message_id: savedId,
+            orchestration_run_id: plan.run_id, orchestration_turn_id: plan.turn_id,
+            request_id: 'orch-run-identity-draft', action_mode: 'manual',
+        });
+        listed.pending_actions = [card];
+        await store().refreshList();
+        assert.equal(anchorOf(card.id), savedId, 'list before SSE must not be orphaned');
+        store().setBodyOpen(card.id, true);
+        const entryKey = store().entries[card.id].key;
+        const runOpened = streams.opened(RUN_PATH);
+        running = approveAndRunPlan({ conversationId, turnId: plan.turn_id });
+        await runOpened;
+        streams.emit(RUN_PATH, {
+            type: 'm365_pending_action', conversation_id: conversationId, run_id: plan.run_id,
+            step_id: 'draft', user_message_id: savedId, pending_action: card,
+        });
+        await settled(() => store().liveStream?.userMessageId === savedId);
+        assert.equal(anchorOf(card.id), savedId);
+        streams.emit(RUN_PATH, {
+            type: 'orchestration_done', done: true, conversation_id: conversationId, run_id: plan.run_id,
+            turn_id: plan.turn_id, user_message_id: savedId, message_id: 'identity-answer',
+            status: 'completed', outcome: 'completed', message_saved: true, full_content: 'Prepared for review.',
+            metadata: { m365_pending_action_ids: [card.id] }, m365_pending_actions: [card],
+        });
+        streams.end(RUN_PATH);
+        await running;
+        assert.equal(anchorOf(card.id), savedId, 'final publication must not move an open card/editor');
+        assert.equal(store().entries[card.id].key, entryKey);
+        assert.equal(store().entries[card.id].bodyOpen, true);
+        assert.equal(Object.keys(store().entries).length, 1);
+        assert.equal(chat().messages.filter((message) => message.role === 'user').length, 1);
+    } finally {
+        streams.end(RUN_PATH);
+        streams.restore();
+        resetStores();
+        useOrchestrationStore.setState({ ...useOrchestrationStore.getInitialState() }, true);
+    }
+});
 
 /** Execute the real controller and SSE reader; only the HTTP boundary is synthetic. */
 async function withEmailRun(name, run) {

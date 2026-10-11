@@ -1,6 +1,6 @@
 // test_v2_m365_pending_actions_logic.mjs
-// Version: 0.261.307
-// Implemented in: 0.261.307
+// Version: 0.261.325
+// Implemented in: 0.261.307; stable producing-request placement added in 0.261.325.
 // Executes the pure rules behind the Microsoft 365 outgoing-action cards in V2 chat: which
 // snapshot of an action to trust, where a card is drawn in the thread, how a card is recognised
 // in a message or a stream frame, which links a card may carry, and how a notification about a
@@ -67,6 +67,22 @@ function anchorContext({ visible = [], byRequest = [], streaming = '' } = {}) {
 }
 
 /* Links -------------------------------------------------------------------------------- */
+
+test('new producing provenance is stable across final replies, but hidden provenance never guesses a turn', () => {
+    const context = anchorContext({ visible: ['u1', 'u2', 'reply1', 'reply2'] });
+    assert.equal(helpers.resolveAnchor(
+        reference({ messageId: 'reply1' }), { producing_user_message_id: 'u1' }, context,
+    ), 'u1');
+    assert.equal(helpers.resolveAnchor(
+        reference({ messageId: 'reply2' }), { producing_user_message_id: 'u2' }, context,
+    ), 'u2');
+    assert.equal(helpers.resolveAnchor(
+        reference(), { producing_user_message_id: 'hidden' }, context,
+    ), ORPHAN_ANCHOR);
+    assert.equal(helpers.resolveAnchor(
+        reference({ messageId: 'reply1' }), {}, context,
+    ), 'reply1', 'legacy message references keep their existing placement');
+});
 
 test('a card only links to https addresses that carry no credentials', () => {
     assert.equal(helpers.safeWebLinkUrl('https://outlook.office.com/mail/id/1'), 'https://outlook.office.com/mail/id/1');
@@ -236,6 +252,19 @@ test('a scheduled action ticks, and is polled only once its time has come or a s
 });
 
 /* Reading what the server sent --------------------------------------------------------- */
+
+test('accepted mail polls only its pending sent link and stops when lookup resolves or exhausts', () => {
+    const now = Date.parse('2026-05-01T10:00:00Z');
+    const waiting = action('sent-link', { status: 'sent', link_pending: true });
+    assert.equal(helpers.needsTicking(waiting), true);
+    assert.equal(helpers.isPollDue(waiting, false, 0, now), true);
+    assert.equal(helpers.isPollDue(waiting, true, 0, now), false);
+    assert.equal(helpers.isPollDue(waiting, false, now + 1, now), false);
+    assert.equal(helpers.isActionableStatus(waiting.status), false, 'link polling is never send permission');
+    const resolved = { ...waiting, link_pending: false };
+    assert.equal(helpers.needsTicking(resolved), false);
+    assert.equal(helpers.isPollDue(resolved, false, 0, now), false);
+});
 
 test('actions are collected from a payload, and anything that is not a saved action is ignored', () => {
     assert.deepEqual(helpers.pendingActionsFromPayload(null), []);
