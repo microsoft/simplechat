@@ -1428,6 +1428,7 @@ class HarnessExecution:
                 self.record["plan"], statuses,
                 file_steps_with_outputs={output["step_id"] for output in outputs},
                 visual_states=visual_states,
+                file_outputs=outputs,
             )
             if notes:
                 content.append(notes)

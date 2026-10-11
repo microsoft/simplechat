@@ -1,12 +1,13 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.230
+Version: 0.261.321
 Implemented in: 0.261.106
 The exec namespace carries ONENOTE_EXTENSIONS, which the upload path reads from 0.261.189: 0.261.189
 Enabled-empty upload admission implemented in: 0.261.114
 Publication processing evidence implemented in: 0.261.118
 Metadata edits keep a release (no metadata rescan) implemented in: 0.261.230
+Native template intake namespace updated in: 0.261.321
 
 Runs the real durable job, scanner, repository, private storage, TXT extraction,
 and publication services against fake Azure boundaries. No live data is used.
@@ -15,6 +16,7 @@ and publication services against fake Azure boundaries. No live data is used.
 import ast
 import copy
 import hashlib
+import json
 import logging
 import math
 import os
@@ -27,6 +29,7 @@ from pathlib import Path
 import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
+from azure.storage.blob import ContentSettings
 from flask import Flask, session
 
 
@@ -54,6 +57,7 @@ from content_screening.repository import ScreeningRepository
 from content_screening.storage import ScreeningStorage
 import functions_embedding_compatibility as embedding_compatibility
 from functions_embeddings import EmbeddingVector
+from functions_document_transform_sources import OFFICE_REFERENCE_MIME_TYPES, TEMPLATE_EXTENSIONS, native_template_pages
 from functions_artifact_publication_readiness import (
     PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
     inspect_publication_readiness,
@@ -247,6 +251,12 @@ def pipeline(monkeypatch):
 
     namespace = {
         "os": os, "math": math, "logging": logging,
+        "json": json, "ContentUnit": ContentUnit, "ContentSettings": ContentSettings,
+        "OFFICE_REFERENCE_MIME_TYPES": OFFICE_REFERENCE_MIME_TYPES, "TEMPLATE_EXTENSIONS": TEMPLATE_EXTENSIONS,
+        "native_template_pages": native_template_pages,
+        "_build_office_embedded_image_chunks": lambda *args: ([], 0, "native", 0),
+        "chunk_word_file_into_pages": lambda **kwargs: kwargs["di_pages"],
+        "WORD_CHUNK_SIZE": 1000,
         "datetime": datetime, "timezone": timezone, "current_extraction": current_extraction,
         "ScreeningError": ScreeningError, "get_settings": lambda: settings,
         "AzureError": AzureError,
@@ -282,7 +292,7 @@ def pipeline(monkeypatch):
         "allowed_file": lambda *args: True,
         "log_event": lambda *args, **kwargs: None,
         "TABULAR_EXTENSIONS": {"csv"}, "IMAGE_EXTENSIONS": {"png"},
-        "DOCUMENT_EXTENSIONS": {"pdf", "docx"}, "VIDEO_EXTENSIONS": {"mp4"},
+        "DOCUMENT_EXTENSIONS": {"pdf", "docx", "dotx", "pptx", "potx"}, "VIDEO_EXTENSIONS": {"mp4"},
         "AUDIO_EXTENSIONS": {"mp3"}, "VISIO_EXTENSIONS": {"vsdx"},
         "EMAIL_EXTENSIONS": {"msg"}, "ONENOTE_EXTENSIONS": {"one", "onepkg"},
         "hold_data_management_search_write_slot": search_write_slot,
@@ -294,14 +304,19 @@ def pipeline(monkeypatch):
         "cosmos_data_management_jobs_container": None,
     }
     functions = {
-        "save_chunks", "upload_to_blob", "process_txt", "_process_document_upload_background_impl",
+        "save_chunks", "upload_to_blob", "process_txt", "process_office_template", "_process_document_upload_background_impl",
         "process_document_upload_background",
         "_require_screening_chunk_write", "_run_final_metadata_extraction", "_resolve_processing_complete_status",
+        "_is_usable_vision_analysis", "_format_vision_analysis_block", "_append_vision_block_to_chunk_text",
         "_search_indexing_results_succeeded", "_execute_document_search_write",
     }
     tree = ast.parse((APP_ROOT / "functions_documents.py").read_text(encoding="utf-8"))
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions]
     assert len(nodes) == len(functions)
+    nodes.extend(
+        node for node in tree.body if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "VISION_ANALYSIS_CONTENT_FIELDS" for target in node.targets)
+    )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP_ROOT / "functions_documents.py"), "exec"), namespace)
     helpers._process_document_upload_background_impl = namespace["_process_document_upload_background_impl"]
     helpers.process_document_upload_background = namespace["process_document_upload_background"]

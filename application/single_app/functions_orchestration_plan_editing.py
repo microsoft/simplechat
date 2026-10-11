@@ -301,6 +301,7 @@ def _revision_catalogs(
     rendering_service=None, external_source_preflight=None,
     external_source_admission=None, external_source_authorizer=None,
     capture_external_source_configuration=None,
+    document_transform_source_reader=None, document_transform_source_resolver=None,
 ):
     seeds = context.get('seeds') or {}
     identity = dict(identity or {})
@@ -328,6 +329,11 @@ def _revision_catalogs(
     }
     if any(callback is not None for callback in external_bindings.values()):
         runtime_options.update(external_bindings)
+    if document_transform_source_reader is not None or document_transform_source_resolver is not None:
+        runtime_options.update(
+            document_transform_source_reader=document_transform_source_reader,
+            document_transform_source_resolver=document_transform_source_resolver,
+        )
     caller = build_capability_request_context(
         user_id, identity, context.get('resolved_message') or context['user_message'],
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
@@ -348,6 +354,8 @@ def validate_edited_plan(
     external_source_preflight=None,
     external_source_admission=None, external_source_authorizer=None,
     capture_external_source_configuration=None,
+    document_transform_source_reader=None, document_transform_source_resolver=None,
+    document_transform_candidate_reader=None,
 ):
     """Recheck a restored/generated plan using its saved contract and current access.
 
@@ -367,12 +375,16 @@ def validate_edited_plan(
         context, user_id, result_alias_resolver=result_alias_resolver,
     )
     admitted_catalog = resolve_revision_export_catalog(export_catalog)
-    seeds = context.get('seeds') or {}
+    seeds = deepcopy(context.get('seeds') or {})
     resolve_elicitation_references(
         seeds.get('elicitation_references') or [],
         user_id, context['conversation_id'], settings=settings,
     )
     candidates = _available_sources(context, plan, user_id, settings)
+    if document_transform_candidate_reader is not None:
+        seeds['document_transform_references'] = document_transform_candidate_reader(
+            [item['document_id'] for item in candidates],
+        )
     authorized = {item['document_id'] for item in candidates}
     if set(plan_document_ids(plan, include_disabled=True)) - authorized:
         raise PlanRevisionError(
@@ -387,6 +399,8 @@ def validate_edited_plan(
         external_source_admission=external_source_admission,
         external_source_authorizer=external_source_authorizer,
         capture_external_source_configuration=capture_external_source_configuration,
+        document_transform_source_reader=document_transform_source_reader,
+        document_transform_source_resolver=document_transform_source_resolver,
     )
     capabilities = resolve_available_capabilities(
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
@@ -449,6 +463,8 @@ def build_plan_edit_outcome(
     external_source_preflight=None,
     external_source_admission=None, external_source_authorizer=None,
     capture_external_source_configuration=None,
+    document_transform_source_reader=None, document_transform_source_resolver=None,
+    document_transform_candidate_reader=None,
 ):
     """Prepare a revision without changing its admitted contract or executing work.
 
@@ -586,6 +602,10 @@ def build_plan_edit_outcome(
         user_id, seeds=seeds, conversation_id=context['conversation_id'], settings=settings,
     )
     candidates = _available_sources(context, current_plan, user_id, settings, candidates)
+    if document_transform_candidate_reader is not None:
+        seeds['document_transform_references'] = document_transform_candidate_reader(
+            [item['document_id'] for item in candidates],
+        )
     agents, actions, caller = _revision_catalogs(
         context, user_id, settings, identity, contract_version=contract_version,
         native_bridge_for_step=native_bridge_for_step,
@@ -594,6 +614,8 @@ def build_plan_edit_outcome(
         external_source_admission=external_source_admission,
         external_source_authorizer=external_source_authorizer,
         capture_external_source_configuration=capture_external_source_configuration,
+        document_transform_source_reader=document_transform_source_reader,
+        document_transform_source_resolver=document_transform_source_resolver,
     )
     resolution = context.get('request_resolution') or {}
     signals = build_conversation_signals(

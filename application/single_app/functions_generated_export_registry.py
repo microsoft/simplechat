@@ -7,6 +7,7 @@ from typing import Tuple
 
 from jsonschema import Draft202012Validator, ValidationError
 
+from functions_document_transform import DOCUMENT_TRANSFORM_SCHEMA_VERSION, get_document_transform_schema
 from functions_generated_export_contracts import (
     GeneratedFileExportError,
     GeneratedFileExportLimits,
@@ -42,6 +43,7 @@ EXACT_TABULAR_WORKBOOK_PROFILE = 'exact_tabular_workbook_v1'
 EXACT_TABULAR_PROFILES = (EXACT_TABULAR_RECORDS_PROFILE, EXACT_TABULAR_WORKBOOK_PROFILE)
 # A file assembled again from the original files a document merge described and checked.
 ASSEMBLED_DOCUMENT_PROFILE = 'assembled_document_v1'
+DOCUMENT_TRANSFORM_PROFILE = DOCUMENT_TRANSFORM_SCHEMA_VERSION
 EXACT_TABULAR_DEFAULT_SHEET_NAME = 'Sheet1'
 GENERATED_IMAGE_REFERENCE_PATTERN = r'^asset:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
 _OPTION_SCHEMAS = {
@@ -165,6 +167,7 @@ _STRUCTURED_PROFILES = (
     GeneratedFileExportProfile('structured_value_v1', ('structured_value',)),
 )
 _ASSEMBLED_PROFILE = GeneratedFileExportProfile(ASSEMBLED_DOCUMENT_PROFILE, ('structured_value',))
+_TRANSFORM_PROFILE = GeneratedFileExportProfile(DOCUMENT_TRANSFORM_PROFILE, ('structured_value',))
 GENERATED_FILE_EXPORT_REGISTRY = (
     GeneratedFileExportFormat(
         'csv', ('csv',), 'csv', 'text/csv; charset=utf-8',
@@ -213,6 +216,7 @@ GENERATED_FILE_EXPORT_REGISTRY = (
         (
             GeneratedFileExportProfile('prepared_report_v1', ('text', 'markdown'), optional_options=('title',)),
             _ASSEMBLED_PROFILE,
+            _TRANSFORM_PROFILE,
         ),
         'office', ('python-docx', 'markdown2', 'beautifulsoup4', 'Pillow'),
         streaming=False, rich_media=True,
@@ -228,7 +232,10 @@ GENERATED_FILE_EXPORT_REGISTRY = (
     ),
     GeneratedFileExportFormat(
         'pptx', ('pptx',), 'pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        (GeneratedFileExportProfile(PREPARED_SLIDE_DECK_VERSION, ('structured_value',)), _ASSEMBLED_PROFILE),
+        (
+            GeneratedFileExportProfile(PREPARED_SLIDE_DECK_VERSION, ('structured_value',)),
+            _ASSEMBLED_PROFILE, _TRANSFORM_PROFILE,
+        ),
         'office', ('python-pptx', 'PyMuPDF', 'Pillow'),
         streaming=False, rich_media=True,
     ),
@@ -256,6 +263,8 @@ def _options_schema(profile):
 
 
 def _input_schema(profile):
+    if profile.profile == DOCUMENT_TRANSFORM_PROFILE:
+        return get_document_transform_schema()
     if profile.profile == PREPARED_SLIDE_DECK_VERSION:
         return get_prepared_slide_deck_schema()
     if profile.profile == ASSEMBLED_DOCUMENT_PROFILE:

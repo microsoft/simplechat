@@ -46,10 +46,26 @@ def composition_profiles():
     return {
         PREPARED_SLIDE_DECK_VERSION: get_prepared_slide_deck_schema(),
         TABULAR_COLUMN_MAPPING_PROFILE: tabular_column_mapping_schema(),
+        "document_transform_v1": _document_transform_schema(),
     }
 
 
+def _document_transform_schema():
+    # Native Office inspection is needed only when the prepared-content catalog is built.
+    from functions_document_transform import get_document_transform_schema
+
+    return get_document_transform_schema()
+
+
 def validate_composition_profile(profile, value):
+    if profile == "document_transform_v1":
+        from functions_document_transform import DocumentTransformError, validate_document_transform
+
+        try:
+            validate_document_transform(value)
+        except DocumentTransformError as exc:
+            raise ResultContractError("result_schema_invalid") from exc
+        return True
     if profile == TABULAR_COLUMN_MAPPING_PROFILE:
         try:
             tabular_mapping_from_profile(value)
@@ -151,6 +167,8 @@ class OrchestrationServices:
         external_source_catalog=None, external_source_authorizer=None,
         external_source_admission=None, external_source_preflight=None, native_bridge_for_step=None,
         capture_external_source_configuration=None, image_asset_reader=None, document_bytes_reader=None,
+        document_transform_source_reader=None, document_transform_source_resolver=None,
+        document_transform_candidate_reader=None,
     ):
         if external_source_preflight is not None and not callable(external_source_preflight):
             raise ResultContractError("result_external_reader_required")
@@ -169,6 +187,18 @@ class OrchestrationServices:
         self.external_source_preflight = external_source_preflight
         self.native_bridge_for_step = native_bridge_for_step
         self.capture_external_source_configuration = capture_external_source_configuration
+        transform_bindings = (
+            document_transform_source_reader, document_transform_source_resolver,
+        )
+        if any(callback is not None for callback in transform_bindings) and not all(
+            callable(callback) for callback in transform_bindings
+        ):
+            raise ResultContractError("result_native_reader_required")
+        if document_transform_candidate_reader is not None and not callable(document_transform_candidate_reader):
+            raise ResultContractError("result_native_reader_required")
+        self.document_transform_source_reader = document_transform_source_reader
+        self.document_transform_source_resolver = document_transform_source_resolver
+        self.document_transform_candidate_reader = document_transform_candidate_reader
         external = {}
         if external_source_catalog is not None or external_source_authorizer is not None:
             external = {
@@ -190,6 +220,7 @@ class OrchestrationServices:
             self.outputs, self.results, transport,
             authorize_execution=authorize_execution, max_output_bytes=max_output_bytes,
             image_asset_reader=image_asset_reader, document_bytes_reader=document_bytes_reader,
+            document_transform_source_reader=document_transform_source_reader,
         )
 
     @property
@@ -209,6 +240,11 @@ class OrchestrationServices:
             "native_bridge_for_step": self.native_bridge_for_step,
             "rendering_service": self.rendering,
         }
+        if callable(self.document_transform_source_reader) and callable(self.document_transform_source_resolver):
+            bindings.update(
+                document_transform_source_reader=self.document_transform_source_reader,
+                document_transform_source_resolver=self.document_transform_source_resolver,
+            )
         external = {
             "external_source_preflight": self.external_source_preflight,
             "external_source_admission": self.external_source_admission,
@@ -268,6 +304,8 @@ class OrchestrationServices:
         context.external_source_admission = self.external_source_admission
         context.external_source_preflight = self.external_source_preflight
         context.native_bridge_for_step = self.native_bridge_for_step
+        context.document_transform_source_reader = self.document_transform_source_reader
+        context.document_transform_source_resolver = self.document_transform_source_resolver
         context.capture_external_source_configuration = self.capture_external_source_configuration
         context._result_guard_token_for_step = lambda step_id: checked_checkpoint(step_id).token
         context.analysis_checkpoint_factory = checked_checkpoint
