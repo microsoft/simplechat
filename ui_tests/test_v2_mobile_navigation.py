@@ -1,11 +1,12 @@
 # test_v2_mobile_navigation.py
 """
 Real-component regression tests for the space-saving V2 mobile navigation.
-Version: 0.261.325
+Version: 0.261.327
 Implemented in: 0.261.323
 
 Reuses production components/CSS and the closed HTTP rail harness. Local Chromium
 and the shared Azure Playwright connection fixture are supported.
+Desktop bell alignment regression implemented in: 0.261.327
 """
 
 import pytest
@@ -76,3 +77,32 @@ def test_home_uses_one_fallback_header_and_mobile_drawer_scrolls(open_page):
     assert region.evaluate("element => getComputedStyle(element).overflowY") == "auto"
     page.keyboard.press("Escape")
     expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_focused()
+
+
+@pytest.mark.parametrize("branding", [
+    {"app_title": "SimpleChat"},
+    {"app_title": "A long custom application title"},
+    {"app_title": "SimpleChat", "hide_app_title": True},
+])
+def test_desktop_bell_stays_next_to_collapse_arrow(open_page, branding):
+    page, api = open_page()
+    mount(page, api, rows=0)
+    page.evaluate("""(branding) => {
+        const store = window.OrchHarness.stores.bootstrap.useBootstrapStore;
+        store.setState((state) => ({data: {...state.data, branding}}));
+    }""", branding)
+    nav = page.get_by_role("navigation", name="Primary")
+    bell = nav.locator("[data-notification-bell]")
+    collapse = nav.get_by_role("button", name="Collapse navigation", exact=True)
+    expect(bell).to_be_visible()
+    expect(collapse).to_be_visible()
+    bell_box, collapse_box = bell.bounding_box(), collapse.bounding_box()
+    assert bell_box and collapse_box
+    gap = collapse_box["x"] - (bell_box["x"] + bell_box["width"])
+    assert 7 <= gap <= 9, f"Bell and collapse arrow should have one 8px gap, not {gap}px"
+    assert abs(
+        bell_box["y"] + bell_box["height"] / 2 - collapse_box["y"] - collapse_box["height"] / 2
+    ) < 1
+    collapse.click()
+    expect(nav.locator("[data-notification-bell]")).to_have_count(1)
+    expect(nav.get_by_role("button", name="Expand navigation", exact=True)).to_be_visible()

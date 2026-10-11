@@ -92,7 +92,7 @@ const EXTENSION_TONES: Record<string, string> = {
     pptx: 'text-warn',
 };
 
-export function documentExtension(document: WorkspaceDocument): string {
+export function documentExtension(document: Pick<WorkspaceDocument, 'file_type' | 'file_name'>): string {
     const explicit = String(document.file_type ?? '').replace('.', '').toLowerCase();
     if (explicit) {
         return explicit;
@@ -107,7 +107,7 @@ export function DocumentIcon({
     size = 18,
     className,
 }: {
-    document: WorkspaceDocument;
+    document: Pick<WorkspaceDocument, 'file_type' | 'file_name'>;
     size?: number;
     className?: string;
 }) {

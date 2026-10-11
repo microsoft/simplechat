@@ -432,7 +432,10 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                             aria-label={mobile ? 'Close navigation' : 'Collapse navigation'}
                             aria-expanded="true"
                             aria-controls="primary-navigation"
-                            className="ml-auto rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                            className={clsx(
+                                'rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                                mobile && 'ml-auto',
+                            )}
                         >
                             <ChevronLeft size={17} />
                         </button>

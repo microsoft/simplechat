@@ -41,6 +41,7 @@ import { ComposerEditor } from '../../../application/v2_ui/src/components/chat/C
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
 import { ParticipantsPanel } from '../../../application/v2_ui/src/components/chat/ParticipantsPanel';
 import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
+import { Dropdown } from '../../../application/v2_ui/src/components/ui/Dropdown';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
 import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
@@ -199,6 +200,7 @@ type ComponentName =
     | 'ChatExperience'
     | 'HomeExperience'
     | 'HeaderExperience'
+    | 'Dropdown'
     | 'ApprovalPreferenceWorkflow'
     | 'PlannerModelWorkflow'
     | 'PlanEditorExperience'
@@ -226,6 +228,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     ChatExperience,
     HomeExperience,
     HeaderExperience,
+    Dropdown,
     ApprovalPreferenceWorkflow,
     PlannerModelWorkflow,
     PlanEditorExperience,
