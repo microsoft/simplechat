@@ -4,7 +4,7 @@
 
 The V2 interface is a React single-page application that runs alongside the existing
 server-rendered SimpleChat UI. It exists to evaluate a different visual and interaction
-direction — a glassmorphism design system, a single collapsible left rail with no top bar,
+direction — a glassmorphism design system, a single collapsible desktop left rail,
 and a search-first admin surface — without disturbing the interface people use today.
 
 It reuses the existing Flask domain APIs. Personal agent/action authoring adds an
@@ -14,6 +14,20 @@ opt-in editor representation while leaving classic callers compatible.
 **Personal agent/action authoring:** 0.261.096 (`application/single_app/config.py`)
 **Native Agents catalogue:** 0.261.305 (`application/single_app/config.py`)
 **Deployer version:** 1.0.26
+
+**Responsive mobile layout implemented in version: 0.261.323**, recorded in
+`application/single_app/config.py`. Below 768px, the same navigation opens as a
+drawer from the page header and consumes no content width when closed. Chat and
+workspace headers integrate the trigger; pages without a shared header receive
+a compact branded header. Notifications remain available beside the trigger.
+Desktop rail preferences are unaffected.
+
+Chat keeps tools access, attachment, voice when enabled, and Send/Stop in a
+stable mobile action row. Secondary controls remain reachable through **Chat
+tools**. Workspace sections use a labelled disclosure rather than a second
+icon column, and document rows prioritize names, status, and selection.
+See [Using V2 on a phone](../../guides/v2-mobile.md) and
+[V2 mobile layout fix](../fixes/V2_MOBILE_LAYOUT_FIX.md).
 
 ### Dependencies
 

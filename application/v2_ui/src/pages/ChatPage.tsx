@@ -11,6 +11,8 @@ import {
     ListTree,
     Maximize2,
     Minimize2,
+    MessageSquarePlus,
+    MoreHorizontal,
     Users,
 } from 'lucide-react';
 import { useChatStore, type DrawerMode } from '../stores/chatStore';
@@ -41,6 +43,7 @@ import {
 import { WORKFLOW_RESULT_INVALID_LINK_MESSAGE } from '../lib/workflowResults';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
+import { MobileNavigation } from '../components/layout/MobileNavigation';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
 import { OrchestrationPlanEditorHost } from '../components/chat/OrchestrationPlanEditor';
 import { ConversationDetails } from '../components/chat/ConversationDetails';
@@ -221,8 +224,10 @@ function useConversationUrlSync() {
 }
 
 function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
+    const [actionsOpen, setActionsOpen] = useState(false);
     const { activeConversationId, conversations, drawerMode, setDrawerMode, metadata } =
         useChatStore();
+    useEffect(() => setActionsOpen(false), [activeConversationId]);
     const contentsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_conversation_contents_drawer),
     );
@@ -296,17 +301,38 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     return (
         <header
             data-tour="chat-header"
-            className="glass glass-edge flex h-14 shrink-0 items-center gap-3 rounded-none border-t-0 border-r-0 px-5"
+            className="chat-header glass glass-edge relative flex min-h-14 shrink-0 flex-wrap items-center gap-2 rounded-none border-t-0 border-r-0 px-2 md:gap-3 md:px-5"
         >
-            <h1 className="truncate text-[15px] font-semibold text-text-1">
+            <MobileNavigation />
+            <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-1">
                 {active?.title || 'New chat'}
             </h1>
             {/* Derived from this conversation's own metadata. Reading the user's active
                 group here instead made every conversation show the same badge. */}
             <ConversationBadges metadata={metadata} />
+            <button type="button" aria-label="Start a new chat"
+                onClick={() => useChatStore.getState().startNewConversation()}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-2 hover:bg-surface-2 md:hidden">
+                <MessageSquarePlus size={18} />
+            </button>
+            {activeConversationId && <button type="button" aria-label="Conversation actions"
+                aria-expanded={actionsOpen} aria-controls="mobile-conversation-actions"
+                onClick={() => setActionsOpen((open) => !open)}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-2 hover:bg-surface-2 md:hidden">
+                <MoreHorizontal size={20} />
+            </button>}
 
             {activeConversationId && (
-                <div className="ml-auto flex items-center gap-1">
+                <div id="mobile-conversation-actions" data-open={actionsOpen}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                            setActionsOpen(false);
+                            event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(
+                                '[aria-controls="mobile-conversation-actions"]',
+                            )?.focus();
+                        }
+                    }}
+                    className="chat-header-actions ml-auto flex items-center gap-1">
                     {shareable && (
                         <button
                             type="button"
@@ -343,7 +369,7 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                         }
                         aria-label="Toggle chat width"
                         className={clsx(
-                            'rounded-lg p-2 transition-colors',
+                            'hidden rounded-lg p-2 transition-colors md:inline-flex',
                             chatWidth === 'wide'
                                 ? 'bg-accent-soft text-accent'
                                 : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
@@ -435,11 +461,12 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                             ) : null}
                         </button>
                     )}
+                    <TourLauncher tourId="chat" />
                 </div>
             )}
 
             {/* Pushed right on its own when there is no conversation and so no tool row. */}
-            <TourLauncher tourId="chat" className={clsx(!activeConversationId && 'ml-auto')} />
+            {!activeConversationId && <TourLauncher tourId="chat" className="ml-auto" />}
         </header>
     );
 }

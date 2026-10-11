@@ -16,6 +16,7 @@ export function GroupWorkspacePicker({
     onSelect: (id: string) => void;
 }) {
     const [search, setSearch] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
     const [term, setTerm] = useState('');
     const [page, setPage] = useState(1);
     const [result, setResult] = useState<WorkspacePage | null>(null);
@@ -48,7 +49,7 @@ export function GroupWorkspacePicker({
     const items = result?.items ?? [];
     return (
         <div className="min-w-0 space-y-2">
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-2 sm:gap-3">
                 <label className="min-w-0 space-y-1 text-xs text-text-2">
                     <span>Group workspace</span>
                     <select aria-label="Group workspace" className={INPUT_CLASS} value={value ?? ''}
@@ -61,7 +62,13 @@ export function GroupWorkspacePicker({
                         {items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                     </select>
                 </label>
-                <label className="min-w-0 space-y-1 text-xs text-text-2">
+                <button type="button" aria-label="Search your groups" aria-expanded={searchOpen}
+                    aria-controls="group-workspace-search" disabled={disabled}
+                    onClick={() => setSearchOpen((open) => !open)}
+                    className="min-h-11 rounded-xl border border-edge px-3 text-sm text-text-2 sm:hidden">
+                    Search
+                </button>
+                <label id="group-workspace-search" className={`min-w-0 space-y-1 text-xs text-text-2 ${searchOpen ? 'col-span-2 sm:col-span-1' : 'hidden sm:block'}`}>
                     <span>Search your groups</span>
                     <input type="search" className={INPUT_CLASS} value={search} disabled={disabled}
                         placeholder="Search all your groups" onChange={(event) => setSearch(event.target.value)} />

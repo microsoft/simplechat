@@ -317,6 +317,8 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     const collapseRef = useRef<HTMLButtonElement>(null);
     const railScrollRef = useRef<HTMLDivElement>(null);
     const alertCalloutShown = useWorkflowAlertCalloutShown();
+    const navRef = useRef<HTMLElement>(null);
+    const previousRoute = useRef({ pathname: location.pathname, conversation: activeConversationId });
 
     const onChatPage = location.pathname.startsWith('/chat');
     const collapsed = mobile ? !mobileNavOpen : railCollapsed;
@@ -325,22 +327,44 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     const toggleNavigation = () => mobile ? setMobileNavOpen(!mobileNavOpen) : toggleRail();
 
     useEffect(() => {
-        if (mobile) setMobileNavOpen(false);
+        const previous = previousRoute.current;
+        if (mobile && (previous.pathname !== location.pathname || previous.conversation !== activeConversationId)) {
+            setMobileNavOpen(false);
+        }
+        previousRoute.current = { pathname: location.pathname, conversation: activeConversationId };
     }, [mobile, location.pathname, activeConversationId, setMobileNavOpen]);
 
     useEffect(() => {
         if (!mobile || !mobileNavOpen) return;
+        const opener = document.activeElement;
         collapseRef.current?.focus();
         const onKeyDown = (event: KeyboardEvent) => {
+            if (document.querySelector('[role="dialog"]')) return;
             if (event.key === 'Escape') {
                 event.preventDefault();
                 setMobileNavOpen(false);
+            }
+            if (event.key === 'Tab') {
+                const controls = [...(navRef.current?.querySelectorAll<HTMLElement>(
+                    'a[href], button, input, select, [tabindex="0"]',
+                ) ?? [])].filter((item) => !item.matches(':disabled') && item.getClientRects().length > 0);
+                const first = controls[0];
+                const last = controls[controls.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last?.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first?.focus();
+                }
             }
         };
         document.addEventListener('keydown', onKeyDown);
         return () => {
             document.removeEventListener('keydown', onKeyDown);
-            expandRef.current?.focus();
+            requestAnimationFrame(() => {
+                if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+            });
         };
     }, [mobile, mobileNavOpen, setMobileNavOpen]);
 
@@ -373,6 +397,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
 
     return (
         <nav
+            ref={navRef}
             id="primary-navigation"
             aria-label="Primary"
             onClickCapture={(event) => {
@@ -398,16 +423,16 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 <BrandMark collapsed={collapsed} />
                 {!collapsed && (
                     <>
-                        {/* Beside the brand rather than in a top bar, which V2 does not have. */}
-                        <NotificationBell collapsed={false} className="ml-auto" />
+                        {/* Desktop keeps notifications beside the brand; phones use the header. */}
+                        {!mobile && <NotificationBell collapsed={false} className="ml-auto" />}
                         <button
                             type="button"
                             ref={collapseRef}
                             onClick={toggleNavigation}
-                            aria-label="Collapse navigation"
+                            aria-label={mobile ? 'Close navigation' : 'Collapse navigation'}
                             aria-expanded="true"
                             aria-controls="primary-navigation"
-                            className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                            className="ml-auto rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                         >
                             <ChevronLeft size={17} />
                         </button>
@@ -475,7 +500,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
             <div
                 ref={railScrollRef}
                 data-rail-scroll-region=""
-                className={clsx('flex-1', showConversations && 'min-h-0 overflow-y-auto')}
+                className={clsx('flex-1', (showConversations || mobile) && 'min-h-0 overflow-y-auto')}
             >
                 <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
                     {NAV_ITEMS.map((item) => (

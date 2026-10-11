@@ -15,6 +15,14 @@ serve file sources and actions.
 
 **Implemented in version:** 0.261.042
 
+**Responsive sections implemented in version: 0.261.323**
+(`application/single_app/config.py`). On phones narrower than 768px,
+**Workspace sections** shows the current section and opens the same permitted
+section links above the content. Choosing a section closes the disclosure.
+The desktop rail and its saved collapse preference remain independent.
+Group/public workspace pickers keep selection visible and disclose workspace
+search on widths below 640px, leaving more vertical room for documents.
+
 **File-source configuration implemented in version: 0.261.310**, recorded in
 `application/single_app/config.py`. Personal, group and public sources now use
 the native shared editor; see [V2 File Source Configuration](V2_FILE_SOURCE_CONFIGURATION.md).

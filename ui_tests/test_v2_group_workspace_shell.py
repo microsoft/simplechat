@@ -1,7 +1,7 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.305
+Version: 0.261.323
 Implemented in: 0.261.127
 Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
 The workflow editor takes focus and hands it back to Edit on close: 0.261.188
@@ -33,6 +33,9 @@ pytestmark = pytest.mark.ui
 
 
 def section(page, label):
+    opener = page.get_by_role("button", name="Workspace sections", exact=True)
+    if opener.is_visible():
+        opener.click()
     page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role("link", name=label, exact=True).click()
 
 

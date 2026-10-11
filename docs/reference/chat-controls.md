@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.321"
+version: "0.261.323"
 ---
 
 ## How to use this reference
@@ -32,11 +32,22 @@ private profile preferences.
 
 ### React V2 navigation on narrow screens
 
-Since **0.261.113**, **Expand navigation** opens the navigation rail above the
-chat on screens narrower than 768 pixels. **Collapse navigation**, Escape, or
-the shaded **Close navigation** backdrop closes it. Choosing a destination or
-conversation also closes the mobile rail. These actions do not change the
-desktop navigation preference.
+Fixed/Implemented in version: **0.261.323** (`application/single_app/config.py`).
+On screens narrower than 768 pixels, **Open navigation** in the header opens
+the existing navigation and conversation history as a drawer. No icon strip
+occupies chat width while the drawer is closed. **Close navigation**, Escape,
+or the shaded backdrop closes it and returns focus to the opener. Choosing a
+destination or conversation also closes it without changing the desktop preference.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Open navigation | Reaches conversations, workspaces, account, support, and theme controls without permanently narrowing the page. | Mobile page header |
+| Start a new chat | Resets the current draft/conversation using the same behavior as the rail's New chat. | Mobile chat header |
+| Conversation actions | Discloses people, details, documents, contents, and plan controls offered for this conversation. | Mobile header with an active conversation |
+| Chat tools | Opens the existing model, agent, capability, and reasoning controls; when orchestrating, the collapsed summary includes approval mode. | Mobile composer |
+
+Attachment, voice when enabled, and Send/Stop remain beside **Chat tools**.
+The tools disclosure does not clear selected options or change capability gates.
 
 Conversation drawers overlay the chat below the wide-desktop breakpoint rather
 than leaving the message pane too narrow to read. **Close panel** returns to the
@@ -58,8 +69,8 @@ and other pages don't scroll this way.
 Since **0.261.195**, the V2 navigation rail has a notification bell beside the
 application's name. It shows the unread count, or a dot when the rail is collapsed,
 and opens a panel where you can follow, mark read, or dismiss notifications without
-leaving the chat. On narrow screens the bell is on the collapsed strip and in the
-open navigation, and Escape closes the panel before the navigation. Since
+leaving the chat. Since **0.261.323**, narrow screens keep one bell in the page
+header rather than duplicating it inside the drawer. Since
 **0.261.236**, a workflow alert that needs attention pops up from the bell as well.
 See [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }}).
 

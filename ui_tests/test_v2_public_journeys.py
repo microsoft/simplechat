@@ -2,7 +2,7 @@
 """M11 public end-to-end journeys: the role x status x File-Sync matrix, mid-session
 transitions, Settings activation and the classic handoff, driven through the real SPA.
 
-Version: 0.261.188
+Version: 0.261.323
 Implemented in: 0.261.185
 The classic handoff follows the Documents header's renamed Classic tools button: 0.261.188
 A locked overview entry is outlined, never faded, and its text stays readable: 0.261.188
@@ -82,6 +82,9 @@ def rail_enabled(context, sectionId):
 
 
 def section(page, label):
+    opener = page.get_by_role("button", name="Workspace sections", exact=True)
+    if opener.is_visible():
+        opener.click()
     page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role(
         "link", name=label, exact=True).click()
 

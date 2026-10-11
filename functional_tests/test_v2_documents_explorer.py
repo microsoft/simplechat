@@ -3,7 +3,7 @@
 """
 Functional test for the V2 workspace documents explorer.
 
-Version: 0.261.129
+Version: 0.261.323
 Implemented in: 0.261.048
 Shared workspace shell integration: 0.261.127
 
@@ -739,7 +739,7 @@ def test_the_workspace_rail_can_be_collapsed():
     )
     assert "PanelLeftClose" in page and "PanelLeftOpen" in page
     assert 'aria-expanded={!railCollapsed}' in page
-    assert "railCollapsed ? 'sr-only'" in page, (
+    assert "collapsed ? 'sr-only'" in page, (
         "A collapsed entry still needs its label available to a screen reader"
     )
 
