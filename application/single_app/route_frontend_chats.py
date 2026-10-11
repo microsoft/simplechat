@@ -19,6 +19,7 @@ from functions_chat_model_catalog import (
 )
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
+from functions_model_capabilities import resolve_model_reasoning_policy
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,

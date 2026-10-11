@@ -1043,7 +1043,6 @@
     "application/single_app/route_enhanced_citations.py::_get_authorized_chat_artifact_message": "b2d9c0fc54c4cf9545a6c46bb93b71c0e1a69d429c8ef1c05ba3fb071582bc4b",
     "application/single_app/route_enhanced_citations.py::register_enhanced_citations_routes.get_enhanced_citation_tabular": "ff7e5776314ddaf82390e3ac0817fb8270307d32da2b29a7bf4f4c7ef529d61e",
     "application/single_app/route_external_public_documents.py::register_route_external_public_documents.external_get_public_documents": "7a2cab5fcb36b8d80f2733e2a3fa2df33e04fbeeea7095bec72bf185778aef02",
-    "application/single_app/route_frontend_chats.py::_resolve_chat_upload_context": "ffacf10e9ecdb47901fa0deb6665e82bcdf06b7cb701feb024f76ab6db06d854",
     "application/single_app/route_frontend_control_center.py::get_control_center_statistics": "6fd3ab6692fe40b5e63490edcdae51eae7ebeb8067996c361cde4cac14c296e6",
     "application/single_app/route_frontend_conversations.py::_authorize_frontend_personal_conversation_access": "a8650a20c098eb598306d3827dce49f4b4c1501404cbd3b200d4887b1fbde552",
     "application/single_app/route_frontend_conversations.py::register_route_frontend_conversations.conversations": "a1d6c7ed62f7b68cb59058ec65e83993ef1f9756d129e439a9bccdc2377ea365",
@@ -24387,12 +24386,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8ebafa6d3ad84d52c1f94fefab84dd67ce8c270142c20114a1ed49b11369676f"
+        "module_sha256": "0641427633cbce91db00156c6934580b2a5c9578f65b4816bce1fbdeaf9eb97f"
       },
       "classification": "response-unused",
-      "contract": "_build_new_chat_conversation: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "Constructs and returns its own plain conversation dictionary; the SDK upsert response is discarded. Real-owner new/missing upload context tests verify persisted SDK responses retain ETags without changing the returned domain document.",
       "evidence_scope": "source-review",
-      "tests": []
+      "tests": [
+        "functional_tests/test_chat_upload_cosmos_response_contract.py::test_chat_upload_context_real_owner_sdk_responses"
+      ]
     },
     "application/single_app/route_frontend_chats.py::_resolve_chat_upload_context": {
       "boundary": {
@@ -24406,13 +24407,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "8ebafa6d3ad84d52c1f94fefab84dd67ce8c270142c20114a1ed49b11369676f"
+        "module_sha256": "0641427633cbce91db00156c6934580b2a5c9578f65b4816bce1fbdeaf9eb97f"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_chat_upload_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point conversation responses use mapping field access for backing detection, collaboration identity, and personal ownership; the returned upload context retains the mapping and ETag. Upload consumers read/mutate fields and upsert the mapping, without an exact-dictionary sink. Real-owner runtime checks cover SDK personal reads, cross-user denial, and new/missing context creation.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_chat_upload_cosmos_response_contract.py::test_chat_upload_context_real_owner_sdk_responses"
       ]
     },
     "application/single_app/route_frontend_chats.py::register_route_frontend_chats.upload_file": {
@@ -24478,10 +24479,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "8ebafa6d3ad84d52c1f94fefab84dd67ce8c270142c20114a1ed49b11369676f"
+        "module_sha256": "0641427633cbce91db00156c6934580b2a5c9578f65b4816bce1fbdeaf9eb97f"
       },
       "classification": "response-unused",
-      "contract": "register_route_frontend_chats.upload_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "All six message/conversation upsert responses are discarded; upload responses project constructed message/workspace fields and conversation title/id, not the SDK write response. Query rows supply thread ids and counts separately. The unchanged body reads/mutates the SDK-compatible upload context mapping.",
       "evidence_scope": "source-review",
       "tests": []
     },
