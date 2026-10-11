@@ -25477,7 +25477,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cd3edba93c97ea5a404835cc28e5af58043c3a18a0714323921d00de4ca81bea"
+        "module_sha256": "262820312ec47c3cd913fad68308cf599e237de88f259fe2b0310c214c0f84fd"
       },
       "classification": "normalized-strict",
       "contract": "Normalize the owned action point read before copying review material, exact-dictionary field validation and version checks; enforce owner and current scope.",
@@ -25508,7 +25508,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "cd3edba93c97ea5a404835cc28e5af58043c3a18a0714323921d00de4ca81bea"
+        "module_sha256": "262820312ec47c3cd913fad68308cf599e237de88f259fe2b0310c214c0f84fd"
       },
       "classification": "normalized-strict",
       "contract": "Normalize the edit-claim write before history transaction/material handling. Conditional Graph PATCH and owner-partition batch preserve ETags; lost acknowledgements never overwrite a committed newer revision.",

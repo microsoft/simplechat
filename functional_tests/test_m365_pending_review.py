@@ -1,7 +1,7 @@
 # test_m365_pending_review.py
 """Functional tests for owner-scoped email/calendar review, assist and draft delivery.
 
-Version: 0.261.325
+Version: 0.261.326
 Implemented in: 0.261.325
 
 Real services/routes use SDK-default Cosmos storage and entirely mocked Graph/model
@@ -453,7 +453,7 @@ def test_sent_link_visibility_is_bounded_and_cannot_reenable_send(editable, sent
     assert projected["link_next_lookup_at"] == "" and not projected["can_send_now"]
     assert "unavailable" in projected["delivery_note"]
     calls = len(editable.calls)
-    sent = delivery.refresh_m365_sent_link("owner", sent["id"])
+    delivery.refresh_m365_sent_link("owner", sent["id"])
     assert len(editable.calls) == calls
     assert len([call for call in editable.calls if call[0] == "POST"]) == 1
     assert any("Sent-message link lookup remains pending" in str(call.args[0]) for call in editable.cards.log.call_args_list)

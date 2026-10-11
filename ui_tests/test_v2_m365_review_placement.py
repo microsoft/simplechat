@@ -1,7 +1,7 @@
 # test_v2_m365_review_placement.py
 """Real planning-to-review placement with distinct optimistic and saved IDs.
 
-Version: 0.261.325
+Version: 0.261.326
 Implemented in: 0.261.325
 Runs desktop/mobile with mocked HTTP; no mailbox or cloud mutations.
 """
@@ -12,7 +12,7 @@ from playwright.sync_api import expect
 from ui_tests.fixtures.playwright_connection import connect_options  # noqa: F401
 from ui_tests.fixtures.orchestration import harness_build
 from ui_tests.test_v2_m365_pending_action_cards import (
-    CONVERSATION_ID, USER_TEXT, _collect_page_errors, _open_chat,
+    USER_TEXT, _collect_page_errors, _open_chat,
     _posts_to_actions, _require_bundle, pending_action,
 )
 

@@ -4,6 +4,12 @@ Fixed/Implemented in version: **0.261.325**
 
 Related version update: `application/single_app/config.py`.
 
+## Review cleanup (v0.261.326)
+
+Removed unused imports from the review service and placement regression test,
+and removed an unused delivery-result binding while preserving the delivery
+call. This maintenance change does not alter review or sending behavior.
+
 ## Issue and root cause
 
 Manual email approval previously sent a saved message snapshot through

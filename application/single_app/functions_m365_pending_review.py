@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
-from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from cosmos_document_utils import normalize_cosmos_document
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
