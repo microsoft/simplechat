@@ -3,7 +3,7 @@
 """
 Functional test for Microsoft 365 pending-action cards in the V2 chat.
 
-Version: 0.261.307
+Version: 0.261.325
 Implemented in: 0.261.307
 
 A Microsoft 365 action the assistant saves for review (an email or a calendar change waiting
@@ -50,6 +50,7 @@ IMPLEMENTED_IN = "0.261.307"
 HELPERS_MODULE = V2_SRC / "lib" / "m365PendingActions.ts"
 STORE_MODULE = V2_SRC / "stores" / "m365PendingActionsStore.ts"
 CARD_COMPONENT = V2_SRC / "components" / "approvals" / "PendingActionCard.tsx"
+BODY_COMPONENT = V2_SRC / "components" / "approvals" / "PendingActionBody.tsx"
 PANEL_COMPONENT = V2_SRC / "components" / "approvals" / "PendingActionsPanel.tsx"
 SLOTS_COMPONENT = V2_SRC / "components" / "chat" / "PendingActionSlots.tsx"
 MESSAGE_LIST = V2_SRC / "components" / "chat" / "MessageList.tsx"
@@ -73,6 +74,7 @@ NEW_FILES = (
     HELPERS_MODULE,
     STORE_MODULE,
     CARD_COMPONENT,
+    BODY_COMPONENT,
     SLOTS_COMPONENT,
     LOGIC_TEST,
     STORE_TEST,
@@ -120,6 +122,7 @@ def test_one_card_serves_the_approvals_page_and_the_chat():
     """Two copies of the card would drift apart on what a saved action may do."""
     print("Testing that the card is shared...")
     card_source = _read(CARD_COMPONENT)
+    body_source = _read(BODY_COMPONENT)
     panel_source = _read(PANEL_COMPONENT)
     slots_source = _read(SLOTS_COMPONENT)
 
@@ -132,7 +135,7 @@ def test_one_card_serves_the_approvals_page_and_the_chat():
     print("  The panel and the thread both draw the shared card.")
 
     for test_id in CARD_TEST_IDS:
-        if f'data-testid="{test_id}"' not in card_source:
+        if f'data-testid="{test_id}"' not in card_source + body_source:
             raise AssertionError(f"The shared card lost the {test_id} test id.")
     print("  The card keeps the test ids the Approvals page was tested with.")
 

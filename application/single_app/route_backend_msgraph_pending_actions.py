@@ -7,6 +7,8 @@ import re
 
 from flask import jsonify, request
 from azure.core.exceptions import AzureError
+from azure.cosmos.exceptions import CosmosHttpResponseError
+from config import cosmos_msgraph_pending_actions_container
 
 from functions_appinsights import log_event
 from functions_authentication import (
@@ -25,6 +27,14 @@ from functions_msgraph_pending_actions import (
 )
 from functions_m365_context import M365PolicyError
 from functions_m365_pending_delivery import authorize_pending_action_view
+from functions_m365_pending_review import (
+    _WINDOWS_ZONES, assist_pending_review, get_pending_review, save_pending_review,
+)
+from functions_m365_transport import M365ProviderError
+from functions_editor_assist import EditorAssistError
+from functions_editor_assist_runtime import (
+    build_editor_assist_services, editor_assist_error_response, read_editor_assist_body,
+)
 from m365_interaction import M365_AUTH_INTERACTION_CODES
 from route_backend_m365 import _subject, validate_m365_csrf
 from swagger_wrapper import get_auth_security, swagger_route
@@ -55,13 +65,13 @@ def _error_response(error_payload, default_status=400):
         status_code = 404
     elif error_code in M365_AUTH_INTERACTION_CODES | {'not_logged_in', 'token_acquisition_failed'}:
         status_code = 401
-    elif error_code in {'permission_denied', 'forbidden', 'access_denied', 'm365_principal_mismatch', 'm365_csrf_invalid', 'm365_action_not_authorized', 'm365_action_not_selected'}:
+    elif error_code in {'permission_denied', 'forbidden', 'access_denied', 'm365_principal_mismatch', 'm365_csrf_invalid', 'm365_action_not_authorized', 'm365_action_not_selected', 'm365_content_blocked'}:
         status_code = 403
     elif error_code in {'pending_action_changed', 'delivery_in_progress', 'm365_action_review_required', 'm365_action_material_changed', 'delivery_outcome_unknown', 'delivery_failed', 'm365_context_changed', 'm365_action_changed', 'm365_workflow_changed', 'm365_execution_stopped'}:
         status_code = 409
     elif error_code == 'throttled':
         status_code = 429
-    elif error_code in {'service_unavailable', 'm365_delivery_unavailable', 'm365_connection_unavailable'}:
+    elif error_code in {'service_unavailable', 'm365_delivery_unavailable', 'm365_connection_unavailable', 'm365_content_check_unavailable'}:
         status_code = 503
 
     return jsonify({
@@ -80,6 +90,18 @@ def _pending_exception_response(error):
     )
     if isinstance(error, M365PolicyError):
         return _error_response(error.payload)
+    if isinstance(error, M365ProviderError):
+        if error.status_code in {409, 412}:
+            return _error_response({
+                'error': 'pending_action_changed',
+                'message': 'The Outlook draft changed. Reopen its review before saving.',
+            })
+        return _error_response({
+            'error': error.code, 'message': 'Microsoft 365 could not update the draft. Refresh before continuing.',
+            **{key: value for key, value in error.details.items() if key in {'scopes', 'retry_after_seconds'}},
+        }, default_status=503)
+    if isinstance(error, CosmosHttpResponseError) and error.status_code in {409, 412}:
+        return _error_response({'error': 'pending_action_changed', 'message': 'This action changed. Reload its review before continuing.'})
     if isinstance(error, PermissionError):
         return _error_response({'error': 'forbidden', 'message': 'This action is not available to your account.'})
     if isinstance(error, LookupError):
@@ -144,7 +166,97 @@ def _normalize_access_test_scopes(raw_scopes):
     return normalized_scopes, invalid_scopes
 
 
+def _pending_review_assist_services():
+    # These route-owned factories initialize configured clients. Resolve them after
+    # registration/bootstrap, not while importing the cold review/model core.
+    from functions_settings import get_settings, is_action_assistant_enabled
+    settings = get_settings()
+    if not is_action_assistant_enabled(settings):
+        raise EditorAssistError('action_assistant_disabled')
+    from route_backend_agents import _create_agent_instruction_client, _resolve_agent_instruction_model
+    return build_editor_assist_services(client_factory=lambda: (
+        _create_agent_instruction_client(settings), _resolve_agent_instruction_model(settings),
+    ))
+
+
 def register_route_backend_msgraph_pending_actions(bp):
+    def review_response(result):
+        action = result.pop('action')
+        payload = {
+            **result, 'success': True,
+            'pending_action': sanitize_msgraph_pending_action_for_client(
+                action, viewer_user_id=action['user_id'], include_full_review=True,
+            ),
+            'expected_version': action['_etag'],
+            'timezone_aliases': dict(_WINDOWS_ZONES),
+        }
+        response = jsonify(payload)
+        response.headers['Cache-Control'] = 'no-store, private'
+        return response
+
+    @bp.route('/api/msgraph/pending-actions/<action_id>/review', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_user_msgraph_pending_review(action_id):
+        try:
+            user_id, _ = _subject()
+            return review_response(get_pending_review(cosmos_msgraph_pending_actions_container, user_id, action_id))
+        except (M365PolicyError, M365ProviderError, PermissionError, LookupError, ValueError, AzureError) as error:
+            return _pending_exception_response(error)
+
+    @bp.route('/api/msgraph/pending-actions/<action_id>/review', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def save_user_msgraph_pending_review(action_id):
+        try:
+            user_id, _ = _subject()
+            validate_m365_csrf()
+            body = read_editor_assist_body()
+            if not isinstance(body, dict) or set(body) - {'expected_version', 'fields', 'origin', 'assist_turn_id'}:
+                raise ValueError('Invalid edit request.')
+            return review_response(save_pending_review(
+                cosmos_msgraph_pending_actions_container, user_id, action_id,
+                expected_version=body.get('expected_version'), fields=body.get('fields'),
+                origin=body.get('origin', 'direct'), assist_turn_id=body.get('assist_turn_id'),
+            ))
+        except EditorAssistError as error:
+            return editor_assist_error_response(error)
+        except (M365PolicyError, M365ProviderError, PermissionError, LookupError, ValueError, AzureError) as error:
+            return _pending_exception_response(error)
+
+    @bp.route('/api/msgraph/pending-actions/<action_id>/history', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_user_msgraph_pending_history(action_id):
+        try:
+            user_id, _ = _subject()
+            return review_response(get_pending_review(
+                cosmos_msgraph_pending_actions_container, user_id, action_id,
+                cursor=request.args.get('cursor', ''), limit=int(request.args.get('limit', '20')),
+            ))
+        except (M365PolicyError, M365ProviderError, PermissionError, LookupError, ValueError, AzureError) as error:
+            return _pending_exception_response(error)
+
+    @bp.route('/api/msgraph/pending-actions/<action_id>/assist', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def assist_user_msgraph_pending_review(action_id):
+        try:
+            user_id, _ = _subject()
+            validate_m365_csrf()
+            body = read_editor_assist_body()
+            return review_response(assist_pending_review(
+                cosmos_msgraph_pending_actions_container, user_id, action_id, body, services=_pending_review_assist_services(),
+            ))
+        except EditorAssistError as error:
+            return editor_assist_error_response(error)
+        except (M365PolicyError, M365ProviderError, PermissionError, LookupError, ValueError, AzureError) as error:
+            return _pending_exception_response(error)
+
     @bp.route('/api/msgraph/test-access', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required

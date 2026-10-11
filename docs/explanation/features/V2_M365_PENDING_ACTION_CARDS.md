@@ -6,6 +6,8 @@ Implemented in version: **0.261.307**
 
 Email review flow updated in version: **0.261.324** (`application/single_app/config.py`).
 
+Review editor implemented in version: **0.261.325** (`application/single_app/config.py`).
+
 Tracking issue: [#1722](https://github.com/microsoft/simplechat/issues/1722), gap 2 (Chat, "M365 pending-action card").
 
 An agent that prepares a Microsoft 365 email or calendar invitation for review saves it as a pending action. The action waits until its owner sends or cancels it, and a notification tells the owner it is waiting. Only the classic chat page drew that card, so every such notification opened classic chat.
@@ -15,6 +17,7 @@ The React V2 chat now draws the card itself, with the same controls and safeguar
 Dependencies:
 
 * [Microsoft Graph Pending Actions](MSGRAPH_PENDING_ACTIONS.md): the backend this reads and writes. The email review repair adds orchestration stream/history references, not a new delivery policy or setting.
+* [Pending Email and Calendar Review](PENDING_REVIEW.md): owner editing, durable AI/revision history and the new draft-to-sent lifecycle.
 * [V2 Terms of Use and Approval Requests](V2_TERMS_AND_APPROVALS.md): the Approvals page uses the same card.
 * [V2 Notification Bell and Desktop Notifications](V2_NOTIFICATIONS_BELL.md): the notices that link to the card.
 * [React V2 UI](REACT_V2_UI.md): the shell and chat page the card lives in.
@@ -46,17 +49,19 @@ A card taken from message history is checked against the server before Send is a
 
 ### The card
 
-The same `PendingActionCard` is used inline in chat and in the Approvals detail pane, so a card behaves the same wherever it is drawn. It shows recipients, times, location, a body preview that is always plain text, and a status. Its controls match the [classic card](../../reference/chat-controls.md#microsoft-365-outgoing-action-cards):
+The same `PendingActionCard` is used inline in chat and in the Approvals detail pane, so a card behaves the same wherever it is drawn. It shows recipients, times, location, the first five rendered body lines, and a status. HTML bodies retain safe prose formatting and links through the locally vendored DOMPurify boundary; executable content, styles, remote images and embeds are removed. **Show More** / **Show Less** appears only for overflowing or server-shortened content. Its controls are described in [chat controls](../../reference/chat-controls.md#microsoft-365-outgoing-action-cards):
 
-An email awaiting review says **Ready to review — not sent**. Preparation and sending are separate outcomes: a later failed report does not discard the draft or mark it sent. After the owner sends, **Accepted for sending — recipient delivery is not confirmed** is the primary result. The original Outlook-draft warning stays visible; a redundant generic successful send-check notice is omitted. Conflict and unknown-outcome warnings remain, and nothing is sent or replayed automatically by the browser.
+An email awaiting review says **Ready to review — not sent**. Preparation and sending are separate outcomes: a later failed report does not discard the draft or mark it sent. After the owner sends, **Accepted for sending — recipient delivery is not confirmed** is the primary result. New draft-send actions send the actual Outlook draft; their sent-message link appears only after it is verified. Older retained-draft actions keep their compatibility behavior and an explicitly labeled retained-draft link. Conflict and unknown-outcome warnings remain, and nothing is sent or replayed automatically by the browser.
 
 * **Send** or **Send now** (for a delayed action) submits the version of the action the reader reviewed, so the server can refuse it if the action changed in the meantime.
 * **Cancel** stops an unclaimed delivery.
+* **Edit** is available only to the owner of an editable manual-review action. The popup loads the complete authorized draft, not a reconstruction of the shortened card. Email exposes To/Cc/Bcc, subject and body; calendar exposes title, attendees, start/end, timezone, location, body and the existing Teams meeting option. **Save changes** persists reviewed edits and refreshes the card. Cancel/Escape discards only unsaved working changes, with a discard confirmation.
+* **Ask AI & history** reuses the incumbent assist thread and typed proposal/undo mechanics. AI can suggest changes only to editable fields; it never sends or changes delivery policy. Applied suggestions remain a working copy until Save. Direct/AI revisions and suggestions are loaded from owner-only paged backend history when reopened. Undo preserves fields changed later and also requires Save. Active review history is cleared when the action is sent or cancelled; its final delivery receipt remains.
 * **Review full message** or **Review full invitation** loads the complete content when the preview was shortened. Send stays hidden until it has loaded, and reviewing never sends.
 * **Reconnect Microsoft 365** renews the Microsoft 365 sign-in for the saved action. It does not resume the chat request or send anything; select Send again afterwards. A saved action that belongs to a workflow links to the workflow's account in Settings instead.
 * **Review sharing decision** opens the data-access approval that a send asked for. Approving that decision does not send the action.
 * **Refresh status** asks the server for the current state. It never sends.
-* **Open in Microsoft 365** opens the web link, only when it is an `https` link without credentials.
+* Outlook links are labeled **Open draft in Outlook**, **Open sent message in Outlook**, **Open retained draft in Outlook**, or **Open calendar event in Outlook**, according to verified server resource metadata. Accepted sends with no resolved sent-copy link show a link-pending notice, never a stale draft link or another Send button.
 
 Only the owner gets Send and Cancel; both are hidden for anyone else, who sees a read-only note instead. The countdown on a delayed action is informational: delivery is by the server's own timer, and loading an overdue card never submits a send.
 
@@ -81,6 +86,8 @@ Paths are relative to `application/v2_ui/src`.
 * `lib/m365PendingActions.ts`: pure rules for which snapshot to trust, where a card belongs, and what a stream frame or history message carries.
 * `stores/m365PendingActionsStore.ts`: one store factory. Chat uses a shared instance, so the chat stream handlers, which run outside React, can hand it cards; every Approvals detail builds its own for the one action it shows.
 * `components/approvals/PendingActionCard.tsx`: the shared card. `PendingActionsPanel.tsx` is now a thin wrapper that gives it a store.
+* `components/approvals/PendingActionEditor.tsx`, `usePendingActionReview.ts`, `PendingActionBody.tsx`: shared responsive owner editor, durable assist integration and sanitized five-line body renderer.
+* `lib/pendingActionReview.ts`, `stores/pendingActionReviewStore.ts`: typed review API contracts, editable-field proposal allowlist and isolated working-copy state.
 * `components/chat/PendingActionSlots.tsx`: placement for the whole thread, the inline and streaming slots, the conversation-level section, list loading, and the deep-link focus.
 * `components/chat/MessageList.tsx`: mounts the placement, the section, and a slot under each bubble.
 * `lib/approvalsApi.ts`: `fetchConversationPendingActions` is new, `fetchPendingAction` takes a conversation id, and `PendingAction` carries the extra fields the chat endpoints return.
@@ -93,7 +100,7 @@ Paths are relative to `application/v2_ui/src`.
 
 Nothing new to enable. Cards appear whenever an agent uses a Microsoft Graph action in manual or delayed delivery mode, as described in [Microsoft Graph Pending Actions](MSGRAPH_PENDING_ACTIONS.md).
 
-* Review the card under the reply, open **Review message body** to read the body, then choose **Send** or **Cancel**.
+* Review the card under the reply. Use **Show More** for a long body, or **Edit** to adjust a manual-review draft. Save any edits before choosing **Send** or **Cancel** on the card.
 * Choose a notification in the bell to land on the card in its conversation. The card is outlined for a moment so you can find it in a long thread.
 * If a card is missing from a thread, use **Refresh outgoing actions** in the conversation-level section.
 
@@ -105,11 +112,13 @@ Functional tests:
 * `functional_tests/test_v2_m365_pending_actions_logic.mjs`: snapshot trust, placement, stream and history references, and countdown rules.
 * `functional_tests/test_v2_m365_pending_actions_store.mjs`: the store's state machine, including late responses, version safety, polling, and focus.
 * `functional_tests/test_v2_m365_pending_actions_stream.mjs`: real chat and orchestration SSE readers/controllers, multiple live cards, saved-reply promotion, failed reports, dropped streams, scoped stale-frame rejection and history recovery.
+* `functional_tests/test_v2_pending_review_logic.mjs`: owner/manual edit gates, typed proposals, safe undo, working-copy state, history deduplication and CSRF-protected review contracts.
 * `functional_tests/test_v2_workflow_run_link_routing.mjs`, `functional_tests/test_v2_notifications_bell.py`, `functional_tests/test_v2_user_settings_memory_m365.py`: updated for the new routing and files.
 
 UI tests:
 
 * `ui_tests/test_v2_m365_pending_action_cards.py`: the real message list with inline, streaming, and conversation-level cards, Send and Cancel, and focus; desktop/mobile Orchestrate preparation, report failure, reference-only reload, keyboard body review and explicit mocked Send/Cancel.
+* `ui_tests/test_v2_pending_review_editor.py`: real desktop/mobile email editing, direct/AI saves, reopening history, focus return, calendar fields, conflict preservation, owner/timed edit denial and sanitized HTML overflow. All send/Graph operations are mocked.
 * `ui_tests/test_v2_notifications_bell.py`: a notice for a saved action opens its card in V2 chat from another page, from the chat page, for an action the list does not show, and for one that is gone.
 * `ui_tests/test_v2_approvals_and_terms_pages.py` and `ui_tests/test_v2_approvals_dashboard.py`: the Approvals page, which keeps its test ids on the shared card.
 

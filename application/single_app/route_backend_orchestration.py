@@ -1479,6 +1479,12 @@ def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id)
         yield build_planning_thought('Plan ready.', status='completed')
         yield build_plan_event(
             outcome['document'], export_catalog=_admitted_export_catalog(user_id, conversation_id),
+            turn_identity={
+                'conversation_id': conversation_id,
+                'turn_id': outcome['document']['turn_id'],
+                'run_id': outcome['document']['run_id'],
+                'user_message_id': context['user_message_id'],
+            } if context.get('user_message_id') else None,
         )
 
 

@@ -677,11 +677,6 @@
     "application/single_app/functions_mcp_server_tools.py::_load_legacy_messages": "0113be12ba7f24aade864c0929ea46be0727d4039d1bb68b0f0d59423ba2feee",
     "application/single_app/functions_mcp_server_tools.py::_load_personal_prompt_page": "05845d307473e30980aafde342c9bedd4fd4b10b7427e34ef49e023bf90ee1a8",
     "application/single_app/functions_mcp_tool_pinning.py::persist_mcp_tool_drift": "d4973e7c62d1e6987b4070fb3c404cc7b11413bbe7dbd20954dea0f028eb4fe4",
-    "application/single_app/functions_msgraph_pending_actions.py::create_msgraph_pending_action": "a21f629072ed36c85b69d8f9158d8387039b2c48dff47b67a2fdd3cb8906fbf5",
-    "application/single_app/functions_msgraph_pending_actions.py::get_msgraph_pending_action": "b2d5ca87ecb2c6ba2f42bf6a5c307deb8b95e4de3d2e8c54ff36e94b3db63d31",
-    "application/single_app/functions_msgraph_pending_actions.py::list_msgraph_pending_actions": "f9b3a499728e9f6ba82a9128bbeeb7d7dc5c4be4d6b8c9cb57e98f0348cba1d5",
-    "application/single_app/functions_msgraph_pending_actions.py::get_pending_action_page": "646c66a2110ca3d522bbfd5a7eb1c84497b54f57fa20d14afe6da9f333b34e66",
-    "application/single_app/functions_msgraph_pending_actions.py::get_chat_pending_action_cards": "f3e43f1dcd114054378bfce48234e47fbe4d88363154e3821d4566455a411309",
     "application/single_app/functions_notifications.py::_read_existing_notification": "d3b17a86baa8600c9f00303815c2fa8aa31ff78f728a007e1db0093e96dc3121",
     "application/single_app/functions_notifications.py::get_notifications_by_metadata": "f0f6bd5c6c05508a18802f821efc5a7953cf2e3a294b7e238c2f33f6c8de3043",
     "application/single_app/functions_notifications.py::get_user_notifications": "b89a7c49901656603a5e35d3ec34739d1130bc19ee364eb29aadc0ab6bb5bb32",
@@ -1020,22 +1015,6 @@
     "application/single_app/route_backend_groups.py::register_route_backend_groups.api_group_activity": "b68cf13c1361c5df6a62e49dd97426deeacf9389b2889dcb7efc02697d528696",
     "application/single_app/route_backend_groups.py::register_route_backend_groups.api_group_stats": "99baefcd65410b84b8eef2e3c7a2113dc43b3a16444f930e077e4c9311f98cf7",
     "application/single_app/route_backend_m365.py::register_route_backend_m365.list_m365_waiting_requests": "a08dfc34823a0019c09d30bf38f7e25ac1dfd6e81944665f3912f2e4daa7a73f",
-    "application/single_app/route_backend_orchestration.py::_load_ledger": "b357e0ed06bcbd5c4c05ba3e0d5880f51f6cc85b2cfa92c249b295231706ae16",
-    "application/single_app/route_backend_orchestration.py::_authorize_context_conversation": "8b319a23b132fe5a74781d4588acb97d8f98a366505f04552c8706ba489756c4",
-    "application/single_app/route_backend_orchestration.py::_load_regeneration_snapshot": "961acd489e27b0e17285cbffd8a7cd2fcc13284049e418b2469c029890f33958",
-    "application/single_app/route_backend_orchestration.py::_link_regeneration_thread": "f29030a01f8bea411281355214c714e64732dd013d7b1df5fe4c95a71d657c5c",
-    "application/single_app/route_backend_orchestration.py::_load_conversation_snapshot": "3500321d32448a7b9d72e6fde2a31ed4e96710eabb43e8d755bddd49db202339",
-    "application/single_app/route_backend_orchestration.py::_validate_saved_conversation_context": "96d03c916384f783c266fd1f25d881eaadc9e7530e5bfb082189f33a799fb3dd",
-    "application/single_app/route_backend_orchestration.py::_conversation_context_for_run": "dc5ccbb792e52fb9d132c68c0f4e9c3ab0e7864885b236bbd6ed4c34620ed92c",
-    "application/single_app/route_backend_orchestration.py::_ensure_conversation": "ad39a61ca6d75d734a7cb9ab1feb08d5e3a249671f5dd2ba5a497de37d1a8c23",
-    "application/single_app/route_backend_orchestration.py::_mirror_planned_turn": "456b1aeaf2bb712973dd90f016a778bfb4ae9928deb01d64f7d098d3f2167259",
-    "application/single_app/route_backend_orchestration.py::_persist_planned_turn": "15302dd953b0e4805d7b84cd60e11eb606fa3577e3ace194463abbb7540ff6a4",
-    "application/single_app/route_backend_orchestration.py::_save_turn_message": "05f1f7e6bea87481d2152914467671d5139c44f18c8eaf8bc53e9cea0a0540a7",
-    "application/single_app/route_backend_orchestration.py::_touch_conversation": "785d71237d18b92269fb287f0efa5c85d4ec32ec027fdcc43c7dfa51bf97357d",
-    "application/single_app/route_backend_orchestration.py::_run_response_removed": "8f67cd9aea5fe4d256450c1f2154edd21bae33f4951a29a0940a6e88eccd52b0",
-    "application/single_app/route_backend_orchestration.py::_validate_checkpoint_artifacts": "3ba819deb0325ec83ff22f22ff21b0e3ddc43094954db6393fac862a66f21914",
-    "application/single_app/route_backend_orchestration.py::_checkpoint_artifact_versions": "1f879fbce6e7528314527a5b3e85272fc7bb75a838c53aecc4a308ac9285b380",
-    "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": "ef569091b1ec9c85e4304487d363cb779e3e58b124962b9d2f0940d397bdc06c",
     "application/single_app/route_backend_plugins.py::set_user_plugins": "6521a2fc13713578fcabc57c611d5a73467630fe3b4006082b579cb1dc7db82a",
     "application/single_app/route_backend_plugins.py::edit_plugin": "e4294468015daedc797eb287aa58c9066c8efe91a9f593a07936b55da9e3e1b1",
     "application/single_app/route_backend_plugins.py::test_cosmos_connection": "2914add8869a52f46cf5639d26e9dda1a163ab1b980935aa459b85a760b3c9be",
@@ -10608,39 +10587,41 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
       "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Notification read/write mappings supply only identity/state fields and safe JSON display metadata.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_pending_delivery.py::_read_delivery": {
       "boundary": {
-        "sha256": "cfbba8b15e3e52d0392d6a3fcb3025c1737203b2bba600c0eb64fcdfe6f0557c",
+        "sha256": "d2728311c4be65a4f417fa73e7300339ff71ca17657595600c1e525eb339fc4b",
         "points": [
           {
             "method": "read_item",
             "receiver": "container",
-            "response": "returned"
+            "response": "consumed"
           }
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
-      "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "classification": "normalized-strict",
+      "contract": "Normalize owner-partitioned point reads before delivery/edit material validation; preserve the claim ETag.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_pending_delivery.py::_save_claimed_outcome": {
       "boundary": {
-        "sha256": "302146ea297b590f1c950a68ff3589523afe51e50f20f611158b585706577aaf",
+        "sha256": "bcc8ba13ef14fe096b7207e5d517b856d014ff3f8c20f3e1a228f09a164d117c",
         "points": [
           {
             "method": "replace_item",
@@ -10650,18 +10631,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
-      "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "classification": "normalized-strict",
+      "contract": "Normalize the conditional outcome write before terminal history cleanup and publication; conflicts never authorize replay.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_pending_delivery.py::dispatch_m365_pending_delivery": {
       "boundary": {
-        "sha256": "65ac667ed3f6abd5675964c1324397791bcc68e46430fca42f8136c9209d49ce",
+        "sha256": "1952741e6466c513cc84ffb2367d04d3ee8e3656431bf49d50a4145b23485753",
         "points": [
           {
             "method": "replace_item",
@@ -10676,14 +10658,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
       "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Conditional claim write is a mapping consumed by field access/spread; outcome storage normalizes before current-card publication. Draft POST is irreversible and cannot replay on uncertain outcome.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_pending_delivery.py::dispatch_due_m365_deliveries": {
       "boundary": {
@@ -10713,14 +10696,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
       "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Scheduled worker consumes plain query rows and returned write mappings through field access; expired/unknown claims never repeat delivery.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_pending_delivery.py::cancel_m365_run_deliveries": {
       "boundary": {
@@ -10734,14 +10718,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
       "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Authorized run cancellation consumes plain query rows, not SDK point wrappers.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_pending_delivery.py::cancel_m365_conversation_deliveries": {
       "boundary": {
@@ -10755,14 +10740,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "15128fe4661fc4787674ac871b6ab36a4802b26dc74feac4b5d710522f595bb1"
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
       },
       "classification": "sdk-compatible",
-      "contract": "Delivery status and leases use mapping fields; responses are not strict domain result envelopes or authority to repeat an effect.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Authorized conversation cancellation consumes plain query rows and preserves current conditional claims.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_request_resume.py::queue_approved_chat": {
       "boundary": {
@@ -10890,14 +10876,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Conversation point mappings are field-read to enforce current owner or participation access.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::read_pending_m365_chat_request": {
       "boundary": {
@@ -10911,14 +10900,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Pending-request point mappings supply current status/identity fields before owned context restoration.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::initialize_m365_chat_context": {
       "boundary": {
@@ -10932,12 +10924,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "response-unused",
-      "contract": "initialize_m365_chat_context: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Context-initialization point write responses are unused; failures are not hidden.",
+      "tests": [],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::ensure_m365_execution_record": {
       "boundary": {
@@ -10961,14 +10953,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Point execution mappings supply current request context; ETags remain available for conditional state changes.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::_begin_step_m365_request": {
       "boundary": {
@@ -10992,14 +10987,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "SDK request point mappings supply current actor/scope fields; writes are projected before result contracts.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::_finish_step_m365_request": {
       "boundary": {
@@ -11018,18 +11016,21 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Conditional step request mappings supply saved status and request state; strict results receive nested plain JSON.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::configure_m365_pending_delivery_runtime.capture_step_reference": {
       "boundary": {
-        "sha256": "3d24fc1797cbd9b33122e2d9c2ab1960444691ab2889976308f9bf813aac7073",
+        "sha256": "9adff3d7f8d79231da3a2efb48b11c8c1d9d76ece4c376ead4744043120093e1",
         "points": [
           {
             "method": "read_item",
@@ -11039,14 +11040,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Execution request point mapping supplies actor/conversation/run fields; exact owned plan is reloaded and validated before new provenance strings are attached. Tool/browser identifiers are not provenance authority.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::configure_m365_pending_delivery_runtime.delivery_context": {
       "boundary": {
@@ -11060,14 +11064,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Saved request mapping is reauthorized against current actor, conversation, selected capability and original plan before token/transport work.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::validate_m365_approval_decision": {
       "boundary": {
@@ -11081,14 +11088,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Approval decisions revalidate saved request point identity/current state and existing grants before permitting the operation.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::record_m365_auth_wait": {
       "boundary": {
@@ -11102,14 +11112,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Authentication wait point mappings supply current conditional request state, not credential or domain result envelopes.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::configure_m365_history_runtime.read_conversation": {
       "boundary": {
@@ -11123,14 +11136,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "History authorization reads conversation point mappings through identity fields.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::configure_m365_history_runtime.read_messages": {
       "boundary": {
@@ -11144,14 +11160,17 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "History reader consumes plain query rows and bounded field projections.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::configure_m365_history_runtime.has_active_request": {
       "boundary": {
@@ -11165,14 +11184,17 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Active-request lookup consumes plain query rows, not point response wrappers.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::record_m365_pending": {
       "boundary": {
@@ -11186,14 +11208,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Pending request point mappings are field-read/projected for durable wait state; nested result envelopes remain plain JSON.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::_save_m365_wait_record": {
       "boundary": {
@@ -11212,12 +11237,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "response-unused",
-      "contract": "_save_m365_wait_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Wait-record write responses are unused; write failures remain visible.",
+      "tests": [],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::complete_m365_request": {
       "boundary": {
@@ -11236,14 +11261,17 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "sdk-compatible",
-      "contract": "Pending request and delivery reads remain mapping-compatible; strict result contracts receive projected domain results, not point wrappers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Completion point mappings supply identity/state fields for conditional outcome writes.",
       "tests": [
-        "functional_tests/test_m365_runtime_adapters.py"
-      ]
+        "functional_tests/test_m365_pending_authorization.py",
+        "functional_tests/test_orchestration_operation_runtime.py",
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_action_provenance.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_runtime.py::cancel_m365_workflow_requests": {
       "boundary": {
@@ -11263,12 +11291,12 @@
           }
         ],
         "batches": [],
-        "module_sha256": "f3c26da87cf765144801233fa2df5d037d93ce308d3a3f0a54ed13ab65d1d597"
+        "module_sha256": "694c0aba003c5e727e085a99b81999bd48321a6f4c49fedcb6b8d989a90de70e"
       },
       "classification": "response-unused",
-      "contract": "cancel_m365_workflow_requests: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Cancellation consumes plain query rows and discards point write responses.",
+      "tests": [],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_m365_workflow_checkpoints.py::read_m365_task_checkpoint": {
       "boundary": {
@@ -11490,7 +11518,7 @@
     },
     "application/single_app/functions_msgraph_pending_actions.py::create_msgraph_pending_action": {
       "boundary": {
-        "sha256": "1d9d4ffae8d44b910a48ba8c20a87ea71614070e3d9f9f07969548ab7678f992",
+        "sha256": "8c0de777d079e2e0e27125bc72e0e38bd92bcf418eb846f9bf1ac2a83020ff41",
         "points": [
           {
             "method": "create_item",
@@ -11500,18 +11528,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a30d57791c28e93355dade976da6df20a761c1b7a48da6d6c6b79ac75e666212"
+        "module_sha256": "e031382d46ba52dee218b8e8867ba0141b30ebb224e54f7ad760dd18b8862cb6"
       },
       "classification": "sdk-compatible",
-      "contract": "create_msgraph_pending_action: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Create response mapping supplies bridge-bound references and notification fields; metadata stripping returns a plain dictionary. New immutable draft strategy is fingerprint-bound; old strategy remains compatible.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_action_card_api.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_msgraph_pending_actions.py::get_msgraph_pending_action": {
       "boundary": {
-        "sha256": "928ffd83b5dc1e0703f407cd219d28b2d4c6be2b1151d342fa17ca8a75a96032",
+        "sha256": "80d93c023dbc3f29a38a9adc2c1909c17f3f898c0ed33c32e7976b8c127a3d43",
         "points": [
           {
             "method": "read_item",
@@ -11521,14 +11550,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a30d57791c28e93355dade976da6df20a761c1b7a48da6d6c6b79ac75e666212"
+        "module_sha256": "e031382d46ba52dee218b8e8867ba0141b30ebb224e54f7ad760dd18b8862cb6"
       },
       "classification": "sdk-compatible",
-      "contract": "get_msgraph_pending_action: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point mapping supplies status fields; sent-link refresh is read-only and normalizes its write. Metadata stripping returns a plain dictionary, not a Cosmos wrapper.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_action_card_api.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_msgraph_pending_actions.py::list_msgraph_pending_actions": {
       "boundary": {
@@ -11542,14 +11572,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "a30d57791c28e93355dade976da6df20a761c1b7a48da6d6c6b79ac75e666212"
+        "module_sha256": "e031382d46ba52dee218b8e8867ba0141b30ebb224e54f7ad760dd18b8862cb6"
       },
       "classification": "sdk-compatible",
-      "contract": "list_msgraph_pending_actions: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Owner-partitioned list consumes plain query rows; history documents have a separate type and are not pending actions.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_action_card_api.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_msgraph_pending_actions.py::get_pending_action_page": {
       "boundary": {
@@ -11563,14 +11594,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "a30d57791c28e93355dade976da6df20a761c1b7a48da6d6c6b79ac75e666212"
+        "module_sha256": "e031382d46ba52dee218b8e8867ba0141b30ebb224e54f7ad760dd18b8862cb6"
       },
       "classification": "sdk-compatible",
-      "contract": "get_pending_action_page: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Owner/current-conversation filtering consumes plain query rows and emits sanitized current card pages.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_action_card_api.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_msgraph_pending_actions.py::get_chat_pending_action_cards": {
       "boundary": {
@@ -11584,14 +11616,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "a30d57791c28e93355dade976da6df20a761c1b7a48da6d6c6b79ac75e666212"
+        "module_sha256": "e031382d46ba52dee218b8e8867ba0141b30ebb224e54f7ad760dd18b8862cb6"
       },
       "classification": "sdk-compatible",
-      "contract": "get_chat_pending_action_cards: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Authorized card discovery consumes plain query rows and sanitized field projections; new producing-message provenance comes only from verified bridge context.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_m365_action_card_api.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_notifications.py::_read_existing_notification": {
       "boundary": {
@@ -12572,14 +12605,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9fa2e76dd1babf4931ecb9171737d6cdd1d631846fd67c5857bfdb20efc9f0af"
+        "module_sha256": "7a73e3976dd0502083d2a7b414cc99b1cb66b25d88170f7dd3aacc8d04fc3868"
       },
       "classification": "normalized-strict",
-      "contract": "Irreversible-effect journal normalizes stored point records before copying and canonical JSON; conditional ETags and sticky uncertain-effect failures remain mandatory.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The effect journal normalizes the SDK point mapping before deepcopy/canonical JSON. Conditional ETags and sticky unknown-effect outcomes are preserved; updated preparation prose is not delivery authority.",
       "tests": [
         "functional_tests/test_orchestration_operation_runtime.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_output_store.py::enumerate_due_outputs": {
       "boundary": {
@@ -23317,14 +23350,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_ledger: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Query rows are plain SDK dictionaries, not point wrappers; no point normalization is required.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_authorize_context_conversation": {
       "boundary": {
@@ -23338,14 +23371,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_context_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point mapping fields prove owner/backing-conversation access before dependent reads.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_load_regeneration_snapshot": {
       "boundary": {
@@ -23359,14 +23392,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_regeneration_snapshot: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Query rows are plain SDK dictionaries used for the authorized historical context cutoff.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_link_regeneration_thread": {
       "boundary": {
@@ -23380,14 +23413,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_link_regeneration_thread: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point source message mapping supplies retry metadata, not a strict result envelope.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_load_conversation_snapshot": {
       "boundary": {
@@ -23407,14 +23440,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_conversation_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point cutoff message mapping and plain query rows feed the bounded authorized context reader.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_validate_saved_conversation_context": {
       "boundary": {
@@ -23428,14 +23461,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_validate_saved_conversation_context: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Plain query rows are bounded before context validation; no point wrapper enters the strict context.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_conversation_context_for_run": {
       "boundary": {
@@ -23449,14 +23482,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_conversation_context_for_run: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point message mapping is reauthorized and converted into bounded nested conversation context.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_ensure_conversation": {
       "boundary": {
@@ -23480,14 +23513,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_ensure_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point conversation mapping is consumed through field access; create/upsert responses are discarded.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_save_message": {
       "boundary": {
@@ -23501,12 +23534,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "response-unused",
-      "contract": "_save_message: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "Upsert response is unused; existing write errors propagate.",
+      "tests": [],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_mirror_planned_turn": {
       "boundary": {
@@ -23525,14 +23558,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_mirror_planned_turn: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point conversation/message mappings feed collaboration field projections; publication failure remains explicit.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_persist_planned_turn": {
       "boundary": {
@@ -23546,14 +23579,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_persist_planned_turn: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point message mapping is patched through the chat metadata owner; saved identity publishes only scoped string fields.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_save_turn_message": {
       "boundary": {
@@ -23572,14 +23605,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_save_turn_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point messages use field access for durable ID/fingerprint reuse and preserve ETags.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_touch_conversation": {
       "boundary": {
@@ -23598,14 +23631,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_touch_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point conversation mapping is consumed through field access; replace response is unused.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_run_response_removed": {
       "boundary": {
@@ -23619,14 +23652,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_run_response_removed: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point message mapping supplies JSON display metadata; domain validators do not receive the wrapper.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_validate_checkpoint_artifacts": {
       "boundary": {
@@ -23640,14 +23673,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_validate_checkpoint_artifacts: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point message mappings supply artifact metadata to existing nested JSON contracts.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::_checkpoint_artifact_versions": {
       "boundary": {
@@ -23661,14 +23694,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "_checkpoint_artifact_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Point message mappings supply display/provenance revision fields; artifact validators operate on nested plain JSON.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
@@ -23682,14 +23715,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c66febd0dbbe84ef8f69cef250b3aa145d96efa5e9fb05e81155d81ad053971f"
+        "module_sha256": "0f6635544ac2696660fbb898a314587195672da3ca906727270dec96c12e45b9"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_orchestration.orchestration_plan: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Authorized backing conversation point mapping supplies the plan admission scope; durable saved identity is separately bound to run/turn/conversation.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_orchestration_conversation_context_routes.py"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_plugins.py::set_user_plugins": {
       "boundary": {
@@ -25404,6 +25437,154 @@
       "tests": [
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
+    },
+    "application/single_app/functions_m365_pending_delivery.py::refresh_m365_sent_link": {
+      "boundary": {
+        "sha256": "5d6aad2753417b82e746e569718468a86672c8cb864cc2d053c437dcbfbb55a8",
+        "points": [
+          {
+            "method": "replace_item",
+            "receiver": "container",
+            "response": "consumed"
+          },
+          {
+            "method": "replace_item",
+            "receiver": "container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "1eb0125daecc6ce3628d79865e60d2bbd2375adc29011e6e70d13a2db8af5b4f"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalize the conditional read-only link write before publication; a lookup cannot change accepted delivery into an actionable state.",
+      "tests": [
+        "functional_tests/test_m365_runtime_adapters.py",
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_m365_pending_review.py::_read_owned": {
+      "boundary": {
+        "sha256": "cb6b2ee76d0e478237a929b893709cac9f60419cc6aa67e0c17e02144e543e1b",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "cd3edba93c97ea5a404835cc28e5af58043c3a18a0714323921d00de4ca81bea"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalize the owned action point read before copying review material, exact-dictionary field validation and version checks; enforce owner and current scope.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_m365_pending_review.py::save_pending_review": {
+      "boundary": {
+        "sha256": "d7aaefcf24a526249d1c2243f51e1f8e2e603e4a3f724f3df2855e66ccc77909",
+        "points": [
+          {
+            "method": "replace_item",
+            "receiver": "container",
+            "response": "consumed"
+          },
+          {
+            "method": "replace_item",
+            "receiver": "container",
+            "response": "unused"
+          },
+          {
+            "method": "replace_item",
+            "receiver": "container",
+            "response": "unused"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "cd3edba93c97ea5a404835cc28e5af58043c3a18a0714323921d00de4ca81bea"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalize the edit-claim write before history transaction/material handling. Conditional Graph PATCH and owner-partition batch preserve ETags; lost acknowledgements never overwrite a committed newer revision.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_m365_review_history.py::clear_review_history": {
+      "boundary": {
+        "sha256": "12b8e3ca56795d2be70a467afcc9fc2798e886bca1218568a686de88889daed2",
+        "points": [
+          {
+            "method": "delete_item",
+            "receiver": "container",
+            "response": "unused"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "466555e650a2a70010caeec2c139f1f1b53722212ab4fd59f43b2a163c24559e"
+      },
+      "classification": "response-unused",
+      "contract": "The owner-partitioned terminal history deletion response is unused; cleanup never deletes the delivery receipt.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_m365_review_history.py::commit_review_history": {
+      "boundary": {
+        "sha256": "b9ab0c4e7c6727f92633f213ccadc6a403721d415a1f8e904c4f523033e0d4ae",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [
+          {
+            "method": "execute_item_batch",
+            "receiver": "container",
+            "response": "unused"
+          }
+        ],
+        "module_sha256": "466555e650a2a70010caeec2c139f1f1b53722212ab4fd59f43b2a163c24559e"
+      },
+      "classification": "normalized-strict",
+      "contract": "History point reads are normalized before deepcopy; owner-partition action/history batch returns are unused. Normalize the final action read before returning its current revision.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_m365_review_history.py::read_review_history": {
+      "boundary": {
+        "sha256": "398667aa7022431a8ab9471dca3c531de90943927dc780580fd26a5688fea0e3",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "466555e650a2a70010caeec2c139f1f1b53722212ab4fd59f43b2a163c24559e"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalize owner-partitioned history point reads before copying stored JSON, preserving the ETag for conditional history writes and verifying action/owner identity.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
     }
   },
   "doubles": {
@@ -31834,6 +32015,86 @@
       "tests": [
         "functional_tests/test_cosmos_document_boundaries.py"
       ]
+    },
+    "functional_tests/test_m365_pending_action_provenance.py::test_capture_step_reference_consumes_sdk_point_reads_and_real_owned_run::point-seam-1": {
+      "boundary": {
+        "sha256": "633549856b976da82a3f5a0631dbd766f50eeb15a3053a10d3611af45b60d11f",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "42f33051b762084913dd8fe138850f528e188013e6be27d5da89b3c0fcf54332"
+      },
+      "classification": "sdk-default",
+      "contract": "Observing wrapper delegates unchanged to the SDK-default CosmosContainer point read, records the actual CosmosDict and ETag, and verifies owned request/run provenance through the real capture callback.",
+      "tests": [
+        "functional_tests/test_m365_pending_action_provenance.py::test_capture_step_reference_consumes_sdk_point_reads_and_real_owned_run"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "functional_tests/test_m365_pending_action_provenance.py::test_capture_step_reference_consumes_sdk_point_reads_and_real_owned_run::point-seam-2": {
+      "boundary": {
+        "sha256": "9425db33552cf53ce14aecd24deb008954518b2415504b5aca4693cdfaee9dc9",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "42f33051b762084913dd8fe138850f528e188013e6be27d5da89b3c0fcf54332"
+      },
+      "classification": "sdk-default",
+      "contract": "Observing wrapper delegates unchanged to the SDK-default CosmosContainer point read, records the actual CosmosDict and ETag, and verifies owned request/run provenance through the real capture callback.",
+      "tests": [
+        "functional_tests/test_m365_pending_action_provenance.py::test_capture_step_reference_consumes_sdk_point_reads_and_real_owned_run"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "functional_tests/test_m365_pending_review.py::test_lost_batch_acknowledgement_does_not_overwrite_the_committed_save::point-seam-1": {
+      "boundary": {
+        "sha256": "cc55654c5cab6ff39f1a785c73efe1ac28e3248d00bd5c016427352d6ea3f462",
+        "methods": [
+          "execute_item_batch"
+        ],
+        "kind": "seam",
+        "imports_sha256": "cf46ffcf60dbee59bbeeeea8cfc0588bf28c9e58d091a65b9a15c087721db736"
+      },
+      "classification": "fault-injection",
+      "contract": "Inject an explicit Cosmos batch acknowledgement/persistence failure into the SDK-default owner-partitioned transaction fixture; preserve ETags and verify non-sendable reconciliation or no overwrite after a committed acknowledgement is lost.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py::test_lost_batch_acknowledgement_does_not_overwrite_the_committed_save"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "functional_tests/test_m365_pending_review.py::test_partial_graph_cosmos_save_blocks_send_until_read_only_reconciliation::point-seam-1": {
+      "boundary": {
+        "sha256": "f7870c08e9da054315f356a6e45912031d09d04ecd86f2417969e96de0080469",
+        "methods": [
+          "execute_item_batch"
+        ],
+        "kind": "seam",
+        "imports_sha256": "cf46ffcf60dbee59bbeeeea8cfc0588bf28c9e58d091a65b9a15c087721db736"
+      },
+      "classification": "fault-injection",
+      "contract": "Inject an explicit Cosmos batch acknowledgement/persistence failure into the SDK-default owner-partitioned transaction fixture; preserve ETags and verify non-sendable reconciliation or no overwrite after a committed acknowledgement is lost.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py::test_partial_graph_cosmos_save_blocks_send_until_read_only_reconciliation"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "functional_tests/test_m365_pending_review.py::test_partial_graph_cosmos_save_blocks_send_until_read_only_reconciliation::point-seam-2": {
+      "boundary": {
+        "sha256": "507500b208d5f908f2d58b66cfa361e29d999855fc7fb77a1823701cd95770b9",
+        "methods": [
+          "execute_item_batch"
+        ],
+        "kind": "seam",
+        "imports_sha256": "cf46ffcf60dbee59bbeeeea8cfc0588bf28c9e58d091a65b9a15c087721db736"
+      },
+      "classification": "fault-injection",
+      "contract": "Inject an explicit Cosmos batch acknowledgement/persistence failure into the SDK-default owner-partitioned transaction fixture; preserve ETags and verify non-sendable reconciliation or no overwrite after a committed acknowledgement is lost.",
+      "tests": [
+        "functional_tests/test_m365_pending_review.py::test_partial_graph_cosmos_save_blocks_send_until_read_only_reconciliation"
+      ],
+      "evidence_scope": "owner-runtime"
     }
   }
 }

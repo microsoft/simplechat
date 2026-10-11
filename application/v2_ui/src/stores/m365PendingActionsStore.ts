@@ -251,13 +251,18 @@ export function createPendingActionsStore(
         const remember: PendingActionsApi['remember'] = (action, rememberOptions = {}) => {
             if (!isPendingAction(action)) return null;
             const authoritative = rememberOptions.authoritative === true;
+            const producingReference = scope === 'chat' && action.conversation_id === get().conversationId
+                ? { userMessageId: action.producing_user_message_id || '' } : null;
             let accepted = false;
             let restoreFullReview = false;
             set((state) => {
                 const existing = state.entries[action.id];
                 if (!existing) {
                     accepted = true;
-                    const reference = mergeReference(EMPTY_PENDING_ACTION_REFERENCE, rememberOptions.reference);
+                    const reference = mergeReference(
+                        mergeReference(EMPTY_PENDING_ACTION_REFERENCE, producingReference),
+                        rememberOptions.reference,
+                    );
                     const created = newEntry(action, ++keyCounter, ++orderCounter, reference);
                     const auth = hydratedAuth(action, authoritative, '', null);
                     created.auth = auth.auth;
@@ -265,7 +270,9 @@ export function createPendingActionsStore(
                     if (authoritative && hasLoadedFullDetails(action, true)) created.fullDetailsVersion = action.version ?? '';
                     return { entries: { ...state.entries, [action.id]: created } };
                 }
-                const reference = mergeReference(existing.reference, rememberOptions.reference);
+                const reference = mergeReference(
+                    mergeReference(existing.reference, producingReference), rememberOptions.reference,
+                );
                 if (isStaleSnapshot(existing.action, new Set(existing.seenVersions), action, authoritative)) {
                     if (reference === existing.reference) return state;
                     return { entries: { ...state.entries, [action.id]: { ...existing, reference } } };

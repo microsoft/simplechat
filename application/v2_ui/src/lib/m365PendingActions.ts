@@ -183,16 +183,21 @@ export function isScheduled(action: PendingAction): boolean {
     );
 }
 
-/** Whether the card should tick once a second (to show the countdown or watch a send finish). */
+function awaitingSentLink(action: PendingAction): boolean {
+    return action.status === 'sent' && action.link_pending === true;
+}
+
+/** Tick while scheduling, sending, or resolving the accepted message's link. */
 export function needsTicking(action: PendingAction): boolean {
-    return (action.will_auto_send === true && isActionableStatus(action.status)) || action.status === 'sending';
+    return (action.will_auto_send === true && isActionableStatus(action.status))
+        || action.status === 'sending' || awaitingSentLink(action);
 }
 
 /** Whether a tick should ask the server again: the send time passed, or a send is in progress. */
 export function isPollDue(action: PendingAction, busy: boolean, nextRefreshAt: number, now: number = Date.now()): boolean {
     if (busy || now < nextRefreshAt) return false;
     const due = Date.parse(action.auto_send_at_utc ?? '');
-    return (isScheduled(action) && due <= now) || action.status === 'sending';
+    return (isScheduled(action) && due <= now) || action.status === 'sending' || awaitingSentLink(action);
 }
 
 /* Reading what the server sent ----------------------------------------------- */
@@ -307,10 +312,14 @@ export interface AnchorContext {
  */
 export function resolveAnchor(
     reference: PendingActionReference,
-    action: Pick<PendingAction, 'request_id'>,
+    action: Pick<PendingAction, 'request_id'> & { producing_user_message_id?: string },
     context: AnchorContext,
 ): string {
     const visible = (id: string) => Boolean(id) && context.visibleMessageIds.has(id);
+    // New actions carry server-bound provenance. Keep their editor/card mounted at the
+    // producing request even when a final reply adds another reference to the same action.
+    const producingMessageId = text(action.producing_user_message_id);
+    if (visible(producingMessageId)) return producingMessageId;
     if (visible(reference.messageId)) return reference.messageId;
     const streaming = context.streamingUserMessageId;
     if (streaming && (reference.userMessageId === streaming || reference.fallbackMessageId === streaming)) {

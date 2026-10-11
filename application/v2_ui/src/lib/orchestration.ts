@@ -821,6 +821,13 @@ export interface OrchestrationRunRequest {
  * `orchestration_plan` or `orchestration_elicitation`, each carrying `done: true`. An `error`
  * frame ends it too.
  */
+export interface PlannedTurnIdentity {
+    conversation_id: string;
+    turn_id: string;
+    run_id: string;
+    user_message_id: string;
+}
+
 export interface PlanStreamEvent {
     reasoning_adjustments?: ReasoningResolution[];
     type?: 'thought' | 'orchestration_plan' | 'orchestration_elicitation' | string;
@@ -828,6 +835,7 @@ export interface PlanStreamEvent {
     elicitation?: Elicitation;
     editor?: PlanEditorState;
     export_catalog?: OrchestrationExportFormat[];
+    turn_identity?: PlannedTurnIdentity;
     done?: boolean;
     error?: string;
     details?: unknown;
@@ -868,7 +876,11 @@ export interface PlanStreamHandlers {
      */
     onConversationMetadata?: (event: ChatStreamEvent) => void;
     /** The planner produced a plan; the stream is over. */
-    onPlan?: (plan: OrchestrationPlan, exportCatalog?: OrchestrationExportFormat[]) => void;
+    onPlan?: (
+        plan: OrchestrationPlan,
+        exportCatalog?: OrchestrationExportFormat[],
+        turnIdentity?: PlannedTurnIdentity,
+    ) => void;
     /** The planner asked a question instead of planning; the stream is over. */
     onElicitation?: (elicitation: Elicitation) => void;
     /** Editor results never need to enter the main conversation's message dispatch. */
@@ -1329,7 +1341,7 @@ async function readPlanStream(
             }
             result.completed = true;
             if (result.plan) {
-                handlers.onPlan?.(result.plan, event.export_catalog);
+                handlers.onPlan?.(result.plan, event.export_catalog, event.turn_identity);
             }
             return true;
         }

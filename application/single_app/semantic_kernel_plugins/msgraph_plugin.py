@@ -802,6 +802,7 @@ class MSGraphPlugin(BasePlugin):
             current_draft = self._perform_graph_request(
                 "send_mail", "GET", f"/v1.0/me/messages/{quote(draft_id, safe='')}",
                 ["Mail.ReadWrite"], params={"$select": "id,changeKey,isDraft"},
+                additional_headers={"Prefer": 'IdType="ImmutableId"'} if action_mode == MSGRAPH_PENDING_ACTION_MANUAL else None,
             )
             if current_draft.get("error"):
                 return current_draft
@@ -830,6 +831,7 @@ class MSGraphPlugin(BasePlugin):
                 graph_endpoint=self._endpoint,
                 web_link=draft_result.get("webLink") or "",
                 m365_action_id=self.manifest.get("id") or self.manifest.get("name"),
+                graph_send_strategy="draft_send_v1" if action_mode == MSGRAPH_PENDING_ACTION_MANUAL else "",
             )
         except AzureError:
             log_m365_failure("pending_action_storage_failed", source="email", operation="send_mail")
@@ -2172,6 +2174,7 @@ class MSGraphPlugin(BasePlugin):
             "/v1.0/me/messages",
             ["Mail.ReadWrite"],
             json_body=message_payload,
+            additional_headers={"Prefer": 'IdType="ImmutableId"'},
         )
         if not isinstance(draft_result, dict) or draft_result.get("error"):
             return draft_result

@@ -112,6 +112,8 @@ export interface ChartJsConstructor {
 
 /** DOMPurify 3.4.14 — https://github.com/cure53/DOMPurify */
 export interface DomPurifyConfig {
+    ALLOWED_TAGS?: string[];
+    ALLOWED_ATTR?: string[];
     USE_PROFILES?: { svg?: boolean; svgFilters?: boolean; html?: boolean; mathMl?: boolean };
     ADD_TAGS?: string[];
     ADD_ATTR?: string[];

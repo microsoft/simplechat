@@ -14,9 +14,11 @@ from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
+from cosmos_document_utils import normalize_cosmos_document
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError, material_fingerprint
 from functions_m365_execution import get_m365_execution_context
 from functions_m365_transport import M365ProviderError, M365Transport
+from functions_m365_review_history import clear_review_history
 from m365_interaction import M365_AUTH_INTERACTION_CODES
 
 
@@ -31,12 +33,27 @@ _CONTEXT_FIELDS = (
 _TERMINAL = {"sent", "cancelled", "failed", "recovery_required"}
 DELIVERY_BINDING_VERSION = 1
 DELIVERY_RECOVERY_GRACE_SECONDS = 120
+SENT_LINK_LOOKUP_INTERVALS_SECONDS = (5, 15, 30, 60, 60)
+SENT_LINK_LOOKUP_WINDOW_SECONDS = 300
+
+
+def _sent_link_now():
+    return datetime.now(timezone.utc)
+
+
+def _sent_link_timestamp(value):
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return timestamp if timestamp.tzinfo is not None else None
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def configure_m365_pending_delivery(
     *, container, context_scope, log_event, transport_factory=M365Transport, notification_sender=None,
     capture_agent_reference=None, view_authorizer=None, conversation_authorizer=None,
     capture_step_reference=None,
+    content_checker=None,
 ):
     _dependencies.update(
         container=container, context_scope=context_scope, log_event=log_event,
@@ -46,6 +63,7 @@ def configure_m365_pending_delivery(
         capture_step_reference=capture_step_reference,
         view_authorizer=view_authorizer,
         conversation_authorizer=conversation_authorizer,
+        content_checker=content_checker,
     )
 
 
@@ -122,7 +140,7 @@ def capture_workflow_delivery(user_id, action_id, workflow_id, run_id):
 
 def pending_delivery_fingerprint(action):
     """Bind reviewed content and execution origin, excluding mutable delivery state."""
-    return material_fingerprint({
+    material = {
         name: action.get(name)
         for name in (
             "id", "user_id", "operation", "graph_resource_type", "action_mode",
@@ -130,7 +148,13 @@ def pending_delivery_fingerprint(action):
             "conversation_id", "workflow_id", "run_id", "request_id",
             "auto_send_at_utc", "m365_execution", "graph_endpoint",
         )
-    })
+    }
+    # Historical snapshots retain their existing fingerprints and compatibility strategy.
+    if "graph_send_strategy" in action:
+        material["graph_send_strategy"] = action["graph_send_strategy"]
+    if "review_provenance_version" in action:
+        material["review_provenance_version"] = action["review_provenance_version"]
+    return material_fingerprint(material)
 
 
 def has_verified_delivery_binding(action):
@@ -181,7 +205,7 @@ def _delivery_error(code, message, **details):
 
 def _read_delivery(container, user_id, action_id):
     try:
-        return container.read_item(action_id, partition_key=user_id)
+        return normalize_cosmos_document(container.read_item(action_id, partition_key=user_id))
     except CosmosResourceNotFoundError:
         return None
 
@@ -200,6 +224,15 @@ def _save_claimed_outcome(container, action_id, claimed, completed):
             "delivery_outcome_unknown",
             "The remote outcome could not be recorded safely. Check Microsoft 365 before retrying.",
         )
+    saved = normalize_cosmos_document(saved)
+    if saved.get("status") in _TERMINAL:
+        try:
+            clear_review_history(container, saved)
+        except AzureError as error:
+            _dependencies["log_event"](
+                "[MS_GRAPH_PENDING_ACTIONS] Terminal review history cleanup remains pending.",
+                {"action_id": action_id, "exception_type": type(error).__name__},
+            )
     saved = notify_m365_pending_delivery(saved)
     return saved, None
 
@@ -211,13 +244,72 @@ def _mail_draft_matches(transport, action):
         raise M365PolicyError("m365_action_review_required", "Recreate this email to review its current content before sending.")
     draft = transport.request_json(
         "GET", f"/v1.0/me/messages/{quote(draft_id, safe='')}", ["Mail.ReadWrite"],
-        params={"$select": "id,changeKey,isDraft"},
+        params={"$select": (
+            "id,changeKey,isDraft,subject,body,toRecipients,ccRecipients,bccRecipients"
+            if action.get("graph_send_strategy") == "draft_send_v1" else "id,changeKey,isDraft"
+        )},
+        **({"additional_headers": {"Prefer": 'IdType="ImmutableId"'}} if action.get("graph_send_strategy") == "draft_send_v1" else {}),
     )
-    if draft.get("isDraft") is not True or draft.get("changeKey") != version:
+    if draft.get("isDraft") is not True or (
+        action.get("graph_send_strategy") != "draft_send_v1" and draft.get("changeKey") != version
+    ):
         raise M365PolicyError(
             "m365_action_material_changed",
             "The Outlook draft changed or is no longer a draft. Review or recreate it before sending.",
         )
+    return draft
+
+
+def _current_draft_material(action, draft):
+    """Refresh a known Outlook edit without a second approval gate or an overwrite."""
+    if draft.get("changeKey") == action.get("graph_draft_version"):
+        return action
+    message = deepcopy(action["graph_payload"]["message"])
+    for field in ("subject", "body", "toRecipients", "ccRecipients", "bccRecipients"):
+        if field in draft:
+            message[field] = deepcopy(draft[field])
+    body = message.get("body") or {}
+    summary = {
+        "subject": message.get("subject", ""), "body_preview": body.get("content", ""),
+        "content_type": body.get("contentType", "Text"),
+    }
+    for source, target in (("toRecipients", "to_recipients"), ("ccRecipients", "cc_recipients"), ("bccRecipients", "bcc_recipients")):
+        summary[target] = [item["emailAddress"]["address"] for item in message.get(source, [])]
+    summary["bcc_recipient_count"] = len(summary["bcc_recipients"])
+    updated = {**action, "graph_payload": {**action["graph_payload"], "message": message},
+               "graph_draft_version": draft["changeKey"], "summary": summary}
+    updated["material_fingerprint"] = pending_delivery_fingerprint(updated)
+    return updated
+
+
+def check_pending_delivery_content(action):
+    """Apply existing configured output checks to new manual review material."""
+    if action.get("action_mode") != "manual" or action.get("review_provenance_version") != 1:
+        return
+    checker = _dependencies.get("content_checker")
+    if checker is None:
+        raise M365PolicyError("m365_content_check_unavailable", "The configured content checks are unavailable.")
+    payload = action["graph_payload"]
+    material = payload.get("message", {}) if action["operation"] == "send_mail" else payload
+    pieces = [material.get("subject", ""), (material.get("body") or {}).get("content", "")]
+    for field in ("toRecipients", "ccRecipients", "bccRecipients", "attendees"):
+        for recipient in material.get(field) or []:
+            address = recipient.get("emailAddress") or {}
+            pieces.extend([address.get("name", ""), address.get("address", "")])
+    if action["operation"] == "create_calendar_invite":
+        pieces.append((material.get("location") or {}).get("displayName", ""))
+    try:
+        decision = checker("\n".join(value for value in pieces if isinstance(value, str) and value), "chat_output", user_id=action["user_id"])
+    except Exception as error:
+        _dependencies["log_event"](
+            "[MS_GRAPH_PENDING_ACTIONS] Configured outgoing content checks did not complete.",
+            {"action_id": action["id"], "exception_type": type(error).__name__},
+        )
+        raise M365PolicyError("m365_content_check_unavailable", "The configured content checks could not finish.") from None
+    if getattr(decision, "blocked", None) is None:
+        raise M365PolicyError("m365_content_check_unavailable", "The configured content checks did not return a decision.")
+    if decision.blocked:
+        raise M365PolicyError("m365_content_blocked", "The outgoing content did not meet the application's configured content rules. Edit it before sending.")
 
 
 def dispatch_m365_pending_delivery(
@@ -241,6 +333,8 @@ def dispatch_m365_pending_delivery(
         return action, None
     if status == "sending":
         return action, _delivery_error("delivery_in_progress", "Delivery is already in progress. Refresh its status.")
+    if status == "editing" or (action.get("review_sync_required") and not cancel):
+        return action, _delivery_error("pending_action_changed", "The draft save needs refresh before sending or cancelling.")
     if expected_version is not None and expected_version != action.get("_etag"):
         return action, _delivery_error("pending_action_changed", "This action changed. Review the refreshed card before continuing.")
     now = datetime.now(timezone.utc)
@@ -261,6 +355,13 @@ def dispatch_m365_pending_delivery(
                 raise
             return _read_delivery(container, user_id, action_id), _delivery_error(
                 "delivery_in_progress", "Another request changed this action. Refresh its current state.",
+            )
+        try:
+            clear_review_history(container, saved)
+        except AzureError as error:
+            _dependencies["log_event"](
+                "[MS_GRAPH_PENDING_ACTIONS] Terminal review history cleanup remains pending.",
+                {"action_id": action_id, "exception_type": type(error).__name__},
             )
         return saved, None
     if not has_verified_delivery_binding(action):
@@ -297,15 +398,22 @@ def dispatch_m365_pending_delivery(
             with transport.operation_context(operation):
                 transport.get_token(scopes)
                 if operation == "send_mail":
-                    _mail_draft_matches(transport, action)
-                    path = "/v1.0/me/sendMail"
-                    payload = deepcopy(action["graph_payload"])
+                    draft = _mail_draft_matches(transport, action)
+                    actual_draft = action.get("graph_send_strategy") == "draft_send_v1"
+                    if actual_draft:
+                        action = _current_draft_material(action, draft)
+                    path = (
+                        f"/v1.0/me/messages/{quote(action['graph_message_id'], safe='')}/send"
+                        if actual_draft else "/v1.0/me/sendMail"
+                    )
+                    payload = None if actual_draft else deepcopy(action["graph_payload"])
                 elif operation == "create_calendar_invite":
                     path = "/v1.0/me/events"
                     payload = deepcopy(action["graph_payload"])
                     payload.setdefault("transactionId", action["id"])
                 else:
                     raise M365PolicyError("unsupported_operation", "This pending operation is not supported.")
+                check_pending_delivery_content(action)
                 claimed = {
                     **action, "status": "sending", "updated_at": now.isoformat(),
                     "delivery_claim_expires_at": (now + timedelta(minutes=5)).isoformat(),
@@ -326,6 +434,7 @@ def dispatch_m365_pending_delivery(
                     result = transport.request_json(
                         "POST", path, scopes, json_body=payload,
                         expect_json=operation == "create_calendar_invite",
+                        **({"additional_headers": {"Prefer": 'IdType="ImmutableId"'}} if operation == "send_mail" and actual_draft else {}),
                     )
                 if operation == "create_calendar_invite" and (
                     not isinstance(result, dict)
@@ -339,10 +448,18 @@ def dispatch_m365_pending_delivery(
             "error": "", "error_code": "", "delivery_claim_expires_at": None,
         }
         if operation == "send_mail":
-            completed["delivery_note"] = (
-                "Microsoft 365 accepted the reviewed message for sending. "
-                "The original Outlook draft remains; do not send it again."
-            )
+            if action.get("graph_send_strategy") == "draft_send_v1":
+                completed.update(
+                    web_link="", sent_link_pending=True, sent_link_lookup_attempts=0,
+                    sent_link_next_lookup_at=None,
+                    sent_link_lookup_deadline_at=(_sent_link_now() + timedelta(seconds=SENT_LINK_LOOKUP_WINDOW_SECONDS)).isoformat(),
+                    delivery_note="Microsoft 365 accepted the Outlook draft for sending. The sent-message link is pending.",
+                )
+            else:
+                completed["delivery_note"] = (
+                    "Microsoft 365 accepted the reviewed message for sending. "
+                    "The original Outlook draft remains; do not send it again."
+                )
         else:
             completed["graph_event_id"] = result.get("id") or ""
             completed["web_link"] = result.get("webLink") or ""
@@ -396,7 +513,105 @@ def dispatch_m365_pending_delivery(
         saved, persistence_error = _save_claimed_outcome(container, action_id, claimed, completed)
         return saved, persistence_error or response_error
     saved, persistence_error = _save_claimed_outcome(container, action_id, claimed, completed)
+    if persistence_error is None and operation == "send_mail" and action.get("graph_send_strategy") == "draft_send_v1":
+        try:
+            saved = refresh_m365_sent_link(user_id, action_id)
+        except (M365PolicyError, PermissionError, LookupError, ValueError, AzureError) as error:
+            _dependencies["log_event"](
+                "[MS_GRAPH_PENDING_ACTIONS] Accepted delivery sent-link refresh remains pending.",
+                {"action_id": action_id, "exception_type": type(error).__name__},
+            )
     return saved, persistence_error
+
+
+def refresh_m365_sent_link(user_id, action_id):
+    """Space bounded read-only lookups; never retry a send or revert acceptance."""
+    container = _dependencies["container"]
+    action = _read_delivery(container, user_id, action_id)
+    if (
+        not action or action.get("user_id") != user_id
+        or action.get("status") != "sent" or action.get("graph_send_strategy") != "draft_send_v1"
+        or not action.get("sent_link_pending")
+    ):
+        return action
+    if not authorize_pending_action_view(action, user_id):
+        raise PermissionError("Action unavailable.")
+    now = _sent_link_now()
+    deadline = _sent_link_timestamp(action.get("sent_link_lookup_deadline_at"))
+    if deadline is None:
+        started = _sent_link_timestamp(action.get("completed_at")) or now
+        deadline = started + timedelta(seconds=SENT_LINK_LOOKUP_WINDOW_SECONDS)
+    attempts = action.get("sent_link_lookup_attempts", 0)
+    next_lookup = _sent_link_timestamp(action.get("sent_link_next_lookup_at"))
+    if now < deadline and next_lookup is not None and now < next_lookup:
+        return action
+    exhausted = attempts >= len(SENT_LINK_LOOKUP_INTERVALS_SECONDS) or now >= deadline
+    updated = {**action, "sent_link_lookup_deadline_at": deadline.isoformat()}
+    unavailable = {
+        "sent_link_pending": False, "sent_link_next_lookup_at": None,
+        "delivery_note": "Microsoft 365 accepted the Outlook draft for sending. The sent-message link is unavailable; check Outlook Sent Items.",
+    }
+    if exhausted:
+        updated.update(unavailable)
+    else:
+        updated.update(
+            sent_link_lookup_attempts=attempts + 1,
+            sent_link_next_lookup_at=(now + timedelta(seconds=SENT_LINK_LOOKUP_INTERVALS_SECONDS[attempts])).isoformat(),
+        )
+        # Claim the read attempt before Graph so concurrent/rapid refreshes cannot
+        # consume the bounded window while a lookup is already in progress.
+        try:
+            action = normalize_cosmos_document(container.replace_item(
+                action_id, body=updated, etag=action["_etag"], match_condition=MatchConditions.IfNotModified,
+            ))
+        except CosmosHttpResponseError as error:
+            if error.status_code == 412:
+                return _read_delivery(container, user_id, action_id)
+            _dependencies["log_event"](
+                "[MS_GRAPH_PENDING_ACTIONS] Sent-message link lookup claim could not be recorded.",
+                {"action_id": action_id, "exception_type": type(error).__name__},
+            )
+            return action
+        except AzureError as error:
+            _dependencies["log_event"](
+                "[MS_GRAPH_PENDING_ACTIONS] Sent-message link lookup claim could not be recorded.",
+                {"action_id": action_id, "exception_type": type(error).__name__},
+            )
+            return action
+        updated = {**action}
+    try:
+        if not exhausted:
+            with _dependencies["context_scope"](action, automatic=False):
+                transport = _dependencies["transport_factory"]("email", action["m365_execution"]["action_id"])
+                with transport.operation_context("send_mail"):
+                    message = transport.request_json(
+                        "GET", f"/v1.0/me/messages/{quote(action['graph_message_id'], safe='')}", ["Mail.ReadWrite"],
+                        params={"$select": "id,isDraft,webLink"},
+                        additional_headers={"Prefer": 'IdType="ImmutableId"'},
+                    )
+                    if message.get("isDraft") is False and message.get("webLink"):
+                        updated.update(
+                            web_link=message["webLink"], sent_link_pending=False, sent_link_next_lookup_at=None,
+                            delivery_note="Microsoft 365 accepted the Outlook draft for sending.",
+                        )
+    except (M365PolicyError, M365ProviderError, AzureError, PermissionError, LookupError, ValueError) as error:
+        # Sent copy propagation and access failures affect only the link, not delivery.
+        _dependencies["log_event"](
+            "[MS_GRAPH_PENDING_ACTIONS] Sent-message link lookup remains pending.",
+            {"action_id": action_id, "exception_type": type(error).__name__},
+        )
+    if updated.get("sent_link_pending") and updated.get("sent_link_lookup_attempts", 0) >= len(SENT_LINK_LOOKUP_INTERVALS_SECONDS):
+        updated.update(unavailable)
+    try:
+        return normalize_cosmos_document(container.replace_item(
+            action_id, body=updated, etag=action["_etag"], match_condition=MatchConditions.IfNotModified,
+        ))
+    except AzureError as error:
+        _dependencies["log_event"](
+            "[MS_GRAPH_PENDING_ACTIONS] Sent-message link could not be recorded.",
+            {"action_id": action_id, "exception_type": type(error).__name__},
+        )
+        return action
 
 
 def dispatch_due_m365_deliveries(*, limit=25):

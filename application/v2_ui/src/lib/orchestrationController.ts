@@ -437,14 +437,21 @@ async function dispatchPlan(
                     event.conversation_title ?? event.title,
                 );
             },
-            onPlan: (plan, exportCatalog) => {
+            onPlan: (plan, exportCatalog, turnIdentity) => {
                 if (!isCurrentRequest()) {
                     return;
                 }
                 const normalized = normalizePlan(context.requiresFreshReview
                     ? { ...plan, requires_fresh_review: true } : plan);
                 if (!normalized?.plan_id || !normalized.run_id || !normalized.turn_id
-                    || normalized.conversation_id !== currentConversationId || !isPlanRunnable(normalized)) {
+                    || normalized.conversation_id !== currentConversationId || !isPlanRunnable(normalized)
+                    || (turnIdentity && (
+                        turnIdentity.conversation_id !== normalized.conversation_id
+                        || turnIdentity.turn_id !== normalized.turn_id
+                        || turnIdentity.run_id !== normalized.run_id
+                        || typeof turnIdentity.user_message_id !== 'string'
+                        || !turnIdentity.user_message_id.trim()
+                    ))) {
                     errored = true;
                     failure = 'The planner returned an invalid plan. Please try again.';
                     useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
@@ -455,6 +462,15 @@ async function dispatchPlan(
                     return;
                 }
                 adoptServerTurnId(normalized.turn_id);
+                if (turnIdentity) {
+                    useChatStore.getState().reconcileOrchestrationUserMessage({
+                        conversationId: currentConversationId,
+                        turnId: currentTurnId,
+                        optimisticId: context.pendingUserMessageId || pendingUserMessageId,
+                        savedId: turnIdentity.user_message_id,
+                    });
+                    context.pendingUserMessageId = turnIdentity.user_message_id;
+                }
                 context.revision = normalized.revision ?? context.revision;
                 useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, {
                     ...normalized,

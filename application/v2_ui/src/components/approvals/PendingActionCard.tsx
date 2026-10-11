@@ -7,9 +7,9 @@
 // reviewed, the server's answer is authoritative, and nothing is ever sent automatically by the
 // browser.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Loader2, RefreshCw, Send, X } from 'lucide-react';
+import { ExternalLink, Loader2, Pencil, RefreshCw, Send, X } from 'lucide-react';
 import {
     formatDateTime,
     pendingActionHeading,
@@ -31,6 +31,10 @@ import {
 import { canChangeEntry, usePendingActions, usePendingActionsStoreApi } from '../../stores/m365PendingActionsStore';
 import { GlassButton } from '../ui/primitives';
 import { DetailShell, Fact, Facts, Notice, StatusBadge } from './ApprovalParts';
+import { PendingActionBody } from './PendingActionBody';
+import { PendingActionEditor } from './PendingActionEditor';
+import { clearPendingReviewThread } from './usePendingActionReview';
+import { canEditPendingAction, pendingActionCanLink, pendingActionLinkLabel } from '../../lib/pendingActionReview';
 
 export type PendingActionCardVariant = 'detail' | 'inline';
 
@@ -40,6 +44,8 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
     const store = usePendingActionsStoreApi();
     const entry = usePendingActions((state) => state.entries[id]);
     const [, setNow] = useState(0);
+    const [editing, setEditing] = useState(false);
+    const editTrigger = useRef<HTMLButtonElement | null>(null);
     const ticking = entry ? needsTicking(entry.action) : false;
     const inline = variant === 'inline';
 
@@ -54,6 +60,10 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
         return () => window.clearInterval(timer);
     }, [id, store, ticking]);
 
+    useEffect(() => {
+        if (entry && (entry.denied || !canEditPendingAction(entry.action))) clearPendingReviewThread(id);
+    }, [id, entry?.action, entry?.denied]);
+
     if (!entry) return null;
 
     const { action, busy, notice, auth, approvalRequired, bodyOpen } = entry;
@@ -67,7 +77,7 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
         ? action.status === 'sent' ? 'Accepted for sending' : action.status === 'pending' ? 'Ready to review' : undefined
         : undefined;
     const canChange = canChangeEntry(entry);
-    const webLink = safeWebLinkUrl(action.web_link);
+    const webLink = pendingActionCanLink(action) ? safeWebLinkUrl(action.web_link) : null;
     const approvalId = (() => {
         const approvals = approvalRequired?.approvals;
         const first = Array.isArray(approvals) ? (approvals[0] as { id?: unknown } | undefined)?.id : undefined;
@@ -101,21 +111,12 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
             </Facts>
 
             {typeof summary.body_preview === 'string' ? (
-                <details
-                    open={bodyOpen}
-                    onToggle={(event) => api.setBodyOpen(id, (event.target as HTMLDetailsElement).open)}
-                    className="rounded-xl border border-edge p-3"
-                >
-                    <summary className="cursor-pointer text-sm font-medium text-text-1">
-                        {fullReview ? 'Message preview' : 'Review message body'}
-                    </summary>
-                    <pre className="mt-2 text-sm break-words whitespace-pre-wrap text-text-1" data-testid="v2-pending-action-body">
-                        {summary.body_preview}
-                    </pre>
-                    {String(summary.content_type ?? '').toLowerCase() === 'html' ? (
-                        <p className="mt-1 text-xs text-text-3">HTML content is displayed as text, not executed.</p>
-                    ) : null}
-                </details>
+                <PendingActionBody body={summary.body_preview} contentType={summary.content_type}
+                    expanded={bodyOpen} truncated={fullReview} loading={entry.reviewing}
+                    onExpand={(open) => {
+                        api.setBodyOpen(id, open);
+                        if (open && fullReview) void api.reviewFull(id);
+                    }} />
             ) : null}
 
             {fullReview ? (
@@ -137,6 +138,11 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
             ) : null}
             {action.error ? <Notice tone="warn">{action.error}</Notice> : null}
             {action.delivery_note ? <Notice tone="info">{action.delivery_note}</Notice> : null}
+            {action.status === 'sent' && emailStatusLabel && !webLink && action.link_pending === true ? (
+                <p role="status" className="text-xs text-text-3">Checking for the sent-message link. Microsoft 365 accepted the send; these read-only checks never send it again.</p>
+            ) : action.status === 'sent' && emailStatusLabel && !webLink && action.viewer_is_owner !== false && action.link_status === 'unavailable' ? (
+                <p role="status" className="text-xs text-text-3">Sent-message link unavailable. Check Outlook Sent Items; Microsoft 365 acceptance has not changed.</p>
+            ) : null}
             {action.will_auto_send === true && actionable ? (
                 <div className="text-sm">
                     <p className="text-text-1">{`Server-scheduled delivery: ${formatDateTime(action.auto_send_at_utc)}.`}</p>
@@ -160,6 +166,15 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
             ) : null}
 
             <div className="flex flex-wrap gap-2" data-testid="v2-pending-action-controls">
+                {canEditPendingAction(action) ? (
+                    <GlassButton size="sm" variant="ghost" disabled={busy || loading || entry.reviewing || entry.denied || editing}
+                        data-testid="v2-pending-action-edit" onClick={(event) => {
+                            editTrigger.current = event.currentTarget;
+                            setEditing(true);
+                        }}>
+                        <Pencil size={14} aria-hidden="true" />Edit
+                    </GlassButton>
+                ) : null}
                 {fullReview ? (
                     <GlassButton
                         size="sm"
@@ -174,7 +189,7 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
                     <GlassButton
                         size="sm"
                         variant="primary"
-                        disabled={!canChange || Boolean(auth) || Boolean(approvalRequired)}
+                        disabled={!canChange || editing || Boolean(auth) || Boolean(approvalRequired)}
                         onClick={() => void api.submit(id, route)}
                         data-testid="v2-pending-action-send"
                     >
@@ -186,7 +201,7 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
                     <GlassButton
                         size="sm"
                         variant="ghost"
-                        disabled={!canChange}
+                        disabled={!canChange || editing}
                         onClick={() => void api.submit(id, 'cancel')}
                         data-testid="v2-pending-action-cancel"
                     >
@@ -228,7 +243,7 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
                 {webLink ? (
                     <a href={webLink} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
                         <ExternalLink size={14} />
-                        Open in Microsoft 365
+                        {pendingActionLinkLabel(action)}
                     </a>
                 ) : null}
                 {!inline && action.conversation_id ? (
@@ -237,6 +252,22 @@ export function PendingActionCard({ id, variant = 'detail' }: { id: string; vari
                     </Link>
                 ) : null}
             </div>
+            {editing ? <PendingActionEditor action={action} onClose={() => {
+                const trigger = editTrigger.current;
+                setEditing(false);
+                void api.refresh(id, { clearNotice: true }).finally(() => {
+                    // Refresh temporarily disables the trigger while the dialog restores focus.
+                    window.requestAnimationFrame(() => {
+                        if (trigger?.isConnected && !trigger.disabled && document.activeElement === document.body) trigger.focus();
+                    });
+                });
+            }}
+                editable={canEditPendingAction(action) && !entry.denied}
+                denied={entry.denied}
+                onSaved={(updated) => {
+                    if (updated) api.remember(updated, { authoritative: true });
+                    else void api.refresh(id);
+                }} /> : null}
         </>
     );
 

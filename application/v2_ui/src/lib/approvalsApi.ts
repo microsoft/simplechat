@@ -506,6 +506,7 @@ export interface PendingAction {
     can_cancel?: boolean;
     can_send_now?: boolean;
     can_approve?: boolean;
+    can_edit?: boolean;
     viewer_is_owner?: boolean;
     requires_recreation?: boolean;
     requires_review?: boolean;
@@ -514,11 +515,19 @@ export interface PendingAction {
     error?: string;
     delivery_note?: string;
     web_link?: string;
+    web_link_kind?: 'draft' | 'sent' | 'event' | 'retained_draft';
+    link_pending?: boolean;
+    link_status?: 'pending' | 'available' | 'unavailable';
+    link_next_lookup_at?: string;
+    link_lookup_deadline_at?: string;
     conversation_id?: string;
     workflow_id?: string;
     run_id?: string;
     request_id?: string;
     message_id?: string;
+    producing_user_message_id?: string;
+    orchestration_run_id?: string;
+    turn_id?: string;
     event_id?: string;
     error_code?: string;
     delay_seconds?: number;

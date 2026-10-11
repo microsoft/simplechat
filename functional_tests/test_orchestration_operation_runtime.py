@@ -1,8 +1,9 @@
 # test_orchestration_operation_runtime.py
 """Policy-governed M365 effects and claimed recovery through the real action runner.
 
-Version: 0.261.324
+Version: 0.261.325
 Implemented in: 0.261.321
+Actual draft send and historical preparation wording added in: 0.261.325
 Storage, Graph, tokens and the model are doubled; external network access is blocked.
 """
 
@@ -85,8 +86,8 @@ def test_email_delivery_modes_and_retry_keep_one_effect(env, world, operations, 
     assert first['operation_receipts']
     assert runtime.operation_summary(first['operation_receipts'], '') == (
         'Accepted for sending; recipient delivery is not confirmed.' if mode == 'auto_send'
-        else 'Delivery scheduled; not yet sent.' if mode == 'draft_delayed'
-        else 'Ready to review — not sent.'
+        else 'Delivery was scheduled; the outgoing-action card shows the current delivery status.' if mode == 'draft_delayed'
+        else 'Prepared for review; the outgoing-action card shows the current delivery status.'
     )
     if mode != 'auto_send':
         action = next(iter(world.pending.items.values()))
@@ -218,7 +219,11 @@ def test_manual_draft_send_reauthorizes_its_step_and_is_not_repeated(env, world,
         again, repeated_error = delivery.dispatch_m365_pending_delivery(USER, action['id'])
     assert error is None and repeated_error is None
     assert sent['status'] == again['status'] == 'sent'
-    assert len(world.graph_calls) == 3
+    posts = [call['url'] for call in world.graph_calls if call['method'] == 'POST']
+    assert posts == [
+        'https://graph.microsoft.com/v1.0/me/messages',
+        'https://graph.microsoft.com/v1.0/me/messages/draft-1/send',
+    ]
 
 
 @pytest.mark.parametrize('mode', ['draft_manual', 'draft_delayed', 'auto_send'])
@@ -257,8 +262,8 @@ def test_calendar_modes_keep_configured_behavior(env, world, operations, monkeyp
     assert len(world.graph_calls) == (1 if mode == 'auto_send' else 0)
     assert runtime.operation_summary(result['operation_receipts'], '') == (
         'Microsoft 365 created the calendar event.' if mode == 'auto_send'
-        else 'Delivery scheduled; not yet sent.' if mode == 'draft_delayed'
-        else 'Ready to review — not sent.'
+        else 'Delivery was scheduled; the outgoing-action card shows the current delivery status.' if mode == 'draft_delayed'
+        else 'Prepared for review; the outgoing-action card shows the current delivery status.'
     )
 
 

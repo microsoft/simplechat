@@ -781,6 +781,13 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
     from functions_notifications import create_notification
     from functions_m365_transport import get_m365_cloud_config
 
+    def content_checker(text, checkpoint, *, user_id):
+        # Optional screening clients/settings resolve at the execution boundary,
+        # not while the delivery owner is bootstrapped.
+        from functions_chat_content_checks import check_chat_content
+
+        return check_chat_content(text, checkpoint, user_id=user_id)
+
     def capture_agent_reference(context, action_id):
         selection = getattr(g, "m365_selected_agent_ref", None) if has_request_context() else None
         if not isinstance(selection, dict) or not selection:
@@ -793,7 +800,7 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
             if key in selection
         }
 
-    def validate_step_reference(reference, context):
+    def validate_step_reference(reference, context, *, include_provenance=False):
         # The stored origin is a locator, not authority; reload its exact owned plan.
         from functions_orchestration_runs import get_orchestration_run
 
@@ -822,6 +829,15 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
         )
         if not matches or run.get("status") == "cancelled" or run.get("superseded_by_run_id"):
             raise M365PolicyError("m365_context_changed", "The originating plan changed or stopped.")
+        if include_provenance:
+            # Derive placement only from the exact owned run validated above, never
+            # from tool arguments or an optimistic browser message identifier.
+            if all(isinstance(run.get(key), str) and run[key] for key in ("turn_id", "user_message_id")):
+                return {
+                    "provenance_version": 1, "conversation_id": context.conversation_id,
+                    "turn_id": run["turn_id"], "user_message_id": run["user_message_id"],
+                }
+            return {}
         return deepcopy(selection)
 
     def capture_step_reference(context, action_id):
@@ -839,7 +855,7 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
         reference = {
             "run_id": origin.get("run_id"), "step_id": origin.get("step_id"), "selection": deepcopy(selection),
         }
-        validate_step_reference(reference, context)
+        reference.update(validate_step_reference(reference, context, include_provenance=True))
         return reference
 
     def authorize_conversation(viewer, conversation_id):
@@ -962,6 +978,7 @@ def configure_m365_pending_delivery_runtime(request_context_factory):
         context_scope=delivery_context, log_event=log_event, notification_sender=notify_delivery,
         capture_agent_reference=capture_agent_reference, view_authorizer=authorize_view,
         capture_step_reference=capture_step_reference,
+        content_checker=content_checker,
         conversation_authorizer=authorize_conversation,
     )
 

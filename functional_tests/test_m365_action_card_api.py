@@ -145,6 +145,7 @@ def cards(monkeypatch):
         view_authorizer=lambda action, viewer: viewer == action["user_id"] or (
             viewer == "viewer" and action.get("m365_execution", {}).get("context", {}).get("shared")
         ),
+        content_checker=lambda *args, **kwargs: SimpleNamespace(blocked=False),
     )
     app = Flask(__name__)
     app.secret_key = "offline-only"
