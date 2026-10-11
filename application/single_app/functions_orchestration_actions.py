@@ -681,7 +681,13 @@ async def invoke_action(
                         level=logging.ERROR,
                         extra={'action_ref': action_ref, 'error_type': type(exc).__name__},
                     )
-                    failure = ActionExecutionError('An action function could not complete.')
+                    journal = current_operation_journal()
+                    failure = (
+                        journal.failure if journal is not None and journal.failure is not None
+                        else ActionExecutionError('An action function could not complete.')
+                    )
+                    if failure is exc:
+                        raise
                     raise failure from exc
                 refusal = result_refusal(invocation.result.value) if m365_step and invocation.result is not None else None
                 if refusal is not None:

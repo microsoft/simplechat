@@ -1,7 +1,7 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.141
+Version: 0.261.324
 Implemented in: 0.261.127
 Initial-claim timing coverage added in: 0.261.129
 Auto-routing admission and content-review file visibility added in: 0.261.131
@@ -57,10 +57,12 @@ SOURCE_SERVICE_FAILURES = (
 def modules():
     before = set(sys.modules)
     with offline_app_imports() as environment:
+        # Match the execution harness's real bootstrap entry before loading routes.
+        bootstrap = importlib.import_module("functions_orchestration_bootstrap")
         imported = SimpleNamespace(
             execution_loop=environment.loop,
             route=importlib.import_module("route_backend_orchestration"),
-            bootstrap=importlib.import_module("functions_orchestration_bootstrap"),
+            bootstrap=bootstrap,
             auth=importlib.import_module("functions_authentication"),
             config=importlib.import_module("config"),
             runs=importlib.import_module("functions_orchestration_runs"),

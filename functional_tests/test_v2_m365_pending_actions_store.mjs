@@ -1,5 +1,5 @@
 // test_v2_m365_pending_actions_store.mjs
-// Version: 0.261.307
+// Version: 0.261.324
 // Implemented in: 0.261.307
 // Executes the state machine behind the Microsoft 365 outgoing-action cards against a fake server:
 // how a card is found, when it may be sent or cancelled, what happens when the server disagrees
@@ -630,8 +630,7 @@ test('Send submits the version that was reviewed, once, with the Microsoft 365 s
         const card = cardOf(store, 'act-1');
         assert.equal(card.action.status, 'sent');
         assert.equal(card.busy, false);
-        assert.equal(card.notice.text, 'Send request checked. Review the server status and delivery note below.');
-        assert.equal(card.notice.tone, 'info');
+        assert.equal(card.notice, null, 'the authoritative sent status needs no duplicate generic send notice');
 
         await stateOf(store).submit('act-1', 'send-now');
         assert.equal(server.calls.length, 1, 'an action that went out cannot be sent again');

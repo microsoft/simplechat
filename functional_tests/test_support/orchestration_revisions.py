@@ -2,9 +2,10 @@
 """
 In-memory Cosmos boundary for conditional orchestration revision tests.
 
-Version: 0.261.140
+Version: 0.261.324
 Implemented in: 0.261.102
 SDK-shaped point response coverage added in: 0.261.140
+SDK responses default in: 0.261.324; sdk_responses=False is a compatibility probe.
 
 Batch operations are formatted by the installed SDK and applied to a copy. A failed
 operation never makes preceding operations visible. Hooks permit deterministic races.
@@ -21,7 +22,7 @@ from azure.cosmos._cosmos_responses import CosmosDict
 
 
 class AtomicMemoryContainer:
-    def __init__(self, partition_field, *, sdk_responses=False):
+    def __init__(self, partition_field, *, sdk_responses=True):
         self.partition_field = partition_field
         self.sdk_responses = sdk_responses
         self.items = {}
@@ -38,7 +39,7 @@ class AtomicMemoryContainer:
         self._lock = RLock()
 
     def _response(self, record):
-        value = deepcopy(record)
+        value = deepcopy(dict(record))
         return CosmosDict(value, response_headers={}) if self.sdk_responses else value
 
     def _hook(self, name):

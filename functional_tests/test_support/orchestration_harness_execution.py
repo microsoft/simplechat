@@ -1,7 +1,7 @@
 # orchestration_harness_execution.py
 """Initialized headless harness fixtures; only external storage/model I/O is doubled.
 
-Version: 0.261.321
+Version: 0.261.324
 Implemented in: 0.261.127
 Publication-only admission guard updated in: 0.261.129
 Direct result-store binding guard updated in: 0.261.130
@@ -171,8 +171,8 @@ class HarnessBlobIO(FakeBlobService):
 
 
 class HarnessMessageContainer(AtomicMemoryContainer):
-    def __init__(self):
-        super().__init__("conversation_id")
+    def __init__(self, *, sdk_responses=True):
+        super().__init__("conversation_id", sdk_responses=sdk_responses)
 
     def delete_item(self, item, partition_key, **kwargs):
         if "etag" not in kwargs:
@@ -241,6 +241,10 @@ class HarnessEnvironment:
         monkeypatch.setattr(self.bootstrap, "get_settings", lambda: deepcopy(self.settings))
         monkeypatch.setattr(self.bootstrap, "get_user_settings", lambda user_id: {"settings": {}})
         monkeypatch.setattr(self.planner, "AzureOpenAI", self.client)
+        # V2 authorized model bindings use the endpoint owner rather than the legacy planner.
+        monkeypatch.setattr(
+            importlib.import_module("functions_model_endpoint_runtime"), "AzureOpenAI", self.client,
+        )
         monkeypatch.setattr(self.artifacts, "_service_factory", self.artifacts._service_factory)
         self.bootstrap.initialize_orchestration_artifact_access()
 

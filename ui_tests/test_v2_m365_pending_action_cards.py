@@ -1,7 +1,7 @@
 # test_v2_m365_pending_action_cards.py
 """
 UI test for Microsoft 365 pending-action cards in the V2 chat.
-Version: 0.261.307
+Version: 0.261.324
 Implemented in: 0.261.307
 
 This test ensures that a saved outgoing Microsoft 365 email or calendar action is drawn in the V2
@@ -39,10 +39,9 @@ CONVERSATION_ID = "conversation-m365"
 LIST_PATH = "/api/msgraph/pending-actions"
 USER_TEXT = "Email Ann the quarterly numbers"
 REPLY_TEXT = "I saved a draft email to Ann. Review it below before it goes out."
-PENDING_STATUS = "Pending \u2014 not sent."
+PENDING_STATUS = "Ready to review \u2014 not sent."
 SENT_STATUS = "Accepted for sending \u2014 recipient delivery is not confirmed."
 CANCELLED_STATUS = "Cancelled \u2014 no further delivery is scheduled for this action."
-SEND_NOTICE = "Send request checked. Review the server status and delivery note below."
 CANCEL_NOTICE = (
     "Cancellation checked. The server status below is authoritative; "
     "this does not recall an already sent item."
@@ -78,7 +77,7 @@ STUB_BACKEND = r"""(config) => {
             method, path, search: target.search, headers: { ...(init.headers || {}) },
             body: typeof init.body === 'string' ? JSON.parse(init.body) : null,
         });
-        if (path === '/api/chat/stream') {
+        if (path === '/api/chat/stream' || path === '/api/v2/orchestration/run') {
             return new Response(new ReadableStream({
                 start(controller) {
                     window.pushChatFrame = (frame) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
@@ -272,6 +271,7 @@ def test_card_follows_its_reply_from_streaming_to_saved(page):
         expect(card).to_have_count(1)
         expect(card).to_have_attribute("data-pending-action-id", "act-live")
         expect(card.get_by_test_id("v2-pending-action-status")).to_have_text(PENDING_STATUS)
+        expect(card.locator('[data-status="pending"]')).to_have_text("Ready to review")
         expect(card.get_by_test_id("v2-pending-action-send")).to_be_enabled()
         expect(card.get_by_test_id("v2-pending-action-cancel")).to_be_enabled()
         expect(root.get_by_test_id("v2-pending-action-slot")).to_have_count(1)
@@ -310,6 +310,97 @@ def test_card_follows_its_reply_from_streaming_to_saved(page):
         assert reply_box is not None
         assert card.bounding_box()["y"] >= reply_box["y"] + reply_box["height"] - 1
         assert not _posts_to_actions(page)
+    assert errors == []
+
+
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}])
+@pytest.mark.parametrize("report_failed", [False, True])
+def test_orchestrated_email_review_stays_with_its_turn_and_requires_explicit_keyboard_choice(page, viewport, report_failed):
+    """A live manual draft is reviewable before the report, and never sends on preparation or reload."""
+    _require_bundle()
+    errors = _collect_page_errors(page)
+    page.set_viewport_size(viewport)
+    draft_warning = "The original Outlook draft remains. Do not send the retained draft again."
+    action = pending_action("act-orchestrated", action_mode="manual", delivery_note=draft_warning)
+    user_message = {
+        "id": "u-orchestrated", "conversation_id": CONVERSATION_ID, "role": "user", "content": USER_TEXT,
+        "metadata": {"orchestration_turn_id": "email-turn"},
+    }
+    with harness_build.start_static_server() as origin:
+        root = _open_chat(page, origin, messages=[user_message], by_id=[action])
+        page.evaluate("""() => {
+            const H = window.OrchHarness;
+            const plan = H.plan.normalizePlan({
+                plan_id: 'email-plan', run_id: 'email-run', turn_id: 'email-turn',
+                conversation_id: 'conversation-m365', planner_contract_version: 2,
+                intent: {summary: 'Prepare the email', complexity: 'simple'},
+                steps: [{step_id: 'draft', capability_id: 'compose', title: 'Prepare the email',
+                    arguments: {}, role: 'reason', estimated_cost: 'low'}],
+                assumptions: [], status: 'awaiting_approval', approval: {mode: 'manual', state: 'pending'},
+                validation: {valid: true, errors: [], warnings: [], repairs: []},
+            });
+            H.stores.orchestration.useOrchestrationStore.getState().setPlan('conversation-m365', 'email-turn', plan);
+            void H.controller.approveAndRunPlan({conversationId: 'conversation-m365', turnId: 'email-turn'});
+        }""")
+        page.wait_for_function("() => typeof window.pushChatFrame === 'function'")
+        creation = {
+            "type": "m365_pending_action", "conversation_id": CONVERSATION_ID, "run_id": "email-run",
+            "step_id": "draft", "user_message_id": "u-orchestrated", "request_id": "orch-email-run-draft",
+            "pending_action": action,
+        }
+        page.evaluate("(frame) => window.pushChatFrame(frame)", creation)
+        card = root.get_by_test_id("v2-pending-action-card")
+        expect(card).to_have_count(1)
+        expect(card.get_by_test_id("v2-pending-action-status")).to_have_text(PENDING_STATUS)
+        expect(root.get_by_test_id("v2-pending-actions-section")).to_have_count(0)
+        user = root.locator('[id="message-u-orchestrated"]')
+        expect(user.get_by_test_id("v2-pending-action-card")).to_have_count(1)
+        summary = card.locator("summary")
+        summary.focus()
+        summary.press("Enter")
+        expect(card.get_by_test_id("v2-pending-action-body")).to_be_visible()
+        assert not _posts_to_actions(page)
+
+        reply_text = "The email is prepared. The later report failed." if report_failed else REPLY_TEXT
+        status = "failed" if report_failed else "completed"
+        terminal = {
+            "type": "orchestration_done", "done": True, "conversation_id": CONVERSATION_ID,
+            "run_id": "email-run", "turn_id": "email-turn", "user_message_id": "u-orchestrated",
+            "message_id": "email-answer", "status": status, "outcome": status, "message_saved": True,
+            "full_content": reply_text, "metadata": {"m365_pending_action_ids": [action["id"]]},
+            "m365_pending_actions": [action],
+        }
+        page.evaluate("""(frame) => { window.pushChatFrame(frame); window.closeChatFrames(); }""", terminal)
+        expect(root.locator('[id="message-email-answer"]').get_by_test_id("v2-pending-action-card")).to_have_count(1)
+        expect(card.get_by_test_id("v2-pending-action-status")).to_have_text(PENDING_STATUS)
+        expect(root.get_by_text(reply_text, exact=True).first).to_be_visible()
+        expect(root.get_by_test_id("v2-pending-actions-section")).to_have_count(0)
+        expect(card).to_have_count(1)
+        assert not _posts_to_actions(page)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth")
+
+        # Reload with ids alone; the owner-authorized detail read recovers the same position.
+        saved_reply = {
+            "id": "email-answer", "conversation_id": CONVERSATION_ID, "role": "assistant",
+            "content": reply_text, "metadata": {"m365_pending_action_ids": [action["id"]]},
+        }
+        root = _open_chat(page, origin, messages=[user_message, saved_reply], by_id=[action])
+        card = root.locator('[id="message-email-answer"]').get_by_test_id("v2-pending-action-card")
+        expect(card).to_have_count(1)
+        expect(root.get_by_test_id("v2-pending-actions-section")).to_have_count(0)
+        expect(card.get_by_test_id("v2-pending-action-status")).to_have_text(PENDING_STATUS)
+        assert not _posts_to_actions(page)
+        choice = card.get_by_test_id("v2-pending-action-cancel" if report_failed else "v2-pending-action-send")
+        expect(choice).to_be_enabled()
+        choice.focus()
+        choice.press("Enter")
+        expect(card.get_by_test_id("v2-pending-action-status")).to_have_text(CANCELLED_STATUS if report_failed else SENT_STATUS)
+        expect(card.get_by_text(draft_warning, exact=True)).to_be_visible()
+        if not report_failed:
+            expect(card.locator('[data-status="sent"]')).to_have_text("Accepted for sending")
+            expect(card.get_by_test_id("v2-pending-action-notice")).to_have_count(0)
+        assert len(_posts_to_actions(page)) == 1
+        assert _posts_to_actions(page)[0]["body"] == {"expected_version": "v1"}
     assert errors == []
 
 
@@ -405,7 +496,7 @@ def test_send_and_cancel_act_on_the_saved_version_and_report_the_servers_answer(
 
         send_card.get_by_test_id("v2-pending-action-send").click()
         expect(send_card.get_by_test_id("v2-pending-action-status")).to_have_text(SENT_STATUS)
-        expect(send_card.get_by_test_id("v2-pending-action-notice")).to_have_text(SEND_NOTICE)
+        expect(send_card.get_by_test_id("v2-pending-action-notice")).to_have_count(0)
         expect(send_card.get_by_test_id("v2-pending-action-send")).to_have_count(0)
         expect(send_card.get_by_test_id("v2-pending-action-cancel")).to_have_count(0)
         # The other card is untouched by it.

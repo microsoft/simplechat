@@ -1,11 +1,12 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.303
+Version: 0.261.324
 Implemented in: 0.261.127
 Container-only generated-file access covered in: 0.261.232
 Merged documents rendered from their own lineage added in: 0.261.245
 Failed files say why they could not be created in: 0.261.303
+SDK-shaped callback boundary normalized in: 0.261.324
 
 Production modules (including the complete upload and download modules) run with
 external Azure I/O doubled. No AST-extracted service, model call, or provider is
@@ -37,6 +38,7 @@ import yaml
 from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
 from flask import Flask, g
 
+from cosmos_document_utils import normalize_cosmos_document
 from content_screening.contracts import (
     ScreeningConfigurationError,
     ScreeningError,
@@ -77,8 +79,8 @@ class Crash(BaseException):
 
 
 class OutputContainer(AtomicMemoryContainer):
-    def __init__(self):
-        super().__init__("conversation_id")
+    def __init__(self, *, sdk_responses=True):
+        super().__init__("conversation_id", sdk_responses=sdk_responses)
 
     def query_items(self, query, parameters=None, partition_key=None, **kwargs):
         params = {entry["name"]: entry["value"] for entry in parameters or []}
@@ -127,8 +129,8 @@ class OutputContainer(AtomicMemoryContainer):
 
 
 class MessageContainer(AtomicMemoryContainer):
-    def __init__(self):
-        super().__init__("conversation_id")
+    def __init__(self, *, sdk_responses=True):
+        super().__init__("conversation_id", sdk_responses=sdk_responses)
         self.before_create = None
         self.after_create = None
 
@@ -302,12 +304,12 @@ class Lifecycle:
 
     def restart(self, *, max_output_bytes=1024 * 1024):
         result_service = self.results.restart()
-        result_service.access.read_conversation = lambda conversation_id: self.conversations.read_item(
+        result_service.access.read_conversation = lambda conversation_id: normalize_cosmos_document(self.conversations.read_item(
             item=conversation_id, partition_key=conversation_id,
-        )
-        result_service.access.read_run = lambda run_id: self.runs.read_item(
+        ))
+        result_service.access.read_run = lambda run_id: normalize_cosmos_document(self.runs.read_item(
             item=run_id, partition_key="conversation-1",
-        )
+        ))
         store = OrchestrationOutputStore(
             self.runs, user_id="owner", conversation_id="conversation-1",
             read_conversation=result_service.access.read_conversation,

@@ -81,6 +81,8 @@ export interface PendingActionDetailState {
 export interface PendingActionsLiveStream {
     conversationId: string;
     userMessageId: string;
+    /** Orchestrated preparation stays beside its original request until the reply is saved. */
+    placement?: 'turn';
 }
 
 export interface PendingActionsFocusRequest {
@@ -477,11 +479,12 @@ export function createPendingActionsStore(
                 patchEntry(id, key, {
                     auth: null,
                     denied: false,
-                    notice: info(
-                        operation === 'cancel'
+                    notice: operation !== 'cancel' && next.status === 'sent'
+                        && (next.graph_resource_type === 'mail' || next.operation === 'send_mail')
+                        ? null
+                        : info(operation === 'cancel'
                             ? 'Cancellation checked. The server status below is authoritative; this does not recall an already sent item.'
-                            : 'Send request checked. Review the server status and delivery note below.',
-                    ),
+                            : 'Send request checked. Review the server status and delivery note below.'),
                 });
             } catch (error) {
                 if (!current(id, key)) return;
@@ -769,7 +772,8 @@ export function createPendingActionsStore(
                     if (previous) set({ liveStream: null });
                     return;
                 }
-                if (previous && previous.conversationId === stream.conversationId && previous.userMessageId === stream.userMessageId) return;
+                if (previous && previous.conversationId === stream.conversationId
+                    && previous.userMessageId === stream.userMessageId && previous.placement === stream.placement) return;
                 const renamed = previous?.conversationId === stream.conversationId ? previous.userMessageId : '';
                 set((state) => {
                     if (!renamed || renamed === stream.userMessageId) return { liveStream: stream };

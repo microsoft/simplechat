@@ -1,8 +1,9 @@
 # test_m365_cosmos_sdk_contract.py
 """
 Functional regressions for Microsoft 365 Cosmos replacement calls.
-Version: 0.261.031
+Version: 0.261.324
 Implemented in: 0.261.031
+Point/query response representation coverage added in: 0.261.324
 
 Uses the installed Cosmos SDK and RequestsTransport with an autospecced HTTP
 session. Only remote responses are faked; the real SDK derives partition routing
@@ -25,6 +26,7 @@ from urllib.parse import unquote, urlsplit
 from azure.core import MatchConditions
 from azure.core.pipeline.transport import RequestsTransport
 from azure.cosmos import CosmosClient
+from azure.cosmos._cosmos_responses import CosmosDict
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 from flask import Flask, g
 import pytest
@@ -72,7 +74,26 @@ class CosmosHttpResponses:
                 "id": "records", "_rid": "offline-container",
                 "partitionKey": {"paths": [f"/{self.partition_field}"], "kind": "Hash", "version": 2},
             }
-        elif "/docs/" in path and method in {"GET", "PUT"}:
+        elif method == "POST" and path == "/dbs/testdb/colls/records/docs":
+            request = json.loads(data)
+            partition = json.loads(headers["x-ms-documentdb-partitionkey"])[0]
+            if headers.get("x-ms-documentdb-isquery"):
+                if request.get("query") != "SELECT * FROM c":
+                    raise AssertionError("Unexpected offline query.")
+                rows = [
+                    deepcopy(record) for (scope, _), record in self.records.items()
+                    if scope == partition
+                ]
+                payload = {"Documents": rows, "_count": len(rows)}
+            else:
+                if request.get(self.partition_field) != partition:
+                    raise AssertionError("Write changed its partition.")
+                key = (partition, request["id"])
+                if key in self.records and not headers.get("x-ms-documentdb-is-upsert"):
+                    status, payload = 409, {"code": "Conflict", "message": "The scoped item already exists."}
+                else:
+                    status, payload = 201, self.seed(request)
+        elif "/docs/" in path and method in {"GET", "PUT", "PATCH"}:
             partition = json.loads(headers["x-ms-documentdb-partitionkey"])[0]
             item_id = path.rsplit("/", 1)[-1]
             existing = self.records.get((partition, item_id))
@@ -84,6 +105,13 @@ class CosmosHttpResponses:
                 status, payload = 412, {"code": "PreconditionFailed", "message": "The item changed."}
             else:
                 body = json.loads(data)
+                if method == "PATCH":
+                    operations = body["operations"]
+                    body = deepcopy(existing)
+                    for operation in operations:
+                        if operation["op"] != "replace" or operation["path"].count("/") != 1:
+                            raise AssertionError("Unexpected offline patch.")
+                        body[operation["path"][1:]] = operation["value"]
                 if body.get(self.partition_field) != partition or body.get("id") != item_id:
                     raise AssertionError("Replacement changed the authorized partition or item ID.")
                 payload = self.seed(body)
@@ -174,6 +202,35 @@ def test_real_sdk_routes_replacements_from_body_and_preserves_etag(cosmos_factor
         )
     assert raised.value.status_code == 412
     assert http.records[(original[partition_field], "record")]["status"] == "completed"
+
+
+def test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain(cosmos_factory):
+    http, container = cosmos_factory("user_id")
+    http.seed({"id": "record", "user_id": "owner", "nested": {"items": [{"value": "json"}]}})
+    point = container.read_item(item="record", partition_key="owner")
+    rows = list(container.query_items(query="SELECT * FROM c", partition_key="owner"))
+    assert type(point) is CosmosDict
+    assert type(point["nested"]) is dict and type(point["nested"]["items"][0]) is dict
+    assert len(rows) == 1 and type(rows[0]) is dict
+    assert rows[0] == dict(point) and type(rows[0]["nested"]) is dict
+
+
+def test_real_sdk_returned_write_documents_use_the_same_top_level_wrapper(cosmos_factory):
+    _http, container = cosmos_factory("user_id")
+    created = container.create_item(body={"id": "record", "user_id": "owner", "status": "created"})
+    upserted = container.upsert_item(body={**created, "status": "upserted"})
+    replaced = container.replace_item(
+        item="record", body={**upserted, "status": "replaced"},
+        etag=upserted["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+    patched = container.patch_item(
+        item="record", partition_key="owner",
+        patch_operations=[{"op": "replace", "path": "/status", "value": "patched"}],
+        etag=replaced["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+    assert all(type(value) is CosmosDict for value in (created, upserted, replaced, patched))
+    assert len({value["_etag"] for value in (created, upserted, replaced, patched)}) == 4
+    assert patched["status"] == "patched" and patched["user_id"] == "owner"
 
 
 def test_real_sdk_rejects_the_unsupported_partition_keyword(cosmos_factory):

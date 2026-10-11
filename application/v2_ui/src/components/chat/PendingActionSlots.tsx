@@ -79,6 +79,7 @@ export function PendingActionPlacementProvider({
             lastMessageByRequestId: lastMessageByRequestId(anchorable),
             streamingUserMessageId:
                 liveStream && liveStream.conversationId === conversationId ? liveStream.userMessageId : '',
+            streamingAtUserTurn: liveStream?.placement === 'turn',
         };
         const byAnchor = new Map<string, string[]>();
         for (const entry of Object.values(entries).sort((a, b) => a.order - b.order)) {

@@ -298,6 +298,7 @@ export interface AnchorContext {
     lastMessageByRequestId: ReadonlyMap<string, string>;
     /** The user message whose reply is still streaming, or '' when nothing is streaming. */
     streamingUserMessageId: string;
+    streamingAtUserTurn?: boolean;
 }
 
 /**
@@ -313,6 +314,7 @@ export function resolveAnchor(
     if (visible(reference.messageId)) return reference.messageId;
     const streaming = context.streamingUserMessageId;
     if (streaming && (reference.userMessageId === streaming || reference.fallbackMessageId === streaming)) {
+        if (context.streamingAtUserTurn && visible(streaming)) return streaming;
         return STREAMING_ANCHOR;
     }
     if (visible(reference.userMessageId)) return reference.userMessageId;

@@ -1101,6 +1101,9 @@ class HarnessExecution:
                 _log_failure("Execution progress delivery stopped.", self.record, exc)
 
     def _progress(self, event):
+        if type(event) is dict and event.get("type") == "m365_pending_action_reference":
+            self._pending_action_created(event)
+            return
         if type(event) is not dict or event.get("type") != "step":
             return
         extra = {
@@ -1117,6 +1120,72 @@ class HarnessExecution:
             event.get("step_id"), event.get("phase"), event.get("summary") or "",
             event.get("step_index"), event.get("capability_id"), **extra,
         ))
+
+    def _pending_action_created(self, event):
+        # The producer runs inside a separate request. Only its exact step-owned
+        # reference crosses the bridge; tool/model snapshots are never published.
+        from functions_orchestration_m365 import step_request_id
+
+        reference = event.get("reference")
+        step_id = event.get("step_id")
+        root = self.record.get("attempt_root_run_id") or self.record["id"]
+        if (
+            type(reference) is not dict
+            or event.get("run_id") != self.record["id"]
+            or reference.get("user_id") != self.record["user_id"]
+            or reference.get("conversation_id") != self.record["conversation_id"]
+            or not any(
+                step.get("step_id") == step_id for step in self.record["plan"]["steps"]
+            )
+            or reference.get("request_id") != step_request_id(f"{root}\x00{step_id}")
+            or not isinstance(reference.get("id"), str) or not reference["id"]
+        ):
+            return
+        with self.lease.lock:
+            current = self.lease.read()
+            action_ids = list(dict.fromkeys([
+                *(current.get("m365_pending_action_ids") or []), reference["id"],
+            ]))
+            self.lease.update({"m365_pending_action_ids": action_ids})
+        try:
+            from functions_msgraph_pending_actions import get_chat_pending_action_cards
+
+            cards = get_chat_pending_action_cards(
+                self.record["user_id"], self.record["conversation_id"],
+                request_id=reference["request_id"], action_ids=[reference["id"]],
+            )
+            for card in cards:
+                self._send(serialize_sse({
+                    "type": "m365_pending_action", "pending_action": card,
+                    "conversation_id": self.record["conversation_id"],
+                    "run_id": self.record["id"], "step_id": step_id,
+                    "user_message_id": self.record.get("user_message_id"),
+                    "request_id": reference["request_id"],
+                }))
+        except Exception as error:
+            _log_failure("A saved outgoing action could not be displayed live.", self.record, error)
+
+    def _pending_action_payload(self):
+        try:
+            record = self._final_record or self.lease.read()
+            action_ids = record.get("m365_pending_action_ids") or []
+            if not action_ids:
+                return {}
+            from functions_msgraph_pending_actions import get_chat_pending_action_cards
+
+            cards = []
+            for offset in range(0, len(action_ids), 100):
+                cards.extend(get_chat_pending_action_cards(
+                    self.record["user_id"], self.record["conversation_id"],
+                    action_ids=action_ids[offset:offset + 100],
+                ))
+            return {"m365_pending_actions": cards}
+        except Exception as error:
+            _log_failure("Saved outgoing actions could not be refreshed.", self.record, error)
+            return {"m365_pending_actions_error": {
+                "error": "m365_pending_actions_unavailable",
+                "message": "Outgoing actions could not be refreshed. Reload them; do not repeat the request.",
+            }}
 
     def _persist(self, record_type, payload):
         if record_type == "run":
@@ -1571,6 +1640,8 @@ class HarnessExecution:
                 if workflow_result_reads and workflow_result_contexts else {}
             ),
         }
+        if current.get("m365_pending_action_ids"):
+            metadata["m365_pending_action_ids"] = list(current["m365_pending_action_ids"])
         thread = self._regeneration_thread()
         if thread:
             metadata["thread_info"] = thread
@@ -1659,6 +1730,7 @@ class HarnessExecution:
         payload.update({
             "metadata": document.get("metadata") or {}, "role": document["role"],
             "replace_content": True, "blocked": blocked,
+            **self._pending_action_payload(),
         })
         return [build_content_event(answer), serialize_sse(strip_private_chat_checks(payload))]
 
@@ -1690,6 +1762,9 @@ class HarnessExecution:
                     finalization_status="failed", outputs=[],
                 ),
             ]
+            terminal = json.loads(self._frames[-1].partition("data:")[2].strip())
+            terminal.update(self._pending_action_payload())
+            self._frames[-1] = serialize_sse(terminal)
         if self.record.get("requires_fresh_review"):
             status = (self._final_record or {}).get("status") or "failed"
             state = {"completed": "completed", "failed": "failed", "cancelled": "interrupted"}.get(status)

@@ -820,6 +820,33 @@ async function executeSavedPlan(
     activeControllers.set(conversationId, controller);
     activeRunIds.set(conversationId, runId);
 
+    const originalUserMessageId = useChatStore.getState().messages.find((message) =>
+        message.conversation_id === conversationId && message.role === 'user'
+        && message.metadata?.orchestration_turn_id === turnId,
+    )?.id || context?.pendingUserMessageId || '';
+    const currentPendingStream = () => activeControllers.get(conversationId) === controller
+        && activeRunIds.get(conversationId) === runId
+        && useChatStore.getState().activeConversationId === conversationId
+        && chatPendingActionsStore.getState().conversationId === conversationId;
+    if (originalUserMessageId && currentPendingStream()) {
+        chatPendingActionsStore.getState().setLiveStream(null);
+        chatPendingActionsStore.getState().setLiveStream({
+            conversationId, userMessageId: originalUserMessageId, placement: 'turn',
+        });
+    }
+    const ingestOutgoingActions = (event: RunStreamEvent) => {
+        if (!currentPendingStream() || event.blocked
+            || (event.conversation_id && event.conversation_id !== conversationId)
+            || (event.run_id && event.run_id !== runId)) return;
+        if (event.type === 'm365_pending_action' && (
+            !plan.steps.some((step) => step.step_id === event.step_id)
+            || (originalUserMessageId && event.user_message_id !== originalUserMessageId)
+        )) return;
+        chatPendingActionsStore.getState().handleStreamPayload(event, {
+            conversationId, userMessageId: originalUserMessageId,
+        });
+    };
+
     const runBody: OrchestrationRunRequest = {
         run_id: runId,
         plan_id: planId,
@@ -833,6 +860,7 @@ async function executeSavedPlan(
     let settled = false;
     let conflictMessage = '';
     const acknowledgeWaiting = (event: RunStreamEvent) => {
+        ingestOutgoingActions(event);
         settled = true;
         const current = useOrchestrationStore.getState();
         const waitingPlan: OrchestrationPlan = { ...plan, status: 'waiting' };
@@ -850,6 +878,7 @@ async function executeSavedPlan(
     const result = await runOrchestration(
         runBody,
         {
+            onM365PendingActions: ingestOutgoingActions,
             onStep: (event) => {
                 const current = useOrchestrationStore.getState();
                 current.applyStepEvent(conversationId, turnId, event);
@@ -876,6 +905,7 @@ async function executeSavedPlan(
                 useChatStore.getState().pushOrchestrationContent(conversationId, accumulated, turnId),
             onWaiting: acknowledgeWaiting,
             onDone: (event, accumulated) => {
+                ingestOutgoingActions(event);
                 settled = true;
                 const status = orchestrationTerminalStatus(event);
                 if (status === 'waiting') {
@@ -910,6 +940,7 @@ async function executeSavedPlan(
                 }
             },
             onCancelled: (event, accumulated) => {
+                ingestOutgoingActions(event);
                 settled = true;
                 const terminal = { ...event, run_id: runId, turn_id: turnId, status: 'cancelled' as const };
                 useOrchestrationStore.getState().updateRunRecovery(runId, {
@@ -948,6 +979,7 @@ async function executeSavedPlan(
         },
         controller.signal,
     );
+    if (currentPendingStream()) chatPendingActionsStore.getState().setLiveStream(null);
     // A draft may have been saved even when the stream ended without its terminal frame.
     refreshOutgoingActions(conversationId);
 

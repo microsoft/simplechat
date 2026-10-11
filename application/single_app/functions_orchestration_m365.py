@@ -26,8 +26,10 @@ import json
 import logging
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from functions_appinsights import log_event
+from functions_m365_action_cards import m365_action_card_events
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_m365_operations import M365_ACTION_DEFINITIONS, M365_FILE_SOURCES, M365_PLUGIN_TYPES, M365_SOURCES
 from functions_msgraph_operations import MSGRAPH_PLUGIN_TYPE
@@ -35,6 +37,7 @@ from m365_interaction import M365_AUTH_INTERACTION_CODES
 
 
 M365_STEP_ACTION_TYPES = frozenset({*M365_PLUGIN_TYPES, MSGRAPH_PLUGIN_TYPE})
+_card_callback = ContextVar('orchestration_m365_card_callback', default=None)
 _FILE_ACTION_SOURCES = {
     action_type: definition['source'] for action_type, definition in M365_ACTION_DEFINITIONS.items()
     if definition['source'] in M365_FILE_SOURCES
@@ -220,6 +223,18 @@ def _log_stop(error, capability_id):
 
 
 @contextmanager
+def orchestration_action_card_events(callback):
+    """Carry the owning run's producer callback into a step's request bridge."""
+    if not callable(callback):
+        raise TypeError('An orchestration action-card callback is required.')
+    token = _card_callback.set(callback)
+    try:
+        yield
+    finally:
+        _card_callback.reset(token)
+
+
+@contextmanager
 def _step_scope(*, user_id, conversation_id, request_key, selection, origin):
     # The runtime owns Cosmos, the tenant and conversation access, so it loads only for a
     # Microsoft 365 step.
@@ -230,7 +245,12 @@ def _step_scope(*, user_id, conversation_id, request_key, selection, origin):
             user_id=user_id, conversation_id=conversation_id,
             request_id=step_request_id(request_key), selection=selection, origin=origin,
         ) as context:
-            yield context
+            callback = _card_callback.get()
+            if callable(callback):
+                with m365_action_card_events(callback):
+                    yield context
+            else:
+                yield context
     except OrchestrationM365Error as error:
         _log_stop(error, origin.get('capability_id'))
         raise

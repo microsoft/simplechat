@@ -3720,6 +3720,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             agent_citations: event.agent_citations as ChatMessage['agent_citations'],
             // Microsoft 365 emails, events and files the answer cites, for its chips.
             ...(event.blocked ? {} : { m365_citations: readM365Citations(event.m365_citations) }),
+            ...(event.blocked ? {} : { m365_pending_actions: event.m365_pending_actions }),
             metadata: {
                 ...event.metadata,
                 ...reasoningMetadataForEvent(event),
@@ -3769,6 +3770,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             };
         });
 
+        if (!event.blocked) chatPendingActionsStore.getState().trackMessage(finalMessage);
         const descriptor = outcome.status === 'completed' ? latestSavedAnalysis([finalMessage]) : null;
         const analysisRevision = get().analysisTurnRevision;
         if (descriptor && analysisRevision !== null) {

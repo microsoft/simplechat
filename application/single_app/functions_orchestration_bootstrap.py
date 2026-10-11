@@ -56,11 +56,12 @@ from functions_simplechat_operations import (
     upload_generated_file_artifact_stream_for_user,
 )
 from functions_workflow_result_store import WorkflowResultStore, _quota_bytes
+from cosmos_document_utils import normalize_cosmos_document
 
 
 def _document_response(value):
     """Remove an SDK mapping wrapper; leave invalid types for the owning contract to reject."""
-    return dict(value) if isinstance(value, dict) else value
+    return normalize_cosmos_document(value) if isinstance(value, dict) else value
 
 
 def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
@@ -75,7 +76,7 @@ def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
         or conversation.get("orchestration_deleted") or conversation.get("deleted")
     ):
         raise OutputUnavailableError("output_conversation_unavailable")
-    return dict(conversation)
+    return normalize_cosmos_document(conversation)
 
 
 def private_external_configuration_digest(value):

@@ -1,7 +1,7 @@
 # test_orchestration_operation_runtime.py
 """Policy-governed M365 effects and claimed recovery through the real action runner.
 
-Version: 0.261.322
+Version: 0.261.324
 Implemented in: 0.261.321
 Storage, Graph, tokens and the model are doubled; external network access is blocked.
 """
@@ -9,6 +9,7 @@ Storage, Graph, tokens and the model are doubled; external network access is blo
 import importlib
 from copy import deepcopy
 import sys
+from types import SimpleNamespace
 
 import pytest
 import requests
@@ -83,9 +84,9 @@ def test_email_delivery_modes_and_retry_keep_one_effect(env, world, operations, 
     assert 'send_mail' in world.loaded_functions[0]
     assert first['operation_receipts']
     assert runtime.operation_summary(first['operation_receipts'], '') == (
-        'Microsoft 365 accepted the send.' if mode == 'auto_send'
+        'Accepted for sending; recipient delivery is not confirmed.' if mode == 'auto_send'
         else 'Delivery scheduled; not yet sent.' if mode == 'draft_delayed'
-        else 'Draft prepared; awaiting review.'
+        else 'Ready to review — not sent.'
     )
     if mode != 'auto_send':
         action = next(iter(world.pending.items.values()))
@@ -129,7 +130,7 @@ def test_changed_payload_or_unknown_outcome_cannot_be_replayed(env, world, opera
     world.replies = [tool_call(
         'm365_email-send_mail', to_recipients='different@example.test', subject='Changed', body_content='Changed',
     )]
-    with pytest.raises(env.actions.ActionExecutionError):
+    with pytest.raises(runtime.OperationRecoveryError):
         run_step(env, world, execution_intent='operate', journal=world.journal())
     assert len(world.graph_calls) == 1
     journal = world.journal()
@@ -175,7 +176,7 @@ def test_receipt_sanitization_failure_blocks_later_calls_in_the_same_step(operat
 
     journal.sanitize = refuse_result
     key, _cached = journal.begin('ticket.create', {'title': 'Requested ticket'})
-    with pytest.raises(ValueError):
+    with pytest.raises(runtime.OperationRecoveryError):
         journal.finish(key, {'id': 'created-ticket'})
     with pytest.raises(runtime.OperationRecoveryError):
         journal.begin('ticket.create', {'title': 'Another ticket'})
@@ -197,7 +198,7 @@ def test_caught_post_write_failure_cannot_continue_with_another_m365_effect(env,
             origin={'run_id': 'run-2', 'attempt_index': 2, 'step_id': STEP}, execution_intent='operate',
         ):
             plugin = env.email.M365EmailPlugin(deepcopy(world.action))
-            with pytest.raises(ValueError):
+            with pytest.raises(runtime.OperationRecoveryError):
                 plugin.send_mail('recipient@example.test', 'Requested email', 'Prepared content.')
             with pytest.raises(runtime.OperationRecoveryError):
                 plugin.send_mail('recipient@example.test', 'Another email', 'Do not send.')
@@ -257,7 +258,7 @@ def test_calendar_modes_keep_configured_behavior(env, world, operations, monkeyp
     assert runtime.operation_summary(result['operation_receipts'], '') == (
         'Microsoft 365 created the calendar event.' if mode == 'auto_send'
         else 'Delivery scheduled; not yet sent.' if mode == 'draft_delayed'
-        else 'Draft prepared; awaiting review.'
+        else 'Ready to review — not sent.'
     )
 
 
@@ -298,15 +299,16 @@ def test_agent_operation_uses_its_own_selection_and_rechecks_revocation(env, wor
 
 
 def test_unknown_graph_write_outcome_is_not_replayed(env, world, operations):
+    runtime, _delivery, _cards = operations
     world.action['additionalFields']['msgraph_mail_send_mode'] = 'auto_send'
     world.graph_error = requests.Timeout('simulated lost write response')
     world.replies = [send_call()]
-    with pytest.raises(env.actions.ActionExecutionError):
+    with pytest.raises(runtime.OperationRecoveryError):
         run_step(env, world, execution_intent='operate', journal=world.journal())
     assert len(world.graph_calls) == 1
     world.graph_error = None
     world.replies = [send_call()]
-    with pytest.raises(env.actions.ActionExecutionError):
+    with pytest.raises(runtime.OperationRecoveryError):
         run_step(env, world, execution_intent='operate', journal=world.journal())
     assert len(world.graph_calls) == 1
 
@@ -321,6 +323,102 @@ def test_sign_in_repair_before_effect_allows_same_request_to_continue(env, world
     world.token_error = None
     result, _ = run_step(env, world, execution_intent='operate', journal=world.journal())
     assert len(world.graph_calls) == 1 and result['operation_receipts']
+
+
+@pytest.mark.parametrize('sdk_responses', [False, True])
+def test_real_receipt_boundary_preserves_sdk_etag_and_completed_retry(operations, world, sdk_responses):
+    world.journal_store.sdk_responses = sdk_responses
+    first = world.journal()
+    key, _cached = first.begin('ticket.create', {'title': 'Requested ticket'})
+    first.finish(key, {'id': 'created-ticket'})
+    saved = world.journal_store.read_item(first.id, partition_key=ROOT_RUN)
+    assert type(saved) is not dict if sdk_responses else type(saved) is dict
+    assert saved['_etag'] and saved['calls'][key]['state'] == 'completed'
+    second = world.journal()
+    _key, cached = second.begin('ticket.create', {'title': 'Requested ticket'})
+    assert cached == {'id': 'created-ticket'}
+
+
+@pytest.mark.parametrize('publication_fails', [False, True])
+def test_saved_manual_draft_reference_crosses_bridge_before_receipt_failure(
+    env, world, operations, monkeypatch, publication_fails,
+):
+    runtime, _delivery, _cards = operations
+    world.graph_response = (200, {'id': 'draft-1', 'changeKey': 'draft-v1'})
+    world.replies = [send_call()]
+    references = []
+
+    def publish(reference):
+        references.append(reference)
+        if publication_fails:
+            raise ConnectionError('PRIVATE_UI_TRANSPORT')
+
+    original = world.journal_store.replace_item
+
+    def fail_finish(*args, **kwargs):
+        if any(call['state'] == 'completed' for call in kwargs['body']['calls'].values()):
+            raise ConnectionError('PRIVATE_RECEIPT_TRANSPORT')
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(world.journal_store, 'replace_item', fail_finish)
+    journal = world.journal()
+    with env.orchestration.orchestration_action_card_events(publish):
+        with pytest.raises(runtime.OperationRecoveryError):
+            run_step(env, world, execution_intent='operate', journal=journal)
+    action = next(iter(world.pending.items.values()))
+    assert len(world.graph_calls) == len(world.pending.items) == len(references) == 1
+    assert references[0] == {
+        'id': action['id'], 'user_id': USER, 'conversation_id': CONVERSATION,
+        'request_id': env.orchestration.step_request_id(f'{ROOT_RUN}\x00{STEP}'),
+    }
+    assert action['status'] == 'pending'
+    world.replies = [send_call()]
+    with pytest.raises(runtime.OperationRecoveryError):
+        run_step(env, world, execution_intent='operate', journal=world.journal())
+    assert len(world.graph_calls) == len(world.pending.items) == 1
+
+
+def test_real_adapter_callback_relays_producer_identity(env, world, operations):
+    world.graph_response = (200, {'id': 'draft-1', 'changeKey': 'draft-v1'})
+    world.replies = [send_call()]
+    events = []
+    callback = env.adapters._m365_card_callback(
+        {'step_id': STEP}, SimpleNamespace(run_id='run-2', user_message_id='question-2'), events.append,
+    )
+    with env.orchestration.orchestration_action_card_events(callback):
+        run_step(env, world, execution_intent='operate', journal=world.journal())
+    action = next(iter(world.pending.items.values()))
+    assert events == [{
+        'type': 'm365_pending_action_reference', 'run_id': 'run-2', 'step_id': STEP,
+        'user_message_id': 'question-2',
+        'reference': {
+            'id': action['id'], 'user_id': USER, 'conversation_id': CONVERSATION,
+            'request_id': env.orchestration.step_request_id(f'{ROOT_RUN}\x00{STEP}'),
+        },
+    }]
+
+
+def test_receipt_conflict_retries_storage_not_the_effect(operations, world, monkeypatch):
+    from azure.cosmos.exceptions import CosmosAccessConditionFailedError
+
+    first = world.journal()
+    key, _cached = first.begin('ticket.create', {'title': 'Requested ticket'})
+    original = world.journal_store.replace_item
+    attempts = []
+
+    def conflict_once(*args, **kwargs):
+        attempts.append(kwargs['etag'])
+        if len(attempts) == 1:
+            raise CosmosAccessConditionFailedError(status_code=412)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(world.journal_store, 'replace_item', conflict_once)
+    first.finish(key, {'id': 'created-ticket'})
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    assert first.receipts == [{'function_name': 'ticket.create', 'result': {'id': 'created-ticket'}}]
+    second = world.journal()
+    _key, cached = second.begin('ticket.create', {'title': 'Requested ticket'})
+    assert cached == {'id': 'created-ticket'}
 
 
 @pytest.mark.parametrize('input_limit', [128000, 1024])

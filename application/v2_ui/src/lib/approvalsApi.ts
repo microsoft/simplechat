@@ -551,7 +551,9 @@ export function pendingActionHeading(action: PendingAction): string {
 
 export function pendingActionStatusText(action: PendingAction): string {
     const labels: Record<string, string> = {
-        pending: 'Pending — not sent.',
+        pending: action.graph_resource_type === 'mail' || action.operation === 'send_mail'
+            ? 'Ready to review — not sent.'
+            : 'Pending — not sent.',
         scheduled: 'Scheduled — not yet sent.',
         review_required: 'Review required — not sent.',
         sending: 'Sending — the Microsoft 365 request is in progress. Do not submit it again.',

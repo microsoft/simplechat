@@ -1,7 +1,7 @@
 # orchestration_results.py
 """
 External-I/O doubles and exact foundation fixtures.
-Version: 0.261.125
+Version: 0.261.324
 Implemented in: 0.261.125
 """
 
@@ -71,8 +71,8 @@ def native_analysis(count=3):
 class ResultContainer(AtomicMemoryContainer):
     """Reuse the transactional fake with the shared result store's cleanup queries."""
 
-    def __init__(self):
-        super().__init__("run_id")
+    def __init__(self, *, sdk_responses=True):
+        super().__init__("run_id", sdk_responses=sdk_responses)
 
     def delete_item(self, item, partition_key, **kwargs):
         if "etag" not in kwargs:

@@ -34,6 +34,7 @@ from azure.core import MatchConditions
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError, ServiceResponseError
 from azure.cosmos import exceptions
 
+from cosmos_document_utils import normalize_cosmos_document
 from content_screening.contracts import ScreeningError
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event, workflow_log_context
@@ -298,7 +299,7 @@ def _replace(record, updates):
     )
     if not isinstance(saved, dict):
         raise CheckpointError('checkpoint_invalid')
-    return dict(saved)
+    return normalize_cosmos_document(saved)
 
 
 def checkpoint_store(record, authorize, *, token=None, claim_id=None):

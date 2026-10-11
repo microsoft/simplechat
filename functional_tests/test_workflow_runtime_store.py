@@ -1,7 +1,7 @@
 # test_workflow_runtime_store.py
 """
 Functional tests for the durable workflow runtime-control journal.
-Version: 0.261.111
+Version: 0.261.324
 Implemented in: 0.261.111
 
 These tests validate milestone 3 runtime-control durability: scoped control-row
@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from azure.core import MatchConditions
+from azure.cosmos._cosmos_responses import CosmosDict
 from azure.cosmos.exceptions import (
     CosmosHttpResponseError,
     CosmosResourceExistsError,
@@ -49,7 +50,10 @@ class FakeClock:
 
 
 class FakeCosmosContainer:
-    def __init__(self):
+    """SDK point documents by default; plain mode is an explicit compatibility case."""
+
+    def __init__(self, *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.records = {}
         self.etag_counter = 0
         self.before_replace = None
@@ -59,6 +63,10 @@ class FakeCosmosContainer:
 
     def _key(self, partition_key, item):
         return (partition_key, item)
+
+    def _response(self, record):
+        value = json_copy(record)
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
 
     def _with_etag(self, record):
         self.etag_counter += 1
@@ -71,13 +79,13 @@ class FakeCosmosContainer:
         if key in self.records:
             raise CosmosResourceExistsError(status_code=409, message="Fake duplicate")
         self.records[key] = self._with_etag(body)
-        return json_copy(self.records[key])
+        return self._response(self.records[key])
 
     def read_item(self, *, item, partition_key):
         key = self._key(partition_key, item)
         if key not in self.records:
             raise CosmosResourceNotFoundError(status_code=404, message="Fake missing")
-        return json_copy(self.records[key])
+        return self._response(self.records[key])
 
     def replace_item(self, *, item, body, etag, match_condition):
         key = self._key(body["run_id"], item)
@@ -91,7 +99,7 @@ class FakeCosmosContainer:
             raise CosmosHttpResponseError(status_code=412, message="Fake stale etag")
         self.records[key] = self._with_etag(body)
         self.replaces.append(json_copy(self.records[key]))
-        return json_copy(self.records[key])
+        return self._response(self.records[key])
 
     def force_replace(self, body):
         key = self._key(body["run_id"], body["id"])
