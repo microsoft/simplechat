@@ -173,3 +173,44 @@ settings.
 
 Related feature references: [Agent and action Ask AI](../features/AGENT_ACTION_AI_ASSISTANT.md)
 and [Workflow Ask AI](../features/WORKFLOW_AI_ASSISTANT.md).
+
+## Cosmos contract review follow-up (v0.261.330)
+
+Fixed in version: **0.261.330**, recorded in `application/single_app/config.py`.
+PR [#1760](https://github.com/microsoft/simplechat/pull/1760) changed the workflow
+runtime module when adding diagnostics, invalidating the Cosmos inventory's
+closed source-only review for `read_workflow_base`. Its function implementation
+did not change; the module fingerprint did. The PR base still matched the
+original review, so this was a PR-caused review gap, not a service outage.
+
+`functional_tests/test_workflow_assist_cosmos_response_contract.py` now runs the
+real reader against the installed Cosmos SDK through the existing offline HTTP
+transport fixture. It checks wrapped point responses, plain editor projections,
+authored revisions, metadata removal, alert diagnostic sanitization, read-only
+behavior, personal partition isolation, real SDK 404 responses and rejected
+identifiers. The inventory replaces the stale source-only exemption with
+owner-runtime evidence that the Cosmos contract job executes automatically.
+No runtime behavior, validator, CI workflow or contract guard is weakened.
+
+The full contract run also exposed an import failure in the existing M365 action
+card harness: its isolated `functions_appinsights` module supplied `log_event`
+but not the PR's new `log_assist_debug` adapter. The harness now supplies both
+logger methods so the real pending-action routes can import the editor assistant
+runtime. Authorization, delivery and route assertions remain unchanged.
+
+### Follow-up validation
+
+Validation uses Python 3.12 and the application's pinned `azure-cosmos==4.9.0`.
+The review gate reports **1,051 owners, 394 doubles and zero review gaps**.
+With the application and functional-test directories on `PYTHONPATH`, this
+network-blocked targeted command passes **85 tests**:
+
+```powershell
+python -m pytest -p test_support.cosmos_network_guard .\functional_tests\test_m365_action_card_api.py .\functional_tests\test_m365_pending_authorization.py .\functional_tests\test_workflow_assist_cosmos_response_contract.py .\functional_tests\test_ask_ai_debug_diagnostics.py .\functional_tests\test_editor_assist_create_item_prompt.py -q --disable-warnings --tb=short
+```
+
+`python .\functional_tests\test_docs_app_surface_coverage.py` passes all seven
+checks, and `python .\functional_tests\test_docs_site_quality.py` passes all six.
+The full CI contract command remains
+`python .\scripts\check_cosmos_response_boundaries.py --run-contracts`; it
+automatically selects the new owner-runtime evidence with its existing suites.

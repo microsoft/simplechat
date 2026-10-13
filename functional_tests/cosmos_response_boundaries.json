@@ -837,7 +837,6 @@
     "application/single_app/functions_thoughts.py::get_pending_thoughts": "f85d5447504e2a31b52688be081be28bfa7d3f43c7c8d5e836be3c2dc1637858",
     "application/single_app/functions_thoughts.py::get_thoughts_for_conversation": "17fdb138dd59ebe66492745f2d0f111655ee6e10714504ea137824a21d374288",
     "application/single_app/functions_workflow_assist_limits.py::CosmosAssistLimitStore.read": "e38f530dd1bef4ba82fdc57f68096ad8426e4c7f992a80cf5b99eb75b8762b11",
-    "application/single_app/functions_workflow_assist_runtime.py::read_workflow_base": "1be9f68968bc2828a5b0088b7e9afab4610f95d6d2c9c880cc1e972f09b45151",
     "application/single_app/functions_workflow_definition_store.py::save_workflow_definition_record": "78c26fbe4d26cdfa86bad30dcc59829d8d883a52749179906824d129451e9fa4",
     "application/single_app/functions_workflow_definition_store.py::create_workflow_definition_record_if_absent": "52d7e92b83453a9caf96bbb108673810fd48caa03ab729dd1ad1fff085cd1339",
     "application/single_app/functions_workflow_definition_store.py::update_workflow_runtime_record": "f41b5161ec9f6f56e4990f3cc55d457d966ee9f2d08a8deae6dd88013acc2e57",
@@ -17065,13 +17064,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e4db2e747cbc4026e96e90af13cf117ab83c5f6d3a8fe3ed2c193364752188cb"
+        "module_sha256": "585d2a5ef9566cfb23b0f763b3b9ed9f0e152d2135f20429b1344f254c2d1aaf"
       },
       "classification": "sdk-compatible",
-      "contract": "read_workflow_base: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "read_workflow_base reads a real SDK CosmosDict in the caller's personal partition, projects a plain editor dictionary without Cosmos metadata, sanitizes alert diagnostics, and recomputes the authored revision without writes. Foreign or missing items remain unavailable, and invalid IDs never reach the SDK.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workflow_assist_cosmos_response_contract.py"
       ]
     },
     "application/single_app/functions_workflow_chat_delivery_status.py::_RequestReads._read_workflow": {
