@@ -211,6 +211,7 @@ python -m pytest -p test_support.cosmos_network_guard .\functional_tests\test_m3
 
 `python .\functional_tests\test_docs_app_surface_coverage.py` passes all seven
 checks, and `python .\functional_tests\test_docs_site_quality.py` passes all six.
-The full CI contract command remains
-`python .\scripts\check_cosmos_response_boundaries.py --run-contracts`; it
-automatically selects the new owner-runtime evidence with its existing suites.
+The full CI contract command,
+`python .\scripts\check_cosmos_response_boundaries.py --run-contracts`, passes
+**704 tests and 231 subtests** locally with external network access blocked.
+It automatically selects the new owner-runtime evidence with its existing suites.

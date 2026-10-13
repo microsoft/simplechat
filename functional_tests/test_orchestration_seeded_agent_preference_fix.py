@@ -2,8 +2,9 @@
 # test_orchestration_seeded_agent_preference_fix.py
 """
 Functional test for an agent the user picked running while their agent preference is off.
-Version: 0.261.289
+Version: 0.261.329
 Implemented in: 0.261.289
+Authenticated action roles forwarded in: 0.261.329
 
 Picking an agent in the composer is itself the permission to use that agent, so planning
 and execution run it even while the user's general "Enable Agents" preference is off. The
@@ -269,7 +270,8 @@ def test_action_sources_never_receive_the_agent_pick():
         )
         assert len(world.admit(current)) == 1
         assert reader.call_count >= 3
-        assert all(set(call.kwargs) == {"settings"} for call in reader.call_args_list)
+        assert all(set(call.kwargs) == {"settings", "user_roles"} for call in reader.call_args_list)
+        assert all(call.kwargs["user_roles"] == list(world.roles) for call in reader.call_args_list)
 
 
 if __name__ == "__main__":
