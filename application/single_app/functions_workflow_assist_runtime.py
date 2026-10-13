@@ -29,7 +29,8 @@ import time
 from azure.core.exceptions import AzureError
 from openai import APITimeoutError, BadRequestError, RateLimitError
 
-from functions_appinsights import log_event
+from functions_appinsights import log_assist_debug, log_event
+from functions_assist_diagnostics import AssistDiagnostics
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_assist import ASSIST_MAX_REQUEST_REFERENCES, WorkflowAssistError, WorkflowAssistServices
 from functions_workflow_assist_limits import CosmosAssistLimitStore, WorkflowAssistLimiter
@@ -148,18 +149,21 @@ class WorkflowAssistModel:
     asked for, and dropped for the rest of the request when the deployment refuses it.
     """
 
-    def __init__(self, client_factory, *, clock=time.monotonic):
+    def __init__(self, client_factory, *, clock=time.monotonic, diagnostics=None):
         self._client_factory = client_factory
         self._clock = clock
         self._client = None
         self._model_name = None
         self._json_mode = True
+        self._diagnostics = diagnostics or AssistDiagnostics()
+        self._provider_calls = 0
 
     def _ready_client(self):
         if self._client is None:
             try:
                 client, model_name = self._client_factory()
             except Exception as exc:
+                self._diagnostics.emit('provider_failed', assist_stage='model', assist_code='assistant_unavailable')
                 raise WorkflowAssistError('assistant_unavailable') from exc
             self._client, self._model_name = client, model_name
         return self._client
@@ -172,13 +176,26 @@ class WorkflowAssistModel:
             if remaining < ASSIST_MIN_CALL_SECONDS:
                 raise WorkflowAssistError('assistant_timeout')
             parameters = assist_model_parameters(self._model_name, messages, json_mode=self._json_mode)
+            started = self._clock()
+            self._provider_calls += 1
             try:
                 response = client.with_options(timeout=remaining, max_retries=0).chat.completions.create(**parameters)
             except Exception as exc:
                 if self._json_mode and is_json_mode_rejection(exc):
+                    self._diagnostics.emit('json_mode_fallback', assist_stage='model', json_mode=True,
+                                           provider_status=getattr(exc, 'status_code', None),
+                                           provider_attempt=self._provider_calls)
                     self._json_mode = False
                     continue
-                raise provider_error(exc) from exc
+                error = provider_error(exc)
+                self._diagnostics.emit('provider_failed', assist_stage='model', assist_code=error.code,
+                                       provider_status=getattr(exc, 'status_code', None), json_mode=self._json_mode,
+                                       provider_attempt=self._provider_calls,
+                                       provider_duration_ms=int((self._clock() - started) * 1000))
+                raise error from exc
+            self._diagnostics.emit('provider_finished', assist_stage='model', json_mode=self._json_mode,
+                                   provider_attempt=self._provider_calls,
+                                   provider_duration_ms=int((self._clock() - started) * 1000))
             return model_reply(response)
 
 
@@ -290,15 +307,17 @@ def build_workflow_assist_services(settings, *, client_factory):
     def log(message, extra, level):
         log_event(message, extra=extra, level=level)
 
+    diagnostics = AssistDiagnostics(log_assist_debug)
     return WorkflowAssistServices(
         limiter=WorkflowAssistLimiter(CosmosAssistLimitStore(cosmos_settings_container)),
         read_base=read_base,
         resolve_references=resolve_references,
         load_options=load_options,
         load_excerpt=load_excerpt,
-        call_model=WorkflowAssistModel(client_factory),
+        call_model=WorkflowAssistModel(client_factory, diagnostics=diagnostics),
         dry_run=dry_run,
         agent_email_capable=agent_email_capable,
         m365_connected=m365_connected,
         log=log,
+        diagnostics=diagnostics,
     )

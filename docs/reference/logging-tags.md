@@ -10,6 +10,8 @@ Last inventoried: 2026-08-10
 
 ## Current tag inventory
 
+- `[EDITOR_ASSIST]`
+- `[WORKFLOW_ASSIST]`
 - `[PUBLIC_CHAT_SCOPE]`
 
 - `[ACTION_TEST]`
@@ -311,6 +313,24 @@ Last inventoried: 2026-08-10
 - `[WORKSPACE_ACTIVITY]`
 - `[WORKSPACE_IDENTITY]`
 - `[WORKSPACE_ROUTE]`
+
+## Ask AI operation diagnostics
+
+Implemented in version: **0.261.329**, recorded in `application/single_app/config.py`.
+
+`[EDITOR_ASSIST] Ask AI diagnostic` covers agent and action editor turns;
+`[WORKFLOW_ASSIST] Ask AI diagnostic` covers personal workflow turns. The shared provider
+adapter uses the same surface-specific tag. **Enable Debug Logging** must be enabled for any of
+these new detailed records to reach the configured Application Insights logger or debug console.
+Existing assistant request summaries retain their previous behavior.
+
+The records use explicitly enumerated `assist_*` categories, bounded numeric measurements,
+boolean flags and `turn_id_hash`. The serializer preserves these safe categories instead of
+replacing them with string lengths. It does not allow arbitrary diagnostic text. No instruction,
+draft, response, credentials, raw identity IDs or provider exception message is recorded.
+
+See [Ask AI operation diagnostics](../explanation/fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md)
+for the event and dimension reference, bounded queries and reproduction procedure.
 
 ## Orchestration failure diagnostics
 

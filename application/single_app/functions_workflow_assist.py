@@ -38,6 +38,7 @@ import time
 import traceback
 
 from functions_assist_references import ReferenceRequestError, canonical_request_references
+from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_LIMIT, AssistDiagnostics, assist_finish_reason
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from functions_m365_workflow_binding import workflow_execution_fingerprint
 from functions_rate_limit import build_rate_limit_error_payload
@@ -592,7 +593,7 @@ def message_size(messages):
 class _Correctable(Exception):
     """The model's reply cannot be used; ``messages`` are server-authored and go to the correction round."""
 
-    def __init__(self, messages, stage):
+    def __init__(self, messages, stage, *, diagnostics=()):
         cleaned = []
         for message in messages[:_MAX_CORRECTION_MESSAGES]:
             text = ' '.join(str(message).split())
@@ -601,13 +602,15 @@ class _Correctable(Exception):
             cleaned.append(text)
         self.messages = cleaned or ['The reply could not be used.']
         self.stage = stage
+        self.diagnostics = list(diagnostics)[:ASSIST_DIAGNOSTIC_LIMIT]
         super().__init__(stage)
 
 
 def parse_model_output(content):
     """The model's reply as a JSON object, or raise ``_Correctable``. One Markdown fence is tolerated."""
     if not isinstance(content, str) or not content.strip():
-        raise _Correctable(['The reply was empty. Reply with exactly one JSON object.'], 'parse')
+        raise _Correctable(['The reply was empty. Reply with exactly one JSON object.'], 'parse',
+                           diagnostics=[{'assist_rule': 'empty_reply'}])
     text = content.strip()
     fenced = _JSON_FENCE.match(text)
     if fenced:
@@ -617,11 +620,14 @@ def parse_model_output(content):
     except (ValueError, RecursionError):
         raise _Correctable(
             ['The reply was not valid JSON. Reply with exactly one JSON object and nothing else.'], 'parse',
+            diagnostics=[{'assist_rule': 'invalid_json'}],
         ) from None
     if not isinstance(output, dict):
-        raise _Correctable(['The reply must be one JSON object.'], 'parse')
+        raise _Correctable(['The reply must be one JSON object.'], 'parse',
+                           diagnostics=[{'assist_rule': 'reply_not_object'}])
     if _json_problem(output) is not None:
-        raise _Correctable(['The reply contains text that is not valid Unicode or is nested too deeply.'], 'parse')
+        raise _Correctable(['The reply contains text that is not valid Unicode or is nested too deeply.'], 'parse',
+                           diagnostics=[{'assist_rule': 'invalid_json_value'}])
     return output
 
 
@@ -681,7 +687,7 @@ class WorkflowAssistServices:
     """
 
     def __init__(self, *, limiter, read_base, resolve_references, load_options, load_excerpt, call_model, dry_run,
-                 agent_email_capable=None, m365_connected=None, log=None, clock=time.monotonic):
+                 agent_email_capable=None, m365_connected=None, log=None, clock=time.monotonic, diagnostics=None):
         self.limiter = limiter
         self.read_base = read_base
         self.resolve_references = resolve_references
@@ -693,6 +699,7 @@ class WorkflowAssistServices:
         self.m365_connected = m365_connected or (lambda _user_id: None)
         self.log = log or (lambda _message, _extra, _level: None)
         self.clock = clock
+        self.diagnostics = diagnostics or AssistDiagnostics()
 
 
 # ---------------------------------------------------------------------------
@@ -781,14 +788,17 @@ class _Evaluator:
         if finish_reason == 'length':
             raise _Correctable(
                 ['The reply was cut off before it ended. Reply with fewer operations or a shorter reply.'], 'length',
+                diagnostics=[{'assist_rule': 'output_truncated'}],
             )
         output = parse_model_output(content)
-        messages = validate_assist_output(output)
+        diagnostics = []
+        messages = validate_assist_output(output, diagnostics=diagnostics)
         if messages:
-            raise _Correctable(messages, 'schema')
+            raise _Correctable(messages, 'schema', diagnostics=diagnostics)
         reply = clean_reply(output['reply'])
         if not reply:
-            raise _Correctable(['reply must be plain text that is not blank.'], 'schema')
+            raise _Correctable(['reply must be plain text that is not blank.'], 'schema',
+                               diagnostics=[{'assist_rule': 'reply_required'}])
         operation_count = len(output.get('operations') or [])
         if output['outcome'] != 'changed':
             return _Attempt(output['outcome'], reply)
@@ -797,17 +807,19 @@ class _Evaluator:
         try:
             candidate, info = apply_assist_operations(draft, output, self.handles, self.context)
         except AssistApplyError as exc:
-            raise _Correctable(exc.messages, 'apply') from None
+            raise _Correctable(exc.messages, 'apply',
+                               diagnostics=exc.diagnostics or [{'assist_rule': 'operation_invalid'}]) from None
         violation = workflow_assist_violation(draft, candidate)
         if violation:
-            raise _Correctable([violation], 'violation')
+            raise _Correctable([violation], 'violation', diagnostics=[{'assist_rule': 'protected_workflow'}])
         changes = workflow_changes(draft, candidate)
         if not changes:
             return _Attempt('explained', _NO_CHANGE_REPLY, operation_count=operation_count)
         try:
             projection = workflow_for_save(_json_copy(candidate), self.original)
         except WorkflowEditorProjectionError:
-            raise _Correctable(['The workflow editor could not save the changed workflow.'], 'projection') from None
+            raise _Correctable(['The workflow editor could not save the changed workflow.'], 'projection',
+                               diagnostics=[{'assist_rule': 'projection_invalid'}]) from None
         result = self.run.services.dry_run(self.run.user_id, validation_copy(projection))
         tolerated = False
         if not (result or {}).get('ok'):
@@ -817,7 +829,10 @@ class _Evaluator:
                 if code in codes:
                     raise WorkflowAssistError(code)
             if _error_signature(errors) != _error_signature(self.baseline_errors()):
-                raise _Correctable(self._validation_messages(errors, candidate), 'validation')
+                raise _Correctable(self._validation_messages(errors, candidate), 'validation',
+                                   diagnostics=[{
+                                       'assist_rule': 'save_validation', 'assist_validation_code': error.get('code'),
+                                   } for error in errors[:ASSIST_DIAGNOSTIC_LIMIT]] or [{'assist_rule': 'save_validation'}])
             tolerated = True
         return _Attempt(
             'changed', reply, candidate=candidate, info=info, changes=changes, projection=projection,
@@ -981,6 +996,8 @@ class _AssistRun:
         self.started = services.clock()
         self.deadline = self.started + ASSIST_DEADLINE_SECONDS
         self.model_called = False
+        self.diagnostics = services.diagnostics
+        self.diagnostics.bind('workflow', 'personal', clock=services.clock)
         self.metrics = {
             'user_id': user_id, 'submission_id': None, 'status': None, 'outcome': None, 'code': None,
             'stage': 'request', 'error_type': None, 'invalid_stage': None, 'operation_count': 0,
@@ -996,6 +1013,7 @@ class _AssistRun:
         self.metrics['stage'] = name
 
     def execute(self, request):
+        self.diagnostics.bind('workflow', 'personal', request.submission_id, clock=self.services.clock)
         services = self.services
         user_id = self.user_id
         self.metrics.update({
@@ -1099,6 +1117,7 @@ class _AssistRun:
         """At most two model calls: the reply, then one correction round with server-authored errors."""
         previous_errors = None
         for attempt_number in range(1, ASSIST_MODEL_ATTEMPTS + 1):
+            self.diagnostics.attempt = attempt_number
             remaining = self.remaining()
             if remaining < ASSIST_MIN_MODEL_SECONDS:
                 raise WorkflowAssistError('assistant_timeout')
@@ -1106,19 +1125,33 @@ class _AssistRun:
             messages = envelope.messages(previous_errors)
             self.model_called = True
             self.metrics['model_calls'] += 1
+            self.diagnostics.emit('model_started', assist_stage='model', remaining_ms=int(remaining * 1000))
             content, finish_reason = self.services.call_model(messages, remaining - ASSIST_POST_MODEL_SECONDS)
+            self.diagnostics.emit(
+                'model_finished', assist_stage='evaluate', assist_finish_reason=assist_finish_reason(finish_reason),
+                output_present=isinstance(content, str) and bool(content.strip()),
+                output_length=len(content) if isinstance(content, str) else 0,
+            )
             self.stage('evaluate')
             try:
                 return evaluator.evaluate(content, finish_reason)
             except _Correctable as exc:
                 self.metrics['invalid_stage'] = exc.stage
+                for reason_index, diagnostic in enumerate(exc.diagnostics, start=1):
+                    self.diagnostics.emit('validation_rejected', **diagnostic, assist_stage=exc.stage,
+                                          reason_index=reason_index, reason_count=len(exc.diagnostics))
                 if attempt_number >= ASSIST_MODEL_ATTEMPTS:
                     break
                 self.metrics['correction_count'] += 1
+                self.diagnostics.emit('correction_started', assist_stage=exc.stage)
                 previous_errors = exc.messages
         raise WorkflowAssistError('assistant_output_invalid')
 
     def log(self, status, *, outcome=None, code=None):
+        self.diagnostics.emit('request_finished', assist_stage=self.metrics['stage'], assist_code=code,
+                              assist_outcome=outcome or 'failed', status=status,
+                              model_calls=self.metrics['model_calls'], correction_count=self.metrics['correction_count'],
+                              operation_count=self.metrics['operation_count'])
         self.metrics.update({
             'status': status, 'outcome': outcome, 'code': code,
             'duration_ms': max(0, int((self.services.clock() - self.started) * 1000)),
