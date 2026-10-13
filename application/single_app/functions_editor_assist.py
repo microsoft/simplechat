@@ -1079,13 +1079,13 @@ class _Attempt:
 _NO_CHANGE_REPLY = 'The draft already works this way, so nothing was changed.'
 
 
-class _OperationErrors(list):
+class _OperationErrors:
     def __init__(self):
-        super().__init__()
+        self.messages = []
         self.diagnostics = []
 
     def reject(self, message, rule, *, index=0, operation='create_item', path=None, descriptor=None):
-        self.append(message)
+        self.messages.append(message)
         if len(self.diagnostics) < ASSIST_DIAGNOSTIC_LIMIT:
             self.diagnostics.append({
                 'assist_rule': rule, 'operation_index': index, 'assist_operation': operation,
@@ -1234,8 +1234,8 @@ def evaluate_output(request, handles, output):
             errors.reject(f'Every created item must stay assigned in {target}.', 'created_item_unassigned',
                           path=target, descriptor=target_descriptor)
 
-    if errors:
-        raise _Correctable(errors, 'operations', diagnostics=errors.diagnostics, operation_count=len(operations))
+    if errors.messages:
+        raise _Correctable(errors.messages, 'operations', diagnostics=errors.diagnostics, operation_count=len(operations))
 
     changes = compute_changes(request, candidate, variant_changed)
     warnings = []

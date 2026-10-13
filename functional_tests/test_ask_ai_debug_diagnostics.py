@@ -1,8 +1,9 @@
 # test_ask_ai_debug_diagnostics.py
 """
 Functional regressions for debug-gated Ask AI diagnostics.
-Version: 0.261.329
+Version: 0.261.331
 Implemented in: 0.261.329
+Operation error container fix: 0.261.331
 
 Exercises real editor/workflow cores, model adapter, and log_event serialization
 with offline providers. Synthetic replies prove rule visibility and privacy,
@@ -206,6 +207,26 @@ def test_repeated_and_read_only_fields_and_bounded_reasons(diagnostic_logger, ca
     assert len(rejected) == 2 * ASSIST_DIAGNOSTIC_LIMIT
     assert all(record.sc_assist_rule == 'field_read_only' for record in rejected)
     assert PRIVATE not in emitted_text(caplog, capsys)
+
+
+@pytest.mark.parametrize('message_count', [0, 2, ASSIST_DIAGNOSTIC_LIMIT + 1])
+def test_operation_error_container_separates_messages_and_bounded_diagnostics(message_count):
+    errors = editor._OperationErrors()
+    expected_messages = []
+    expected_diagnostics = []
+    for index in range(1, message_count + 1):
+        message = f'Operation {index}: the path is not a field in this draft.'
+        expected_messages.append(message)
+        errors.reject(message, 'field_unknown', index=index, operation='set')
+        if index <= ASSIST_DIAGNOSTIC_LIMIT:
+            expected_diagnostics.append({
+                'assist_rule': 'field_unknown', 'operation_index': index,
+                'assist_operation': 'set', 'assist_field': None,
+                'field_known': False, 'assist_field_kind': None,
+            })
+    assert type(errors.messages) is list
+    assert errors.messages == expected_messages
+    assert errors.diagnostics == expected_diagnostics
 
 
 def test_duplicate_fields_and_private_paths_have_separate_safe_reasons(diagnostic_logger, caplog, capsys):

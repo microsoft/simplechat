@@ -1,4 +1,4 @@
-# Ask AI Creation Contract and Operation Diagnostics Fix (v0.261.329)
+# Ask AI Creation Contract and Operation Diagnostics Fix (v0.261.331)
 
 ## Issue and root cause
 
@@ -215,3 +215,33 @@ The full CI contract command,
 `python .\scripts\check_cosmos_response_boundaries.py --run-contracts`, passes
 **704 tests and 231 subtests** locally with external network access blocked.
 It automatically selects the new owner-runtime evidence with its existing suites.
+
+## Operation error container review follow-up (v0.261.331)
+
+Fixed in version: **0.261.331**, recorded in `application/single_app/config.py`.
+The CodeQL review on PR [#1760](https://github.com/microsoft/simplechat/pull/1760)
+flagged `py/missing-equals`: `_OperationErrors` inherited list equality while
+adding separate diagnostic metadata that those comparisons ignored.
+
+The accumulator is now a plain object with explicit `messages` and `diagnostics`
+lists, rather than a list subclass. Validation checks `messages` and supplies
+that ordinary list to the correction exception. This removes the inherited
+collection equality contract without adding unnecessary equality operators or
+changing correction text, diagnostic limits, proposal atomicity or response bodies.
+No CodeQL rule, CI check or domain validation is weakened.
+
+`functional_tests/test_ask_ai_debug_diagnostics.py` adds regression cases for empty
+accumulators, multiple messages, and a rejection count above the diagnostic limit.
+They verify that messages remain an ordinary, ordered list while diagnostic
+records are retained separately and capped. Existing core and creation-contract
+tests exercise successful proposals, corrected rejections and terminal failures.
+
+The three new cases fail against the original list subclass and pass after the
+change. The targeted validation command passes **76 tests**:
+
+```powershell
+python -m pytest .\functional_tests\test_ask_ai_debug_diagnostics.py .\functional_tests\test_editor_assist_core.py .\functional_tests\test_editor_assist_create_item_prompt.py -q --tb=short
+```
+
+`python .\functional_tests\test_docs_app_surface_coverage.py` passes all seven
+checks, and `python .\functional_tests\test_docs_site_quality.py` passes all six.
