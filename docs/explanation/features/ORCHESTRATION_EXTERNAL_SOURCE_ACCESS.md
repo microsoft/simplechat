@@ -23,6 +23,12 @@ refused just before it ran. Each refusal is now logged with the check that faile
 See the [agent document type fix](../fixes/ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX.md)
 ([#1699](https://github.com/microsoft/simplechat/issues/1699)).
 
+**Updated in version: 0.261.329.** Action discovery and exact manifest resolution
+receive the authenticated external-source identity's roles explicitly. Control
+Center actions therefore remain available to authorized callers during worker
+preflight and retained-result reads without a Flask request context. See the
+[Control Center role propagation fix](../fixes/CONTROL_CENTER_ORCHESTRATION_ROLE_PROPAGATION_FIX.md).
+
 ## Purpose and scope
 
 An external Gather result is the content an authorized adapter actually returned,
@@ -68,6 +74,12 @@ is refused as `result_external_source_unavailable`, and a narrowed catalog with
 more than one agent is refused. The pick only selects a record from the current
 catalog; its own name, scope and ID fields are never proof of access. Action steps
 never receive the pick.
+For action steps, the provider passes `user_roles=list(identity.roles)` to both
+the action catalog reader and exact manifest resolver. Injected action callbacks
+must accept this keyword. These roles come from the current authenticated
+external-source identity, never a saved run or plan; the absence of a Flask
+request on a worker is not a reason to drop them. Agent callbacks do not receive
+this action-specific keyword.
 Membership in a catalog alone is insufficient: the provider also calls
 `resolve_delegation_agent` or `resolve_action_manifest` for the exact stored
 integration. These existing APIs recheck scope membership, governance, enablement,

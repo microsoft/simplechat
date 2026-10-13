@@ -1,10 +1,11 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.291
+Version: 0.261.329
 Session-trusted agent and action sources in: 0.261.270
 Hand-selected agent honoured while the agent preference is off in: 0.261.289
 Stored agents accepted as any dictionary, and refusals logged by check, in: 0.261.291 (#1699)
+Authenticated action roles forwarded to discovery and exact resolution in: 0.261.329
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page
@@ -310,7 +311,9 @@ class OrchestrationExternalSourceProvider:
         callback = self.agent_catalog_reader if source_type == "agent" else self.action_catalog_reader
         if callback is None:
             raise ResultUnavailableError("result_external_catalog_required")
-        if seeded_agent is None:
+        if source_type == "action":
+            catalog = callback(identity.user_id, settings=settings, user_roles=list(identity.roles))
+        elif seeded_agent is None:
             catalog = callback(identity.user_id, settings=settings)
         else:
             # Narrowed to the run's selection exactly as planning and execution narrowed it.
@@ -413,7 +416,7 @@ class OrchestrationExternalSourceProvider:
                 if self.action_resolver is None:
                     raise ResultUnavailableError("result_external_resolver_required")
                 resolved = self.action_resolver(
-                    identity.user_id, selected["action_ref"], settings=settings,
+                    identity.user_id, selected["action_ref"], settings=settings, user_roles=list(identity.roles),
                 )
                 origin = get_action_origin(resolved)
                 if not isinstance(resolved, dict):

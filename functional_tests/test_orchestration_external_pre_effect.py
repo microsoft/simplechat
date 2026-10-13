@@ -1,8 +1,9 @@
 # test_orchestration_external_pre_effect.py
 """
 Functional tests for current and actual configuration support before acquisition.
-Version: 0.261.127
+Version: 0.261.329
 Implemented in: 0.261.127
+Authenticated action roles forwarded in: 0.261.329
 
 Real provider authorization, scoped resolvers, metadata reconstruction, attestor
 projections and acquisition hooks run with only external/storage I/O doubled.
@@ -64,7 +65,7 @@ def pre_effect_world(metadata_world, capture_runtime):
             raise world.identity_failure
         return source_module.CurrentExternalSourceIdentity(user_id, world.roles, True)
 
-    def catalog(user_id, *, settings):
+    def catalog(user_id, *, settings, user_roles=None):
         world.catalog_reads.append(user_id)
         action = world.action_store.items["action-one"]
         agent = world.agent_store.items["agent-one"]
