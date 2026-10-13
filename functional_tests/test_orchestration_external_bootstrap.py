@@ -1,11 +1,12 @@
 # test_orchestration_external_bootstrap.py
 """
 Functional test for application-owned session identity and acquisition wiring on retained results.
-Version: 0.261.270
+Version: 0.261.329
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.209
 Session-trusted agent and action steps implemented in: 0.261.270
+Authenticated action roles forwarded in: 0.261.329
 
 Runs the real bootstrap, session capture, current-access reader, retention and
 result store with only Cosmos storage doubled and networking blocked. Roles come
@@ -652,13 +653,15 @@ def action_root(runtime, monkeypatch):
     }
     state = SimpleNamespace(catalog=[entry], description="Delegated mail reads.", metadata_reads=[])
 
-    def resolve(user_id, action_ref, *, settings=None, user_groups=None):
+    def resolve(user_id, action_ref, *, settings=None, user_groups=None, user_roles=None):
         if user_id != USER_ID or action_ref != selector or not state.catalog:
             raise PermissionError("The action is unavailable.")
         return manifests.bind_action_origin({**entry, "description": state.description}, "personal", USER_ID)
 
     defaults = runtime.root.OrchestrationExternalSourceProvider.__init__.__kwdefaults__
-    monkeypatch.setitem(defaults, "action_catalog_reader", lambda user_id, settings=None: deepcopy(state.catalog))
+    monkeypatch.setitem(
+        defaults, "action_catalog_reader", lambda user_id, settings=None, user_roles=None: deepcopy(state.catalog),
+    )
     monkeypatch.setitem(defaults, "action_resolver", resolve)
 
     def reread(*args, **kwargs):
