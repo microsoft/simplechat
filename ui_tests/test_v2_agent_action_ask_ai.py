@@ -1,8 +1,9 @@
 # test_v2_agent_action_ask_ai.py
 """
 Offline real-bundle browser regressions for Ask AI in the agent and action editors.
-Version: 0.261.288
+Version: 0.261.329
 Implemented in: 0.261.288
+SQL draft and debug-diagnostic coverage extended in: 0.261.329
 
 Covers the agent editor applying a proposal to the unsaved draft with Undo, an agent turn that
 drafts a new action that blocks saving until the person finishes it in the action editor and is
@@ -35,6 +36,7 @@ from functions_editor_assist import (  # noqa: E402
     parse_editor_assist_request,
     run_editor_assist,
 )
+from functions_assist_diagnostics import AssistDiagnostics  # noqa: E402
 from ui_tests.fixtures.workspace_authoring import (  # noqa: E402
     ACTION_ID,
     AGENT_ID,
@@ -68,6 +70,7 @@ class AskAiWorkspaceFixture(WorkspaceAuthoringFixture):
         self.agent_assist_enabled = True
         self.action_assist_enabled = True
         self.assist_requests = []
+        self.assist_diagnostics = []
         self.script = None
 
     def _bootstrap(self):
@@ -91,7 +94,8 @@ class AskAiWorkspaceFixture(WorkspaceAuthoringFixture):
             request = parse_editor_assist_request(copy.deepcopy(body), kind=kind, scope=scope)
             return json.dumps(script(request, ChoiceHandles(request))), "stop"
 
-        services = EditorAssistServices(limiter=_Limiter(), call_model=call_model)
+        services = EditorAssistServices(limiter=_Limiter(), call_model=call_model,
+                                       diagnostics=AssistDiagnostics(self.assist_diagnostics.append))
         try:
             result = run_editor_assist(body, kind=kind, scope=scope, user_id=OWNER_ID, services=services)
         except EditorAssistError as error:
@@ -218,6 +222,118 @@ def test_action_ask_ai_never_sends_stored_credentials(ask_ai_ui):
     serialized = json.dumps(body)
     assert STORED_KEY not in serialized
     assert '"/auth/key"' not in serialized
+
+
+@pytest.mark.parametrize('first_defect', [None, 'blank_connection', 'unprefixed_common_fields'])
+def test_new_sql_agent_drafts_an_action_without_inventing_connection_details(ask_ai_ui, first_defect):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    attempts = []
+
+    def script(request, _handles):
+        attempts.append(True)
+        assert request.new_items is not None
+        assert 'sql_query' in request.new_items.variants
+        fields = request.new_items.variants['sql_query']
+        assert '/additionalFields/server' in fields
+        assert not any('password' in path or 'connection_string' in path for path in fields)
+        values = {'/displayName': 'SQL lookup', '/additionalFields/read_only': True}
+        if first_defect == 'blank_connection' and len(attempts) == 1:
+            values['/additionalFields/server'] = ''
+        elif first_defect == 'unprefixed_common_fields' and len(attempts) == 1:
+            values['displayName'] = values.pop('/displayName')
+            values['description'] = 'Read SQL rows.'
+        return {
+            'reply': 'I drafted a read-only SQL action. Enter the database details before saving.',
+            'operations': [{'op': 'create_item', 'handle': 'N1', 'type': 'sql_query', 'values': values}],
+        }
+
+    ui.script = script
+    ui.open('/workspace/agents/new')
+    panel = ask(page, 'i want to connect to a sql database')
+    pending = page.get_by_role('list', name='New actions from Ask AI', exact=True)
+    expect(pending).to_contain_text('SQL lookup')
+    expect(pending.get_by_text(re.compile('Needs attention before saving'))).to_be_visible()
+    assert not ui.editor_writes
+    assert len(attempts) == (2 if first_defect else 1)
+    rejected = [event for event in ui.assist_diagnostics if event['assist_event'] == 'validation_rejected']
+    if first_defect == 'blank_connection':
+        assert len(rejected) == 1
+        assert rejected[0]['assist_rule'] == 'required_value'
+        assert rejected[0]['assist_field'] == '/additionalFields/server'
+    elif first_defect == 'unprefixed_common_fields':
+        assert [event['assist_rule'] for event in rejected] == [
+            'new_field_unknown', 'new_field_unknown', 'new_required_field',
+        ]
+    else:
+        assert rejected == []
+    panel.get_by_role('button', name=re.compile(r'^Undo this change')).click()
+    expect(page.get_by_role('list', name='New actions from Ask AI', exact=True)).to_have_count(0)
+    assert not ui.editor_writes
+
+
+def test_failed_new_sql_agent_turn_keeps_the_draft_and_records_the_rule(ask_ai_ui):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    ui.script = lambda _request, _handles: {
+        'reply': 'I configured SQL.',
+        'operations': [{'op': 'create_item', 'handle': 'N1', 'type': 'sql_query', 'values': {}}],
+    }
+    ui.open('/workspace/agents/new')
+    original = page.get_by_label('Display name', exact=True).input_value()
+    page.get_by_role('button', name='Ask AI', exact=True).click()
+    panel = page.get_by_role('complementary', name='Ask AI', exact=True)
+    panel.get_by_role('textbox', name='Message Ask AI', exact=True).fill('i want to connect to a sql database')
+    panel.get_by_role('button', name='Send to Ask AI', exact=True).click()
+    expect(panel.get_by_text(re.compile("couldn't produce a valid change"))).to_be_visible()
+    expect(page.get_by_label('Display name', exact=True)).to_have_value(original)
+    expect(page.get_by_role('list', name='New actions from Ask AI', exact=True)).to_have_count(0)
+    assert not ui.editor_writes
+    rejected = [event for event in ui.assist_diagnostics if event['assist_event'] == 'validation_rejected']
+    assert [event['attempt'] for event in rejected] == [1, 2]
+    assert all(event['assist_rule'] == 'new_required_field' for event in rejected)
+
+
+def test_new_sql_agent_can_assign_an_existing_action_without_running_it(ask_ai_ui):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    ui.actions[ACTION_ID].update({
+        "displayName": "SQL lookup", "type": "sql_query",
+        "additionalFields": {"server": "sql.example.test", "database": "fixture", "read_only": True},
+    })
+
+    def script(request, handles):
+        assert any(option["value"] == ACTION_ID for option in request.fields["/actions"].options)
+        handle = handles.handle("/actions", ACTION_ID)
+        assert handle is not None
+        return {
+            "reply": "I assigned the existing SQL lookup action.",
+            "operations": [{"op": "set", "path": "/actions", "value": [handle]}],
+        }
+
+    ui.script = script
+    ui.open("/workspace/agents/new")
+    panel = ask(page, "i want to connect to a sql database")
+    expect(page.get_by_role("checkbox", name=re.compile("SQL lookup")).first).to_be_checked()
+    assert not ui.editor_writes
+    expect(page.get_by_role("list", name="New actions from Ask AI", exact=True)).to_have_count(0)
+    panel.get_by_role("button", name=re.compile(r"^Undo this change")).click()
+    expect(page.get_by_role("checkbox", name=re.compile("SQL lookup")).first).not_to_be_checked()
+    assert not ui.editor_writes
+
+
+def test_new_sql_agent_can_ask_for_connection_details_without_mutation(ask_ai_ui):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    question = "Which SQL database engine will you use? Enter its connection details in the action editor."
+    ui.script = lambda _request, _handles: {"reply": question, "operations": []}
+    ui.open("/workspace/agents/new")
+    original = page.get_by_label("Display name", exact=True).input_value()
+    page.get_by_role("button", name="Ask AI", exact=True).click()
+    panel = page.get_by_role("complementary", name="Ask AI", exact=True)
+    panel.get_by_role("textbox", name="Message Ask AI", exact=True).fill("i want to connect to a sql database")
+    panel.get_by_role("button", name="Send to Ask AI", exact=True).click()
+    expect(panel.get_by_text(question, exact=True)).to_be_visible()
+    expect(page.get_by_label("Display name", exact=True)).to_have_value(original)
+    expect(page.get_by_role("list", name="New actions from Ask AI", exact=True)).to_have_count(0)
+    assert not ui.editor_writes
+    assert ui.assist_diagnostics[-1]["assist_outcome"] == "explained"
 
 
 @pytest.mark.parametrize("path", [f"/workspace/agents/{AGENT_ID}", f"/workspace/actions/{ACTION_ID}"])

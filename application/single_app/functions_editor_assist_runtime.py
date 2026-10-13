@@ -20,7 +20,8 @@ import logging
 from flask import current_app, request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
-from functions_appinsights import log_event
+from functions_appinsights import log_assist_debug, log_event
+from functions_assist_diagnostics import AssistDiagnostics
 from functions_editor_assist import (
     EDITOR_ASSIST_MAX_BODY_BYTES,
     EditorAssistError,
@@ -82,10 +83,12 @@ def build_editor_assist_services(*, client_factory, limiter=None):
     def log(message, extra, level):
         log_event(message, extra=extra, level=level)
 
+    diagnostics = AssistDiagnostics(log_assist_debug)
     return EditorAssistServices(
         limiter=_ConvertingLimiter(limiter),
-        call_model=_ConvertingModel(WorkflowAssistModel(client_factory)),
+        call_model=_ConvertingModel(WorkflowAssistModel(client_factory, diagnostics=diagnostics)),
         log=log,
+        diagnostics=diagnostics,
     )
 
 

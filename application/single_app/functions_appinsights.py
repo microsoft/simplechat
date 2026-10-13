@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from azure.monitor.opentelemetry import configure_azure_monitor
 import app_settings_cache
+from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_TEXT, safe_assist_diagnostics
 
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
@@ -274,6 +275,9 @@ def _build_logger_extra(
                 if diagnostic_key in LOGGER_WORKFLOW_HASH_KEYS:
                     if re.fullmatch(r"[0-9a-f]{64}", value):
                         logger_extra[normalized_key] = value
+                elif key in ASSIST_DIAGNOSTIC_TEXT:
+                    if value in ASSIST_DIAGNOSTIC_TEXT[key]:
+                        logger_extra[normalized_key] = value
                 elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
                     if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
                         logger_extra[normalized_key] = value
@@ -381,6 +385,19 @@ def is_debug_enabled() -> bool:
     """Check if debug logging is enabled in the current settings snapshot."""
     settings = _load_logging_settings()
     return bool(settings.get('enable_debug_logging', False))
+
+
+def log_assist_debug(properties):
+    """Send content-free Ask AI diagnostics to both sinks only while debug logging is enabled."""
+    if not is_debug_enabled():
+        return
+    safe = safe_assist_diagnostics(properties)
+    if 'assist_surface' not in safe or 'assist_event' not in safe:
+        return
+    if safe['assist_surface'] == 'workflow':
+        log_event('[WORKFLOW_ASSIST] Ask AI diagnostic', extra=safe)
+    else:
+        log_event('[EDITOR_ASSIST] Ask AI diagnostic', extra=safe)
 
 
 def _get_appinsights_debug_logger() -> Optional[logging.Logger]:
