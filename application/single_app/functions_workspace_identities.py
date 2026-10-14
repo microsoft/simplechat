@@ -28,6 +28,7 @@ from functions_keyvault import (
     ui_trigger_word,
 )
 from functions_settings import get_settings
+from cosmos_document_utils import normalize_cosmos_document
 
 
 WORKSPACE_IDENTITY_SCOPE_PERSONAL = "personal"
@@ -435,12 +436,15 @@ def create_workspace_identity(
     created_by: str,
     *,
     stage_secrets: bool = False,
+    identity_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     scope_type = _validate_scope(scope_type)
-    identity_id = str(uuid.uuid4())
+    deterministic_identity_id = identity_id is not None
+    identity_id = identity_id or str(uuid.uuid4())
     staged_names: Optional[List[str]] = [] if stage_secrets else None
     normalized_payload = _normalize_identity_payload(
-        scope_type, scope_id, payload or {}, identity_id, staged_names=staged_names
+        scope_type, scope_id, payload or {}, identity_id,
+        fresh_names=stage_secrets and deterministic_identity_id, staged_names=staged_names,
     )
     scope_field = _scope_field(scope_type)
     now_iso = _now_iso()
@@ -457,20 +461,29 @@ def create_workspace_identity(
         **normalized_payload,
     }
     try:
-        _get_identities_container(scope_type).create_item(body=identity)
+        stored = _get_identities_container(scope_type).create_item(body=identity)
     except Exception:
-        # The create failed after secrets may have been stored; drop them so a
-        # failed create never leaves an orphan behind in Key Vault.
+        # A lost write response is not proof that staged secrets are unused.
+        # Confirm the owned point record before cleanup or an idempotent return.
+        try:
+            current = get_workspace_identity(scope_type, scope_id, identity_id)
+        except LookupError:
+            current = None
+        except Exception:
+            raise
+        if current is not None and all(current.get(key) == value for key, value in identity.items()):
+            return normalize_cosmos_document(current)
         if staged_names:
             keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
         raise
-    return identity
+    return normalize_cosmos_document(stored)
 
 
 def update_workspace_identity(scope_type: str, scope_id: str, identity_id: str, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
     normalized_payload = _normalize_identity_payload(scope_type, scope_id, payload or {}, identity_id, existing_identity=identity)
     identity.update(normalized_payload)
+    identity.pop("credential_operation_id", None)
     identity["updated_by"] = updated_by
     identity["updated_at"] = _now_iso()
     _get_identities_container(scope_type).upsert_item(identity)
@@ -480,7 +493,24 @@ def update_workspace_identity(scope_type: str, scope_id: str, identity_id: str, 
 def delete_workspace_identity(scope_type: str, scope_id: str, identity_id: str, deleted_by: str) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
     _get_identities_container(scope_type).delete_item(item=identity["id"], partition_key=scope_id)
+    _invalidate_personal_action_bindings(scope_type, scope_id, identity_id)
     return {"identity_id": identity_id, "deleted_by": deleted_by}
+
+
+def _invalidate_personal_action_bindings(scope_type, scope_id, identity_id):
+    # Initialized identity mutations run after the application supplies private state storage.
+    # Resolution also checks the identity point read, so a cleanup failure cannot reuse it.
+    if scope_type == WORKSPACE_IDENTITY_SCOPE_PERSONAL:
+        import functions_action_credential_state
+
+        if functions_action_credential_state.is_configured():
+            try:
+                functions_action_credential_state.invalidate_identity(scope_id, identity_id)
+            except Exception as error:
+                # The identity deletion already committed; resolver point reads
+                # refuse it even if best-effort binding cleanup is unavailable.
+                log_event("[IDENTITIES] Personal action binding cleanup failed.",
+                          extra={"error_type": type(error).__name__}, level=logging.WARNING)
 
 
 class WorkspaceIdentityConflict(Exception):
@@ -500,6 +530,8 @@ def update_workspace_identity_conditional(
     payload: Dict[str, Any],
     updated_by: str,
     expected_etag: str,
+    *,
+    operation_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Update an identity only if its stored ``_etag`` still matches ``expected_etag``.
 
@@ -514,6 +546,8 @@ def update_workspace_identity_conditional(
     :class:`LookupError` (404) and is never recreated.
     """
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    if operation_id and identity.get("credential_operation_id") == operation_id:
+        return normalize_cosmos_document(identity)
     current_etag = identity.get("_etag")
     if not expected_etag or expected_etag != current_etag:
         raise WorkspaceIdentityConflict("Workspace identity changed before the update")
@@ -532,6 +566,10 @@ def update_workspace_identity_conditional(
     updated.update(normalized_payload)
     updated["updated_by"] = updated_by
     updated["updated_at"] = _now_iso()
+    if operation_id:
+        updated["credential_operation_id"] = operation_id
+    else:
+        updated.pop("credential_operation_id", None)
 
     container = _get_identities_container(scope_type)
     try:
@@ -541,20 +579,30 @@ def update_workspace_identity_conditional(
             etag=expected_etag,
             match_condition=MatchConditions.IfNotModified,
         )
-    except CosmosResourceNotFoundError:
-        keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
-        raise LookupError("Workspace identity not found")
-    except CosmosAccessConditionFailedError:
-        keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
-        raise WorkspaceIdentityConflict("Workspace identity changed before the update")
-    except Exception:
-        keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
-        raise
+    except Exception as error:
+        try:
+            current = get_workspace_identity(scope_type, scope_id, identity_id)
+        except LookupError:
+            current = None
+        except Exception:
+            # Preserve possibly live staged references when confirmation is unavailable.
+            raise error
+        if current is not None and all(
+            current.get(key) == value for key, value in updated.items() if not key.startswith("_")
+        ):
+            stored = current
+        else:
+            keyvault_identity_discard_staged_helper(staged_names, scope_id, scope=_keyvault_scope(scope_type))
+            if isinstance(error, CosmosResourceNotFoundError):
+                raise LookupError("Workspace identity not found") from None
+            if isinstance(error, CosmosAccessConditionFailedError) or getattr(error, "status_code", None) == 412:
+                raise WorkspaceIdentityConflict("Workspace identity changed before the update") from None
+            raise
 
     keyvault_identity_cleanup_helper(
         previous_auth, normalized_payload.get("auth") or {}, scope_id, scope=_keyvault_scope(scope_type)
     )
-    return stored if isinstance(stored, dict) else updated
+    return normalize_cosmos_document(stored)
 
 
 def delete_workspace_identity_conditional(
@@ -592,6 +640,7 @@ def delete_workspace_identity_conditional(
     keyvault_identity_delete_helper(
         dict(identity.get("auth") or {}), scope_id, scope=_keyvault_scope(scope_type)
     )
+    _invalidate_personal_action_bindings(scope_type, scope_id, identity_id)
     return {"identity_id": identity_id, "deleted_by": deleted_by}
 
 

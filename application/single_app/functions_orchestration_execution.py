@@ -975,7 +975,9 @@ class HarnessExecution:
             or not self.record.get("execution_binding")
         ):
             raise HarnessExecutionError("checkpoint_unavailable")
-        deadline = datetime.fromisoformat(self.record["execution_deadline_at"])
+        from action_credential_deadline import execution_deadline
+
+        deadline = execution_deadline(self.record)
         if deadline.tzinfo is None:
             raise HarnessExecutionError("checkpoint_invalid")
         if self.record["status"] == "completed":
@@ -1071,7 +1073,9 @@ class HarnessExecution:
             if not current.get("started_at") or not current.get("execution_deadline_at"):
                 raise HarnessExecutionError("checkpoint_unavailable")
             try:
-                deadline = datetime.fromisoformat(current["execution_deadline_at"])
+                from action_credential_deadline import execution_deadline
+
+                deadline = execution_deadline(current)
             except (ValueError, TypeError) as exc:
                 raise HarnessExecutionError("checkpoint_invalid") from exc
             if deadline.tzinfo is None:
@@ -1101,6 +1105,11 @@ class HarnessExecution:
                 _log_failure("Execution progress delivery stopped.", self.record, exc)
 
     def _progress(self, event):
+        if type(event) is dict and event.get("type") == "action_credentials_required":
+            from functions_orchestration_events import serialize_sse
+
+            self._send(serialize_sse(event))
+            return
         if type(event) is dict and event.get("type") == "m365_pending_action_reference":
             self._pending_action_created(event)
             return
@@ -1627,6 +1636,10 @@ class HarnessExecution:
             "assistant_message_created_at": timestamp,
             "message_saved": False, "finalization_status": "pending",
         }
+        if status == "waiting" and any(
+            wait.get("kind") == "action_credentials" for wait in updates["pending_results"].values()
+        ):
+            updates["credential_wait_started_at"] = current.get("credential_wait_started_at") or _now_iso()
         if not self._delivery_only:
             updates["harness_step_token_usage"] = _usage(
                 result.get("token_usage", self.context.token_usage if self.context is not None else {}),

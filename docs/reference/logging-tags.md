@@ -176,6 +176,7 @@ Application Insights sanitization boundary with debug logging on or off.
 - `[GROUP_WORKFLOW_STORE]`
 - `[HISTORY_CONTEXT]`
 - `[HISTORY_FALLBACK]`
+- `[IDENTITIES]`
 - `[IMAGE_CONTEXT]`
 - `[IMAGE_GENERATION]`
 - `[INBOUND_MCP]`

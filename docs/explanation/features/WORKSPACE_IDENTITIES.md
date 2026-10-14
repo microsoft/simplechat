@@ -7,6 +7,8 @@ Azure Files File Sync identity support implemented in: **0.241.127**
 Global cloud drive File Sync identities implemented in: **0.241.129**
 Native personal V2 authoring implemented in: **0.261.315**, recorded in
 `application/single_app/config.py`.
+Personal credential binding for shared Yamcs actions implemented in:
+**0.261.333**, recorded in `application/single_app/config.py`.
 
 ## Overview
 
@@ -60,6 +62,14 @@ Bootstrap classic-page modal. Personal users and authorized shared-workspace
 managers can create identities without opening a classic workspace.
 
 Action setup now uses the same identity catalog. Personal actions can use personal identities, group actions can use identities from the active group, and global actions can use global identities. Public workspace identities are not exposed to actions. Action manifests store only `identity_id` and `auth.type = "identity"`; runtime code resolves secrets through `functions_workspace_identities.py` so credentials are not copied into action records.
+
+Shared Yamcs actions can separately require the invoking user's personal
+identity for their service or proxy slots. These are private user bindings,
+not cross-workspace `identity_id` references. The shared action stays unchanged.
+Missing credentials are collected through a dedicated chat card, even when
+personal workspace authoring is disabled. Existing same-scope identity references
+and their access rules remain unchanged.
+See [Personal action credentials](PERSONAL_ACTION_CREDENTIALS.md).
 
 ## Testing and Validation
 

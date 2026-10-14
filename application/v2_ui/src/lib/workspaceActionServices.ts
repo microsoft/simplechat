@@ -86,6 +86,9 @@ export function buildActionConnectionPayload(
     testScope?: ActionTestScope,
 ): Record<string, unknown> {
     const scopeName = actionTestScopeName(testScope);
+    if (draft.credential_requirements && Object.keys(draft.credential_requirements.slots ?? {}).length) {
+        throw new Error('Save this action, then use it in chat to configure and check your personal identity.');
+    }
     const groupScope = isGroupActionTestScope(testScope) ? testScope : undefined;
     // An action is testable only from its own scope: a group action from its group workspace and a
     // global action from Admin Settings, each carrying its own action_scope.

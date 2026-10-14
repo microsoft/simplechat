@@ -346,6 +346,12 @@ class PluginHealthChecker:
                     errors.append(f"Tableau additionalFields.{field_name} must be between {minimum} and {maximum}")
 
         elif plugin_type == YAMCS_PLUGIN_TYPE:
+            from action_credential_contracts import validate_credential_requirements
+
+            try:
+                personal_slots = validate_credential_requirements(manifest)
+            except ValueError:
+                return False, ["Invalid personal action credential requirements."]
             auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
             auth_type = str(auth.get('type') or 'username_password').strip()
             raw_additional_fields = manifest.get('additionalFields', {})
@@ -359,6 +365,8 @@ class PluginHealthChecker:
             identity_id = str(manifest.get('identity_id') or '').strip()
             raw_auth_method = str(raw_additional_fields.get('auth_method') or '').strip().lower()
             auth_method = additional_fields.get('auth_method')
+            if "service" in personal_slots:
+                auth_method = personal_slots["service"]["auth_type"]
 
             if parsed_endpoint.scheme not in {'http', 'https'} or not parsed_endpoint.netloc:
                 errors.append("Yamcs plugin requires an http(s) Yamcs server URL")
@@ -368,7 +376,9 @@ class PluginHealthChecker:
                 errors.append("Yamcs plugin supports auth.type values 'NoAuth', 'key', 'identity', or 'username_password'")
             if raw_auth_method and raw_auth_method not in YAMCS_SUPPORTED_AUTH_METHODS:
                 errors.append("Yamcs plugin supports additionalFields.auth_method values 'username_password', 'api_key', 'bearer_token', or 'none'")
-            if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+            if "service" in personal_slots:
+                pass
+            elif auth_type == 'identity' and not auth.get('identity') and not identity_id:
                 errors.append("Yamcs reusable identity auth requires auth.identity or identity_id")
             elif auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD:
                 if auth_type == 'username_password' and (not auth.get('identity') or not auth.get('key')):
@@ -385,7 +395,7 @@ class PluginHealthChecker:
                     errors.append(YAMCS_BASIC_AUTH_CONFLICT_MESSAGE)
                 # A referenced identity supplies both values at runtime, so only unreferenced
                 # configurations must carry an inline username and password.
-                if not basic_auth_identity_id:
+                if not basic_auth_identity_id and "proxy" not in personal_slots:
                     if not additional_fields.get('basic_auth_username'):
                         errors.append("Yamcs HTTP Basic authentication requires additionalFields.basic_auth_username")
                     if not additional_fields.get('basic_auth_password'):

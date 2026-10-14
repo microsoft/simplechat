@@ -2615,7 +2615,10 @@ def hydrate_workspace_identity_in_plugin(plugin_manifest):
         return plugin_manifest
     if is_retired_mcp_stdio(plugin_manifest):
         raise McpStdioRemovedError()
-    if not get_action_identity_reference_id(plugin_manifest):
+    if not get_action_identity_reference_id(plugin_manifest) and not (
+        isinstance(plugin_manifest.get("additionalFields"), dict)
+        and plugin_manifest["additionalFields"].get("basic_auth_identity_id")
+    ):
         return plugin_manifest
 
     mcp_action = is_mcp_action(plugin_manifest)

@@ -69,6 +69,14 @@ conversation. See [Call another agent]({{ '/guides/call-another-agent/' | relati
 
 In chat, select the agent and ask for a task that requires the action. The response should follow the agent instructions and use the attached action only when appropriate.
 
+A shared Yamcs action can require your own identity instead of a shared
+credential, starting in **0.261.333** (`application/single_app/config.py`).
+When the action is first used, complete the private credential card and choose
+**Save and continue**. Do not paste the credential into the agent's instructions
+or a chat message. The same card supports authorized direct action
+orchestration; creating an agent is not required solely for authentication.
+See [Personal action credentials]({{ '/guides/personal-action-credentials/' | relative_url }}).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

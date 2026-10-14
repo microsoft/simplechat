@@ -16,6 +16,7 @@
 
 import { createConversation, type AttemptOrchestrationRequest } from './endpoints';
 import { ApiError } from './apiClient';
+import type { CredentialRequest } from './actionCredentialTypes';
 import { legacyPlanErrorMessage } from './orchestrationErrors';
 import {
     beginPlanEdit,
@@ -806,6 +807,7 @@ async function executeSavedPlan(
     plan: OrchestrationPlan,
     edits?: PlanEdits,
     reviewedRegeneration = false,
+    credentialRequest?: CredentialRequest,
 ): Promise<void> {
     const store = useOrchestrationStore.getState();
 
@@ -819,6 +821,7 @@ async function executeSavedPlan(
         startedAt: Date.now(),
     });
     if (!began) {
+        if (credentialRequest) throw new Error('This action is already continuing in this tab.');
         return;
     }
     if (store.editorTarget?.conversationId === conversationId && store.editorTarget.turnId === turnId) {
@@ -994,6 +997,7 @@ async function executeSavedPlan(
             },
         },
         controller.signal,
+        credentialRequest,
     );
     if (currentPendingStream()) chatPendingActionsStore.getState().setLiveStream(null);
     // A draft may have been saved even when the stream ended without its terminal frame.
@@ -1048,6 +1052,29 @@ async function executeSavedPlan(
         }
         await reconcileOrchestrationRun(conversationId, runId);
     }
+    if (credentialRequest && (result.transportUnknown || result.errored || result.conflict || result.rejection)) {
+        throw new Error('The continuation could not be confirmed. Review the saved attempt; no steps were replayed.');
+    }
+}
+
+export async function continueCredentialOrchestration(credentialRequest: CredentialRequest): Promise<void> {
+    const { conversation_id: conversationId, run_id: runId } = credentialRequest;
+    if (!runId || useChatStore.getState().activeConversationId !== conversationId ||
+        useChatStore.getState().streaming || activeControllers.has(conversationId)) {
+        throw new Error('Open this conversation and wait for its current response before continuing.');
+    }
+    const record = await fetchOrchestrationRun(runId);
+    if (!record) throw new Error('The saved action could not be read. Reload this conversation.');
+    const plan = normalizePlan(persistedRunPlan(record));
+    if (!plan || plan.run_id !== runId || plan.conversation_id !== conversationId ||
+        (credentialRequest.turn_id && credentialRequest.turn_id !== plan.turn_id) ||
+        !isOrchestrationRunWaiting(record)) {
+        throw new Error('The saved action is no longer waiting for these credentials. Reload requests.');
+    }
+    const store = useOrchestrationStore.getState();
+    store.setPlan(conversationId, plan.turn_id, plan);
+    store.releaseRunAttempt(runId);
+    await executeSavedPlan(conversationId, plan.turn_id, plan, undefined, false, credentialRequest);
 }
 
 const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();

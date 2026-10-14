@@ -656,7 +656,9 @@ class OrchestrationOutputStore:
             if parse_time(record["deadline_at"]) <= self.clock():
                 raise OutputUnavailableError("output_deadline_exceeded")
             persisted_deadline = run.get("execution_deadline_at")
-            if persisted_deadline and parse_time(persisted_deadline) < parse_time(record["deadline_at"]):
+            from action_credential_deadline import execution_deadline
+
+            if persisted_deadline and execution_deadline(run) < parse_time(record["deadline_at"]):
                 raise OutputUnavailableError("output_deadline_invalid")
         return run
 

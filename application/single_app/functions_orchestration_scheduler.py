@@ -310,7 +310,9 @@ class _Tick:
         if not record.get("execution_deadline_at"):
             raise CheckpointError("checkpoint_unavailable")
         try:
-            deadline = _aware_time(datetime.fromisoformat(record["execution_deadline_at"]))
+            from action_credential_deadline import execution_deadline
+
+            deadline = _aware_time(execution_deadline(record, now=self.resources.clock()))
         except (TypeError, ValueError) as exc:
             raise CheckpointError("checkpoint_invalid") from exc
         states = {step["step_id"]: step["status"] for step in record.get("execution_steps") or []}

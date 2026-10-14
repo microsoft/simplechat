@@ -539,6 +539,10 @@ async def invoke_action(
     from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
     from agent_delegation_runtime import await_agent_operation
     from functions_settings import get_settings
+    from action_credential_contracts import find_credential_stop
+    from functions_action_credential_continuation import CredentialJournal
+    from functions_action_credentials import _continuation
+    from functions_action_credential_state import key_for
 
     invocation_capture = require_invocation_capture(invocation_capture)
     visual_request = visual_request if isinstance(visual_request, dict) else {}
@@ -675,6 +679,10 @@ async def invoke_action(
                     failure = step_error(exc)
                     raise failure from exc
                 except Exception as exc:
+                    credential_stop = find_credential_stop(exc)
+                    if credential_stop is not None:
+                        failure = credential_stop
+                        raise credential_stop from None
                     # Contain arbitrary plugin exceptions before SK puts them in model context.
                     log_event(
                         '[ORCHESTRATION_ADAPTERS] Action function failed.',
@@ -795,9 +803,30 @@ async def invoke_action(
                 )
             else:
                 execution_settings.function_choice_behavior = function_choice
-            replies = await await_agent_operation(
-                service.get_chat_message_contents(history, execution_settings, kernel=kernel), frame,
-            )
+            descriptor = _continuation.get()
+            credential_journal = None
+            if descriptor:
+                credential_journal = CredentialJournal(
+                    kernel, "action", key_for(manifest),
+                    user_id, getattr(context, "conversation_id", None),
+                )
+            if credential_journal:
+                with credential_journal.scope():
+                    saved_history = credential_journal.load()
+                    if saved_history is not None:
+                        history = saved_history
+                        await credential_journal.resume_calls(history, function_behavior=function_choice)
+                    replies = await await_agent_operation(
+                        service.get_chat_message_contents(history, execution_settings, kernel=kernel), frame,
+                    )
+                    if credential_journal.pending or credential_journal.loaded:
+                        credential_journal.save(history, completed=credential_journal.pending is None)
+                    if credential_journal.pending:
+                        raise credential_journal.pending
+            else:
+                replies = await await_agent_operation(
+                    service.get_chat_message_contents(history, execution_settings, kernel=kernel), frame,
+                )
             if cancel_requested():
                 raise AgentExecutionCancelled('Action execution was cancelled.')
             if failure is not None:

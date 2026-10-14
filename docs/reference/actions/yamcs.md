@@ -4,6 +4,7 @@ title: "Yamcs"
 description: "Reference for the Yamcs SimpleChat action."
 section: "Reference"
 audience: user
+version: "0.261.333"
 ---
 
 <!-- action-slug: yamcs -->
@@ -76,8 +77,37 @@ it there updates every action that points at it, so a new password does not requ
 the action. Only username and password identities appear in this list, because HTTP Basic
 authentication is always a username and password pair.
 
-An identity resolves within the workspace that owns the action. A personal action paired
-with a personal identity therefore uses that person's own credential.
+An ordinary reusable identity resolves within the workspace that owns the action.
+A personal action paired with a personal identity therefore uses that person's own
+credential; a group/global reference remains a group/global credential.
+
+### Each user's personal identity
+
+Fixed/Implemented in version: **0.261.333** (`application/single_app/config.py`).
+
+For a shared global or group action, choose **Each user's personal identity** as
+the credential source when every operator must sign in independently. Service
+and proxy sources are separate. A proxy-only deployment can keep Yamcs
+**No Authentication** and request only the user's proxy username/password.
+A directly authenticated Yamcs deployment can instead request its service
+username/password, API key, or bearer token.
+
+Chat requests the missing identity when the action is actually used. The user
+selects an existing compatible personal identity or saves a new one in the
+credential card, then chooses **Save and continue**. The shared action and agent
+are unchanged, and completed work is not replayed. This works with direct action
+orchestration as well as an agent assigned to the action.
+
+Personal credentials use configured Key Vault storage when enabled, otherwise
+existing Cosmos identity storage. They are not conversation messages. Users can
+complete this setup for an authorized shared action even when personal workspace
+authoring is disabled.
+
+Personal sources retain the proxy/service header restrictions above. Save the
+action and use it in chat to check a personal identity; ordinary draft connection
+testing cannot substitute a shared credential for it.
+
+See [Use your own credentials with a shared action]({{ '/guides/personal-action-credentials/' | relative_url }}).
 
 ## Related
 

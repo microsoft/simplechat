@@ -313,6 +313,7 @@ class OrchestrationServices:
         context.composition_profiles = composition_profiles()
         context.composition_profile_validator = validate_composition_profile
         context.execution_deadline_at = record.get("execution_deadline_at")
+        context.credential_wait_seconds = record.get("credential_wait_seconds", 0)
         context.rendering_service = self.rendering
         # Each attempt is approved separately and owns its files, so a retry renders a new
         # output rather than presenting the superseded attempt's work identity.

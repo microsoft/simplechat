@@ -2311,6 +2311,7 @@ export function loadMessages(conversationId) {
     .finally(() => {
       if (!ownsConversation()) return;
       void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
+      void window.SimpleChatActionCredentials?.refreshConversation(conversationId);
       // Check if there's a search highlight to apply
       if (window.searchHighlight && window.searchHighlight.term) {
         const elapsed = Date.now() - window.searchHighlight.timestamp;
