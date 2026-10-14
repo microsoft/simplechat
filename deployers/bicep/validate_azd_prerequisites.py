@@ -17,6 +17,7 @@ is requested in a region that does not offer it.
 from __future__ import annotations
 
 import fnmatch
+import ipaddress
 import json
 import os
 import shutil
@@ -466,12 +467,47 @@ def _ensure_runner_ip_is_allowed(enable_private_networking: bool) -> None:
         print('  If this runner needs public access to protected resources, set ALLOWED_IP_RANGES manually before rerunning azd.')
 
 
+def _validate_monitor_private_link(enable_private_networking: bool, enabled: bool, subnet_id: str) -> bool:
+    if not enabled:
+        return True
+    if not enable_private_networking:
+        print('ERROR: ENABLE_AZURE_MONITOR_PRIVATE_LINK requires ENABLE_PRIVATE_NETWORKING=true.', file=sys.stderr)
+        return False
+
+    if subnet_id:
+        exit_code, stdout, stderr = _run_command(['az', 'network', 'vnet', 'subnet', 'show', '--ids', subnet_id, '-o', 'json'])
+        if exit_code != 0:
+            print(f'ERROR: Unable to validate the AMPLS private endpoint subnet: {stderr}', file=sys.stderr)
+            return False
+        try:
+            subnet = json.loads(stdout)
+            prefixes = subnet.get('addressPrefixes') or [subnet.get('addressPrefix')]
+            networks = [ipaddress.ip_network(prefix) for prefix in prefixes if prefix]
+        except (ValueError, TypeError, AttributeError):
+            print('ERROR: Unable to parse the AMPLS subnet address prefixes.', file=sys.stderr)
+            return False
+        if not any(network.version == 4 and network.prefixlen <= 27 for network in networks):
+            print('ERROR: AMPLS requires an IPv4 subnet of /27 or larger; use /26 or larger for shared platform endpoints.', file=sys.stderr)
+            return False
+
+    _print_header('AZURE MONITOR PRIVATE LINK: OPTED IN')
+    print('Application Insights and Log Analytics public ingestion and queries will be disabled.')
+    print('AMPLS uses at least 11 subnet IPs. The new shared endpoint subnet is /24; allow sufficient free IPs when reusing a subnet.')
+    print('All monitoring clients and administrators need private routing and DNS resolution.')
+    print('Use one AMPLS per shared DNS boundary; coordinate with your central monitoring/network team before enabling this option.')
+    return True
+
+
 def main() -> int:
     enable_private_networking = _to_bool(_get_env('AZURE_ENV_ENABLE_PRIVATE_NETWORKING', 'ENABLE_PRIVATE_NETWORKING'))
+    enable_monitor_private_link = _to_bool(_get_env('AZURE_ENV_ENABLE_AZURE_MONITOR_PRIVATE_LINK', 'ENABLE_AZURE_MONITOR_PRIVATE_LINK'))
     existing_vnet_id = _get_env('AZURE_ENV_EXISTING_VNET_RESOURCE_ID', 'EXISTING_VNET_RESOURCE_ID').strip()
     app_subnet_id = _get_env('AZURE_ENV_EXISTING_APP_SERVICE_SUBNET_RESOURCE_ID', 'EXISTING_APP_SERVICE_SUBNET_RESOURCE_ID').strip()
     pe_subnet_id = _get_env('AZURE_ENV_EXISTING_PRIVATE_ENDPOINT_SUBNET_RESOURCE_ID', 'EXISTING_PRIVATE_ENDPOINT_SUBNET_RESOURCE_ID').strip()
     private_dns_raw = _get_env('AZURE_ENV_PRIVATE_DNS_ZONE_CONFIGS', 'PRIVATE_DNS_ZONE_CONFIGS')
+
+    if not _validate_monitor_private_link(enable_private_networking, enable_monitor_private_link, pe_subnet_id):
+        return 1
 
     if not _validate_managed_identity_preflight():
         return 1

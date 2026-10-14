@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.333)**
+
+#### New Features
+
+*   **Optional Private Monitoring In Commercial And Government**
+    *   Deployment administrators can opt into Azure Monitor Private Link Scope (AMPLS) for Application Insights and Log Analytics in either cloud. The option defaults off and requires private networking; when enabled, monitoring ingestion and queries use private-only access.
+    *   Bicep/AZD, Terraform, and Azure CLI support cloud-specific monitoring DNS and existing-zone reuse. AMPLS reuses Blob DNS, and Government's additional ADX zone is handled separately from the five-zone private endpoint DNS group.
+    *   (Ref: `enableAzureMonitorPrivateLink`, `ENABLE_AZURE_MONITOR_PRIVATE_LINK`, `azureMonitorPrivateNetworking.bicep`, [Azure Monitor Private Link](features/AZURE_MONITOR_PRIVATE_LINK.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+
+#### Bug Fixes
+
+*   **Redis Private Endpoints And Cloud DNS Corrections**
+    *   Private Bicep/AZD deployments now create the appropriate Managed or classic Redis private endpoint. Redis remains reachable during bootstrap, and the final `azd up` hook disables public access after configuration succeeds. Separate provision/deploy workflows must perform equivalent final lockdown.
+    *   Commercial Video Indexer uses `privatelink.api.videoindexer.ai`, while unsupported Government private endpoint creation remains disabled. Government Key Vault now uses `privatelink.vaultcore.usgovcloudapi.net` across all three deployers.
+    *   (Ref: `privateNetworking.bicep`, `redisCache.bicep`, `privateDNSZones.json`, `deployers/azure.yaml`, [Private Endpoint And DNS Fix](fixes/DEPLOYER_PRIVATE_ENDPOINT_DNS_FIX.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+
+#### Documentation And Architecture
+
+*   **Expanded Visio Architectures And Deployment Network References**
+    *   Updated `artifacts/architecture.vsdx` and `artifacts/private_endpoints.vsdx` with Azure Container Registry, Key Vault, platform networking, compact subnet sizing, monitoring DNS, and Commercial/Government service distinctions, including Managed versus classic Redis.
+    *   Cloud-specific tables distinguish fresh script-created networks from a compact existing-network reference, showing CIDRs, total and Azure-usable addresses, delegation, service placement, and growth space. The compact segmented reference is not automatically created by existing-VNet reuse.
+    *   Added a Visio companion and deployment guidance covering AMPLS capacity, shared-DNS impacts, bootstrap lockdown, and cloud limitations. Diagram labels do not override the documented service/private-endpoint availability requirements.
+    *   Deployer version: **1.0.34**. Live-cloud connectivity and monitoring validation remain deployment checks.
+    *   (Ref: `artifacts/architecture.vsdx`, `artifacts/private_endpoints.vsdx`, [Diagram Network Reference](../../artifacts/PRIVATE_ENDPOINTS_NETWORK_REFERENCE.md), [Enterprise Networking](../guides/enterprise-networking.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+
 ### **(v0.261.315)**
 
 #### New Features

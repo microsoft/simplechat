@@ -207,6 +207,8 @@ param_existing_azure_openai_subscription_id = "00000000-0000-0000-0000-000000000
 #### Private Networking Variables
 
 param_enable_private_networking = true
+# Default off; private-only monitoring is optional in either cloud
+# param_enable_azure_monitor_private_link = true
 
 # Option 1: let Terraform create the VNet and required subnets
 # param_existing_virtual_network_id = ""
@@ -248,6 +250,14 @@ terraform apply -var-file="./params/rudy1.tfvars" -auto-approve
 terraform destroy -var-file="./params/rudy1.tfvars" -auto-approve
 
 ## Post-Deployment Manual Steps
+
+### AMPLS and Network Sizing
+
+`param_enable_azure_monitor_private_link` defaults false and requires `param_enable_private_networking=true`. It associates monitoring resources with AMPLS and disables public ingestion and queries. Telemetry senders and monitoring users need private DNS/routing. Coordinate with the owner of any existing AMPLS in the shared DNS boundary before opting into a new scope.
+
+This uses the generated [shared ARM template](../bicep/modules/azureMonitorPrivateNetworking.json) through Terraform's template-deployment resource. Retain the adjacent Bicep directory when distributing the deployer. With no existing network IDs, the default VNet is `10.0.0.0/21` with two `/24` subnets. See the [Commercial fresh/compact tables](../../docs/guides/enterprise-networking.md#networking-in-azure-commercial) and [Government fresh/compact tables](../../docs/guides/enterprise-networking.md#networking-in-azure-government). AMPLS needs `/27` or larger and at least 11 monitoring IPs; plan `/26` or larger for shared platform endpoints. Existing-VNet reuse does not implement the five-subnet compact reference automatically.
+
+DNS overrides accept `monitor`, `monitorOms`, `monitorOds`, `monitorAgent`, `monitorAdx` (Government), and `videoIndexer`, in addition to core service keys, using `zone_resource_id`/`create_vnet_link`. AMPLS reuses Blob DNS. Video Indexer uses dedicated Commercial DNS only when supported. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`. Terraform does not provision Redis.
 
 ### Private Networking Notes
 

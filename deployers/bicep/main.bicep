@@ -185,6 +185,9 @@ param enableDiagLogging bool
 - Default is false''')
 param enablePrivateNetworking bool
 
+@description('Opt in to private-only Application Insights and Log Analytics through AMPLS. Requires enablePrivateNetworking and private DNS/routing for all monitoring clients.')
+param enableAzureMonitorPrivateLink bool = false
+
 @description('''Optional existing virtual network resource ID to reuse when private networking is enabled.
 - May reference a virtual network in the same or another resource group or subscription
 - Leave blank to create a new virtual network''')
@@ -205,7 +208,7 @@ param existingPrivateEndpointSubnetId string = ''
 - For each supported key, provide:
   - zoneResourceId: Optional existing private DNS zone resource ID to reuse
   - createVNetLink: Optional bool, defaults to true. Set to false if the customer manages the VNet link separately
-- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites''')
+- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites, redis, videoIndexer, monitor, monitorOms, monitorOds, monitorAgent, monitorAdx''')
 param privateDnsZoneConfigs object = {}
 
 @description('''Optional existing Azure OpenAI or Azure AI Foundry OpenAI-compatible endpoint.
@@ -471,6 +474,7 @@ module logAnalytics 'modules/logAnalyticsWorkspace.bicep' = {
     appName: appName
     environment: environment
     tags: tags
+    enableAzureMonitorPrivateLink: enableAzureMonitorPrivateLink
   }
 }
 
@@ -486,6 +490,7 @@ module applicationInsights 'modules/applicationInsights.bicep' = {
     environment: environment
     tags: tags
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    enableAzureMonitorPrivateLink: enableAzureMonitorPrivateLink
   }
 }
 
@@ -924,7 +929,7 @@ module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = i
 //=========================================================
 // configure private networking
 //=========================================================
-module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking) {
+module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking || enableAzureMonitorPrivateLink) {
   name: 'privateNetworking'
   scope: rg
   params: {
@@ -932,6 +937,8 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     virtualNetworkId: resolvedVirtualNetworkId
     privateEndpointSubnetId: resolvedPrivateEndpointSubnetId
     privateDnsZoneConfigs: privateDnsZoneConfigs
+    enableAzureMonitorPrivateLink: enableAzureMonitorPrivateLink
+    monitoringResourceIds: [logAnalytics.outputs.logAnalyticsId, applicationInsights.outputs.appInsightsId]
 
     location: location
     appName: appName
@@ -948,6 +955,8 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     openAIResourceGroupName: openAI.outputs.openAIResourceGroup
     openAISubscriptionId: openAI.outputs.openAISubscriptionId
     webAppName: appService.outputs.name
+    redisCacheResourceId: deployRedisCache ? redisCache!.outputs.redisCacheResourceId : ''
+    redisCacheKind: redisCacheKind
     
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
@@ -987,6 +996,7 @@ output var_openAISubscriptionId string = openAI.outputs.openAISubscriptionId
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
 output var_redisCacheKind string = deployRedisCache ? redisCacheKind : ''
+output var_redisCacheResourceId string = deployRedisCache ? redisCache!.outputs.redisCacheResourceId : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCachePort string = deployRedisCache ? string(redisCache.outputs.redisCachePort) : ''
 output var_rgName string = rgName

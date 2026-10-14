@@ -498,7 +498,15 @@ Example `privateDnsZoneConfigs` value:
 }
 ```
 
-Supported `privateDnsZoneConfigs` keys: `keyVault`, `cosmosDb`, `containerRegistry`, `aiSearch`, `blobStorage`, `cognitiveServices`, `openAi`, and `webSites`.
+Supported `privateDnsZoneConfigs` keys: `keyVault`, `cosmosDb`, `containerRegistry`, `aiSearch`, `blobStorage`, `cognitiveServices`, `openAi`, `webSites`, `redis`, `videoIndexer`, `monitor`, `monitorOms`, `monitorOds`, `monitorAgent`, and `monitorAdx` (Government).
+
+#### Optional AMPLS and Subnet References
+
+Implemented in version **0.261.333**, deployer **1.0.34** ([#1765](https://github.com/microsoft/simplechat/issues/1765)). `enableAzureMonitorPrivateLink` defaults to false. Opt in with `azd env set ENABLE_AZURE_MONITOR_PRIVATE_LINK true` and `ENABLE_PRIVATE_NETWORKING=true`. This creates one AMPLS endpoint, associates Application Insights and Log Analytics, and disables public ingestion and queries. Use a `/27` or larger endpoint subnet; `/26` or larger is recommended when sharing with platform endpoints. All monitoring clients need private routing and DNS; coordinate one AMPLS per shared DNS boundary.
+
+A **fresh private-network deployment without existing network IDs** creates `10.0.0.0/21`, `AppServiceIntegration` at `10.0.0.0/24`, and `PrivateEndpoints` at `10.0.2.0/24`, in either cloud. See the [Commercial tables](../../docs/guides/enterprise-networking.md#networking-in-azure-commercial) and [Government tables](../../docs/guides/enterprise-networking.md#networking-in-azure-government) for counts and the compact `10.42.0.0/24` existing-network reference. Existing-VNet reuse still accepts one shared endpoint subnet; the segmented reference requires endpoint placement customization.
+
+Optional Redis now gets an offering-aware endpoint (`redisEnterprise` for Managed Redis, `redisCache` for classic). `azd up` disables public access during `postup`, after bootstrap; `azd provision` or `azd deploy` alone does not run this final lockdown. Later provisioning resets Managed Redis bootstrap access and needs another lockdown. Commercial Video Indexer uses `privatelink.api.videoindexer.ai`; Government's API profile still has no Video Indexer PE. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`.
 
 If you use AZD, set `PRIVATE_DNS_ZONE_CONFIGS` to the JSON object above instead of editing the parameter file directly.
 

@@ -900,6 +900,16 @@ hooks:
             fi
 
             echo ""
+            if [ -n "${var_redisCacheResourceId}" ]; then
+                redis_api_version="2024-11-01"
+                if [ "${var_redisCacheKind}" = "managed" ]; then
+                    redis_api_version="2025-07-01"
+                fi
+                echo "Disabling public network access for Redis..."
+                az resource update --ids "${var_redisCacheResourceId}" \
+                    --api-version "${redis_api_version}" \
+                    --set properties.publicNetworkAccess=Disabled > /dev/null
+            fi
             echo "✓ Private networking configured successfully"
         else
             echo ""
@@ -943,6 +953,8 @@ hooks:
             'var_cosmosDb_uri',
             'var_enablePrivateNetworking',
             'var_keyVaultName',
+            'var_redisCacheResourceId',
+            'var_redisCacheKind',
             'var_rgName',
             'var_subscriptionId',
             'var_webService'
@@ -1086,6 +1098,14 @@ hooks:
             }
             Write-Host "✓ Web Application public access disabled"
 
+            if (-not [string]::IsNullOrWhiteSpace($env:var_redisCacheResourceId)) {
+                $redisApiVersion = if ($env:var_redisCacheKind -eq 'managed') { '2025-07-01' } else { '2024-11-01' }
+                Write-Host 'Disabling public network access for Redis...'
+                az resource update --ids $env:var_redisCacheResourceId --api-version $redisApiVersion --set properties.publicNetworkAccess=Disabled | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'Failed to disable Redis public access.'
+                }
+            }
             Write-Host ""
             Write-Host "✓ Private networking configured successfully"
         } else {
