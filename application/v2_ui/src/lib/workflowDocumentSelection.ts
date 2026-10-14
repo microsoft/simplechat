@@ -24,6 +24,7 @@ export interface TaskDocumentSelection {
     scopes: DocumentScope[];
     filters: DocumentFilter;
     on_empty: 'report' | 'error';
+    time_basis?: 'added' | 'added_or_updated';
 }
 export const WINDOW_UNITS = { minutes: 1, hours: 60, days: 1440, weeks: 10080 } as const;
 export type WindowUnit = keyof typeof WINDOW_UNITS;
@@ -45,7 +46,8 @@ export function isTaskDocumentSelection(value: unknown): value is TaskDocumentSe
     const record = (item: unknown): item is Record<string, unknown> =>
         Boolean(item) && typeof item === 'object' && !Array.isArray(item);
     const onlyKeys = (item: Record<string, unknown>, allowed: string[]) => Object.keys(item).every((key) => allowed.includes(key));
-    if (!record(value) || !onlyKeys(value, ['scopes', 'filters', 'on_empty']) ||
+    if (!record(value) || !onlyKeys(value, ['scopes', 'filters', 'on_empty', 'time_basis']) ||
+        (value.time_basis !== undefined && !['added', 'added_or_updated'].includes(String(value.time_basis))) ||
         !['report', 'error'].includes(String(value.on_empty)) ||
         !Array.isArray(value.scopes) || value.scopes.length > 20 || !value.scopes.every((scope: unknown) =>
         record(scope) && onlyKeys(scope, ['scope_type', 'scope_id']) && ['personal', 'group', 'public'].includes(String(scope.scope_type)) &&

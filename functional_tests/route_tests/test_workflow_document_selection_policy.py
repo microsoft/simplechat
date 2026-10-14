@@ -1,7 +1,7 @@
 # test_workflow_document_selection_policy.py
 """
 Task document preview policy and response tests.
-Version: 0.261.332
+Version: 0.261.335
 Implemented in: 0.261.332
 
 Runs the real route helper and authorized selection service on a closed Flask
@@ -98,6 +98,23 @@ def test_exact_preview_returns_only_safe_advisory_metadata(preview_api):
     encoded = response.get_data(as_text=True)
     for sensitive in ('PRIVATE-STORAGE-PATH', 'PRIVATE-SECRET', 'blob_path', 'provenance', 'settings'):
         assert sensitive not in encoded
+
+
+def test_runtime_choice_preview_uses_the_same_conservative_bound_without_choosing(preview_api):
+    client, catalog, _ = preview_api
+    catalog.add_document('new-upload', file_name='New.pdf', _ts=1,
+                         upload_date='2099-01-01T00:00:00Z')
+    with document_actions_over_stubs() as actions:
+        expected = actions.get_workflow_document_selection_limit('choose', settings=catalog.settings)
+    payload = preview_payload(action(kind='choose'))
+    response = client.post('/user', json=payload)
+    assert response.status_code == 200 and response.json['limit'] == expected
+    payload['document_selection']['time_basis'] = 'added'
+    added = client.post('/user', json=payload)
+    assert added.status_code == 200 and added.json['count'] == 0
+    payload['document_selection']['time_basis'] = 'invented'
+    invalid = client.post('/user', json=payload)
+    assert invalid.status_code == 400
 
 
 def test_access_denials_and_explicit_group_scope_precede_document_reads(preview_api):

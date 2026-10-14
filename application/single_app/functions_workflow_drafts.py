@@ -33,6 +33,7 @@ import re
 import uuid
 
 from jsonschema import Draft202012Validator
+from functions_workflow_merge_schema import workflow_merge_options_schema as _merge_options_schema
 
 from content_screening.contracts import DocumentHeldError
 from functions_appinsights import log_event
@@ -535,57 +536,6 @@ def _merge_schema():
             'file_name': _text_schema(BLUEPRINT_MERGE_FILE_NAME_MAX_LENGTH),
             'recent_window_minutes': {'type': 'integer', 'minimum': 1, 'maximum': 1440},
             'options': {'$ref': '#/$defs/merge_options'},
-        },
-    }
-
-
-def _merge_options_schema():
-    name = {'type': 'string', 'minLength': 1, 'maxLength': 256}
-    names = {'type': 'array', 'items': name, 'minItems': 1, 'uniqueItems': True}
-    return {
-        'type': 'object',
-        'additionalProperties': False,
-        'description': (
-            'The same column, sheet, duplicate and sort settings a chat merge accepts, for kind tabular. '
-            'kind workbook takes only sheets and sheet; kind pdf takes only bookmarks; kind docx takes only '
-            'formatting, page_breaks and source_headings; kind pptx takes only formatting and sections.'
-        ),
-        'properties': {
-            'bookmarks': {'type': 'boolean'},
-            'formatting': {'enum': ['keep_source', 'use_first']},
-            'page_breaks': {'type': 'boolean'},
-            'source_headings': {'type': 'boolean'},
-            'sections': {'type': 'boolean'},
-            'schema_policy': {'enum': ['by_name', 'exact_order', 'union', 'mapped']},
-            'columns': {**names, 'maxItems': 255},
-            # A list of closed objects rather than a map, so every object in the blueprint stays closed.
-            'column_aliases': {
-                'type': 'array', 'minItems': 1, 'maxItems': 256,
-                'items': {
-                    'type': 'object', 'additionalProperties': False, 'required': ['column', 'aliases'],
-                    'properties': {'column': name, 'aliases': {**names, 'maxItems': 32}},
-                },
-            },
-            'sheet': {'type': 'string', 'minLength': 1, 'maxLength': 31},
-            'sheets': {'enum': ['first', 'all']},
-            'header_row': {'type': 'integer', 'minimum': 1, 'maximum': 1000},
-            'include_source_column': {'type': 'boolean'},
-            'source_column_name': {'type': 'string', 'minLength': 1, 'maxLength': 128},
-            'on_incompatible': {'enum': ['fail', 'exclude']},
-            'dedupe': {'enum': ['none', 'exact_rows', 'key_columns']},
-            'dedupe_columns': {**names, 'maxItems': 16},
-            'dedupe_keep': {'enum': ['first', 'last']},
-            'sort_by': {
-                'type': 'array', 'maxItems': 3,
-                'items': {
-                    'type': 'object', 'additionalProperties': False, 'required': ['column'],
-                    'properties': {
-                        'column': name,
-                        'descending': {'type': 'boolean'},
-                        'value_type': {'enum': ['text', 'number', 'date']},
-                    },
-                },
-            },
         },
     }
 

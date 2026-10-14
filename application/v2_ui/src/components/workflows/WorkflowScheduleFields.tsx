@@ -234,10 +234,16 @@ export function WorkflowScheduleFields({
                                 type="time"
                                 step={60}
                                 aria-label="Time"
+                                aria-invalid={scheduled && !calendar.time_of_day}
+                                aria-describedby={!calendar.time_of_day ? `${baseId}-time-needed` : undefined}
+                                required={scheduled}
                                 value={calendar.time_of_day}
                                 disabled={!scheduled}
                                 onChange={(event) => updateCalendar({ time_of_day: event.target.value })}
                             />
+                            {scheduled && !calendar.time_of_day ? <p id={`${baseId}-time-needed`} className="mt-1 text-sm text-danger">
+                                Choose a run time. This recurrence is incomplete and cannot be saved or run yet.
+                            </p> : null}
                         </WorkflowField>
                     ) : null}
                     {calendar ? (

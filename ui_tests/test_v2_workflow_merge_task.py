@@ -1,7 +1,7 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.271
+Version: 0.261.335
 Implemented in: 0.261.241; PDF merge authoring added in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
@@ -100,8 +100,8 @@ def test_v2_workflow_merge_task_is_not_offered_while_merge_is_off(workflow_ui):
     labelled(page, "Task name").fill("Merge monthly files")
     open_task_details(page, 0)
     action = labelled(page, "Document action")
-    expect(action.locator("option", has_text="Compare source and target documents")).to_have_count(1)
-    expect(action.locator("option", has_text="Merge files")).to_have_count(0)
+    expect(action.locator("option", has_text="Compare")).to_have_count(1)
+    expect(action.locator("option", has_text="Merge")).to_have_count(0)
     assert not [request for request in ui.workflow_writes if request.method == "POST"]
 
 
