@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow per-document analysis mode.
-Version: 0.261.329
+Version: 0.261.332
 Implemented in: 0.241.182
 
 This test ensures Analyze workflows can persist the Run each document separately

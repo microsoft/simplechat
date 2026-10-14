@@ -1,8 +1,8 @@
 # test_workflow_authoring_telemetry.py
 """
 Real logging-sink tests for Ask AI diagnostics.
-Version: 0.261.329
-Implemented in: 0.261.329
+Version: 0.261.332
+Implemented in: 0.261.332
 
 Uses the existing blocked-network application bootstrap and synthetic model
 responses to prove categories/counts survive sanitization without private text.

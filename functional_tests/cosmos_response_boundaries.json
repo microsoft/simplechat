@@ -17050,12 +17050,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "576276ede9816d9c6f25c6326a872a39e29874ee4abb293c5d349ebba05e7b9b"
+        "module_sha256": "3d31898e1009c128645fd772c45079200ade6d291cd0b41fe048b3328ab4da30"
       },
       "classification": "sdk-compatible",
-      "contract": "read_workflow_base: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "read_workflow_base reads a real SDK CosmosDict in the caller's personal partition, projects a plain editor dictionary without Cosmos metadata, sanitizes alert diagnostics, and recomputes the authored revision without writes. Foreign or missing items remain unavailable, and invalid IDs never reach the SDK.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_workflow_assist_cosmos_response_contract.py",
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_assist_base_owner_projects_sdk_workflow_without_metadata"
       ]
     },

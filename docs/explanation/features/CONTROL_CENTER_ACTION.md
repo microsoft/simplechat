@@ -6,6 +6,10 @@ The Control Center action lets a Control Center viewer ask questions about Simpl
 
 **Version implemented:** 0.261.301
 
+**Updated in version: 0.261.329.** Orchestration forwards authenticated roles
+through worker preflight and retained-result authorization. See the
+[role propagation fix](../fixes/CONTROL_CENTER_ORCHESTRATION_ROLE_PROPAGATION_FIX.md).
+
 **Dependencies:** Semantic Kernel actions (`enable_semantic_kernel`), Chat Orchestration with Action Access for chat use, the V2 Control Center Dashboard, and the existing Control Center role settings.
 
 ## Technical specifications
@@ -29,7 +33,14 @@ The action answers only for someone whose roles grant `can_view_dashboard`: an A
 2. Resolving the action's manifest for a plan step refuses anyone else.
 3. Every function re-reads the capabilities from the signed-in session before reading data.
 
-Orchestration captures the caller's roles with their identity and passes them explicitly to the catalog and manifest resolution, including on its worker threads, where the run re-enters a request context carrying the authenticated session. A scheduled workflow run has no signed-in session, so the action refuses it. Any failure to determine access refuses the call.
+Orchestration captures the caller's roles with their authenticated identity and
+passes them explicitly to catalog discovery and exact manifest resolution.
+Worker preflight, result admission, and retained-result reads do not need a Flask
+request context: their external-source identity reader supplies those roles.
+Actual plugin calls use the existing execution bridge to re-enter a request
+context carrying the authenticated session. A scheduled workflow run has no
+signed-in session, so the action refuses it. Any failure to determine access
+refuses the call.
 
 The type is global-only. Personal and group workspaces cannot list, create or save it; an administrator creates it in **Admin Settings › Agents & Actions › Global Actions**.
 
@@ -105,6 +116,7 @@ The prompt is passed in router state, never the URL, so a link cannot place text
 
 - `functional_tests/test_v2_control_center_action.py`: refusal without dashboard access and outside a signed-in request, role rules through the real capability function, bounded chartable rows, validation before reads, generic storage errors, no writes, kernel function parameters, schema registration, readiness rules and remedies, admin-only links that match real Admin Settings sections and the browser allowlist, and the readiness route.
 - `functional_tests/test_orchestration_action_catalog.py`: the action is offered and resolved only to dashboard viewers, never outside global scope, and the type is refused for personal and group governance.
+- `functional_tests/test_control_center_orchestration_roles.py`: real worker preflight, acquisition checks, result admission, and fresh-provider retained reads with authenticated roles; denial after access changes and refusal of stale catalogs or saved/ambient roles.
 - `functional_tests/test_v2_control_center_dashboard.py`: the shared aggregation and reports.
 - `ui_tests/test_v2_control_center_dashboard.py`: the checklist, **Check again**, and the prompt hand-off into a new orchestrated chat.
 

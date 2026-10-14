@@ -43,6 +43,7 @@ import traceback
 from urllib.parse import urlsplit
 
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
+from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_LIMIT, AssistDiagnostics, assist_finish_reason
 from functions_rate_limit import build_rate_limit_error_payload
 
 
@@ -704,7 +705,7 @@ Operations:
 - {"op": "set", "path": "<a field path from draft.fields>", "value": <the new value>} replaces one field's whole value.
 __CREATE_OPERATION__
 Rules:
-- Use only paths listed in draft.fields (or, after you change "__VARIANT_PATH__", the fields listed for the new value in draft.variant_fields). Never set a field marked "read_only".
+- For set operations, use only paths listed in draft.fields (or, after you change "__VARIANT_PATH__", the fields listed for the new value in draft.variant_fields). Never set a field marked "read_only".
 - Match each field's "kind": "text" is one line; "textarea" may have line breaks; "number" is a JSON number within "min" and "max" ("integer" means a whole number); "boolean" is true or false; "select" is one of the field's option "value"s; "choices" is a JSON array of option "handle"s from that field (a full replacement list -- include the ones to keep); "lines" is a JSON array of short strings; "web_sources" is a JSON array of {"url": "https://...", "mode": "url_review" or "deep_research"}.
 - Respect "max_length" and "max_items". Never invent handles, option values, IDs or URLs the person did not give you.
 - Never ask for, guess, write or repeat secrets, keys, passwords, tokens or connection strings. Those fields are hidden from you; tell the person to fill them in themselves when they are needed.
@@ -726,7 +727,9 @@ _ACTION_GUIDANCE = """Action guidance:
 - Endpoints, server names and IDs come only from the person. Leave them unchanged if you were not told them, and tell the person to fill in required ones.
 - Prefer safe defaults, such as read-only access and modest row or result limits, unless the person asks otherwise."""
 
-_CREATE_OPERATION = """- {"op": "create_item", "handle": "N1", "type": "<one of new_items.types value>", "values": {"<path>": <value>, ...}} drafts a new __NOUN__ that will be saved with this __SUBJECT__ and assigns it through "__TARGET__". Use handles N1, N2, ... (at most __MAX__). "values" may set the paths in new_items.common_fields and the fields listed for that type in new_items.type_fields; set every required common field. To assign it, the new handle is added to "__TARGET__" for you. Create one only when no existing option fits."""
+_CREATE_OPERATION = """- {"op": "create_item", "handle": "N1", "type": "<one of new_items.types value>", "values": {"<path>": <value>, ...}} drafts a new __NOUN__ that will be saved with this __SUBJECT__ and assigns it through "__TARGET__". Use handles N1, N2, ... (at most __MAX__). To assign it, the new handle is added to "__TARGET__" for you. Create one only when no existing option fits.
+  For create_item, use only the paths in new_items.common_fields and new_items.type_fields for the selected type, not the parent draft's fields. "values" is a flat object: its keys must be the exact "path" strings, including the leading "/" and the exact capitalization. For example, a listed "/displayName" field is written as "values": {"/displayName": "Lookup"}, never "values": {"displayName": "Lookup"}.
+  Respect each new field's kind, limits and options, and set every required common field. Do not copy every type-specific field or send blank placeholders. If a type-specific field needs a server, database, endpoint or other detail the person has not provided, omit that field from "values" and tell the person to finish it before saving, or ask a short question with no operations. Never invent connection details or enter credentials."""
 
 
 def system_prompt(request):
@@ -893,7 +896,7 @@ _CORRECTION_MESSAGE_MAX_LENGTH = 400
 class _Correctable(Exception):
     """The reply cannot be used; ``messages`` are server-authored and go to the correction round."""
 
-    def __init__(self, messages, stage):
+    def __init__(self, messages, stage, *, diagnostics=(), operation_count=None):
         cleaned = []
         for message in list(messages)[:_MAX_CORRECTION_MESSAGES]:
             text = ' '.join(str(message).split())
@@ -902,13 +905,16 @@ class _Correctable(Exception):
             cleaned.append(text)
         self.messages = cleaned or ['The reply could not be used.']
         self.stage = stage
+        self.diagnostics = list(diagnostics)[:ASSIST_DIAGNOSTIC_LIMIT]
+        self.operation_count = operation_count
         super().__init__(stage)
 
 
 def parse_model_output(content):
     """The model's reply as a JSON object, or raise ``_Correctable``. One Markdown fence is tolerated."""
     if not isinstance(content, str) or not content.strip():
-        raise _Correctable(['The reply was empty. Reply with exactly one JSON object.'], 'parse')
+        raise _Correctable(['The reply was empty. Reply with exactly one JSON object.'], 'parse',
+                           diagnostics=[{'assist_rule': 'empty_reply'}])
     text = content.strip()
     fenced = _JSON_FENCE.match(text)
     if fenced:
@@ -916,11 +922,14 @@ def parse_model_output(content):
     try:
         output = _strict_json(text)
     except (ValueError, RecursionError):
-        raise _Correctable(['The reply was not valid JSON. Reply with exactly one JSON object and nothing else.'], 'parse') from None
+        raise _Correctable(['The reply was not valid JSON. Reply with exactly one JSON object and nothing else.'], 'parse',
+                           diagnostics=[{'assist_rule': 'invalid_json'}]) from None
     if not isinstance(output, dict):
-        raise _Correctable(['The reply must be one JSON object.'], 'parse')
+        raise _Correctable(['The reply must be one JSON object.'], 'parse',
+                           diagnostics=[{'assist_rule': 'reply_not_object'}])
     if _json_problem(output) is not None:
-        raise _Correctable(['The reply contains text that is not valid Unicode or is nested too deeply.'], 'parse')
+        raise _Correctable(['The reply contains text that is not valid Unicode or is nested too deeply.'], 'parse',
+                           diagnostics=[{'assist_rule': 'invalid_json_value'}])
     return output
 
 
@@ -956,7 +965,9 @@ def _safe_url(value):
 
 
 class _ValueError(Exception):
-    pass
+    def __init__(self, message, rule):
+        super().__init__(message)
+        self.rule = rule
 
 
 def coerce_value(descriptor, value, handles, extra_handles=()):
@@ -967,39 +978,39 @@ def coerce_value(descriptor, value, handles, extra_handles=()):
         if value is None and not descriptor.required:
             return ''
         if not isinstance(value, str) or _CONTROL_CHARACTERS.search(value):
-            raise _ValueError(f'{path} must be a string without control characters.')
+            raise _ValueError(f'{path} must be a string without control characters.', 'text_invalid')
         if kind == 'text' and _LINE_BREAKS.search(value):
-            raise _ValueError(f'{path} must be one line.')
+            raise _ValueError(f'{path} must be one line.', 'text_multiline')
         text = _js_trim(value) if kind == 'text' else value.strip('\r\n')
         if len(text) > descriptor.max_length:
-            raise _ValueError(f'{path} must be at most {descriptor.max_length} characters.')
+            raise _ValueError(f'{path} must be at most {descriptor.max_length} characters.', 'text_too_long')
         if descriptor.required and not _js_trim(text):
-            raise _ValueError(f'{path} is required and cannot be blank.')
+            raise _ValueError(f'{path} is required and cannot be blank.', 'required_value')
         return text
     if kind == 'number':
         if value is None and not descriptor.required:
             return None
         number = _number(value, integer=descriptor.integer)
         if number is None:
-            raise _ValueError(f'{path} must be a {"whole " if descriptor.integer else ""}number.')
+            raise _ValueError(f'{path} must be a {"whole " if descriptor.integer else ""}number.', 'number_invalid')
         if descriptor.minimum is not None and number < descriptor.minimum:
-            raise _ValueError(f'{path} must be at least {descriptor.minimum}.')
+            raise _ValueError(f'{path} must be at least {descriptor.minimum}.', 'number_below_minimum')
         if descriptor.maximum is not None and number > descriptor.maximum:
-            raise _ValueError(f'{path} must be at most {descriptor.maximum}.')
+            raise _ValueError(f'{path} must be at most {descriptor.maximum}.', 'number_above_maximum')
         return int(number) if descriptor.integer else number
     if kind == 'boolean':
         if not isinstance(value, bool):
-            raise _ValueError(f'{path} must be true or false.')
+            raise _ValueError(f'{path} must be true or false.', 'boolean_invalid')
         return value
     if kind == 'select':
         if value is None and not descriptor.required:
             return None
         if value not in descriptor.option_values():
-            raise _ValueError(f'{path} must be one of its option values.')
+            raise _ValueError(f'{path} must be one of its option values.', 'select_invalid')
         return value
     if kind == 'choices':
         if not isinstance(value, list):
-            raise _ValueError(f'{path} must be a JSON array of option handles.')
+            raise _ValueError(f'{path} must be a JSON array of option handles.', 'choices_not_array')
         result = []
         for handle in value:
             if isinstance(handle, str) and handle in extra_handles:
@@ -1007,51 +1018,51 @@ def coerce_value(descriptor, value, handles, extra_handles=()):
             else:
                 resolved = handles.value(path, handle) if isinstance(handle, str) else None
             if resolved is None:
-                raise _ValueError(f'{path} lists a handle that is not one of its options.')
+                raise _ValueError(f'{path} lists a handle that is not one of its options.', 'choice_handle_invalid')
             if resolved not in result:
                 result.append(resolved)
         if len(result) > descriptor.max_items:
-            raise _ValueError(f'{path} can list at most {descriptor.max_items} items.')
+            raise _ValueError(f'{path} can list at most {descriptor.max_items} items.', 'too_many_items')
         return result
     if kind == 'lines':
         if not isinstance(value, list):
-            raise _ValueError(f'{path} must be a JSON array of strings.')
+            raise _ValueError(f'{path} must be a JSON array of strings.', 'lines_not_array')
         result = []
         for item in value:
             if not isinstance(item, str) or _CONTROL_CHARACTERS.search(item) or _LINE_BREAKS.search(item):
-                raise _ValueError(f'{path} items must be one-line strings.')
+                raise _ValueError(f'{path} items must be one-line strings.', 'line_invalid')
             text = _js_trim(item)
             if not text:
                 continue
             if len(text) > descriptor.max_length:
-                raise _ValueError(f'{path} items must be at most {descriptor.max_length} characters.')
+                raise _ValueError(f'{path} items must be at most {descriptor.max_length} characters.', 'line_too_long')
             if text not in result:
                 result.append(text)
         if len(result) > descriptor.max_items:
-            raise _ValueError(f'{path} can list at most {descriptor.max_items} items.')
+            raise _ValueError(f'{path} can list at most {descriptor.max_items} items.', 'too_many_items')
         return result
     if kind == 'web_sources':
         if not isinstance(value, list):
-            raise _ValueError(f'{path} must be a JSON array of {{"url", "mode"}} objects.')
+            raise _ValueError(f'{path} must be a JSON array of {{"url", "mode"}} objects.', 'web_sources_not_array')
         result = []
         seen = set()
         for item in value:
             if not isinstance(item, dict) or not set(item) <= {'url', 'mode'} or 'url' not in item:
-                raise _ValueError(f'{path} items must be {{"url", "mode"}} objects.')
+                raise _ValueError(f'{path} items must be {{"url", "mode"}} objects.', 'web_source_shape')
             url = _safe_url(item['url'])
             if url is None:
-                raise _ValueError(f'{path} URLs must be http or https addresses without credentials.')
+                raise _ValueError(f'{path} URLs must be http or https addresses without credentials.', 'web_source_url')
             mode = item.get('mode', 'url_review')
             if mode not in WEB_SOURCE_MODES:
-                raise _ValueError(f'{path} mode must be "url_review" or "deep_research".')
+                raise _ValueError(f'{path} mode must be "url_review" or "deep_research".', 'web_source_mode')
             if url in seen:
                 continue
             seen.add(url)
             result.append({'url': url, 'mode': mode})
         if len(result) > descriptor.max_items:
-            raise _ValueError(f'{path} can list at most {descriptor.max_items} items.')
+            raise _ValueError(f'{path} can list at most {descriptor.max_items} items.', 'too_many_items')
         return result
-    raise _ValueError(f'{path} cannot be changed.')
+    raise _ValueError(f'{path} cannot be changed.', 'field_kind_invalid')
 
 
 class _Attempt:
@@ -1068,28 +1079,43 @@ class _Attempt:
 _NO_CHANGE_REPLY = 'The draft already works this way, so nothing was changed.'
 
 
+class _OperationErrors:
+    def __init__(self):
+        self.messages = []
+        self.diagnostics = []
+
+    def reject(self, message, rule, *, index=0, operation='create_item', path=None, descriptor=None):
+        self.messages.append(message)
+        if len(self.diagnostics) < ASSIST_DIAGNOSTIC_LIMIT:
+            self.diagnostics.append({
+                'assist_rule': rule, 'operation_index': index, 'assist_operation': operation,
+                'assist_field': path, 'field_known': descriptor is not None,
+                'assist_field_kind': descriptor.kind if descriptor is not None else None,
+            })
+
+
 def _apply_create(request, handles, operation, index, created, errors):
     spec = request.new_items
     if spec is None or spec.max_items <= 0:
-        errors.append(f'Operation {index}: create_item is not available in this editor.')
+        errors.reject(f'Operation {index}: create_item is not available in this editor.', 'create_unavailable', index=index)
         return
     if not set(operation) <= {'op', 'handle', 'type', 'values'}:
-        errors.append(f'Operation {index}: create_item accepts only handle, type and values.')
+        errors.reject(f'Operation {index}: create_item accepts only handle, type and values.', 'create_shape', index=index)
         return
     handle = operation.get('handle')
     if not isinstance(handle, str) or not _NEW_HANDLE.match(handle) or handle in created:
-        errors.append(f'Operation {index}: handle must be a new, unique N1, N2, ... handle.')
+        errors.reject(f'Operation {index}: handle must be a new, unique N1, N2, ... handle.', 'new_handle_invalid', index=index)
         return
     if len(created) >= spec.max_items:
-        errors.append(f'Operation {index}: at most {spec.max_items} new items can be created.')
+        errors.reject(f'Operation {index}: at most {spec.max_items} new items can be created.', 'too_many_new_items', index=index)
         return
     item_type = operation.get('type')
     if item_type not in {option['value'] for option in spec.type_options}:
-        errors.append(f'Operation {index}: type must be one of new_items.types.')
+        errors.reject(f'Operation {index}: type must be one of new_items.types.', 'new_type_invalid', index=index)
         return
     raw_values = operation.get('values', {})
     if not isinstance(raw_values, dict):
-        errors.append(f'Operation {index}: values must be an object.')
+        errors.reject(f'Operation {index}: values must be an object.', 'new_values_not_object', index=index)
         return
     allowed = dict(spec.common)
     allowed.update(spec.variants.get(item_type, {}))
@@ -1098,17 +1124,20 @@ def _apply_create(request, handles, operation, index, created, errors):
     for path, value in raw_values.items():
         descriptor = allowed.get(path)
         if descriptor is None or descriptor.read_only:
-            errors.append(f'Operation {index}: {str(path)[:80]} is not a field a new item can set.')
+            errors.reject(f'Operation {index}: {str(path)[:80]} is not a field a new item can set.',
+                          'field_read_only' if descriptor is not None else 'new_field_unknown',
+                          index=index, path=path, descriptor=descriptor)
             failed = True
             continue
         try:
             values[path] = coerce_value(descriptor, value, handles)
         except _ValueError as exc:
-            errors.append(f'Operation {index}: {exc}')
+            errors.reject(f'Operation {index}: {exc}', exc.rule, index=index, path=path, descriptor=descriptor)
             failed = True
     for path, descriptor in spec.common.items():
         if descriptor.required and _is_blank(values.get(path)):
-            errors.append(f'Operation {index}: {path} is required for a new item.')
+            errors.reject(f'Operation {index}: {path} is required for a new item.', 'new_required_field',
+                          index=index, path=path, descriptor=descriptor)
             failed = True
     if not failed:
         created[handle] = {'handle': NEW_ITEM_PREFIX + handle, 'type': item_type, 'values': values}
@@ -1116,27 +1145,32 @@ def _apply_create(request, handles, operation, index, created, errors):
 
 def _checked_operations(output):
     if not set(output) <= {'reply', 'operations'}:
-        raise _Correctable(['The reply object may contain only "reply" and "operations".'], 'shape')
+        raise _Correctable(['The reply object may contain only "reply" and "operations".'], 'shape',
+                           diagnostics=[{'assist_rule': 'unexpected_reply_field'}])
     reply = clean_reply(output.get('reply'))
     if reply is None:
-        raise _Correctable(['"reply" must be a non-empty string.'], 'shape')
+        raise _Correctable(['"reply" must be a non-empty string.'], 'shape',
+                           diagnostics=[{'assist_rule': 'reply_required'}])
     operations = output.get('operations', [])
     if operations is None:
         operations = []
     if not isinstance(operations, list):
-        raise _Correctable(['"operations" must be a JSON array.'], 'shape')
+        raise _Correctable(['"operations" must be a JSON array.'], 'shape',
+                           diagnostics=[{'assist_rule': 'operations_not_array'}])
     if len(operations) > EDITOR_ASSIST_MAX_OPERATIONS:
-        raise _Correctable([f'Send at most {EDITOR_ASSIST_MAX_OPERATIONS} operations.'], 'shape')
+        raise _Correctable([f'Send at most {EDITOR_ASSIST_MAX_OPERATIONS} operations.'], 'shape',
+                           diagnostics=[{'assist_rule': 'too_many_operations'}])
     for index, operation in enumerate(operations, start=1):
         if not isinstance(operation, dict) or operation.get('op') not in ('set', 'create_item'):
-            raise _Correctable([f'Operation {index} must be an object whose "op" is "set" or "create_item".'], 'shape')
+            raise _Correctable([f'Operation {index} must be an object whose "op" is "set" or "create_item".'], 'shape',
+                               diagnostics=[{'assist_rule': 'operation_shape', 'operation_index': index}])
     return reply, operations
 
 
 def evaluate_output(request, handles, output):
     """Apply the model's operations to a copy of the view and return an ``_Attempt``, or raise ``_Correctable``."""
     reply, operations = _checked_operations(output)
-    errors = []
+    errors = _OperationErrors()
     created = {}
     for index, operation in enumerate(operations, start=1):
         if operation['op'] == 'create_item':
@@ -1151,26 +1185,31 @@ def evaluate_output(request, handles, output):
     variant_changed = False
     for index, operation in sets:
         if not set(operation) <= {'op', 'path', 'value'} or 'value' not in operation:
-            errors.append(f'Operation {index}: a set operation has exactly "op", "path" and "value".')
+            errors.reject(f'Operation {index}: a set operation has exactly "op", "path" and "value".',
+                          'operation_shape', index=index, operation='set')
             continue
         path = operation.get('path')
         active = request.active_fields(candidate)
         descriptor = active.get(path) if isinstance(path, str) else None
         if descriptor is None:
-            errors.append(f'Operation {index}: the path is not a field in this draft.')
+            errors.reject(f'Operation {index}: the path is not a field in this draft.', 'field_unknown',
+                          index=index, operation='set', path=path)
             continue
         if descriptor.read_only:
-            errors.append(f'Operation {index}: {path} is read-only.')
+            errors.reject(f'Operation {index}: {path} is read-only.', 'field_read_only',
+                          index=index, operation='set', path=path, descriptor=descriptor)
             continue
         if path in seen_paths:
-            errors.append(f'Operation {index}: {path} is set more than once.')
+            errors.reject(f'Operation {index}: {path} is set more than once.', 'field_repeated',
+                          index=index, operation='set', path=path, descriptor=descriptor)
             continue
         seen_paths.add(path)
         extra = tuple(created) if request.new_items is not None and path == request.new_items.target else ()
         try:
             value = coerce_value(descriptor, operation['value'], handles, extra)
         except _ValueError as exc:
-            errors.append(f'Operation {index}: {exc}')
+            errors.reject(f'Operation {index}: {exc}', exc.rule, index=index, operation='set',
+                          path=path, descriptor=descriptor)
             continue
         if path == variant_path and value != candidate.get(path):
             variant_changed = True
@@ -1186,15 +1225,17 @@ def evaluate_output(request, handles, output):
                 assigned.append(item['handle'])
         target_descriptor = request.fields[target]
         if len(assigned) > target_descriptor.max_items:
-            errors.append(f'{target} can list at most {target_descriptor.max_items} items, including new ones.')
+            errors.reject(f'{target} can list at most {target_descriptor.max_items} items, including new ones.',
+                          'too_many_items', path=target, descriptor=target_descriptor)
         candidate[target] = assigned
         new_handles = {item['handle'] for item in created.values()}
         orphan = [handle for handle in new_handles if handle not in assigned]
         if orphan:
-            errors.append(f'Every created item must stay assigned in {target}.')
+            errors.reject(f'Every created item must stay assigned in {target}.', 'created_item_unassigned',
+                          path=target, descriptor=target_descriptor)
 
-    if errors:
-        raise _Correctable(errors, 'operations')
+    if errors.messages:
+        raise _Correctable(errors.messages, 'operations', diagnostics=errors.diagnostics, operation_count=len(operations))
 
     changes = compute_changes(request, candidate, variant_changed)
     warnings = []
@@ -1254,11 +1295,12 @@ class EditorAssistServices:
     Each may raise ``EditorAssistError`` or the shared ``WorkflowAssistError``, which is converted.
     """
 
-    def __init__(self, *, limiter, call_model, log=None, clock=time.monotonic):
+    def __init__(self, *, limiter, call_model, log=None, clock=time.monotonic, diagnostics=None):
         self.limiter = limiter
         self.call_model = call_model
         self.log = log or (lambda _message, _extra, _level: None)
         self.clock = clock
+        self.diagnostics = diagnostics or AssistDiagnostics()
 
 
 def _as_editor_error(exc):
@@ -1276,6 +1318,8 @@ class _AssistRun:
         self.started = services.clock()
         self.deadline = self.started + ASSIST_DEADLINE_SECONDS
         self.model_called = False
+        self.diagnostics = services.diagnostics
+        self.diagnostics.bind(kind, scope, clock=services.clock)
         self.metrics = {
             'user_id': user_id, 'editor': kind, 'scope': scope, 'submission_id': None, 'status': None,
             'outcome': None, 'code': None, 'stage': 'request', 'error_type': None, 'invalid_stage': None,
@@ -1291,6 +1335,8 @@ class _AssistRun:
         self.metrics['stage'] = name
 
     def execute(self, request):
+        self.diagnostics.bind(self.metrics['editor'], self.metrics['scope'], request.submission_id,
+                              clock=self.services.clock)
         self.metrics.update({
             'submission_id': request.submission_id, 'turns_received': len(request.conversation),
             'field_count': len(request.fields),
@@ -1341,6 +1387,7 @@ class _AssistRun:
     def _model_turns(self, request, handles, envelope):
         previous_errors = None
         for attempt_number in range(1, ASSIST_MODEL_ATTEMPTS + 1):
+            self.diagnostics.attempt = attempt_number
             remaining = self.remaining()
             if remaining < ASSIST_MIN_MODEL_SECONDS:
                 raise EditorAssistError('assistant_timeout')
@@ -1348,23 +1395,41 @@ class _AssistRun:
             messages = envelope.messages(previous_errors)
             self.model_called = True
             self.metrics['model_calls'] += 1
+            self.diagnostics.emit('model_started', assist_stage='model', remaining_ms=int(remaining * 1000))
             content, finish_reason = self.services.call_model(messages, remaining - ASSIST_POST_MODEL_SECONDS)
+            self.diagnostics.emit(
+                'model_finished', assist_stage='evaluate',
+                assist_finish_reason=assist_finish_reason(finish_reason),
+                output_present=isinstance(content, str) and bool(content.strip()),
+                output_length=len(content) if isinstance(content, str) else 0,
+            )
             self.stage('evaluate')
             try:
                 if finish_reason == 'content_filter':
                     raise EditorAssistError('assistant_refused')
                 if finish_reason == 'length':
-                    raise _Correctable(['The reply was cut off. Reply with fewer operations or shorter text.'], 'length')
+                    raise _Correctable(['The reply was cut off. Reply with fewer operations or shorter text.'], 'length',
+                                       diagnostics=[{'assist_rule': 'output_truncated'}])
                 return evaluate_output(request, handles, parse_model_output(content))
             except _Correctable as exc:
                 self.metrics['invalid_stage'] = exc.stage
+                for reason_index, diagnostic in enumerate(exc.diagnostics, start=1):
+                    self.diagnostics.emit('validation_rejected', **diagnostic, assist_stage=exc.stage,
+                                          reason_index=reason_index, reason_count=len(exc.diagnostics),
+                                          operation_count=exc.operation_count)
                 if attempt_number >= ASSIST_MODEL_ATTEMPTS:
                     break
                 self.metrics['correction_count'] += 1
+                self.diagnostics.emit('correction_started', assist_stage=exc.stage)
                 previous_errors = exc.messages
         raise EditorAssistError('assistant_output_invalid')
 
     def log(self, status, *, outcome=None, code=None):
+        self.diagnostics.emit('request_finished', assist_stage=self.metrics['stage'],
+                              assist_outcome=outcome or 'failed', assist_code=code, status=status,
+                              model_calls=self.metrics['model_calls'], correction_count=self.metrics['correction_count'],
+                              operation_count=self.metrics['operation_count'], change_count=self.metrics['change_count'],
+                              new_item_count=self.metrics['new_item_count'])
         self.metrics.update({
             'status': status, 'outcome': outcome, 'code': code,
             'duration_ms': max(0, int((self.services.clock() - self.started) * 1000)),

@@ -27,6 +27,7 @@ import re
 import uuid
 
 from jsonschema import Draft202012Validator
+from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_LIMIT
 
 from functions_workflow_alert_authoring import alert_rule_properties
 from functions_workflow_alerts import normalize_alert_rule, normalize_alert_flag
@@ -121,15 +122,17 @@ _LINE_BREAKS = re.compile(r'[\r\n\u0085\u2028\u2029]')
 class AssistApplyError(Exception):
     """The model's operations cannot be applied. ``messages`` are server-authored and content-free."""
 
-    def __init__(self, messages):
+    def __init__(self, messages, *, diagnostics=()):
         self.messages = [str(message) for message in messages]
+        self.diagnostics = list(diagnostics)[:ASSIST_DIAGNOSTIC_LIMIT]
         super().__init__('; '.join(self.messages))
 
 
 class _OperationError(Exception):
-    def __init__(self, message):
+    def __init__(self, message, rule='operation_invalid'):
         super().__init__(message)
         self.message = message
+        self.rule = rule
 
 
 # ---------------------------------------------------------------------------
@@ -147,16 +150,16 @@ def _string(value):
 def model_text(value, label, max_length, *, multiline=False, required=True):
     """Check one piece of model-written text and return it trimmed, or raise ``_OperationError``."""
     if not isinstance(value, str):
-        raise _OperationError(f'{label} must be text.')
+        raise _OperationError(f'{label} must be text.', 'text_invalid')
     text = js_trim(value)
     if required and not text:
-        raise _OperationError(f'{label} must not be blank.')
+        raise _OperationError(f'{label} must not be blank.', 'required_value')
     if len(text) > max_length:
-        raise _OperationError(f'{label} must be {max_length} characters or fewer.')
+        raise _OperationError(f'{label} must be {max_length} characters or fewer.', 'text_too_long')
     if _CONTROL_CHARACTERS.search(text):
-        raise _OperationError(f'{label} must not contain control characters.')
+        raise _OperationError(f'{label} must not contain control characters.', 'text_invalid')
     if not multiline and _LINE_BREAKS.search(text):
-        raise _OperationError(f'{label} must be a single line.')
+        raise _OperationError(f'{label} must be a single line.', 'text_multiline')
     return text
 
 
@@ -1181,21 +1184,21 @@ class _Applier:
         if handle.startswith('new_'):
             task_id = self.new_tasks.get(handle)
             if task_id is None:
-                raise _OperationError('It names a new task that no earlier add_task created.')
+                raise _OperationError('It names a new task that no earlier add_task created.', 'handle_invalid')
         else:
             target = self.handles.resolve(handle)
             if target is None or target[0] != 'task':
-                raise _OperationError('It names a task that is not in the draft.')
+                raise _OperationError('It names a task that is not in the draft.', 'handle_invalid')
             task_id = target[1]
         if task_id in self.removed_tasks:
-            raise _OperationError('It names a task that an earlier operation removed.')
+            raise _OperationError('It names a task that an earlier operation removed.', 'handle_invalid')
         return task_id
 
     def _task(self, handle):
         task_id = self._task_id(handle)
         index = self._task_index(task_id)
         if index < 0:
-            raise _OperationError('It names a task that is not in the draft.')
+            raise _OperationError('It names a task that is not in the draft.', 'handle_invalid')
         return index, self._tasks()[index]
 
     def _renumber(self):
@@ -1207,17 +1210,17 @@ class _Applier:
     def _agent(self, handle):
         target = self.handles.resolve(handle)
         if target is None or target[0] != 'agent':
-            raise _OperationError('It names an agent that is not one of the choices.')
+            raise _OperationError('It names an agent that is not one of the choices.', 'handle_invalid')
         return target[1]
 
     def _model(self, handle):
         target = self.handles.resolve(handle)
         if handle == 'default_model':
             if target is None:
-                raise _OperationError('The default model is not available here. Choose one of the models.')
+                raise _OperationError('The default model is not available here. Choose one of the models.', 'handle_invalid')
             return None
         if target is None or target[0] != 'model':
-            raise _OperationError('It names a model that is not one of the choices.')
+            raise _OperationError('It names a model that is not one of the choices.', 'handle_invalid')
         return target[1]
 
     def _references(self):
@@ -1241,11 +1244,11 @@ class _Applier:
         """``(identity, reference or None, label)`` for a document handle the model sent."""
         target = self.handles.resolve(handle)
         if target is None or target[0] not in ('reference', 'document'):
-            raise _OperationError('It names a document that is not in the draft or the request.')
+            raise _OperationError('It names a document that is not in the draft or the request.', 'handle_invalid')
         if target[0] == 'reference':
             reference = self._reference_by_id(target[1])
             if reference is None:
-                raise _OperationError('It names a shared reference that an earlier operation removed.')
+                raise _OperationError('It names a shared reference that an earlier operation removed.', 'handle_invalid')
             return reference_identity(reference, self.user_id), reference, ''
         entry = self.handles.documents.get(self.handles.identity_handles.get(target[1])) or {}
         return target[1], self._reference_for_identity(target[1]), entry.get('file_label') or ''
@@ -1255,7 +1258,7 @@ class _Applier:
         if identity[0] == UNKNOWN_SCOPE:
             raise _OperationError(
                 'The workspace of that document is not known, so the assistant cannot place it. '
-                'Ask the user to add it with the document picker.'
+                'Ask the user to add it with the document picker.', 'document_scope_unknown',
             )
         return identity
 
@@ -1282,9 +1285,11 @@ class _Applier:
     def _check_trigger_editable(self, *, schedule=True):
         trigger_type = self.candidate.get('trigger_type')
         if trigger_type == 'file_sync':
-            raise _OperationError('This workflow runs on File Sync changes, which the assistant cannot change yet.')
+            raise _OperationError('This workflow runs on File Sync changes, which the assistant cannot change yet.',
+                                  'protected_workflow')
         if schedule and trigger_type == 'interval' and workflow_schedule_for_editor(self.candidate.get('schedule')) is None:
-            raise _OperationError('The current schedule uses options the editor cannot show, so the assistant cannot change it.')
+            raise _OperationError('The current schedule uses options the editor cannot show, so the assistant cannot change it.',
+                                  'protected_workflow')
 
     def _current_calendar_timezone(self):
         schedule = workflow_schedule_for_editor(self.candidate.get('schedule'))
@@ -1299,7 +1304,7 @@ class _Applier:
                 enforce_workflow_schedule_minimum(normalized, self.min_interval_seconds)
         except WorkflowPublicValidationError as exc:
             # Schedule messages name only fixed limits and choices, never the value sent.
-            raise _OperationError(str(exc)) from None
+            raise _OperationError(str(exc), 'schedule_invalid') from None
         self._set(self.candidate, 'trigger_type', 'interval')
         self._set(self.candidate, 'schedule', schedule)
 
@@ -1321,12 +1326,12 @@ class _Applier:
         if 'timezone' in op:
             timezone = model_text(op['timezone'], 'The time zone', ASSIST_TIMEZONE_MAX_LENGTH)
             if timezone not in workflow_schedule_timezones():
-                raise _OperationError('The time zone must be an IANA time zone name, such as America/New_York.')
+                raise _OperationError('The time zone must be an IANA time zone name, such as America/New_York.', 'schedule_invalid')
         else:
             # changeRepeats keeps a calendar schedule's time zone, else uses the browser's.
             timezone = self._current_calendar_timezone() or self.context.time_zone
             if not timezone:
-                raise _OperationError('No time zone is known for this schedule. Ask the user which time zone to use.')
+                raise _OperationError('No time zone is known for this schedule. Ask the user which time zone to use.', 'schedule_invalid')
         frequency = op['frequency']
         days = op.get('days_of_week') or []
         self._set_schedule({
@@ -1394,7 +1399,8 @@ class _Applier:
         condition = self._alert_condition(op['condition'])
         scope = op.get('scope') or {'type': 'final'}
         if condition['type'] in ASSIST_SCOPELESS_CONDITIONS and scope['type'] != 'final':
-            raise _OperationError('Run status, File Sync and agent signal rules watch the whole run, so their scope must be final.')
+            raise _OperationError('Run status, File Sync and agent signal rules watch the whole run, so their scope must be final.',
+                                  'alert_scope_invalid')
         task_id = self._task_id(scope['task']) if scope['type'] == 'task' else ''
         # newWorkflowAlertRule's shape, with the model's choices.
         self.alert_rules.append((None, {
@@ -1413,10 +1419,10 @@ class _Applier:
         self._alerts()
         target = self.handles.resolve(op['rule'])
         if target is None or target[0] != 'alert':
-            raise _OperationError('It names an alert rule that is not in the draft.')
+            raise _OperationError('It names an alert rule that is not in the draft.', 'handle_invalid')
         rule = next((rule for index, rule in self.alert_rules if index == target[1]), None)
         if rule is None:
-            raise _OperationError('It names an alert rule that an earlier operation removed.')
+            raise _OperationError('It names an alert rule that an earlier operation removed.', 'handle_invalid')
         for key in ('name', 'enabled', 'severity', 'delivery', 'require_acknowledgment', 'sound', 'size'):
             if key in op:
                 rule[key] = (
@@ -1429,18 +1435,19 @@ class _Applier:
             scope = op['scope']
             rule['scope'] = {'type': scope['type'], 'task_id': self._task_id(scope['task']) if scope['type'] == 'task' else ''}
         if rule['condition']['type'] in ASSIST_SCOPELESS_CONDITIONS and rule['scope']['type'] != 'final':
-            raise _OperationError('Run status, File Sync and agent signal rules watch the whole run, so their scope must be final.')
+            raise _OperationError('Run status, File Sync and agent signal rules watch the whole run, so their scope must be final.',
+                                  'alert_scope_invalid')
 
     def op_remove_alert_rule(self, op):
         self._alerts()
         target = self.handles.resolve(op['rule'])
         if target is None or target[0] != 'alert':
-            raise _OperationError('It names an alert rule that is not in the draft.')
+            raise _OperationError('It names an alert rule that is not in the draft.', 'handle_invalid')
         for position, (index, _rule) in enumerate(self.alert_rules):
             if index == target[1]:
                 del self.alert_rules[position]
                 return
-        raise _OperationError('It names an alert rule that an earlier operation removed.')
+        raise _OperationError('It names an alert rule that an earlier operation removed.', 'handle_invalid')
 
     # -- runners -----------------------------------------------------------
 
@@ -1461,7 +1468,7 @@ class _Applier:
     def op_set_task_runner(self, op):
         _index, task = self._task(op['task'])
         if js_truthy(task.get('publication')):
-            raise _OperationError('A publication task has no runner to change.')
+            raise _OperationError('A publication task has no runner to change.', 'protected_workflow')
         current = task.get('runner') if isinstance(task.get('runner'), dict) else {}
         runner_type = op['runner']
         # TaskRunnerFields writes a fresh runner of the chosen type.
@@ -1489,7 +1496,8 @@ class _Applier:
     def _refuse_structured(self):
         if self.structured:
             raise _OperationError(
-                'This workflow is a flow. Only the flow editor adds, removes, moves or connects its tasks.'
+                'This workflow is a flow. Only the flow editor adds, removes, moves or connects its tasks.',
+                'protected_workflow',
             )
 
     def _position_after(self, handle, moving_id=None):
@@ -1497,20 +1505,20 @@ class _Applier:
             return 0
         task_id = self._task_id(handle)
         if task_id == moving_id:
-            raise _OperationError('A task cannot be placed after itself.')
+            raise _OperationError('A task cannot be placed after itself.', 'task_self_reference')
         index = self._task_index(task_id)
         if index < 0:
-            raise _OperationError('It names a task that is not in the draft.')
+            raise _OperationError('It names a task that is not in the draft.', 'handle_invalid')
         return index + 1
 
     def op_add_task(self, op):
         self._refuse_structured()
         key = op['key']
         if key in self.new_tasks:
-            raise _OperationError('Each add_task needs its own key.')
+            raise _OperationError('Each add_task needs its own key.', 'new_task_key_repeated')
         tasks = self._tasks()
         if len(tasks) >= self.max_tasks:
-            raise _OperationError(f'A workflow can have at most {self.max_tasks} tasks.')
+            raise _OperationError(f'A workflow can have at most {self.max_tasks} tasks.', 'task_limit')
         position = self._position_after(op['after']) if 'after' in op else len(tasks)
         task = create_workflow_task(len(tasks))
         task['id'] = _new_uuid()
@@ -1529,9 +1537,9 @@ class _Applier:
         index, task = self._task(op['task'])
         tasks = self._tasks()
         if len(tasks) <= 1:
-            raise _OperationError('A workflow needs at least one task.')
+            raise _OperationError('A workflow needs at least one task.', 'task_required')
         if task.get('approval') is not None:
-            raise _OperationError('The task has an approval step, which only the user can remove.')
+            raise _OperationError('The task has an approval step, which only the user can remove.', 'protected_workflow')
         del tasks[index]
         self._renumber()
         self.removed_tasks.add(task['id'])
@@ -1581,7 +1589,7 @@ class _Applier:
         for handle in op['from']:
             producer_id = self._task_id(handle)
             if producer_id == task['id']:
-                raise _OperationError('A task cannot take input from itself.')
+                raise _OperationError('A task cannot take input from itself.', 'task_self_reference')
             if producer_id not in producers:
                 producers.append(producer_id)
         existing = [item for item in inputs if _is_legacy_binding(item)] if isinstance(inputs, list) else []
@@ -1664,7 +1672,8 @@ class _Applier:
         for handle in op['references']:
             identity, reference, _label = self._document(handle)
             if reference is None:
-                raise _OperationError('It names a document that is not a shared reference. Use bind_reference first.')
+                raise _OperationError('It names a document that is not a shared reference. Use bind_reference first.',
+                                      'reference_not_bound')
             if reference['id'] not in selected:
                 selected.append(reference['id'])
             self.placed.add(identity)
@@ -1674,7 +1683,7 @@ class _Applier:
     def op_unbind_reference(self, op):
         _identity, reference, _label = self._document(op['reference'])
         if reference is None:
-            raise _OperationError('It names a document that is not a shared reference.')
+            raise _OperationError('It names a document that is not a shared reference.', 'reference_not_bound')
         references = self._references()
         for position, item in enumerate(references):
             if item is reference:
@@ -1688,12 +1697,14 @@ class _Applier:
 
     def _check_document_target(self, task):
         if js_truthy(task.get('publication')):
-            raise _OperationError('A publication task has no document action.')
+            raise _OperationError('A publication task has no document action.', 'protected_workflow')
         mode = document_action_mode(task.get('document_action'))
         if mode == 'current_item':
-            raise _OperationError('The task analyzes the current loop document, which only the flow editor changes.')
+            raise _OperationError('The task analyzes the current loop document, which only the flow editor changes.',
+                                  'protected_workflow')
         if mode == 'preserve':
-            raise _OperationError('The task has an advanced document action that the assistant cannot change.')
+            raise _OperationError('The task has an advanced document action that the assistant cannot change.',
+                                  'protected_workflow')
 
     def _target_identity(self, handle):
         identity, _reference, _label = self._document(handle)
@@ -1882,37 +1893,61 @@ def apply_assist_operations(draft, output, handles, context):
     """
     applier = _Applier(draft, handles, context)
     messages = []
+    diagnostics = []
     for position, operation in enumerate(output.get('operations') or [], start=1):
         name = operation['op']
         try:
             getattr(applier, f'op_{name}')(operation)
         except _OperationError as exc:
             messages.append(f'Operation {position} ({name}): {exc.message}')
+            diagnostics.append({'assist_rule': exc.rule, 'operation_index': position, 'assist_operation': name})
             if len(messages) >= _MAX_SCHEMA_ERRORS:
                 break
     if not messages:
         messages = applier.finish(output)
+        if messages:
+            diagnostics.append({'assist_rule': 'candidate_invalid'})
     if messages:
-        raise AssistApplyError(messages)
+        raise AssistApplyError(messages, diagnostics=diagnostics)
     return applier.candidate, applier.info()
 
 
-def _schema_errors(validator, instance, prefix):
+_SCHEMA_DIAGNOSTIC_RULES = {
+    'required': 'schema_required', 'additionalProperties': 'schema_additional_properties',
+    'not': 'schema_not', 'enum': 'schema_enum', 'const': 'schema_const', 'type': 'schema_type',
+    'pattern': 'schema_pattern', 'minLength': 'schema_min_length', 'maxLength': 'schema_max_length',
+    'minItems': 'schema_min_items', 'maxItems': 'schema_max_items', 'uniqueItems': 'schema_unique_items',
+    'minimum': 'schema_minimum', 'maximum': 'schema_maximum', 'oneOf': 'schema_one_of',
+}
+
+
+def _schema_errors(validator, instance, prefix, diagnostics=None, *, position=0, operation=None):
     errors = sorted(validator.iter_errors(instance), key=lambda item: (list(map(str, item.absolute_path)), item.validator))
+    if diagnostics is not None:
+        for error in errors[:_MAX_SCHEMA_ERRORS]:
+            if len(diagnostics) >= ASSIST_DIAGNOSTIC_LIMIT:
+                break
+            diagnostics.append({
+                'assist_rule': _SCHEMA_DIAGNOSTIC_RULES.get(error.validator, 'schema_invalid'),
+                'operation_index': position, 'assist_operation': operation,
+            })
     return [f'{prefix}{_schema_error_message(error)}' for error in errors[:_MAX_SCHEMA_ERRORS]]
 
 
-def validate_assist_output(output):
+def validate_assist_output(output, *, diagnostics=None):
     """Schema errors in the model's parsed reply, as server-authored messages; empty when it is valid."""
     if not isinstance(output, dict):
+        if diagnostics is not None:
+            diagnostics.append({'assist_rule': 'reply_not_object'})
         return ['The reply must be a JSON object.']
-    messages = _schema_errors(_ENVELOPE_VALIDATOR, output, '')
+    messages = _schema_errors(_ENVELOPE_VALIDATOR, output, '', diagnostics)
     if messages:
         return messages
     for position, operation in enumerate(output.get('operations') or [], start=1):
         name = operation['op']
         prefix = f'Operation {position} ({name}): '
-        messages.extend(_schema_errors(_OPERATION_VALIDATORS[name], operation, prefix))
+        messages.extend(_schema_errors(_OPERATION_VALIDATORS[name], operation, prefix, diagnostics,
+                                       position=position, operation=name))
         if len(messages) >= _MAX_SCHEMA_ERRORS:
             break
     return messages[:_MAX_SCHEMA_ERRORS]

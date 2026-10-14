@@ -1,8 +1,8 @@
 # test_workflow_document_selection.py
 """
 Functional tests for rolling per-task document selection and contextual Ask AI.
-Version: 0.261.329
-Implemented in: 0.261.329
+Version: 0.261.332
+Implemented in: 0.261.332
 
 Exercises typed filters, real paged/authorized catalog reads, normalization and
 the real assist core without network access. No selection writes documents.

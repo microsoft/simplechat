@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.315)
+# Workflow AI Assistant (v0.261.329)
 
 ## Overview
 
@@ -22,6 +22,9 @@ Implemented in version: **0.261.208** (the endpoint) and **0.261.213** (the **As
 **Draft with AI**), tracked in `application/single_app/config.py`.
 Phases 3b and 3c of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1548, part of #1543).
+
+Debug-gated operation diagnostics implemented in version: **0.261.329**, tracked in
+`application/single_app/config.py`.
 
 The assistant ships in three layers:
 
@@ -499,6 +502,22 @@ only these fields: `user_id`, `submission_id`, `status`, `outcome`, `code`, `sta
 `warning_codes`, `fault_location` (file and line, on a 500 only) and `duration_ms`. A body that
 can't be read logs `[WorkflowAssist] Assist request refused` with its code, status and stage.
 
+With **Enable Debug Logging** (`enable_debug_logging`) enabled, the core also emits
+`[WORKFLOW_ASSIST] Ask AI diagnostic` records for model attempts, validation rejection, correction
+and the terminal outcome. The shared provider adapter records call duration, safe failure status
+and JSON-mode fallback. These new records reach the configured Application Insights logger and
+the application's debug console mirror only while debug logging is enabled.
+
+The records retain closed rule codes, operation categories and indexes, attempt counters,
+finish-reason categories and a hash of the validated submission ID. Workflow schema failures
+identify the schema keyword; apply failures identify the operation and rule; save-check failures
+retain only explicitly allowlisted validation codes. At most 12 reasons are recorded per rejected
+attempt. Private content, raw identity IDs, arbitrary paths and exception messages are excluded.
+Existing summaries and the single correction retry are unchanged.
+
+The [Ask AI operation diagnostics reference](../fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md)
+includes bounded queries and explains remaining diagnostic limitations.
+
 ### The Ask AI tab
 
 **Ask AI** is the second tab in the editor's side panel, after **Changes**. It runs on Track A1's
@@ -800,6 +819,7 @@ All tests use a scripted model. None calls a live model.
 | `test_workflow_assist_scenarios.py` | The roadmap's "Done when" cases, placement, the un-normalized candidate, the correction round and 502, warnings, deadlines and content-free telemetry |
 | `test_workflow_assist_dry_run_parity.py` | The Python `workflowForSave` projection against Phase 2's dry run, including a whole `expected_count` given as `"12"` or `12.0`, which is checked and saved as an `int` |
 | `test_workflow_assist_limits_runtime.py` | The limiter (in flight, window, `Retry-After`, refunds, fail closed), the model parameters and provider errors, the runtime adapters, and a whole request against stores that fail on any write other than the caller's rate-limit document |
+| `test_ask_ai_debug_diagnostics.py` | Debug-on/off behavior in both logging sinks, per-attempt schema/apply/save rejection rules, provider failures and fallback, finish reasons, content privacy and observer failure isolation |
 | `test_workflow_assist_field_parity.py` | The Python field lists, violation messages and editor vocabularies against the V2 TypeScript, read as text |
 | `test_workflow_assist_candidate_parity.py` | 24 Python candidates replayed through the real V2 editor code under Node, and the type-strict corpus of numbers, whitespace, JSON literals and File Sync saves. Tables of known JavaScript answers also run without Node. |
 | `route_tests/test_workflow_assist_policy.py` | The decorator order, the gates and their status codes, `is_workflow_assistant_enabled_for_user` and the V2 bootstrap flag built from it, and strict response serialization |

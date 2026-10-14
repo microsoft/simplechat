@@ -1,8 +1,8 @@
 # test_workflow_authoring_sdk_boundaries.py
 """
 SDK-shaped runtime coverage for storage owners in the workflow authoring modules.
-Version: 0.261.329
-Implemented in: 0.261.329
+Version: 0.261.332
+Implemented in: 0.261.332
 
 The inventory fingerprints whole modules. These unchanged storage functions
 therefore need renewed owner-runtime evidence when selectors/telemetry change

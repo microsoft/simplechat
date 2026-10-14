@@ -2,7 +2,7 @@
 # test_workflow_assist_policy.py
 """
 Functional policy tests for the AI workflow assistant route.
-Version: 0.261.329
+Version: 0.261.332
 Implemented in: 0.261.208
 
 This test ensures that ``POST /api/user/workflows/assist`` keeps its Blueprint, Swagger and gate

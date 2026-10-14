@@ -1,8 +1,8 @@
-# Workflow Ask AI authoring fix — v0.261.329
+# Workflow Ask AI authoring fix — v0.261.332
 
 ## Issue and root cause
 
-**Fixed in version: 0.261.329**, tracked by
+**Fixed in version: 0.261.332**, tracked by
 `application/single_app/config.py`.
 
 Two observed personal-workflow requests returned HTTP 200 and successful

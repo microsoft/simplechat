@@ -1,4 +1,4 @@
-# Ask AI in the Agent and Action Editors (v0.261.288)
+# Ask AI in the Agent and Action Editors (v0.261.329)
 
 ## Overview
 
@@ -15,6 +15,12 @@ created in the agent's workspace only when the agent is saved.
 Implemented in version: **0.261.288**, tracked in `application/single_app/config.py`. It was
 built in phases (shared backend, agent editor, action editor, drafted actions, then tests,
 documentation and the drafted-action hand-off fix) and ships as one release.
+
+Debug-gated operation diagnostics implemented in version: **0.261.329**, tracked in
+`application/single_app/config.py`.
+
+The same version clarifies the creation prompt's exact field paths and treatment of missing
+connection details, fixing a SQL-agent request reproduced against the configured live model.
 
 Dependencies:
 
@@ -95,6 +101,35 @@ before saving**. Call agent actions are never drafted.
 - **Remove** drops a drafted action. Undoing the turn that drafted it does the same, and undoing a
   later turn that removed it brings it back.
 
+The assistant must use the new action's exact field paths, not the parent agent's paths or
+unprefixed field names. When connection details have not been supplied, it can omit those
+type-specific values and explain what needs finishing, or ask a clarifying question without
+changing the draft. It must not invent connection details or send blank placeholders for
+required fields. An unfinished SQL action still needs its server and database before saving.
+
+### Diagnosing a failed turn
+
+When **Enable Debug Logging** (`enable_debug_logging`) is enabled, agent and action turns emit
+`[EDITOR_ASSIST] Ask AI diagnostic` records to the configured Application Insights logger and
+the application's debug console mirror. With it disabled, none of these new detailed records
+are emitted; the existing request summaries remain unchanged.
+
+Each record identifies the assistant surface, scope category, attempt and stage, with a hash of
+the validated submission ID for correlation. Validation records include a closed rule code,
+operation index and operation category. Safe, explicitly allowlisted fields and field kinds help
+distinguish an unknown path from a blank required value or a bad choice handle. Up to 12 reasons
+are recorded per rejected attempt. Provider records distinguish a failed call from a JSON-mode
+fallback; successful calls record their duration. A final record reports the outcome, status and
+correction count.
+
+These records never include instructions, draft values, replies, credentials, raw identity IDs,
+provider exception messages or unknown field names. A SQL request without connection details can
+produce an unfinished action draft that needs attention before saving; diagnostics do not
+authorize connecting to a database or saving that draft.
+
+See [Ask AI operation diagnostics](../fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md) for bounded queries
+and the distinction between diagnosing a rejection and fixing its underlying cause.
+
 ## Usage Instructions
 
 1. Open an agent or action in the V2 editor, for a personal, group or global agent or action.
@@ -109,12 +144,18 @@ The guides [Create an agent](../../guides/create-an-agent.md) and
 ## Testing and Validation
 
 - `functional_tests/test_editor_assist_core.py`: request validation, prompt building and answer checking.
+- `functional_tests/test_editor_assist_create_item_prompt.py`: exact new-action path guidance,
+  the live-observed malformed-operation pattern and a valid unfinished SQL draft.
+- `functional_tests/test_ask_ai_debug_diagnostics.py`: real logging serialization, both debug
+  states, per-attempt rules, provider failures and fallback, privacy and best-effort observers.
 - `functional_tests/route_tests/test_editor_assist_policy.py`: scope authorization, feature toggles and route policy.
 - `functional_tests/test_v2_agent_editor_assist_logic.mjs`, `test_v2_action_editor_assist_logic.mjs`
   and `test_v2_agent_drafted_actions_logic.mjs`: the adapters' describe and apply logic.
 - `ui_tests/test_v2_agent_action_ask_ai.py`: an agent turn applied and undone, a drafted action
   finished in the action editor and saved with the agent, an action turn that never sends the
-  stored key, and the panels hidden while the toggles are off.
+  stored key, and the panels hidden while the toggles are off. SQL new-agent cases use the actual
+  browser-generated descriptors to check unfinished drafts, successful correction, terminal
+  rejection and undo without persistence.
 - `ui_tests/test_v2_group_action_drafts.ts` (run by `test_v2_group_actions.py`): the drafted-action
   hand-off never crosses a workspace boundary.
 

@@ -2,7 +2,7 @@
 # test_workflow_document_picker_recent_targets.py
 """
 Functional test for workflow document picker and recent workflow document targets.
-Version: 0.261.329
+Version: 0.261.332
 Implemented in: 0.241.188
 Enhanced in: 0.250.225
 

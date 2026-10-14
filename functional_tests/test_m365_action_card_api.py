@@ -1,8 +1,9 @@
 # test_m365_action_card_api.py
 """
 Behavioral tests for authoritative M365 action cards and confirmation APIs.
-Version: 0.261.038
+Version: 0.261.330
 Implemented in: 0.261.038
+Ask AI diagnostic logger adapter updated in: 0.261.330
 
 Real records, projections, route bodies, tenant/CSRF checks and delivery claims
 run with scoped external storage/Graph seams. No live messages are sent.
@@ -82,7 +83,7 @@ def cards(monkeypatch):
     monkeypatch.setattr(connections, "_service", connection_service)
     seams = {
         "config": module_stub("config", cosmos_msgraph_pending_actions_container=container),
-        "functions_appinsights": module_stub("functions_appinsights", log_event=log),
+        "functions_appinsights": module_stub("functions_appinsights", log_event=log, log_assist_debug=Mock()),
         "functions_debug": module_stub("functions_debug", debug_print=lambda *args: None),
         "functions_authentication": module_stub(
             "functions_authentication", login_required=login_guard, user_required=user_guard,

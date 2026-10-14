@@ -1,8 +1,8 @@
 # test_v2_workflow_document_selection.py
 """
 Real-bundle UI tests for explanatory per-task document filters and advisory preview.
-Version: 0.261.329
-Implemented in: 0.261.329
+Version: 0.261.332
+Implemented in: 0.261.332
 
 Uses the shared Azure Playwright-compatible closed browser harness. No production
 workflow, document, or model is contacted; saved API payloads are inspected.

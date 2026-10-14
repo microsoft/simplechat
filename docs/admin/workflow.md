@@ -44,7 +44,7 @@ of instruction tasks that runs on demand or on a schedule, against documents in 
 workspace. This section decides who may build and run them, and how much work a
 single run is allowed to do.
 
-Since **0.261.329**, Ask AI can create an initial draft from a goal and apply
+Since **0.261.332**, Ask AI can create an initial draft from a goal and apply
 clear edits while asking for missing execution details. It remains a personal
 workflow authoring assistant, not a save or execution permission.
 

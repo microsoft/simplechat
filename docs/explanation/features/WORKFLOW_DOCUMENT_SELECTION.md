@@ -1,8 +1,8 @@
-# Per-task rolling document selection — v0.261.329
+# Per-task rolling document selection — v0.261.332
 
 ## Overview
 
-**Implemented in version: 0.261.329**, tracked by
+**Implemented in version: 0.261.332**, tracked by
 `application/single_app/config.py`.
 
 Workflow tasks can select documents at execution time using an explicit

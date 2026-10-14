@@ -713,7 +713,7 @@ they can only be discarded together, with **Cancel**.
 
 ## Rolling documents for each task
 
-From **0.261.329**, the V2 task editor can select recently added **or updated**
+From **0.261.332**, the V2 task editor can select recently added **or updated**
 documents separately for each task. Under **Runner, inputs, references and
 outputs**, choose **Analyze recent documents**, **Search recent documents**, or
 **Compare recent documents**. A Merge files task also offers recent documents.
@@ -772,7 +772,7 @@ the workflow to do but not which fields hold it, or to make the same kind of
 change across many tasks. It never saves. Its changes are highlighted like your
 own, and you review them before you save.
 
-From **0.261.329**, a new-workflow goal can generate a name, description, and
+From **0.261.332**, a new-workflow goal can generate a name, description, and
 initial task instead of only explaining how to use the editor. Follow-ups such
 as “Give this a name and a description” use the goal already in the thread.
 Clear edits can be applied while the assistant asks for a missing time,
