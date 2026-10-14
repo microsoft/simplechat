@@ -111,7 +111,12 @@ export function makeSubmissionId(): string {
             return id;
         }
     }
-    return `assist-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    // getRandomValues also works on HTTP development hosts without randomUUID.
+    if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') {
+        throw new Error('Secure randomness is unavailable for AI-assist identifiers.');
+    }
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return `assist-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export function blockThreadKey(

@@ -1,8 +1,9 @@
 # test_v2_group_agents.py
 """
 Production-SPA coverage for the native scope-aware V2 group agents workbench.
-Version: 0.261.188
+Version: 0.261.333
 Implemented in: 0.261.138
+Contextual action return labels extended in: 0.261.333
 A narrow agent card wraps its buttons below the title rather than overlapping it: 0.261.188
 
 Exercises the real agent collection and full-page editor against closed synthetic
@@ -467,12 +468,13 @@ def test_new_group_action_from_the_agent_editor_returns_into_the_retained_draft(
     page.get_by_role("button", name="New action", exact=True).click()
     # The action editor opens in the same group scope, carrying a return path to this agent.
     expect(page).to_have_url(re.compile(r"/v2/groups/group-a/actions/new\?"))
+    expect(page.get_by_role("button", name="Back to agent", exact=True)).to_be_visible()
     begin_action(page, "fixture_custom", "Ledger companion")
     with page.expect_response(
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == "/api/groups/group-a/actions"
     ) as created:
-        page.get_by_role("button", name="Save action", exact=True).click()
+        page.get_by_role("button", name="Save action and return to agent", exact=True).click()
     assert created.value.status == 201
     # Returned to the retained agent draft, not the collection, with the rename still present.
     expect(page).to_have_url(f"{ORIGIN}/v2/groups/group-a/agents/{EDITABLE_AGENT_ID}")
