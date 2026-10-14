@@ -411,6 +411,21 @@ credential resolves from the global Key Vault namespace rather than your own. A
 **Call agent** action can target only global agents, because the server refuses
 any other target for a global action.
 
+Since **0.261.333** (`application/single_app/config.py`), a Yamcs action can keep
+its administrator-owned destination while requesting each invoking user's
+personal identity. In Authentication, choose a personal source independently
+for Yamcs service credentials and reverse proxy credentials. A proxy-only
+deployment can keep Yamcs No Authentication and request only proxy sign-in.
+The existing proxy/service header restrictions still apply.
+
+Users provide credentials through a private chat card when the action is
+actually used, including direct orchestration without a custom agent. The
+card does not grant authoring rights, and shared actions/agents do not receive
+the user's credential. Identity storage follows the configured Key Vault or
+existing Cosmos choice. Save the action and use it in chat to check a personal
+identity; draft connection testing must not fall back to an administrator
+credential. See [Personal action credentials]({{ '/guides/personal-action-credentials/' | relative_url }}).
+
 Since **0.261.301**, a **Control Center** action answers read-only questions about
 SimpleChat usage, such as sign-ins, active users, conversations, uploads and token
 use, from the Control Center dashboard's data. It can only be created here, as a

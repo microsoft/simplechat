@@ -25,6 +25,25 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ## Conversation header and status
 
+### Personal action credential cards
+
+Fixed/Implemented in version: **0.261.333** (`application/single_app/config.py`).
+A shared Yamcs action can request the invoking user's personal identity for a
+service or proxy slot. The card appears only when that authorized action needs
+credentials; it is not an ordinary chat message or a generic follow-up question.
+
+| Control | Purpose | Availability |
+| --- | --- | --- |
+| Personal identity | Selects a compatible identity you own, or exposes the dedicated inputs for saving a new one. | Pending credential request |
+| Replace credentials in this personal identity | Updates the selected identity's authentication after checking its own revision, without editing the shared action. | Selected personal identity with a current revision |
+| Save and continue | Saves the requested personal identity and resumes the blocked work without resending the question or replaying completed operations. | Pending credential request with required inputs |
+| Continue | Resumes an already-saved request after its current status has been recovered. | Ready credential request |
+| Cancel blocked work | Cancels the outstanding credential request rather than continuing with missing credentials. | Pending or ready credential request |
+| Reload requests | Reads current request state after a save/continuation conflict or transport error. Unsaved secret inputs are not recovered. | Credential request load/recovery error |
+
+Credential values go directly to the credential API, never the composer,
+model, or shared transcript. See [Use your own credentials with a shared action]({{ '/guides/personal-action-credentials/' | relative_url }}).
+
 The conversation details dialog includes a paginated **Microsoft 365 sharing
 and analysis acknowledgements** section. It shows the recorded source, decision,
 effective duration, and approval reference without exposing credentials or

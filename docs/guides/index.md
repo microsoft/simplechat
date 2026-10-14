@@ -73,6 +73,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | [Create agents]({{ '/guides/create-agents/' | relative_url }}) | Create reusable agents for common work and configure their instructions, model, and access. | Agent builders |
 | [Create your first agent]({{ '/guides/create-your-first-agent/' | relative_url }}) | Define an agent role, tune instructions, connect knowledge sources, and test behavior. | Agent builders |
 | [Create an agent with actions]({{ '/guides/create-an-agent-with-actions/' | relative_url }}) | Attach approved actions to an agent so it can use tools while answering. | Agent builders |
+| [Use your own credentials with a shared action]({{ '/guides/personal-action-credentials/' | relative_url }}) | Sign in privately when an authorized shared Yamcs action needs your personal service or proxy identity. | Action users |
 
 ## ServiceNow agents
 

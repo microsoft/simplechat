@@ -116,6 +116,14 @@ does not run the action. If a test fails, resolve the connection or permission
 problem rather than assuming that a successful configuration save proves the
 remote service is reachable.
 
+Since **0.261.333**, shared Yamcs actions can request each invoking user's
+personal service or proxy identity. The credential is entered in a private
+chat card, not copied into the shared action or agent. These sources preserve
+ordinary governance and group membership checks and do not enable personal
+authoring for someone whose workspace is disabled. Use the saved action in
+chat to check a personal identity, rather than the draft connection test.
+See [Use your own credentials with a shared action]({{ '/guides/personal-action-credentials/' | relative_url }}).
+
 ## Connect the two without losing a draft
 
 An agent's **Actions** section lists all permitted action types together.

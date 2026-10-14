@@ -705,7 +705,6 @@
     "application/single_app/functions_orchestration_runs.py::save_orchestration_step": "73eb814415222ab91add82c86cf9fb7bce32e68241d68013225909cca583bf71",
     "application/single_app/functions_orchestration_runs.py::get_orchestration_step_record": "d2d2acb89ed64a68e561ef8c8096bf6f9045060bdd2cf2894abe036151ce01f9",
     "application/single_app/functions_orchestration_runs.py::list_run_steps": "ab9d6e26de5970720e6bcd4b74c8374f1ae5b53aa9c966f4042aad6993f355ed",
-    "application/single_app/functions_orchestration_scheduler.py::enumerate_due_runs": "3ee4b0d3fcaf170e9eaae4ee2293c5237b9be086e9847487cb5c30dd18528244",
     "application/single_app/functions_orchestration_workflow_context.py::_read_personal_agents": "f2e09eb63b012196502aa502ab60a41ad5efd4cc3f6f90c0b53fb81602123b18",
     "application/single_app/functions_orchestration_workflow_context.py::_read_global_agents": "4fdd993d426241ca7b83baba80475546e8a66ba25fa227f09a990a0d169a54c3",
     "application/single_app/functions_orchestration_workflow_context.py::_read_workflows": "55c742e6c677be568c66ee47f57819528633c8c458698c7081556d099c1f14cf",
@@ -716,8 +715,6 @@
     "application/single_app/functions_orchestration_workflow_results.py::_point_read": "4620c22db8dd6c7f18a0a6e96def9f9176246522529434a2ce9d2fb00759295f",
     "application/single_app/functions_orchestration_workflow_results.py::_query_runs": "cb98bdfce574b42c37ad0603fd7b1bf4c9dec9e47254d4893a0d29ecd9854364",
     "application/single_app/functions_orchestration_workflow_run_links.py::_point_read": "cfe6ae27270536f1ad9bff61a5f9ba0ab3220bfe76dbe98218c475da152a9e3f",
-    "application/single_app/functions_orchestration_workflow_runs.py::_point_read": "efe4896bb9f4094744efe20695580651e4079b9e9f719c4c46e742b445293e7e",
-    "application/single_app/functions_orchestration_workflow_runs.py::_write_plan_wait": "dcf1a0cfa8cbfea406dc10f54e659c885d9b3cc101c7c77f8a07a8d5ba59d9e5",
     "application/single_app/functions_personal_actions.py::_read_personal_action_record": "0f33c40dc18ad82afb9db059ba9a16fa2009e95f44b0b96725e71750b5ad76dd",
     "application/single_app/functions_personal_actions.py::_find_personal_action_record": "7eb9544197b57ad8d2e3767ad67a9e9c214d0f15522a28d9e13719f208e914aa",
     "application/single_app/functions_personal_actions.py::get_personal_actions": "9aba8abbd11ba6c1df1c2b5328ef47edc765152ea3d6c0bdf71422286a4b961f",
@@ -865,34 +862,7 @@
     "application/single_app/functions_workspace_authoring.py::_assert_global_available_name": "b6923e866f1e01a28b8e85395084b697bdb90cf9855d5296a88d6971e33950f1",
     "application/single_app/functions_workspace_authoring.py::save_global_editor_record": "96d36d2900a3da68dc8ec1d41557949f82b9f117f6f9cde9223b5cb6c7efe9a4",
     "application/single_app/functions_workspace_authoring.py::_assert_available_name": "9e729b2e15fe012c62dccb152a8c73449a3ea7dfae2c841abbad48d1ed9c9120",
-    "application/single_app/functions_workspace_identities.py::list_workspace_identities": "4c3c59d6b050d1fca8dd925d846ca0880b8654300c4f9818660c747430faa9a5",
-    "application/single_app/functions_workspace_identities.py::get_workspace_identity": "a5001270da312f91f9558bab35792ca1c774f97b8d182e3a99b205065e82b9f2",
-    "application/single_app/functions_workspace_identities.py::update_workspace_identity_conditional": "b21cc17006b4298302dd08e500576fd1e66b326e5bd75074f18249e93be0665a",
     "application/single_app/route_backend_agents.py::_load_all_agent_records_for_default_migration": "23a840625a3965fe6f6fcd03519321ca9af7ad1e4b81b587e208da787afce90b",
-    "application/single_app/route_backend_chats.py::_get_user_message_image_context": "4dd0e8dc61de33fba33d6e9f2e6ef10f973142ec6e1c8819cc80c23b05f0ee36",
-    "application/single_app/route_backend_chats.py::_read_recent_assistant_messages": "aff744388fee1a2f526865ab3de73bffd99d5b6780f5acaee187297dae1f2b1a",
-    "application/single_app/route_backend_chats.py::_read_agent_citation_artifact_payloads": "760c136550b10967520cd947ae5a7275ce47b3a8cbe0ff85c5e52a6f0733c142",
-    "application/single_app/route_backend_chats.py::_resolve_chat_selected_document_metadata": "92dba0d1ca8977222ee4d876cd27214d9497f1bb2b727fc4937dfca91d49afe8",
-    "application/single_app/route_backend_chats.py::_resolve_authorized_conversation_context": "ed36ddb8756056ba924b8084dbb6500ac4410e77ee4bc94e0d2edfb3bcf1b26b",
-    "application/single_app/route_backend_chats.py::_load_user_message_response_context": "e4bf88307ddec13b885982ab50d610c8332239af73dd38fee27ce93b1b7e8923",
-    "application/single_app/route_backend_chats.py::_build_tabular_related_document_catalog": "cdc0f8e04a04b3d2bb9656a403b221245b45c417e536cc07e61006dd9533305c",
-    "application/single_app/route_backend_chats.py::_save_chat_user_metadata": "3a16c24d6a7866b0da433f1ee8388e358b2aa24acc9095c50c3d25df9cfdd446",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats._resolve_document_action_selected_documents": "a623179aa00cb852ef107309845e6e7c75af1aab96fa438a1ff80972700d9c7e",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats._get_latest_chat_thread_id": "fb1d9a5d373fc51c862566551a1c9abcb1b92a58d1ceab15ce242f06d4cc590c",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats._load_or_create_analyze_conversation": "4a670796d37d7fe9eaffbe8ff2986f1cf20223db310870d64e8454a26d40837a",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_saved_analysis_chat_request": "49cfab0cd08b3c4d7094787fe588b2c28d00218326b91c1e8295fdd5e21732f8",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.execute_document_action_chat_request": "b1c12e459fd95790e53b737932368c262681da8fe968c0abdfcfe917e21880b7",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal": "c66e2bf1b7d04065a5a4da1f3dc17ca2936b1a31d263bd3bd6ded739bef66669",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.generate_image_from_proposal.read_conversation_image": "19693a51c420ac8f3b85458da0d20837f46cade6aa2cd348498dd0cf7e728158",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.image_proposal_status": "3125be935bd3b497fb487a7f57d869e101d5595e8fdfd292b571e196f71a3dbd",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": "7b62a538441519b9fd7d180731717bff0e1e06b30d145e94dd7988db83f9f657",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": "db6f2d86c297e2599ff83bdc2d9e9c475df28a3917bf61a626b441ada0306cda",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.mask_message_api": "d23cc3a5cc6803ad0256f8af8ae8bc44a49213070bc615df625a40871e8f915e",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.set_message_visual_style_api": "52dcb8af3745c395e7b517df197695a96ccd291fbf2ae0ef893d1ade4f056ae2",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats._load_block_revision_message": "be26bc2ebf68b98a36b3d97c098c2912066fd8acf48b10365a55f225c9d352be",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats._find_originating_user_request": "69b5ef6b7c79f197dd463044ad6d9fc723c00e78c8685c1a601648d7973dc4d4",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats._answer_raced_block_submission": "d66f74bf333aa0b52f1d9d7f74cada540396e25d6cb98fb284ff4440f9ea577a",
-    "application/single_app/route_backend_chats.py::register_route_backend_chats.add_message_image_revision_api": "546d1c71d327da40dff6b9acf9c17a0010a67c081b56ba73a2d7fd58816d3fc5",
     "application/single_app/route_backend_collaboration.py::_read_source_message_doc": "5d0160630390a148ed5eda28cb03eeb0089a6231f2eb274561d89d35429fde33",
     "application/single_app/route_backend_collaboration.py::_sync_collaboration_mask_metadata_to_source": "690239415e92bce6acc5ac0d8bfd1d401c539bdf6d78b8639b35958e991b2c54",
     "application/single_app/route_backend_collaboration.py::_sync_collaboration_block_revisions_to_source": "11bfc552a7ac4d90e4128bcfc46c20f4c1969f46f2f46a56d1e130b4fb01f096",
@@ -954,30 +924,6 @@
     "application/single_app/route_backend_conversation_export.py::_load_exportable_conversation_for_user": "ca4f7705686b225dc75a93cf8f1e95682478fd1cb9cb25b99a51bfb95790812e",
     "application/single_app/route_backend_conversation_export.py::_load_export_message_for_user": "b423a5373bedddedf3035705845bd9e8279573b342112c56518810ce633556c3",
     "application/single_app/route_backend_conversation_export.py::_load_generated_image_proposal_assets": "e0a4bc16710f97f752cd231daee89f7263feccf9e6ce645de27896ddc667b529",
-    "application/single_app/route_backend_conversations.py::_query_matching_messages": "bd67bcd916b4d3fef1b7085358b7a4fada8b94904b9193a3852addbdbb198c98",
-    "application/single_app/route_backend_conversations.py::_query_legacy_conversations_for_feed": "cf3b0af7c14447ff7866ac74e97db726969ae1c0ce0ec7848552b467ee12fc68",
-    "application/single_app/route_backend_conversations.py::_count_hidden_legacy_conversations": "4d305e9f69c1d9f9ea5ce79a1c6f98aaa0e3603962afa56c0c3973baceb416a1",
-    "application/single_app/route_backend_conversations.py::_load_unread_collaboration_notification_map": "a8f036748f23e9b10225de8a768982776a975cc77886b39f2e3f4db7911afa59",
-    "application/single_app/route_backend_conversations.py::_collect_child_message_documents": "ff1d4330f278ca5fc5fe12fdaffd2feef73a1a22548afb76c588c537e170452b",
-    "application/single_app/route_backend_conversations.py::_promote_remaining_thread_attempt": "17b5297700a889293692dea0bc4aa50c8ee01694713617e400ecbf37023a28a8",
-    "application/single_app/route_backend_conversations.py::_authorize_personal_conversation_read": "1a760f636b7fcc04309c1bd58c8b0917f85e755035c32cbbd3d3c54d84c9c19f",
-    "application/single_app/route_backend_conversations.py::_list_personal_conversation_generated_documents": "3386210857478ef4bdd0c8e85438c569be8e5315ce70ed60be62897c313a21e6",
-    "application/single_app/route_backend_conversations.py::_load_scope_lock_conversation": "f3fb15e9dac79f689d80184c22b1d1b520111e91b406cd73020862ab127bd442",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.api_get_messages": "35b92bca28ce1e9497e5df23d706756e0002b090a81bb860e8e2a7084df3d8d8",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.get_conversations": "c0b0ee534e32bdbbe20a5a71e51a7ba648b79b9c77f37ddefb424e7060d55710",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.update_conversation_title": "cdb3602338782a1b843876bf4561e6db620d80737c0064540acb00e74affd2e2",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.toggle_conversation_pin": "6e91ad276946a1ceec5fec3175386d916616a30fcc4f2885d82855f576ad9552",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.toggle_conversation_hide": "d3205eb93784767f6c53bf208f4fe0f76477c06dfa1bbb7f5f672b801fac1cec",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.bulk_pin_conversations": "73b9ac90a0b2df2cccb594511be435c1e099a5d99803a9d144d3ac1799a82308",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.bulk_hide_conversations": "62c38fb0c174ac755afa8fbe2f5cb0619687ca3e3d136f7787c87091ddc1ebfc",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.get_conversation_metadata_api": "40031fe0d8412ad41a92001c783ab21d96cf24c260f2f73c26cf948aa0be0f08",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.get_conversation_kind_api": "7a0eff800ca6b15d1b4a512201d67ab5dbaae696948f8b9ecba8598730427fd7",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.mark_conversation_read_api": "b47e6aaee897a1e1af275af54f2d9d7bccf56a1524031ff105bb7ba7103f6ffe",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.generate_conversation_summary_api": "7ff7eba0bbab9aea3dffb5adc7493cef9ae8c1c44fabe991cb37a7ffbc2436fa",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.get_user_classifications": "91a7442f804e0dba28ad2962edcecd0e808d452c70f20c48b9daf0cae2997b74",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.search_conversations": "22716d3bea7e927300299218c515a69bf2aa5b20349f758b7fb50e2d8a667cc9",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.delete_message": "50c338fd82cef1394cb64e4a9b6b4653c99d08a477aa8ecdf76a7c8064fa719c",
-    "application/single_app/route_backend_conversations.py::register_route_backend_conversations.switch_attempt": "7da244c36ded68e83e17208cb38ef6f3f6b93d55f75d3185f56c96c084e84b0e",
     "application/single_app/route_backend_documents.py::_load_accessible_personal_documents": "c30706d4a4f55e432daf154e9f56ff6937167cfb89682658c1fecacec0d4b6f4",
     "application/single_app/route_backend_documents.py::register_route_backend_documents.get_file_content": "68a6779aa45f86f39b70204731c10eb41dcf31c9602a14cbbfefb625148a025e",
     "application/single_app/route_backend_documents.py::register_route_backend_documents.api_get_user_documents": "b81faefe7664165df55537ee7dbb81b7a6fc70b24285b217e68bac72caa03bcc",
@@ -12407,12 +12353,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c59f0ee0b7653f08c774ae1a5e59a6942a33098c4399758e0931432355c176e8"
+        "module_sha256": "e9b999f01ad4c7aa7c795f92372db7fcd47488d26ceaae800f6bcf353fdc2e30"
       },
       "classification": "sdk-compatible",
       "contract": "Point guards use mapping fields and plain metadata-stripping projections; inherited lease reads already normalize before strict continuation state.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py"
       ]
     },
@@ -12448,12 +12395,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "c59f0ee0b7653f08c774ae1a5e59a6942a33098c4399758e0931432355c176e8"
+        "module_sha256": "e9b999f01ad4c7aa7c795f92372db7fcd47488d26ceaae800f6bcf353fdc2e30"
       },
       "classification": "sdk-compatible",
       "contract": "Point guards use mapping fields and plain metadata-stripping projections; inherited lease reads already normalize before strict continuation state.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py"
       ]
     },
@@ -12474,12 +12422,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
+        "module_sha256": "e09d375f266e73b933e0a82bc42f5a1795d566371a0112377b4cb9ef8132b893"
       },
       "classification": "sdk-compatible",
       "contract": "Saved snapshot point responses are consumed through Mapping fields and normalize_history_message before strict snapshot validation; publication metadata enrichment does not alter this boundary.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py"
       ]
     },
@@ -12495,12 +12444,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
+        "module_sha256": "e09d375f266e73b933e0a82bc42f5a1795d566371a0112377b4cb9ef8132b893"
       },
       "classification": "sdk-compatible",
       "contract": "Delivery metadata point responses are read through Mapping fields and projected into plain model/reasoning dictionaries; restored publication retains SDK ETags and conditional guards.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py"
       ]
     },
@@ -12516,12 +12466,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
+        "module_sha256": "e09d375f266e73b933e0a82bc42f5a1795d566371a0112377b4cb9ef8132b893"
       },
       "classification": "sdk-compatible",
       "contract": "Regeneration reads the question's Mapping role and nested plain thread metadata; no exact top-level dictionary contract consumes the SDK point response.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py"
       ]
     },
@@ -12537,19 +12488,20 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
+        "module_sha256": "e09d375f266e73b933e0a82bc42f5a1795d566371a0112377b4cb9ef8132b893"
       },
       "classification": "sdk-compatible",
       "contract": "The bootstrap supplies a normalized owned conversation; conditional replace responses go to the Mapping-compatible cache invalidator. New readable citation metadata is merged into nested plain document records.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery"
       ]
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._finalize": {
       "boundary": {
-        "sha256": "82d887da7806a9fef3ee21004f3de469ce8305cb55ebb07870e42951fc576469",
+        "sha256": "b6e2ff51f8dc7a514213a3ddcb52ad02f90d1a55af81ee451e37c039a5e5eb1f",
         "points": [
           {
             "method": "read_item",
@@ -12559,12 +12511,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "610ff1cab4877e0fbd7a4ccfffa110fec3078c057ef0789c45d84faf70af2264"
+        "module_sha256": "e09d375f266e73b933e0a82bc42f5a1795d566371a0112377b4cb9ef8132b893"
       },
       "classification": "sdk-compatible",
       "contract": "Finalization reads the already-published SDK message through Mapping fields and publishes a plain message DTO. Display metadata is copied only from authorized source manifests, outside strict retained-result identity descriptors.",
       "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery"
       ]
@@ -12591,7 +12544,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7a73e3976dd0502083d2a7b414cc99b1cb66b25d88170f7dd3aacc8d04fc3868"
+        "module_sha256": "f33f7431faef59bb042655228753c7a68f79254b6195097703a1f5ccdb412aaa"
       },
       "classification": "normalized-strict",
       "contract": "The effect journal normalizes the SDK point mapping before deepcopy/canonical JSON. Conditional ETags and sticky unknown-effect outcomes are preserved; updated preparation prose is not delivery authority.",
@@ -12612,7 +12565,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "b4218ffe925c740a8acf31370d7210f1103a82b903481e56c5d33299edc90d1d"
+        "module_sha256": "cb4a3e2ffa7a5e6d43b49563660aeb32983204359c5c764f4f01615e3f314037"
       },
       "classification": "sdk-compatible",
       "contract": "Output point records normalize in _point before strict output validation; owner-injected conversation readers normalize before authorization.",
@@ -12633,7 +12586,7 @@
           }
         ],
         "batches": [],
-        "module_sha256": "b4218ffe925c740a8acf31370d7210f1103a82b903481e56c5d33299edc90d1d"
+        "module_sha256": "cb4a3e2ffa7a5e6d43b49563660aeb32983204359c5c764f4f01615e3f314037"
       },
       "classification": "sdk-compatible",
       "contract": "Output point records normalize in _point before strict output validation; owner-injected conversation readers normalize before authorization.",
@@ -12654,7 +12607,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b4218ffe925c740a8acf31370d7210f1103a82b903481e56c5d33299edc90d1d"
+        "module_sha256": "cb4a3e2ffa7a5e6d43b49563660aeb32983204359c5c764f4f01615e3f314037"
       },
       "classification": "normalized-strict",
       "contract": "Output point records normalize in _point before strict output validation; owner-injected conversation readers normalize before authorization.",
@@ -12675,7 +12628,7 @@
             "response": "consumed"
           }
         ],
-        "module_sha256": "b4218ffe925c740a8acf31370d7210f1103a82b903481e56c5d33299edc90d1d"
+        "module_sha256": "cb4a3e2ffa7a5e6d43b49563660aeb32983204359c5c764f4f01615e3f314037"
       },
       "classification": "sdk-compatible",
       "contract": "Output point records normalize in _point before strict output validation; owner-injected conversation readers normalize before authorization.",
@@ -12696,12 +12649,14 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "b4218ffe925c740a8acf31370d7210f1103a82b903481e56c5d33299edc90d1d"
+        "module_sha256": "cb4a3e2ffa7a5e6d43b49563660aeb32983204359c5c764f4f01615e3f314037"
       },
       "classification": "response-unused",
       "contract": "OrchestrationOutputStore.enroll_run_cleanup: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
+      ]
     },
     "application/single_app/functions_orchestration_plan_revisions.py::read_revision_run": {
       "boundary": {
@@ -13426,13 +13381,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d6df5be9e8e468d58f6c7532d553daa2f34414f3526ac0083ec23277d073864f"
+        "module_sha256": "6c7dfa4c14e2c87ee6423d8e2186056909c0a5544c0a4ebe7acdf896e075874d"
       },
       "classification": "sdk-compatible",
       "contract": "enumerate_due_runs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_action_credentials_orchestration_continuation.py",
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_orchestration_cosmos_response_contract.py"
       ]
     },
     "application/single_app/functions_orchestration_workflow_context.py::_read_personal_agents": {
@@ -13657,13 +13614,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "506835922ecb5b830d71dc6b845a415fe6feec133932ea989d6a6878033a3eb4"
+        "module_sha256": "e5dafb70ae7505bddb42f98995f576e7845a1709c887238e2574c69fc71b216a"
       },
       "classification": "sdk-compatible",
       "contract": "_point_read: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_orchestration_workflow_run_wait_claims.py",
+        "functional_tests/test_orchestration_workflow_run_wait_execution.py"
       ]
     },
     "application/single_app/functions_orchestration_workflow_runs.py::_write_plan_wait": {
@@ -13683,13 +13642,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "506835922ecb5b830d71dc6b845a415fe6feec133932ea989d6a6878033a3eb4"
+        "module_sha256": "e5dafb70ae7505bddb42f98995f576e7845a1709c887238e2574c69fc71b216a"
       },
       "classification": "sdk-compatible",
       "contract": "_write_plan_wait: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
+        "functional_tests/test_orchestration_workflow_run_wait_claims.py",
+        "functional_tests/test_orchestration_workflow_run_wait_execution.py"
       ]
     },
     "application/single_app/functions_personal_actions.py::_read_personal_action_record": {
@@ -19115,12 +19076,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
       "classification": "sdk-compatible",
       "contract": "list_workspace_identities: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19136,37 +19098,40 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
       "classification": "sdk-compatible",
       "contract": "get_workspace_identity: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
     "application/single_app/functions_workspace_identities.py::create_workspace_identity": {
       "boundary": {
-        "sha256": "4fab2bd15981a31010a3de4ad587231e96a88291d515d7f17bc199409b5127b6",
+        "sha256": "2cb3d7431eace51481a79be9524175792c280fc72f8fde63e967156a23006f2e",
         "points": [
           {
             "method": "create_item",
             "receiver": "_get_identities_container(scope_type)",
-            "response": "unused"
+            "response": "consumed"
           }
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
-      "classification": "response-unused",
-      "contract": "create_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "classification": "normalized-strict",
+      "contract": "create_workspace_identity: normalizes returned create/conditional replace SDK documents before credential submission consumes ETags and copies identity state. Lost-response confirmation reads the owned SDK point record before preserving committed Key Vault references; failed writes retain conflict/error behavior and never delete possibly live secrets.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py"
+      ]
     },
     "application/single_app/functions_workspace_identities.py::update_workspace_identity": {
       "boundary": {
-        "sha256": "bd7e6858f1315f39121afc58e3ffcd068aecf0a869de6440bea8c10823675962",
+        "sha256": "e36e9170ac3efa2a58ae038617cf0468b908f1552ef18c071fa1649e4517e228",
         "points": [
           {
             "method": "upsert_item",
@@ -19176,16 +19141,18 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
       "classification": "response-unused",
       "contract": "update_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py"
+      ]
     },
     "application/single_app/functions_workspace_identities.py::delete_workspace_identity": {
       "boundary": {
-        "sha256": "41ad9424b165d9f38062f9f943e64872ef6b37c76cc2db569b2ecd1041f24a55",
+        "sha256": "53af570e44df2c56f42fb0a497bf4bb305a3e39092965c92c947642abbe954a5",
         "points": [
           {
             "method": "delete_item",
@@ -19195,16 +19162,18 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
       "classification": "response-unused",
       "contract": "delete_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py"
+      ]
     },
     "application/single_app/functions_workspace_identities.py::update_workspace_identity_conditional": {
       "boundary": {
-        "sha256": "609a40e20a4d0889beda4dd0eacc6b0c792b3ebbbd323e7ad367a48ca55e0896",
+        "sha256": "30c57cb2eb491ef106116beb674dd15cb3f37565b8b8215066967b24fbd6a8c4",
         "points": [
           {
             "method": "replace_item",
@@ -19214,18 +19183,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
-      "classification": "sdk-compatible",
-      "contract": "update_workspace_identity_conditional: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "classification": "normalized-strict",
+      "contract": "update_workspace_identity_conditional: normalizes returned create/conditional replace SDK documents before credential submission consumes ETags and copies identity state. Lost-response confirmation reads the owned SDK point record before preserving committed Key Vault references; failed writes retain conflict/error behavior and never delete possibly live secrets.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
     "application/single_app/functions_workspace_identities.py::delete_workspace_identity_conditional": {
       "boundary": {
-        "sha256": "44ade66ac6236cae59672f164c59dee64ad7911ea1baf4f78d9723529296a82b",
+        "sha256": "c1296eec3a40980524b382b74731f785d997bb255353446d12198dc61565d43b",
         "points": [
           {
             "method": "delete_item",
@@ -19235,12 +19205,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ebb0c3de664aa68372c2259cea73549507be27ae3f84decd179a2f71164ba1a1"
+        "module_sha256": "9bb9ed0a2441126490ad81570a172e6c4594599d63d379d5e64e9aaff408abaa"
       },
       "classification": "response-unused",
       "contract": "delete_workspace_identity_conditional: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py"
+      ]
     },
     "application/single_app/route_backend_agents.py::_load_all_agent_records_for_default_migration": {
       "boundary": {
@@ -19296,12 +19268,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "response-unused",
-      "contract": "_rollback_agent_citation_artifacts: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "_rollback_agent_citation_artifacts: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_chats.py::_get_user_message_image_context": {
       "boundary": {
@@ -19315,12 +19289,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_user_message_image_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_get_user_message_image_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19336,12 +19311,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_recent_assistant_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_recent_assistant_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19357,12 +19333,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_agent_citation_artifact_payloads: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_read_agent_citation_artifact_payloads: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19378,12 +19355,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "response-unused",
-      "contract": "_persist_screened_assistant: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "_persist_screened_assistant: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_chats.py::_resolve_chat_selected_document_metadata": {
       "boundary": {
@@ -19397,12 +19376,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_chat_selected_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_resolve_chat_selected_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19423,12 +19403,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "response-unused",
-      "contract": "_create_personal_conversation: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "_create_personal_conversation: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_chats.py::_resolve_authorized_conversation_context": {
       "boundary": {
@@ -19442,12 +19424,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_authorized_conversation_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_resolve_authorized_conversation_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19468,12 +19451,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "response-unused",
-      "contract": "persist_agent_citation_artifacts: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "persist_agent_citation_artifacts: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_chats.py::_load_user_message_response_context": {
       "boundary": {
@@ -19487,12 +19472,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_user_message_response_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_load_user_message_response_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19518,12 +19504,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "response-unused",
-      "contract": "_reject_chat_submission: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "_reject_chat_submission: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_chats.py::_build_tabular_related_document_catalog": {
       "boundary": {
@@ -19537,12 +19525,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_build_tabular_related_document_catalog: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_build_tabular_related_document_catalog: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19558,12 +19547,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "_save_chat_user_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_save_chat_user_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19579,12 +19569,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats._resolve_document_action_selected_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats._resolve_document_action_selected_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19600,12 +19591,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats._get_latest_chat_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats._get_latest_chat_thread_id: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19626,12 +19618,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats._load_or_create_analyze_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats._load_or_create_analyze_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19678,12 +19671,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.execute_saved_analysis_chat_request: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.execute_saved_analysis_chat_request: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19719,12 +19713,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.execute_document_action_chat_request: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.execute_document_action_chat_request: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19745,12 +19740,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.generate_image_from_proposal: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.generate_image_from_proposal: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19766,12 +19762,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.generate_image_from_proposal.read_conversation_image: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.generate_image_from_proposal.read_conversation_image: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19787,18 +19784,19 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.image_proposal_status: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.image_proposal_status: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_api": {
       "boundary": {
-        "sha256": "847f5b558af23dd4abbc4417e73664862f2e9d2f5fddca4749a0dfc2b2b65f46",
+        "sha256": "83cccdc0c9f621c3bd93b31cd961855fe0e2080f45ec356b194f31fbf08631e8",
         "points": [
           {
             "method": "read_item",
@@ -19879,18 +19877,19 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.chat_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.chat_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.chat_stream_api.generate": {
       "boundary": {
-        "sha256": "4191c8cba2e6a543d8304fbbcc916260406e07f370c2b51346ca8487a5b12cba",
+        "sha256": "f4d073ca23e977c5b025094bd50521f364ba14ea792d366558a91112a6411dea",
         "points": [
           {
             "method": "read_item",
@@ -19951,12 +19950,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.chat_stream_api.generate: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.chat_stream_api.generate: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -19972,12 +19972,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "response-unused",
-      "contract": "register_route_backend_chats.chat_stream_api.generate.finalize_cancelled_stream_response: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "register_route_backend_chats.chat_stream_api.generate.finalize_cancelled_stream_response: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_chats.py::register_route_backend_chats.mask_message_api": {
       "boundary": {
@@ -20002,12 +20004,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.mask_message_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.mask_message_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -20023,12 +20026,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.set_message_visual_style_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.set_message_visual_style_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -20044,12 +20048,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats._load_block_revision_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats._load_block_revision_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -20065,12 +20070,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats._find_originating_user_request: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats._find_originating_user_request: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -20086,12 +20092,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats._answer_raced_block_submission: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats._answer_raced_block_submission: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -20107,12 +20114,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "865c35d29eb1b428035d0c5c3028d8696de1ecd0e0ffcc4a7dc5c5d520a82b9d"
+        "module_sha256": "b93ec6e2741e6ab6ce2fedb133c7d765b548fc4257f74c8649a89e341fb99892"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_chats.add_message_image_revision_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_chats.add_message_image_revision_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22047,12 +22055,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_matching_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_matching_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22068,12 +22077,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_legacy_conversations_for_feed: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_query_legacy_conversations_for_feed: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22089,12 +22099,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_count_hidden_legacy_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_count_hidden_legacy_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22110,12 +22121,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_unread_collaboration_notification_map: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_load_unread_collaboration_notification_map: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22131,12 +22143,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_collect_child_message_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_collect_child_message_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22152,12 +22165,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_promote_remaining_thread_attempt: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_promote_remaining_thread_attempt: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22173,12 +22187,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_personal_conversation_read: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_authorize_personal_conversation_read: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22194,12 +22209,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_list_personal_conversation_generated_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_list_personal_conversation_generated_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22226,12 +22242,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "response-unused",
-      "contract": "_rebuild_authorized_personal_conversation_used_documents: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "_rebuild_authorized_personal_conversation_used_documents: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_conversations.py::_load_scope_lock_conversation": {
       "boundary": {
@@ -22245,12 +22263,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_scope_lock_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "_load_scope_lock_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22271,12 +22290,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "response-unused",
-      "contract": "_persist_scope_lock_update: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "_persist_scope_lock_update: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_conversations.py::register_route_backend_conversations.api_get_messages": {
       "boundary": {
@@ -22290,12 +22311,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.api_get_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.api_get_messages: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22311,12 +22333,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.get_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.get_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22337,18 +22360,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.update_conversation_title: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.update_conversation_title: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
     "application/single_app/route_backend_conversations.py::register_route_backend_conversations.delete_conversation": {
       "boundary": {
-        "sha256": "cbdca96268fe6f7693a4ad6c477c22962d218d02dac1bdd05aa53b0746daadd2",
+        "sha256": "2813609bc34a1f69a760e0669062af2a3c50f4eb132920826af6ad2dab369fe5",
         "points": [
           {
             "method": "upsert_item",
@@ -22379,16 +22403,18 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "response-unused",
-      "contract": "register_route_backend_conversations.delete_conversation: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "register_route_backend_conversations.delete_conversation: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_conversations.py::register_route_backend_conversations.delete_multiple_conversations": {
       "boundary": {
-        "sha256": "9773c7d7de39b4ae9ad0c9879d46f75a51300375c117cc50c20384a568ede0b7",
+        "sha256": "5fec3e5e02315179963be1e9629075ab9f14bcc494402628389eda532d51469e",
         "points": [
           {
             "method": "upsert_item",
@@ -22419,12 +22445,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "response-unused",
-      "contract": "register_route_backend_conversations.delete_multiple_conversations: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "register_route_backend_conversations.delete_multiple_conversations: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ]
     },
     "application/single_app/route_backend_conversations.py::register_route_backend_conversations.toggle_conversation_pin": {
       "boundary": {
@@ -22443,12 +22471,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.toggle_conversation_pin: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.toggle_conversation_pin: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22469,12 +22498,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.toggle_conversation_hide: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.toggle_conversation_hide: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22495,12 +22525,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.bulk_pin_conversations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.bulk_pin_conversations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22521,12 +22552,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.bulk_hide_conversations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.bulk_hide_conversations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22547,12 +22579,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.get_conversation_metadata_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.get_conversation_metadata_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22568,12 +22601,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.get_conversation_kind_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.get_conversation_kind_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22594,12 +22628,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.mark_conversation_read_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.mark_conversation_read_api: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22615,12 +22650,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.generate_conversation_summary_api: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.generate_conversation_summary_api: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22636,12 +22672,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.get_user_classifications: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.get_user_classifications: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22657,12 +22694,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.search_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.search_conversations: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22704,12 +22742,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.delete_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.delete_message: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -22741,12 +22780,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "2f98b82253ee3906e01a7ec5c478df8467121e90fb4588e8dff81d50988c992e"
+        "module_sha256": "d1985bab8ab0a260a959d85efac8505c9ffb8b0d28f7abbde104e6aa9a50a012"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_conversations.switch_attempt: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "register_route_backend_conversations.switch_attempt: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Credential interaction adds no new raw point consumer: the private owner normalizes its own SDK responses; existing ownership/Mapping reads and discarded write returns remain unchanged.",
+      "evidence_scope": "owner-runtime",
       "tests": [
+        "functional_tests/test_action_credentials_bootstrap.py",
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
@@ -25572,6 +25612,144 @@
       "contract": "Normalize owner-partitioned history point reads before copying stored JSON, preserving the ETag for conditional history writes and verifying action/owner identity.",
       "tests": [
         "functional_tests/test_m365_pending_review.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_action_credential_state.py::create": {
+      "boundary": {
+        "sha256": "c9a4a6aaf7031f06328e2b44fbd323c06d692e3933eb08236c94eb4fd18e8cee",
+        "points": [
+          {
+            "method": "create_item",
+            "receiver": "container()",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalizes the returned SDK create document before returning private JSON state; preserves the owned partition and ETag for conditional submission/checkpoint consumers.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py",
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_action_credential_state.py::delete_private_state": {
+      "boundary": {
+        "sha256": "a7372b66e56a731f2a21e0e9a209ae7a618d64e5f092183fd60399e65f3883b0",
+        "points": [
+          {
+            "method": "delete_item",
+            "receiver": "container()",
+            "response": "unused"
+          }
+        ],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "container()",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+      },
+      "classification": "response-unused",
+      "contract": "Owned partition query rows supply id and ETag for IfNotModified deletion; delete response bodies are discarded and errors stay visible. Conversation cleanup retains persistent bindings.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py",
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_action_credential_state.py::invalidate_identity": {
+      "boundary": {
+        "sha256": "085b6bf2d3405a4b0caef746001cc944c2604efb10c010d816ad3410b5c539b2",
+        "points": [],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "container()",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Queries yield plain rows; owned read and replace helpers supply normalized documents and preserve conditional ETags while invalidating only the deleted actor's bindings.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py",
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_action_credential_state.py::pending": {
+      "boundary": {
+        "sha256": "b475bdb558c62ec9453003be1b7f5b0fbef9bdc0bd72e7ba014be76231f6d3f9",
+        "points": [],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "container()",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Partition-bound pending queries yield plain SDK JSON rows, copied into ordinary dictionaries before authorized safe DTO projection; they do not consume point wrappers.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py",
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_action_credential_state.py::read": {
+      "boundary": {
+        "sha256": "f56da19f655b3a5dea4dcfd360004f754a5d0ebd783cf877bab9af58c2949c29",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "container()",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalizes the owned SDK point document before record-type/expiry validation and before strict/deepcopy request, binding and checkpoint consumers; retains ETags.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py",
+        "functional_tests/test_action_credentials_bootstrap.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_action_credential_state.py::replace": {
+      "boundary": {
+        "sha256": "8f5de29af218a33f1fc366aa5174fc44479e7d762be73e1248a113614507c9b9",
+        "points": [
+          {
+            "method": "replace_item",
+            "receiver": "container()",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+      },
+      "classification": "normalized-strict",
+      "contract": "Owned IfNotModified replace normalizes its returned SDK document before conditional request/binding/checkpoint consumers; rejects changed identity, partition or ETag and preserves conflict errors.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py",
+        "functional_tests/test_action_credentials_bootstrap.py"
       ],
       "evidence_scope": "owner-runtime"
     }
@@ -32084,6 +32262,54 @@
         "functional_tests/test_m365_pending_review.py::test_partial_graph_cosmos_save_blocks_send_until_read_only_reconciliation"
       ],
       "evidence_scope": "owner-runtime"
+    },
+    "functional_tests/test_action_personal_credentials.py::CredentialContainer": {
+      "boundary": {
+        "sha256": "9c086de6148edfd5b4ca6c0a4b86a793dfd9828719464b90c3a82102d3b2933a",
+        "methods": [
+          "delete_item"
+        ],
+        "kind": "class",
+        "inherited_bases": [
+          "CosmosContainer"
+        ],
+        "imports_sha256": "5249446487875899092fb53b4ea82c84a8d0bd1fb094ad2af9336d77a83e12ad"
+      },
+      "classification": "sdk-default",
+      "contract": "Inherits the shared installed-SDK CosmosDict point/write default with ETags and partitions. Queries return plain JSON; conditional deletes enforce IfNotModified before the real shared delete.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py"
+      ]
+    },
+    "functional_tests/test_action_personal_credentials.py::test_lost_identity_write_responses_keep_committed_keyvault_references::point-seam-1": {
+      "boundary": {
+        "sha256": "8130af2588105a4e56f9e6d59e396d3ff690dd0a0c16e4cb485fa4cebdc252d1",
+        "methods": [
+          "create_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "5249446487875899092fb53b4ea82c84a8d0bd1fb094ad2af9336d77a83e12ad"
+      },
+      "classification": "fault-injection",
+      "contract": "Commits through the real SDK-default fake create/replace before throwing a lost-response outage. Owned point confirmation exercises the real identity owner without overriding response shape.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py::test_lost_identity_write_responses_keep_committed_keyvault_references"
+      ]
+    },
+    "functional_tests/test_action_personal_credentials.py::test_lost_identity_write_responses_keep_committed_keyvault_references::point-seam-2": {
+      "boundary": {
+        "sha256": "44576681a87e5aa4b91bdfcf0241009a44008b3d6c54b4facb7a8eb6098ecc29",
+        "methods": [
+          "replace_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "5249446487875899092fb53b4ea82c84a8d0bd1fb094ad2af9336d77a83e12ad"
+      },
+      "classification": "fault-injection",
+      "contract": "Commits through the real SDK-default fake create/replace before throwing a lost-response outage. Owned point confirmation exercises the real identity owner without overriding response shape.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py::test_lost_identity_write_responses_keep_committed_keyvault_references"
+      ]
     }
   }
 }

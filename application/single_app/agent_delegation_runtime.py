@@ -350,7 +350,9 @@ async def execute_target(target, task, context, frame, *, scope=None):
                         [metadata.model_dump(mode="json") for metadata in kernel.get_full_list_of_function_metadata()],
                     )
                 _check_cancelled(frame)
-                result = await _invoke_local(agent, messages)
+                from functions_action_credential_continuation import invoke_credential_agent
+
+                result = await invoke_credential_agent(agent, messages)
                 if journal is not None:
                     journal.require_valid()
                 text = str(result) if result is not None else ""
@@ -480,6 +482,12 @@ async def call_agent(action_id, task, context=""):
         error = "The configured agent is unavailable or you are not permitted to use it."
         raise AgentDelegationError(error) from exc
     except Exception as exc:
+        from action_credential_contracts import find_credential_stop
+
+        credential_stop = find_credential_stop(exc)
+        if credential_stop:
+            error = "The delegated agent needs personal action credentials."
+            raise credential_stop from None
         # Consent failures retain their dedicated exception type and safe message.
         if type(exc).__name__ == "FoundryAgentUserAuthenticationRequired":
             error = "The called agent requires sign-in or consent for Foundry."
@@ -531,6 +539,7 @@ class AgentExecution:
         self._stream_retry_override = None
         self._drain_consumer_id = str(uuid.uuid4())
         self.completed_delegation_count = 0
+        self.credential_checkpoint_id = f"checkpoint_{uuid.uuid4().hex}"
 
     def __getattr__(self, name):
         return getattr(self.agent, name)
@@ -553,6 +562,9 @@ class AgentExecution:
         return {"citations": _delegation_records_citations(records), "usage": _delegation_records_usage(records)}
 
     async def _run(self, messages, *, streaming=False, **kwargs):
+        from functions_action_credentials import _continuation, credential_continuation
+        from functions_action_credential_continuation import invoke_credential_agent, stream_credential_agent
+
         if self.prevent_replay and self._invocations and self.budget.attempts:
             raise AgentDelegationError("This agent turn cannot be replayed after a delegated action.")
         self._invocations += 1
@@ -564,6 +576,10 @@ class AgentExecution:
         invocation_retry_state = None
         retry_override = self._stream_retry_override
         selected = self.agent
+        descriptor = _continuation.get() or {
+            "mode": "chat", "checkpoint_id": self.credential_checkpoint_id,
+            "agent_reference": deepcopy(self.reference),
+        }
         try:
             with agent_execution(frame) as frame:
                 frame.budget.raise_authentication_requirement(frame.identity)
@@ -591,12 +607,12 @@ class AgentExecution:
                 if retry_override:
                     invocation_retry_state = retry_override[1](selected, retry_override[0])
             if streaming:
-                with agent_execution(frame):
+                with agent_execution(frame), credential_continuation(descriptor):
                     # Stream wrappers such as the M365 continuation journal set
                     # ContextVars on the first pull and reset them on the last,
                     # so create, pull, and close the stream in one Context.
                     stream_context = contextvars.copy_context()
-                    stream = stream_context.run(selected.invoke_stream, messages=messages, **kwargs)
+                    stream = stream_context.run(stream_credential_agent, selected, messages, **kwargs)
                 while True:
                     with agent_execution(frame):
                         try:
@@ -611,8 +627,8 @@ class AgentExecution:
                     # token across the yield; the inner stream keeps stream_context.
                     yield result
             else:
-                with agent_execution(frame):
-                    result = await await_agent_operation(_invoke_local(selected, messages), frame)
+                with agent_execution(frame), credential_continuation(descriptor):
+                    result = await await_agent_operation(invoke_credential_agent(selected, messages, **kwargs), frame)
                     self.last_usage = _observed_usage(result, kernel or getattr(selected, "kernel", None))
                 yield result
         finally:

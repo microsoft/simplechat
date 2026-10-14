@@ -325,7 +325,7 @@ export function changeActionType(draft: ActionConfiguration, definition: ActionT
     if (draft.type === definition.type) return draft;
     const initial = configurationForType(definition);
     const configuration = initial;
-    return {
+    const next: ActionConfiguration = {
         ...draft,
         ...configuration,
         type: definition.type,
@@ -337,6 +337,8 @@ export function changeActionType(draft: ActionConfiguration, definition: ActionT
         _openApiSourceDraft: configuration._openApiSourceDraft,
         _sqlConnectionMethod: configuration._sqlConnectionMethod,
     };
+    delete next.credential_requirements;
+    return next;
 }
 
 export function changeActionDisplayName(draft: ActionConfiguration, value: string, isNew: boolean): ActionConfiguration {
@@ -437,10 +439,48 @@ export function changeActionAuth(draft: ActionConfiguration, choice: ActionAuthM
     if (choice.authType === 'identity' && !draft.identity_id) {
         auth.identity = sql && choice.value !== 'managed_identity' ? '' : 'managed_identity';
     }
-    return {
+    const changed = {
         ...draft, auth, additionalFields,
         ...(sql && choice.value === 'connection_string_only' ? { _sqlConnectionMethod: 'connection_string' } : {}),
     };
+    return draft.type === 'yamcs' && usesPersonalActionCredential(draft, 'service')
+        ? changeActionCredentialSource(changed, 'service', choice.value !== 'none')
+        : changed;
+}
+
+export function usesPersonalActionCredential(draft: ActionConfiguration, slot: 'service' | 'proxy'): boolean {
+    return draft.credential_requirements?.version === 1 &&
+        draft.credential_requirements.slots?.[slot]?.source === 'personal';
+}
+
+export function changeActionCredentialSource(
+    draft: ActionConfiguration, slot: 'service' | 'proxy', personal: boolean,
+): ActionConfiguration {
+    if (draft.type !== 'yamcs') throw new Error('Personal credentials are not supported by this action.');
+    const slots = { ...draft.credential_requirements?.slots };
+    if (!personal) {
+        delete slots[slot];
+        return { ...draft, credential_requirements: Object.keys(slots).length ? { version: 1, slots } : undefined };
+    }
+    const method = slot === 'proxy' ? 'username_password' : actionAuthMethod(draft);
+    if (method !== 'username_password' && method !== 'api_key' && method !== 'bearer_token') {
+        throw new Error('Select a supported authentication method before requesting personal credentials.');
+    }
+    slots[slot] = { source: 'personal', auth_type: method };
+    const additionalFields = { ...draft.additionalFields };
+    if (slot === 'service') {
+        delete additionalFields.identity_id;
+        delete additionalFields.identity_auth_type;
+        return {
+            ...draft, identity_id: '', auth: { ...draft.auth, type: method === 'username_password' ? 'username_password' : 'key', identity: '', key: '' },
+            additionalFields, credential_requirements: { version: 1, slots },
+        };
+    }
+    additionalFields.basic_auth_identity_id = '';
+    additionalFields.basic_auth_identity_auth_type = '';
+    additionalFields.basic_auth_username = '';
+    additionalFields.basic_auth_password = '';
+    return { ...draft, additionalFields, credential_requirements: { version: 1, slots } };
 }
 
 export function selectActionIdentity(draft: ActionConfiguration, identity: ActionIdentity | null): ActionConfiguration {
@@ -490,6 +530,7 @@ export function actionForSave(draft: ActionConfiguration): ActionConfiguration {
     void _discardedOpenApiSourceDraft;
     void _discardedSqlConnectionMethod;
     let next = { ...persistable, displayName: actionText(draft.displayName ?? draft.name).trim(), name: actionText(draft.name).trim() } as ActionConfiguration;
+    if (!next.credential_requirements) delete next.credential_requirements;
     if (!next.endpoint) next.endpoint = actionText(displayedActionValue(draft, '/endpoint'));
     if (draft.type === 'agent') next = { ...next, endpoint: 'internal://agent', auth: { type: 'user' } };
     if (draft.type === 'snowflake' && !draft.identity_id && !draft.auth.identity && draft.additionalFields.user) {
@@ -541,7 +582,8 @@ export function validateActionDraft(
         if (!isRecord(target) || !actionText(target.id) || !actionText(target.scope_id) || !['personal', 'group', 'global'].includes(actionText(target.scope_type))) {
             errors['/additionalFields/target_agent'] = 'Select an authorized target agent.';
         }
-    } else if (!['openapi', 'mcp'].includes(draft.type) && !native.internal && !draft.identity_id) {
+    } else if (!['openapi', 'mcp'].includes(draft.type) && !native.internal && !draft.identity_id &&
+        !usesPersonalActionCredential(draft, 'service')) {
         const sql = ['sql_query', 'sql_schema'].includes(draft.type);
         const method = actionAuthMethod(draft);
         if (sql && method === 'connection_string_only' && sqlConnectionMethod(draft) !== 'connection_string') {
@@ -567,6 +609,40 @@ export function validateActionDraft(
     if (draft.type === 'snowflake' && ['key_pair', 'oauth'].includes(actionAuthMethod(draft)) &&
         (!draft.auth.identity || draft.identity_id) && !draft.additionalFields.user) {
         errors['/additionalFields/user'] = 'Snowflake user is required for key-pair or OAuth authentication.';
+    }
+    if (draft.credential_requirements) {
+        if (draft.type !== 'yamcs' || draft.credential_requirements.version !== 1) {
+            errors['/credential_requirements'] = 'This action does not support these credential requirements.';
+        }
+        if (!isRecord(draft.credential_requirements.slots)) {
+            errors['/credential_requirements'] = 'Credential requirements must declare supported slots.';
+        }
+        for (const [slot, requirement] of Object.entries(draft.credential_requirements.slots ?? {})) {
+            if (!requirement || requirement.source !== 'personal' || !['service', 'proxy'].includes(slot) ||
+                !['username_password', 'api_key', 'bearer_token'].includes(requirement.auth_type)) {
+                errors['/credential_requirements'] = 'Choose a supported personal credential source.';
+            } else if (slot === 'service' && requirement.auth_type !== actionAuthMethod(draft)) {
+                errors['/credential_requirements'] = 'Personal credentials must match the service authentication method.';
+            } else if (slot === 'proxy' && (requirement.auth_type !== 'username_password' ||
+                draft.additionalFields.enable_basic_auth !== true)) {
+                errors['/credential_requirements'] = 'Personal proxy credentials require reverse proxy authentication.';
+            } else if (slot === 'service' && (draft.identity_id || draft.auth.identity || draft.auth.key ||
+                draft.additionalFields.identity_id)) {
+                errors['/credential_requirements'] = 'Clear shared service credentials and identity references before requesting a personal identity.';
+            } else if (slot === 'proxy' && (draft.additionalFields.basic_auth_identity_id ||
+                draft.additionalFields.basic_auth_username || draft.additionalFields.basic_auth_password)) {
+                errors['/credential_requirements'] = 'Clear shared proxy credentials and identity references before requesting a personal identity.';
+            }
+        }
+    }
+    if (draft.type === 'yamcs' && draft.additionalFields.enable_basic_auth === true) {
+        if (['username_password', 'bearer_token'].includes(actionAuthMethod(draft))) {
+            errors['/additionalFields/enable_basic_auth'] = 'Proxy Basic authentication requires Yamcs No authentication or API key; the other methods also use Authorization.';
+        }
+        if (!usesPersonalActionCredential(draft, 'proxy') && !draft.additionalFields.basic_auth_identity_id) {
+            requireField('/additionalFields/basic_auth_username', 'Proxy username');
+            requireField('/additionalFields/basic_auth_password', 'Proxy password');
+        }
     }
     if (native.capabilities) {
         const capabilities = actionValueAt(draft, native.capabilities.path);

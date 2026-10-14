@@ -55,6 +55,7 @@ import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { useMessageScroll } from './useMessageScroll';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
 import { ElicitationCard } from './ElicitationCard';
+import { CredentialRequestCards } from './CredentialRequestCard';
 import {
     selectActiveTurn,
     selectActiveTurnRunInFlight,
@@ -1713,6 +1714,7 @@ export function MessageList() {
                         {activeConversationId && tailPlan && (
                             <ActiveOrchestrationCard conversationId={activeConversationId} />
                         )}
+                        {activeConversationId ? <CredentialRequestCards conversationId={activeConversationId} /> : null}
                         <AgentActivityIndicator />
                         <TypingIndicator />
                     </div>

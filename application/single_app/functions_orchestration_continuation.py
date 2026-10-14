@@ -188,6 +188,7 @@ def _continuation_guards(record, authorize, message_container):
 
 def claim_run_continuation(
     run_id, user_id, conversation_id, *, authorize, message_container, mode="execute",
+    credential_request_id=None,
 ):
     """CAS-claim one existing attempt; a live or no-longer-due run returns None.
 
@@ -198,6 +199,24 @@ def claim_run_continuation(
     if type(mode) is not str or mode not in _MODES or message_container is None:
         raise RecoveryError(code="invalid_request", status_code=400)
     record = _read_owned(run_id, user_id, conversation_id, authorize)
+    credential_waits = [
+        row for row in record.get("execution_steps") or []
+        if row.get("status") == "waiting" and (row.get("wait") or {}).get("kind") == "action_credentials"
+    ]
+    if credential_waits and mode == "execute":
+        # Scheduler/recovery reads never consume an interactive credential wait.
+        if not credential_request_id:
+            return None
+        from functions_action_credentials import authorize_request
+
+        request, _manifest = authorize_request(user_id, credential_request_id)
+        if (
+            request["status"] != "continuing"
+            or request["continuation"].get("run_id") != run_id
+            or request["conversation_id"] != conversation_id
+            or not any(row["wait"]["request_id"] == credential_request_id for row in credential_waits)
+        ):
+            raise CheckpointError("context_unavailable")
     if _lease_live(record):
         return None
     status = record.get("status")
@@ -268,6 +287,10 @@ def claim_run_continuation(
     }
     if mode != "delivery":
         updates["status"] = "running"
+    if credential_waits and mode == "execute":
+        from action_credential_deadline import finish_human_wait
+
+        updates.update(finish_human_wait(record, now=_now()))
     if authorize() is False:
         raise CheckpointError("context_unavailable")
     try:
@@ -498,6 +521,7 @@ class ContinuationCheckpoints(ExecutionCheckpoints):
         elif self.binding != self.record.get("execution_binding"):
             raise CheckpointError("recovery_changed")
         context.execution_deadline_at = self.record["execution_deadline_at"]
+        context.credential_wait_seconds = self.record.get("credential_wait_seconds", 0)
         self.store = checkpoint_store(self.record, lease.read, token=lease.token, claim_id=lease.claim_id)
         source = self.record if self.initializing else reconcile_checkpoints(self.record, lease.read)
         self.records = _execution_steps(source)

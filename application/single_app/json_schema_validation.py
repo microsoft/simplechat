@@ -13,6 +13,7 @@ from functions_action_manifest import (
     is_retired_mcp_stdio,
     resolve_action_type,
 )
+from action_credential_contracts import validate_credential_requirements
 from functions_mcp_operations import normalize_mcp_transport, validate_mcp_endpoint_for_transport
 from functions_agent_delegation import (
     AGENT_ACTION_VALIDATION_ERROR,
@@ -308,8 +309,9 @@ def validate_plugin(plugin):
         return MCP_STDIO_REMOVED_MESSAGE
     try:
         resolve_action_type(plugin)
+        validate_credential_requirements(plugin)
     except ValueError:
-        return 'Invalid action type.'
+        return 'Invalid action type or credential requirements.'
     try:
         plugin_copy = apply_plugin_validation_defaults(plugin)
     except ValueError:

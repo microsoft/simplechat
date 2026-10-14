@@ -763,6 +763,11 @@ export class PluginModalStepper {
     document.getElementById('tableau-auth-method').addEventListener('change', () => this.toggleTableauAuthFields());
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
+    ['service', 'proxy'].forEach(slot => {
+        document.getElementById(`yamcs-${slot}-credential-source`)?.addEventListener('change', () => {
+            this.applyYamcsCredentialSources(true);
+        });
+    });
     document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
     document.getElementById('yamcs-enable-basic-auth').addEventListener('change', () => this.toggleYamcsBasicAuthFields());
     document.getElementById('yamcs-basic-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcsBasicAuth'));
@@ -2975,9 +2980,11 @@ export class PluginModalStepper {
     const apiKeyGroup = document.getElementById('yamcs-api-key-group');
     const bearerTokenGroup = document.getElementById('yamcs-bearer-token-group');
 
+    const personalService = this.isYamcsPersonalSource('service');
+    document.getElementById('yamcs-action-identity-group')?.classList.toggle('d-none', personalService || !this.getActionIdentitiesForKind('yamcs').length);
     if (authMethodSelect) {
-      authMethodSelect.disabled = Boolean(selectedIdentity);
-      if (selectedIdentity) {
+      authMethodSelect.disabled = Boolean(selectedIdentity) && !personalService;
+      if (selectedIdentity && !personalService) {
         authMethodSelect.value = this.getYamcsIdentityAuthMethod(selectedIdentity);
       }
     }
@@ -2990,7 +2997,7 @@ export class PluginModalStepper {
 
     this.toggleYamcsBasicAuthFields();
 
-    if (selectedIdentity) {
+    if (selectedIdentity || personalService) {
       return;
     }
 
@@ -3006,7 +3013,7 @@ export class PluginModalStepper {
 
   getYamcsAuthMethodForConflictCheck() {
     const selectedIdentity = this.getSelectedActionIdentity('yamcs');
-    if (selectedIdentity) {
+    if (selectedIdentity && !this.isYamcsPersonalSource('service')) {
       return this.getYamcsIdentityAuthMethod(selectedIdentity);
     }
     return document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
@@ -3020,27 +3027,65 @@ export class PluginModalStepper {
     return document.getElementById('yamcs-enable-basic-auth')?.checked === true;
   }
 
+  isYamcsPersonalSource(slot) {
+    return document.getElementById(`yamcs-${slot}-credential-source`)?.value === 'personal';
+  }
+
+  applyYamcsCredentialSources(clearCompeting = false) {
+    if (clearCompeting && this.isYamcsPersonalSource('service')) {
+        this.setSelectedActionIdentity('yamcs', '');
+        ['yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+    }
+    if (clearCompeting && this.isYamcsPersonalSource('proxy')) {
+        this.setSelectedActionIdentity('yamcsBasicAuth', '');
+        ['yamcs-basic-auth-username', 'yamcs-basic-auth-password'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+    }
+    this.toggleYamcsAuthFields();
+  }
+
+  getYamcsCredentialRequirements() {
+    const slots = {};
+    if (this.isYamcsPersonalSource('service')) {
+        slots.service = { source: 'personal', auth_type: this.getYamcsAuthMethodForConflictCheck() };
+    }
+    if (this.isYamcsBasicAuthEnabled() && this.isYamcsPersonalSource('proxy')) {
+        slots.proxy = { source: 'personal', auth_type: 'username_password' };
+    }
+    return { version: 1, slots };
+  }
+
   toggleYamcsBasicAuthFields() {
     const fields = document.getElementById('yamcs-basic-auth-fields');
     const conflictAlert = document.getElementById('yamcs-basic-auth-conflict');
     const usernameInput = document.getElementById('yamcs-basic-auth-username');
     const passwordInput = document.getElementById('yamcs-basic-auth-password');
     const enabled = this.isYamcsBasicAuthEnabled();
+    const personalProxy = this.isYamcsPersonalSource('proxy');
+    const hasPersonalCredentials = this.isYamcsPersonalSource('service') || (enabled && personalProxy);
+    const testButton = document.getElementById('yamcs-test-connection-btn');
+    if (testButton) testButton.disabled = hasPersonalCredentials;
+    document.getElementById('yamcs-personal-test-note')?.classList.toggle('d-none', !hasPersonalCredentials);
 
     fields?.classList.toggle('d-none', !enabled);
     conflictAlert?.classList.toggle('d-none', !(enabled && this.yamcsBasicAuthConflicts()));
+    document.getElementById('yamcs-basic-auth-identity-group')?.classList.toggle('d-none', personalProxy || !this.getActionIdentitiesForKind('yamcsBasicAuth').length);
+    usernameInput?.closest('.row')?.classList.toggle('d-none', personalProxy);
 
     // A reusable identity supplies both values, so the inline inputs become read-only
     // mirrors of the stored credential rather than a second place to edit it.
     const selectedIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
     if (usernameInput) {
-      usernameInput.disabled = Boolean(selectedIdentity);
-      if (selectedIdentity) {
+      usernameInput.disabled = Boolean(selectedIdentity) || personalProxy;
+      if (selectedIdentity && !personalProxy) {
         usernameInput.value = selectedIdentity.credentials?.username || '';
       }
     }
     if (passwordInput) {
-      passwordInput.disabled = Boolean(selectedIdentity);
+      passwordInput.disabled = Boolean(selectedIdentity) || personalProxy;
       if (selectedIdentity) {
         passwordInput.value = '';
       }
@@ -3048,8 +3093,14 @@ export class PluginModalStepper {
   }
 
   populateYamcsForm(plugin) {
+    ['yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
     const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
     const auth = plugin.auth || {};
+    const slots = plugin.credential_requirements?.slots || {};
+    document.getElementById('yamcs-service-credential-source').value = slots.service?.source === 'personal' ? 'personal' : 'shared';
+    document.getElementById('yamcs-proxy-credential-source').value = slots.proxy?.source === 'personal' ? 'personal' : 'shared';
     const serverUrl = this.normalizeYamcsServerUrl(plugin.endpoint || additionalFields.server_url || '');
 
     document.getElementById('yamcs-server-url').value = serverUrl;
@@ -3059,7 +3110,7 @@ export class PluginModalStepper {
     document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
     document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
     document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
-    document.getElementById('yamcs-enable-basic-auth').checked = additionalFields.enable_basic_auth === true;
+    document.getElementById('yamcs-enable-basic-auth').checked = additionalFields.enable_basic_auth === true || slots.proxy?.source === 'personal';
     document.getElementById('yamcs-basic-auth-username').value = additionalFields.basic_auth_username || '';
     document.getElementById('yamcs-basic-auth-password').value = additionalFields.basic_auth_password || '';
 
@@ -3079,17 +3130,20 @@ export class PluginModalStepper {
       }
     }
 
-    document.getElementById('yamcs-auth-method').value = authMethod;
+    document.getElementById('yamcs-auth-method').value = slots.service?.auth_type || authMethod;
     this.setSelectedActionIdentity('yamcs', plugin.identity_id || '');
     this.setSelectedActionIdentity('yamcsBasicAuth', additionalFields.basic_auth_identity_id || '');
     this.handleActionIdentityChange('yamcs');
     this.handleActionIdentityChange('yamcsBasicAuth');
+    this.applyYamcsCredentialSources(true);
   }
 
   getYamcsConfiguration() {
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
-    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
-    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    const personalService = this.isYamcsPersonalSource('service');
+    const personalProxy = this.isYamcsPersonalSource('proxy');
+    const selectedIdentity = personalService ? null : this.getSelectedActionIdentity('yamcs');
+    const basicAuthIdentity = personalProxy ? null : this.getSelectedActionIdentity('yamcsBasicAuth');
     const enableBasicAuth = this.isYamcsBasicAuthEnabled();
     const authMethod = selectedIdentity
       ? this.getYamcsIdentityAuthMethod(selectedIdentity)
@@ -3103,18 +3157,18 @@ export class PluginModalStepper {
       read_only: true,
       enable_archive_sql: document.getElementById('yamcs-enable-archive-sql')?.checked === true,
       enable_basic_auth: enableBasicAuth,
-      // Only an identity selection blanks the inline credential. Turning the toggle off
+      // Identity selection or personal source explicitly clears inline credentials. Turning the toggle off
       // must keep the stored values, otherwise saving would drop the Key Vault reference
       // and leave its secret orphaned. Runtime and validation already ignore these fields
       // while the toggle is off. An untouched password field still holds the Key Vault
       // placeholder, which the save helper resolves back to the existing reference.
-      basic_auth_identity_id: basicAuthIdentity
+      basic_auth_identity_id: basicAuthIdentity && !personalProxy
         ? (basicAuthIdentity.id || basicAuthIdentity.identity_id || '')
         : '',
-      basic_auth_username: basicAuthIdentity
+      basic_auth_username: basicAuthIdentity || personalProxy
         ? ''
         : (document.getElementById('yamcs-basic-auth-username')?.value.trim() || ''),
-      basic_auth_password: basicAuthIdentity
+      basic_auth_password: basicAuthIdentity || personalProxy
         ? ''
         : (document.getElementById('yamcs-basic-auth-password')?.value || ''),
       max_rows: parseInt(document.getElementById('yamcs-max-rows')?.value, 10) || 500,
@@ -3123,7 +3177,10 @@ export class PluginModalStepper {
     const auth = {};
     let identityId = '';
 
-    if (selectedIdentity) {
+    if (personalService) {
+      Object.assign(auth, { type: 'NoAuth', key: '', identity: '' });
+      additionalFields.identity_auth_type = '';
+    } else if (selectedIdentity) {
       identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
       auth.type = 'identity';
       auth.identity = identityId;
@@ -4760,15 +4817,20 @@ export class PluginModalStepper {
             this.showError('Select a supported Yamcs authentication method.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
+          const personalService = this.isYamcsPersonalSource('service');
+          if (personalService && authMethod === YAMCS_AUTH_METHOD_NONE) {
+            this.showError('Personal Yamcs credentials require an authenticated service method. Use shared configuration for No Authentication.');
+            return false;
+          }
+          if (!personalService && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
             this.showError('Yamcs username and password are required for username/password authentication.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
+          if (!personalService && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
             this.showError('Yamcs API key is required for API key authentication.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
+          if (!personalService && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
             this.showError('Yamcs bearer token is required for bearer token authentication.');
             return false;
           }
@@ -4780,7 +4842,7 @@ export class PluginModalStepper {
               this.showError('HTTP Basic authentication cannot be combined with username/password or access token authentication. Choose "No Authentication" or "API Key".');
               return false;
             }
-            if (!basicAuthIdentity && (!basicAuthUsername || !basicAuthPassword)) {
+            if (!this.isYamcsPersonalSource('proxy') && !basicAuthIdentity && (!basicAuthUsername || !basicAuthPassword)) {
               this.showError('A proxy username and password are required for HTTP Basic authentication.');
               return false;
             }
@@ -5654,6 +5716,13 @@ export class PluginModalStepper {
     const resultDiv = document.getElementById('yamcs-test-connection-result');
     const alertDiv = document.getElementById('yamcs-test-connection-alert');
     if (!btn || !resultDiv || !alertDiv) return;
+
+    if (Object.keys(this.getYamcsCredentialRequirements().slots).length) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-info mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'Personal credentials are checked when each user connects in chat. Save this action without shared credentials; this test does not acquire or replace a user identity.';
+        return;
+    }
 
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     const instance = document.getElementById('yamcs-instance')?.value?.trim() || '';
@@ -7332,6 +7401,11 @@ export class PluginModalStepper {
     if (identityId) {
       formData.identity_id = identityId;
     }
+    if (isYamcsVisible) {
+        // Empty references are intentional clears, not requests to preserve old secrets.
+        formData.identity_id = identityId || '';
+        formData.credential_requirements = this.getYamcsCredentialRequirements();
+    }
     if (this.isEditMode && this.originalPlugin?.id) {
         formData.id = this.originalPlugin.id;
     }
@@ -7615,6 +7689,9 @@ export class PluginModalStepper {
       }
       return this.formatTableauAuthMethod(document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
     } else if (this.isYamcsType()) {
+      if (this.isYamcsPersonalSource('service')) {
+        return `Personal identity for each user (${this.formatYamcsAuthMethod(this.getYamcsAuthMethodForConflictCheck())})`;
+      }
       if (this.getSelectedActionIdentity('yamcs')) {
         return 'Reusable Identity';
       }
@@ -7940,7 +8017,9 @@ export class PluginModalStepper {
 
     document.getElementById('summary-yamcs-instance').textContent = document.getElementById('yamcs-instance')?.value.trim() || '-';
     document.getElementById('summary-yamcs-processor').textContent = document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR;
-    document.getElementById('summary-yamcs-auth-method').textContent = selectedIdentity
+    document.getElementById('summary-yamcs-auth-method').textContent = this.isYamcsPersonalSource('service')
+      ? `Personal identity for each user (${this.formatYamcsAuthMethod(authMethod)})`
+      : selectedIdentity
       ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
       : this.formatYamcsAuthMethod(authMethod);
     document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
@@ -7954,6 +8033,9 @@ export class PluginModalStepper {
   formatYamcsBasicAuthSummary() {
     if (!this.isYamcsBasicAuthEnabled()) {
       return 'Disabled';
+    }
+    if (this.isYamcsPersonalSource('proxy')) {
+        return 'Personal proxy sign-in for each user';
     }
     const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
     if (basicAuthIdentity) {
@@ -8639,6 +8721,9 @@ export class PluginModalStepper {
         element.dataset[key] = value;
       }
     };
+    safeSetValue('yamcs-service-credential-source', 'shared');
+    safeSetValue('yamcs-proxy-credential-source', 'shared');
+    this.populateYamcsForm({ endpoint: '', auth: { type: 'username_password' }, additionalFields: {} });
 
     // Step 2 fields - Basic Info
     safeSetValue('plugin-name');

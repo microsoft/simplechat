@@ -11,6 +11,7 @@ import type { ReasoningResolution } from './reasoning';
 import type { ContentScreeningSummary } from './contentScreening';
 import type { ImageReferenceRequest } from './imageReferences';
 import type { PublicWorkspaceSelection } from './publicChatScope';
+import type { CredentialRequest } from './actionCredentialTypes';
 
 export type Json = Record<string, unknown>;
 
@@ -1309,6 +1310,7 @@ export interface WorkspaceAvailability {
  * why almost everything here is optional.
  */
 export interface ChatStreamEvent {
+    credential_request?: CredentialRequest;
     role?: MessageRole;
     blocked?: boolean;
     replace_content?: boolean;
