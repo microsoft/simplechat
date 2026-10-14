@@ -10,6 +10,9 @@ from functions_document_analysis import (
 )
 from functions_document_analysis_results import normalize_analysis_options
 from functions_search import normalize_search_id_list
+from functions_workflow_document_selection import (
+    MAX_RECENT_WINDOW_MINUTES, normalize_document_selection, validate_recent_window,
+)
 
 
 DOCUMENT_ACTION_TYPE_NONE = 'none'
@@ -181,7 +184,7 @@ def normalize_recent_document_window_minutes(value):
         normalized_value = int(value)
     except (TypeError, ValueError):
         normalized_value = DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES
-    return max(1, min(1440, normalized_value))
+    return max(1, min(MAX_RECENT_WINDOW_MINUTES, normalized_value))
 
 
 def _coerce_document_action_limit(value, default_value, execution_context):
@@ -504,6 +507,20 @@ def normalize_document_action_config(
         'target_mode': DOCUMENT_ACTION_TARGET_MODE_SELECTED,
         'recent_window_minutes': DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
     }
+    if 'document_selection' in source_action:
+        if source_action.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT or action_type == DOCUMENT_ACTION_TYPE_NONE:
+            raise ValueError('Document selection requires the Recent documents target mode.')
+        selection = normalize_document_selection(source_action['document_selection'])
+        validate_recent_window(source_action.get('recent_window_minutes'))
+        normalized_action['document_selection'] = selection
+        source_action = dict(source_action)
+        scopes = selection['scopes']
+        kinds = {scope['scope_type'] for scope in scopes}
+        source_action.update({
+            'doc_scope': next(iter(kinds)) if len(kinds) == 1 else 'all',
+            'active_group_ids': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'group'],
+            'active_public_workspace_id': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'public'],
+        })
     if action_type == DOCUMENT_ACTION_TYPE_NONE:
         return normalized_action
 

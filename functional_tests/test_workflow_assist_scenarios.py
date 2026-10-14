@@ -2,7 +2,7 @@
 # test_workflow_assist_scenarios.py
 """
 Functional test for the AI workflow assistant's end-to-end scenarios.
-Version: 0.261.208
+Version: 0.261.332
 Implemented in: 0.261.208
 
 This test ensures that the assistant turns an instruction into the candidate the roadmap's "Done
@@ -26,6 +26,7 @@ The model is always scripted; nothing here reaches Azure or a model.
 """
 
 import copy
+import hashlib
 import json
 import logging
 import sys
@@ -81,10 +82,10 @@ DRAFT_ERRORS_MESSAGE = (
     "The draft already had a problem that saving will report. The assistant did not cause it; fix it before saving."
 )
 METRIC_KEYS = {
-    "user_id", "submission_id", "status", "outcome", "code", "stage", "error_type", "invalid_stage",
+    "turn_id_hash", "status", "outcome", "code", "stage", "error_type", "invalid_stage",
     "operation_count", "correction_count", "model_calls", "turns_received", "turns_sent", "turns_dropped",
     "reference_count", "excerpt_count", "definition_version", "is_new", "warning_codes", "fault_location",
-    "duration_ms",
+    "duration_ms", "output_code", "failure_code", "execution_code", "validation_code",
 }
 
 
@@ -749,9 +750,11 @@ def test_telemetry_is_content_free_whatever_the_outcome(label):
         assert content not in logged, content
     record = wa.finished_log(bundle)
     assert set(record) == METRIC_KEYS
-    assert (record["status"], record["submission_id"], record["user_id"]) == (status, "submission-0001", wa.USER_ID)
+    assert record["status"] == status
+    assert record["turn_id_hash"] == hashlib.sha256(b"submission-0001").hexdigest()
+    assert "submission-0001" not in logged and wa.USER_ID not in logged
     assert (record["turns_received"], record["turns_sent"], record["reference_count"]) == (2, 2, 1)
-    level = next(level for message, _extra, level in bundle.logs if message == "[WorkflowAssist] Assist request finished")
+    level = next(level for message, _extra, level in bundle.logs if message == "[WORKFLOW_ASSIST] Assist request finished")
     assert level == {200: logging.INFO, 502: logging.WARNING, 503: logging.WARNING, 500: logging.ERROR}[status]
 
 
@@ -761,11 +764,13 @@ def test_a_successful_request_logs_exactly_its_counts():
     bundle = wa.services(model, stored=stored)
     wa.run(body, bundle)
     assert wa.finished_log(bundle) == {
-        "user_id": wa.USER_ID, "submission_id": "submission-0001", "status": 200, "outcome": "changed", "code": None,
+        "turn_id_hash": hashlib.sha256(b"submission-0001").hexdigest(),
+        "status": 200, "outcome": "changed", "code": None,
         "stage": "response", "error_type": None, "invalid_stage": None, "operation_count": 1, "correction_count": 0,
         "model_calls": 1, "turns_received": 2, "turns_sent": 2, "turns_dropped": 0, "reference_count": 1,
         "excerpt_count": 1, "definition_version": 2, "is_new": False, "warning_codes": [], "fault_location": None,
-        "duration_ms": 0,
+        "duration_ms": 0, "output_code": "changed", "failure_code": None,
+        "execution_code": "response", "validation_code": "not_required",
     }
 
 

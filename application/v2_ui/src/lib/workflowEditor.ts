@@ -42,6 +42,7 @@ import {
     type WorkflowFlowBinding,
     type WorkflowLoopIterable,
 } from './workflowFlow';
+import { documentSelectionErrors, isTaskDocumentSelection } from './workflowDocumentSelection';
 
 export type WorkflowScope = { type: 'personal' } | { type: 'group'; groupId: string };
 export type WorkflowRunnerType = 'model' | 'agent';
@@ -89,6 +90,7 @@ export interface WorkflowModelOption {
 }
 
 export interface WorkflowEditorOptions {
+    document_workspaces?: (import('./workflowDocumentSelection').DocumentScope & { name: string })[];
     definition_version: 2;
     supported_definition_versions?: number[];
     supported_node_kinds?: string[];
@@ -458,6 +460,7 @@ export interface WorkflowDocumentAction {
     right_document_ids?: string[];
     merge_kind?: WorkflowMergeKind;
     recent_window_minutes?: number;
+    document_selection?: import('./workflowDocumentSelection').TaskDocumentSelection;
     output_format?: WorkflowMergeOutputFormat;
     output_file_name?: string;
     merge_options?: WorkflowMergeOptions;
@@ -1322,9 +1325,7 @@ export function workflowMergeActionFromSelection(
         ? options.outputFormat as WorkflowMergeOutputFormat
         : WORKFLOW_MERGE_DEFAULT_OUTPUT_FORMAT[mergeKind];
     const outputFileName = text(options.outputFileName).trim();
-    const recentWindowMinutes = Number.isInteger(options.recentWindowMinutes) &&
-        Number(options.recentWindowMinutes) >= 1 && Number(options.recentWindowMinutes) <= 1440
-        ? options.recentWindowMinutes : 60;
+    const recentWindowMinutes = options.recentWindowMinutes ?? 60;
     const action: WorkflowDocumentAction = {
         type: 'merge',
         merge_kind: mergeKind,
@@ -1551,8 +1552,8 @@ export function workflowMergeValidationErrors(
         errors.push('Changed files is available only for File Sync workflows.');
     }
     if (targetMode === 'recent' &&
-        (!Number.isInteger(action.recent_window_minutes) || Number(action.recent_window_minutes) < 1 || Number(action.recent_window_minutes) > 1440)) {
-        errors.push('Recent files window must be a whole number from 1 to 1,440 minutes.');
+        (!Number.isInteger(action.recent_window_minutes) || Number(action.recent_window_minutes) < 1 || Number(action.recent_window_minutes) > 525600)) {
+        errors.push('Recent files window must be a whole number from 1 minute to 365 days.');
     }
     if (action.doc_scope !== undefined && !['all', 'personal', 'group', 'public'].includes(String(action.doc_scope))) {
         errors.push('Merge files needs a supported workspace scope.');
@@ -2180,6 +2181,15 @@ export function workflowValidationErrors(
             errors.push(`${task.name || `Task ${index + 1}`} needs a nonnegative whole-number expected count.`);
         }
         const action = task.document_action;
+        if (action?.document_selection) {
+            errors.push(...documentSelectionErrors(action.document_selection, action.recent_window_minutes ?? 0)
+                .map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
+            if (action.target_mode !== 'recent') errors.push('Document filters require Recent documents.');
+            if (options.scope.type === 'group' && isTaskDocumentSelection(action.document_selection) && action.document_selection.scopes.some((source) =>
+                source.scope_type !== 'group' || source.scope_id !== options.scope.id)) {
+                errors.push('Group tasks can select only documents in this group workspace.');
+            }
+        }
         if (action && !['none', 'search', 'analyze', 'comparison', 'merge'].includes(String(action.type))) {
             errors.push(`${task.name || `Task ${index + 1}`} has an unsupported document action type.`);
         }
@@ -2192,7 +2202,7 @@ export function workflowValidationErrors(
                 maxSelectedDocuments: workflowMergeDocumentLimit(options),
             }).map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
         }
-        if (action?.type === 'analyze' && action.target_mode !== 'current_item' && !changedFileTargets &&
+        if (action?.type === 'analyze' && action.target_mode !== 'current_item' && action.target_mode !== 'recent' && !changedFileTargets &&
             (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for Analyze.`);
         }
@@ -2204,11 +2214,11 @@ export function workflowValidationErrors(
                 errors.push(`${task.name}: choose a loop-eligible local agent or model. Hosted runners are not supported inside For each or Repeat.`);
             }
         }
-        if (action?.type === 'search' && action.doc_scope !== 'all' &&
+        if (action?.type === 'search' && action.doc_scope !== 'all' && action.target_mode !== 'recent' &&
             (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for selected Search.`);
         }
-        if (action?.type === 'comparison' &&
+        if (action?.type === 'comparison' && action.target_mode !== 'recent' &&
             (!action.left_document_id || !Array.isArray(action.right_document_ids) || action.right_document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs one source and at least one target document for comparison.`);
         }

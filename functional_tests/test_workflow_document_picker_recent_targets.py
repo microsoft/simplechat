@@ -2,7 +2,7 @@
 # test_workflow_document_picker_recent_targets.py
 """
 Functional test for workflow document picker and recent workflow document targets.
-Version: 0.261.213
+Version: 0.261.332
 Implemented in: 0.241.188
 Enhanced in: 0.250.225
 
@@ -216,7 +216,7 @@ def test_workflow_picker_javascript_contracts() -> None:
     assert 'actionType === DOCUMENT_ACTION_SEARCH && isSelectedMode' in workflow_js
     assert 'actionType === DOCUMENT_ACTION_COMPARISON && isSelectedMode' in workflow_js
     assert 'const isSelectedMode = actionPayload.target_mode === DOCUMENT_ANALYSIS_TARGET_SELECTED;' in workflow_js
-    assert 'Recent document window must be between 1 and 1440 minutes.' in workflow_js
+    assert 'Recent document window must be between 1 minute and 365 days.' in workflow_js
     assert 'const pickerDocumentIds = isRecentMode ? [] : getWorkflowPickerSelectedDocumentIds();' in workflow_js
     assert 'setEffectiveScopes(pickerScopes, {' in workflow_js
     assert 'force: workflowWorkspaceConfig.scope === "group"' in workflow_js

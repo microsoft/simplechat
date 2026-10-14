@@ -44,6 +44,23 @@ of instruction tasks that runs on demand or on a schedule, against documents in 
 workspace. This section decides who may build and run them, and how much work a
 single run is allowed to do.
 
+Since **0.261.332**, Ask AI can create an initial draft from a goal and apply
+clear edits while asking for missing execution details. It remains a personal
+workflow authoring assistant, not a save or execution permission.
+
+Recent-document filters belong to individual tasks. Their 365-day maximum
+window does not raise Analyze, Compare, or Merge document limits; Search uses
+the Analyze document limit. A matching set above the applicable limit is
+refused, not trimmed. Authors should narrow the window or metadata conditions
+rather than raise capacity limits without considering the workload.
+
+Debug diagnostics use `[WORKFLOW_ASSIST]` and
+`[WORKFLOW_DOCUMENT_SELECTION]`. They retain closed outcome/error categories,
+counts, elapsed time, and hashed turn/run/task correlation. They do not log
+prompts, replies, filenames, document text, tags, regex values, or raw user IDs.
+See [logging tags]({{ '/reference/logging-tags/' | relative_url }}) and the
+[task filtering guide]({{ '/guides/create-a-workflow/' | relative_url }}#rolling-documents-for-each-task).
+
 The two capabilities are independent. Personal workflows belong to one user and
 run in their own workspace. Group workflows belong to a group workspace and are
 visible to its members. Turning one on does not turn on the other.

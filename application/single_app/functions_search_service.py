@@ -46,6 +46,7 @@ from functions_search import (
     normalize_search_top_n,
 )
 from functions_settings import get_settings, get_user_settings
+from functions_workflow_document_selection import selected_document_context_validator, selected_source_matches
 from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 
 
@@ -559,6 +560,8 @@ def resolve_document_context(
     include_content=True,
     visible_public_workspace_ids=None,
 ):
+    validator = selected_document_context_validator(user_id)
+    context_options = {'context_validator': validator} if validator is not None else {}
     normalized_scope = normalize_search_scope(doc_scope)
     if current_public_chat_scope(user_id):
         normalized_scope = "public"
@@ -569,7 +572,7 @@ def resolve_document_context(
 
     if normalized_scope in ("all", "personal"):
         personal_context = _resolve_personal_document_context(document_id, user_id)
-        if personal_context:
+        if personal_context and (validator is None or validator(personal_context, document_id)):
             return personal_context
 
     if normalized_scope in ("all", "group"):
@@ -581,6 +584,7 @@ def resolve_document_context(
                 active_group_ids=active_group_ids,
                 fallback_to_memberships=True,
             ),
+            **context_options,
         )
         if group_context:
             return group_context
@@ -594,6 +598,7 @@ def resolve_document_context(
                 active_public_workspace_id=active_public_workspace_id,
                 **public_visibility,
             ),
+            **context_options,
         )
         if public_context:
             return public_context
@@ -606,7 +611,7 @@ def resolve_document_context(
         conversation_id=conversation_id,
         include_content=include_content,
     )
-    if chat_upload_context:
+    if chat_upload_context and (validator is None or validator(chat_upload_context, document_id)):
         return chat_upload_context
 
     return None
@@ -624,6 +629,7 @@ def resolve_document_contexts(
     context_validator=None,
 ):
     """Resolve documents, optionally requiring explicit scopes and an accepted access path."""
+    context_validator = selected_document_context_validator(user_id, context_validator)
     normalized_scope = normalize_search_scope(doc_scope)
     aggregate = current_public_chat_scope(user_id)
     if aggregate:
@@ -781,6 +787,11 @@ def search_documents(
         include_all_public_workspaces=include_all_public_workspaces,
     )
     results = hybrid_search(**search_request) or []
+    results = [
+        result for result in results if selected_source_matches(
+            user_id, result.get('document_id'), result.get('scope'), result.get('scope_id'),
+        )
+    ]
     unique_document_ids = {
         result.get("document_id")
         for result in results

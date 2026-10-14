@@ -298,6 +298,7 @@ export interface WorkflowAssistResponse {
     readonly submissionId: string;
     readonly outcome: WorkflowAssistOutcome;
     readonly reply: string;
+    readonly clarification?: { question: string; fields: string[] };
     readonly candidate: WorkflowDefinition | null;
     readonly changes: readonly WorkflowAssistReportedChange[];
     readonly warnings: readonly WorkflowAssistWarning[];
@@ -360,6 +361,11 @@ export function parseWorkflowAssistResponse(value: unknown, submissionId: string
         outcome,
         reply: codePointLength(reply) > WORKFLOW_ASSIST_REPLY_LIMIT
             ? `${codePointPrefix(reply, WORKFLOW_ASSIST_REPLY_LIMIT - 1)}…` : reply,
+        ...(isRecord(value.clarification) && typeof value.clarification.question === 'string' && Array.isArray(value.clarification.fields)
+            ? { clarification: {
+                question: serverText(value.clarification.question, 400) ?? '',
+                fields: value.clarification.fields.filter((field): field is string => typeof field === 'string'),
+            } } : {}),
         candidate: outcome === 'changed' ? candidate as WorkflowDefinition : null,
         changes: value.changes.slice(0, MAX_REPORTED_CHANGES).map(reportedChange)
             .filter((change): change is WorkflowAssistReportedChange => change !== null),

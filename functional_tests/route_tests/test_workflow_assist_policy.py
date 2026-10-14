@@ -2,7 +2,7 @@
 # test_workflow_assist_policy.py
 """
 Functional policy tests for the AI workflow assistant route.
-Version: 0.261.208
+Version: 0.261.332
 Implemented in: 0.261.208
 
 This test ensures that ``POST /api/user/workflows/assist`` keeps its Blueprint, Swagger and gate
@@ -507,8 +507,8 @@ def test_a_body_that_is_not_strict_json_is_refused_before_any_service(harness, d
     assert_closed_error(response, 400, "invalid_request")
     assert set(response.json) == {"error", "code"}
     assert harness.reached_nothing()
-    assert harness.logs == [("[WorkflowAssist] Assist request refused", {
-        "user_id": wa.USER_ID, "status": 400, "code": "invalid_request", "stage": "body",
+    assert harness.logs == [("[WORKFLOW_ASSIST] Assist request refused", {
+        "status": 400, "failure_code": "invalid_request", "execution_code": "body",
     }, logging.INFO)]
 
 
@@ -619,8 +619,8 @@ def test_services_that_cannot_start_fail_without_detail(harness):
     assert_closed_error(response, 500, "assistant_failed")
     assert set(response.json) == {"error", "code"}
     assert harness.runs == [] and harness.limiter.events == []
-    assert harness.logs == [("[WorkflowAssist] Assist services could not start", {
-        "user_id": wa.USER_ID, "error_type": "RuntimeError",
+    assert harness.logs == [("[WORKFLOW_ASSIST] Assist services could not start", {
+        "error_type": "RuntimeError", "failure_code": "assistant_failed",
     }, logging.ERROR)]
 
 
@@ -653,8 +653,8 @@ def test_a_result_json_cannot_hold_fails_without_echoing_it(harness, value, erro
     text = response_text(response)
     assert "NaN" not in text and "Infinity" not in text and "Nightly review" not in text
     assert strict_json(text) == response.json
-    assert harness.logs == [("[WorkflowAssist] Assist response could not be serialized", {
-        "user_id": wa.USER_ID, "status": 200, "error_type": error_type,
+    assert harness.logs == [("[WORKFLOW_ASSIST] Assist response could not be serialized", {
+        "status": 200, "error_type": error_type, "failure_code": "assistant_failed",
     }, logging.ERROR)]
 
 

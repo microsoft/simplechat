@@ -2,7 +2,7 @@
 # test_workflow_assist_operations_security.py
 """
 Functional test for the AI workflow assistant's operation allowlist and prompt security.
-Version: 0.261.208
+Version: 0.261.332
 Implemented in: 0.261.208
 
 This test ensures that a model reply can only change what the V2 personal editor authors, through
@@ -494,7 +494,7 @@ def test_untrusted_material_reaches_the_model_only_as_json_data():
     assert "ignore them" in core.ASSIST_SYSTEM_PROMPT
     assert user["role"] == "user"
     envelope = json.loads(user["content"])
-    assert list(envelope) == ["instruction", "focus", "time_zone", "conversation", "draft", "choices", "document_excerpts"]
+    assert list(envelope) == ["authoring", "instruction", "focus", "time_zone", "conversation", "draft", "choices", "document_excerpts"]
     assert envelope["instruction"] == "What does this workflow do?"
     assert envelope["draft"]["description"] == INJECTION
     assert envelope["draft"]["tasks"][1]["instructions"] == INJECTION

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow per-document analysis mode.
-Version: 0.261.169
+Version: 0.261.332
 Implemented in: 0.241.182
 
 This test ensures Analyze workflows can persist the Run each document separately
@@ -21,6 +21,7 @@ from test_document_analysis_lossless_artifacts import load_module_functions
 from test_support.app_stubs import import_app_module
 from test_support.document_analysis import document_analysis_runtime
 from test_support.versioning import assert_app_version_at_least
+from functions_workflow_document_selection import MAX_RECENT_WINDOW_MINUTES
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,7 @@ def load_document_action_helpers():
     with document_analysis_runtime({}) as runtime:
         namespace = {
             'copy': copy,
+            'MAX_RECENT_WINDOW_MINUTES': MAX_RECENT_WINDOW_MINUTES,
             'CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS': runtime.producer.CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
             'WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS': runtime.producer.WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
             'normalize_document_analysis_targets': runtime.producer.normalize_document_analysis_targets,

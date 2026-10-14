@@ -20,6 +20,7 @@ from content_screening.access import (
 )
 from content_screening.contracts import ScreeningConflictError, ScreeningError
 from functions_analysis_access import analysis_source_snapshot
+from functions_workflow_document_selection import DocumentSelectionError
 from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_MAX,
     WorkflowLoopInputError,
@@ -106,7 +107,7 @@ def _authorize(scope, actor, authorize_scope, check):
         allowed = (authorize_scope or _default_authorize_scope)(scope, actor_user_id=actor)
         if allowed is False:
             raise PermissionError("Source scope access was denied.")
-    except WorkflowLoopInputError:
+    except (WorkflowLoopInputError, DocumentSelectionError):
         raise
     except Exception as error:
         raise _input_unavailable() from error
@@ -201,6 +202,7 @@ def _entry_for_document(workflow, descriptor, *, actor, read_document, authorize
 
 def reauthorize_workflow_loop_document(
     workflow, entry, *, actor_user_id, check=None, read_document=None, authorize_scope=None,
+    include_document=False,
 ):
     """Recheck a stored entry and require exact source AND screening-proof equality.
 
@@ -211,6 +213,9 @@ def reauthorize_workflow_loop_document(
     ``read_document`` is an optional authoritative reader with the same keyword
     arguments as ``_default_read_document``; it must enforce current object access
     and content-screening availability, not read a projection/cache.
+
+    ``include_document`` returns the checked projection and the same authoritative
+    document together, so a binary-file consumer does not introduce a re-read race.
     """
     actor = _actor(workflow, actor_user_id)
     if not isinstance(entry, Mapping) or not isinstance(entry.get("document"), Mapping):
@@ -224,14 +229,14 @@ def reauthorize_workflow_loop_document(
     }
     if requested["scope_type"] != "personal":
         requested["scope_id"] = descriptor.get("scope_id")
-    current, _document = _entry_for_document(
+    current, document = _entry_for_document(
         workflow, requested, actor=actor, read_document=read_document,
         authorize_scope=authorize_scope, check=check,
     )
     if any(entry.get(key) != current[key] for key in ("source", "availability", "document")):
         raise _source_changed()
     _check(check)
-    return current
+    return (current, document) if include_document else current
 
 
 def _qualified_identity(entry):
@@ -256,6 +261,8 @@ def _same_revision(left, right):
 
 
 def _matches(document, filters, match_filters):
+    if match_filters is not None:
+        return match_filters(document, filters)
     if not filters:
         return True
     if match_filters is None:
@@ -576,7 +583,7 @@ def iter_workflow_loop_documents(
             "complete": False, "exhaustive": False,
         })
         raise
-    except WorkflowLoopInputError:
+    except (WorkflowLoopInputError, DocumentSelectionError):
         capture.update({"complete": False, "exhaustive": False})
         raise
     except Exception as error:

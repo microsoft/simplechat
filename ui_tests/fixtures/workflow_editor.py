@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.207
+Version: 0.261.332
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -814,7 +814,14 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
 
     def _dispatch(self, route, entry):
         path, method = entry.path, entry.method
-        if path.startswith("/api/v2/workspaces/group/") and method == "GET":
+        if path == "/api/v2/scope" and method == "GET":
+            self._json(route, {"user": {"id": OWNER_ID}, "scope": {
+                "active_group_id": self.active_group_id,
+                "active_group_name": next((group["name"] for group in self._bootstrap()["scope"]["groups"]
+                                           if group["id"] == self.active_group_id), None),
+                "active_public_workspace_id": None,
+            }})
+        elif path.startswith("/api/v2/workspaces/group/") and method == "GET":
             group_id = path.rsplit("/", 1)[-1]
             assert group_id in (GROUP_ID, SECOND_GROUP_ID), entry
             context = group_context(
@@ -826,6 +833,20 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             assert entry.body["groupId"] in (GROUP_ID, SECOND_GROUP_ID), entry
             self.active_group_id = entry.body["groupId"]
             self._json(route, {"message": "Active group selected."})
+        elif method == "GET" and path in ("/api/group_documents/tags", "/api/group_documents/facets"):
+            assert entry.query.get("group_id") in ([GROUP_ID], [SECOND_GROUP_ID]), entry
+            self._json(route, {"tags": []} if path.endswith("/tags") else {
+                "total": len(self.group_documents.get(entry.query["group_id"][0], [])),
+                "untagged": 0, "processing": 0, "errors": 0, "recent": 0,
+                "shared_with_me": 0, "by_tag": {}, "by_classification": {},
+            })
+        elif method == "GET" and re.fullmatch(
+            r"/api/groups/[^/]+/(file-sources|prompts|agents|actions|identities|model-endpoints|membership/members)", path,
+        ):
+            group_id, resource = path.split("/")[3], "/".join(path.split("/")[4:])
+            assert group_id in (GROUP_ID, SECOND_GROUP_ID), entry
+            keys = {"file-sources": "sources", "model-endpoints": "endpoints", "membership/members": "members"}
+            self._json(route, {keys.get(resource, resource): [], "page": 1, "page_size": 1, "total_count": 0})
         elif path == "/api/groups" and method == "GET":
             self._json(route, {
                 "groups": [
