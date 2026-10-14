@@ -1,11 +1,13 @@
 // WorkflowTaskFields.tsx
 // Shared task fields and runner pickers for native workflow authoring.
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight, Sparkles, Trash2 } from 'lucide-react';
 import { GlassButton, Toggle } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
+import { WorkflowDocumentSelection } from './WorkflowDocumentSelection';
+import { defaultDocumentSelection } from '../../lib/workflowDocumentSelection';
 import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
 import { WorkflowChangedField, WorkflowItemChangeBadge } from './WorkflowChangeTracking';
@@ -755,6 +757,7 @@ function actionMode(action: WorkflowDocumentAction | undefined): string {
     if (!action || action.type === 'none') {
         return 'none';
     }
+    if (action.target_mode === 'recent' && action.type !== 'merge') return `${action.type}_recent`;
     if (action.type === 'analyze') {
         return action.target_mode === 'current_item' ? 'current_item' : 'analyze';
     }
@@ -942,14 +945,14 @@ function MergeActionFields({
                     </span>
                 </label>
             </div>
-            {targetMode === 'recent' ? (
+            {targetMode === 'recent' && !action?.document_selection ? (
                 <label className="block text-sm text-text-2">
                     Recent window in minutes
                     <input
                         className={`${inputClass} mt-1`}
                         type="number"
                         min={1}
-                        max={1440}
+                        max={525600}
                         aria-label="Recent window in minutes"
                         value={action?.recent_window_minutes ?? 60}
                         onChange={(event) => onActionChange({ recentWindowMinutes: Number(event.target.value) })}
@@ -1249,9 +1252,19 @@ function DocumentActionFields({
     const [evidence, setEvidence] = useState(() => evidenceFromAction(task.document_action));
     const [analysisMode, setAnalysisMode] = useState<'combined' | 'per_document'>(() =>
         task.document_action?.analysis_mode === 'per_document' ? 'per_document' : 'combined');
+    useEffect(() => {
+        setMode(actionMode(task.document_action));
+        setEvidence((current) => evidenceFromAction(task.document_action).map((reference) =>
+            current.find((previous) => previous.document_id === reference.document_id &&
+                previous.scope_type === reference.scope_type &&
+                (reference.scope_type === 'personal' || previous.scope_id === reference.scope_id)) ?? reference));
+        setAnalysisMode(task.document_action?.analysis_mode === 'per_document' ? 'per_document' : 'combined');
+    }, [task.document_action]);
     const comparison = splitComparisonEvidence(task.document_action, evidence);
     const maxMergeDocuments = workflowMergeDocumentLimit(options);
     const mergeEnabled = workflowMergeEnabled(options);
+    const newSelection = () => defaultDocumentSelection(scope.type === 'group'
+        ? { scope_type: 'group', scope_id: scope.groupId } : { scope_type: 'personal' });
 
     const currentMergeActionOptions = (): WorkflowMergeActionOptions => {
         const action = task.document_action?.type === 'merge' ? task.document_action : undefined;
@@ -1277,7 +1290,15 @@ function DocumentActionFields({
         nextLeft = comparison.left,
         nextRight = comparison.right,
     ) => {
-        if (nextMode === 'none') {
+        if (nextMode.endsWith('_recent')) {
+            const type = nextMode === 'search_recent' ? 'search' : nextMode === 'comparison_recent' ? 'comparison' : 'analyze';
+            onChange({ ...task, document_action: {
+                ...(task.document_action?.document_selection ? task.document_action : {}),
+                type, target_mode: 'recent', document_ids: [], analysis_mode: nextAnalysisMode,
+                recent_window_minutes: task.document_action?.recent_window_minutes ?? 60,
+                document_selection: task.document_action?.document_selection ?? newSelection(),
+            } });
+        } else if (nextMode === 'none') {
             onChange({ ...task, document_action: { type: 'none' } });
         } else if (nextMode === 'search_relevance') {
             onChange({ ...task, document_action: documentActionFromSelection('search', [], { mode: 'relevance', analysisMode: nextAnalysisMode }) });
@@ -1328,7 +1349,11 @@ function DocumentActionFields({
             merged.outputFormat = mergeOutputFormat({ type: 'merge', merge_kind: updates.mergeKind }, updates.mergeKind);
             merged.mergeOptions = cleanupWorkflowMergeOptions(updates.mergeKind, merged.mergeOptions);
         }
-        onChange({ ...task, document_action: workflowMergeActionFromSelection(nextEvidence, merged) });
+        const nextAction = workflowMergeActionFromSelection(nextEvidence, merged);
+        if (nextAction.target_mode === 'recent' && (updates.targetMode === 'recent' || task.document_action?.document_selection)) {
+            nextAction.document_selection = task.document_action?.document_selection ?? newSelection();
+        }
+        onChange({ ...task, document_action: nextAction });
     };
 
     const mergeNeedsSelectedEvidence = mode === 'merge' && mergeTargetMode(task.document_action) === 'selected';
@@ -1353,10 +1378,13 @@ function DocumentActionFields({
                 >
                     <option value="none">No document action</option>
                     <option value="analyze">Analyze selected evidence</option>
+                    <option value="analyze_recent">Analyze recent documents</option>
                     {loops.length || mode === 'current_item' ? <option value="current_item">Analyze current loop document</option> : null}
                     <option value="search_selected">Search selected evidence</option>
+                    <option value="search_recent">Search recent documents</option>
                     <option value="search_relevance">Search by relevance</option>
                     <option value="comparison">Compare source and target documents</option>
+                    <option value="comparison_recent">Compare recent documents</option>
                     {mergeEnabled || mode === 'merge' ? <option value="merge">Merge files</option> : null}
                     {mode === 'preserve' ? <option value="preserve">Existing advanced action (preserved)</option> : null}
                 </select>
@@ -1446,6 +1474,25 @@ function DocumentActionFields({
                     }}
                     onActionChange={(updates) => updateMergeAction(evidence, updates)}
                 />
+            ) : null}
+            {task.document_action?.target_mode === 'recent' && task.document_action.type !== 'none' ? (
+                <>
+                    {task.document_action.type === 'search' ? <p className="text-sm text-text-2">
+                        Search ranks matching content. Choose Analyze to process every selected document completely.
+                    </p> : task.document_action.type === 'comparison' ? <p className="text-sm text-text-2">
+                        Compares the newest matching document against the others. At least two matches are required.
+                    </p> : null}
+                    {task.document_action.document_selection ? <WorkflowDocumentSelection
+                        scope={scope} action={task.document_action} options={options}
+                        onChange={(action) => onChange({ ...task, document_action: action })}
+                    /> : <button type="button" className="text-sm text-accent underline"
+                        onClick={() => onChange({ ...task, document_action: {
+                            ...task.document_action, type: task.document_action?.type ?? 'analyze',
+                            document_selection: newSelection(),
+                        } })}>
+                        Add guided workspace and metadata filters
+                    </button>}
+                </>
             ) : null}
             {mode === 'comparison' && evidence.length ? (
                 <div className="space-y-3 rounded-xl border border-edge p-3">

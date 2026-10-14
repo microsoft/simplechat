@@ -119,7 +119,8 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         get_document_action_max_documents,
         is_document_action_enabled,
     )
-    from functions_group import assert_group_role
+    from functions_group import assert_group_role, get_user_groups
+    from functions_public_workspaces import get_user_visible_public_workspace_docs
     from functions_group_workflows import (
         GROUP_WORKFLOW_MEMBER_ROLES,
         _build_model_endpoint_candidates as group_endpoints,
@@ -148,7 +149,7 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         )
         endpoints = personal_endpoints(user_id, settings)
         can_manage = True
-    return build_workflow_editor_options(
+    options = build_workflow_editor_options(
         scope_type="group" if group_id else "personal", scope_id=group_id or user_id,
         can_manage=can_manage, max_tasks=get_workflow_max_tasks(settings),
         agents=agents, endpoints=endpoints, default_model=_build_default_model_summary(settings),
@@ -162,3 +163,17 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
             ),
         },
     )
+    workspaces = [{'scope_type': 'personal', 'name': 'My workspace'}]
+    if group_id:
+        workspaces = [{'scope_type': 'group', 'scope_id': group_id, 'name': 'This group'}]
+    else:
+        if settings.get('enable_group_workspaces'):
+            workspaces.extend({
+                'scope_type': 'group', 'scope_id': str(group['id']), 'name': str(group.get('name') or 'Group'),
+            } for group in get_user_groups(user_id))
+        if settings.get('enable_public_workspaces'):
+            workspaces.extend({
+                'scope_type': 'public', 'scope_id': str(workspace['id']), 'name': str(workspace.get('name') or 'Public workspace'),
+            } for workspace in get_user_visible_public_workspace_docs(user_id))
+    options['document_workspaces'] = workspaces
+    return options

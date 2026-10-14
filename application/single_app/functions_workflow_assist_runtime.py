@@ -179,7 +179,19 @@ class WorkflowAssistModel:
                     self._json_mode = False
                     continue
                 raise provider_error(exc) from exc
-            return model_reply(response)
+            content, finish_reason = model_reply(response)
+            # Export only closed finish categories and numeric usage, never model/prompt contents.
+            usage = getattr(response, 'usage', None)
+            log_event('[WORKFLOW_ASSIST] Model response received', extra={
+                'output_code': finish_reason if finish_reason in (
+                    'stop', 'length', 'content_filter', 'tool_calls',
+                ) else 'unknown',
+                'input_count': getattr(usage, 'prompt_tokens', None),
+                'output_count': getattr(usage, 'completion_tokens', None),
+                'total_count': getattr(usage, 'total_tokens', None),
+                'json_mode': self._json_mode,
+            })
+            return content, finish_reason
 
 
 # ---------------------------------------------------------------------------

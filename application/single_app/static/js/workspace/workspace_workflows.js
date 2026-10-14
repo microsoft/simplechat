@@ -4495,9 +4495,9 @@ function validateWorkflowTaskDocumentAction(actionPayload, taskLabel, usesDynami
     if (!isSelectedMode && (
         !Number.isInteger(actionPayload.recent_window_minutes)
         || actionPayload.recent_window_minutes < 1
-        || actionPayload.recent_window_minutes > 1440
+        || actionPayload.recent_window_minutes > 525600
     )) {
-        throw new Error(`${prefix}Recent document window must be between 1 and 1440 minutes.`);
+        throw new Error(`${prefix}Recent document window must be between 1 minute and 365 days.`);
     }
     if (actionType === DOCUMENT_ACTION_COMPARISON && isSelectedMode) {
         if (actionPayload.document_ids.length < 2) {

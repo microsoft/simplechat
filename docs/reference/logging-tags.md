@@ -8,8 +8,27 @@ When adding or renaming a tag in `log_event`, `debug_print`, `print`, or `logger
 
 Last inventoried: 2026-08-10
 
+## Workflow authoring diagnostics
+
+Since **0.261.329**, `[WORKFLOW_ASSIST]` records request outcome and failure
+categories, the validation/execution stage, correction and model-call counts,
+and elapsed time. `turn_id_hash` correlates the submitted turn without exposing
+its identifier. Model usage uses numeric `input_count`, `output_count`, and
+`total_count`, not credential-sensitive token property names.
+
+`[WORKFLOW_DOCUMENT_SELECTION]` records validation/failure codes, candidate and
+match counts, window minutes, and elapsed time. `run_id_hash` and `step_id_hash`
+correlate runtime captures. An over-limit count is explicitly a lower bound;
+zero matches is distinct from an incomplete catalog or denied access.
+
+These diagnostics do not emit prompts, replies, document text/names, tags, regex
+literals, or raw actor identifiers. Their categorical/count fields survive the
+Application Insights sanitization boundary with debug logging on or off.
+
 ## Current tag inventory
 
+- `[WORKFLOW_ASSIST]`
+- `[WORKFLOW_DOCUMENT_SELECTION]`
 - `[PUBLIC_CHAT_SCOPE]`
 
 - `[ACTION_TEST]`

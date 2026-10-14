@@ -479,7 +479,15 @@ def _raise_if_workflow_run_cancelled(workflow, run_id):
 def _execute_cancelable_workflow_step(workflow, run_id, operation):
     _raise_if_workflow_run_cancelled(workflow, run_id)
     try:
-        result = operation()
+        entries = (workflow.get('document_action') or {}).get('selection_entries')
+        if entries is not None:
+            # Legacy steps need no selector context; load the binding only for captured selections.
+            from functions_workflow_document_selection import selected_document_sources
+
+            with selected_document_sources(entries, str(workflow.get('user_id') or '').strip()):
+                result = operation()
+        else:
+            result = operation()
     except AgentExecutionCancelled as exc:
         raise WorkflowRunCancelledError(WORKFLOW_RUN_CANCELLED_MESSAGE) from exc
     _raise_if_workflow_run_cancelled(workflow, run_id)
@@ -7021,7 +7029,7 @@ def _coerce_workflow_recent_window_minutes(value):
         normalized_value = int(value)
     except (TypeError, ValueError):
         normalized_value = DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES
-    return max(1, min(1440, normalized_value))
+    return max(1, min(365 * 24 * 60, normalized_value))
 
 
 def _query_recent_documents(container, query, parameters, max_documents):
@@ -7142,7 +7150,7 @@ def _get_workflow_search_max_documents(settings):
 
 
 def _get_recent_workflow_document_limit(action_type, settings):
-    if action_type in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+    if action_type in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON, DOCUMENT_ACTION_TYPE_MERGE}:
         return get_document_action_max_documents(
             action_type,
             DOCUMENT_ACTION_CONTEXT_WORKFLOW,
@@ -7282,6 +7290,8 @@ def _resolve_recent_document_action_targets(workflow, action_config, settings):
         return action_config
     if action_config.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT:
         return action_config
+    if action_config.get('document_selection'):
+        return _resolve_task_document_selection(workflow, action_config, settings)
     if action_config.get('recent_targets_resolved') and normalize_search_id_list(action_config.get('document_ids')):
         return action_config
 
@@ -7311,6 +7321,70 @@ def _resolve_recent_document_action_targets(workflow, action_config, settings):
         resolved_action['left_document_id'] = document_ids[0]
         resolved_action['right_document_ids'] = document_ids[1:]
     return resolved_action
+
+
+def _resolve_task_document_selection(workflow, action_config, settings):
+    # Selection is prepared once per task/visit; saved source proofs are reauthorized on resume.
+    # Load the cloud-backed catalog boundary only during task execution.
+    from functions_workflow_document_selection import resolve_document_selection
+    from functions_workflow_loop_inputs import _authorize, _scope, reauthorize_workflow_loop_document
+
+    user_id = str(workflow.get('user_id') or '').strip()
+    task = workflow.get('active_task') or {}
+    execution = current_workflow_execution()
+    for scope in action_config['document_selection']['scopes']:
+        _authorize(_scope(workflow, scope, user_id), user_id, None, execution.check if execution is not None else None)
+    key = f"document-selection:{task.get('id') or 'task'}"
+    limit = _get_recent_workflow_document_limit(action_config.get('type'), settings)
+    operation = lambda: resolve_document_selection(
+        workflow, action_config, settings, actor_user_id=user_id, limit=limit,
+        check=execution.check if execution is not None else None,
+        run_id=execution.run_id if execution is not None else None,
+    )
+    inputs = {
+        'document_selection': action_config['document_selection'],
+        'window_minutes': action_config['recent_window_minutes'],
+        'action_type': action_config['type'], 'limit': limit,
+        **({'merge_kind': action_config.get('merge_kind')} if action_config['type'] == DOCUMENT_ACTION_TYPE_MERGE else {}),
+    }
+    if execution is not None:
+        selected = execution.run_unit(key, operation, inputs=inputs, replay_safe=True)
+    else:
+        snapshots = workflow.get('_task_document_selection_snapshots', {})
+        snapshot = snapshots.get(key)
+        if snapshot is not None and snapshot['inputs'] != inputs:
+            raise WorkflowInputError('Task selection changed during this run. Start a new run.')
+        selected = snapshot['selection'] if snapshot is not None else operation()
+        snapshots[key] = {'inputs': inputs, 'selection': selected}
+    entries = [
+        reauthorize_workflow_loop_document(workflow, entry, actor_user_id=user_id)
+        for entry in selected['entries']
+    ]
+    resolved = dict(action_config)
+    resolved['document_ids'] = [entry['document']['document_id'] for entry in entries]
+    resolved['recent_targets_resolved'] = True
+    resolved['selection_entries'] = entries
+    resolved['selection_summary'] = {
+        'status': 'matched' if entries else 'no_matches', 'count': len(entries),
+        'cutoff_ts': selected['cutoff_ts'],
+    }
+    if not entries and action_config['document_selection']['on_empty'] == 'error':
+        raise WorkflowInputError('No recent documents found. Review the task window and filters.')
+    if action_config.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON and entries:
+        if len(entries) < 2:
+            raise WorkflowInputError('Comparison requires at least two matching documents.')
+        resolved['left_document_id'] = resolved['document_ids'][0]
+        resolved['right_document_ids'] = resolved['document_ids'][1:]
+    return resolved
+
+
+def _no_document_selection_result(action):
+    return {
+        'reply': 'No recent documents found. No document-processing model was called.',
+        'token_usage': {}, 'model_deployment_name': None, 'provider': None,
+        'selection_summary': action['selection_summary'],
+        'generated_analysis_artifacts': [], 'generated_tabular_outputs': [],
+    }
 
 
 def _is_document_search_workflow(action_config):
@@ -10149,6 +10223,20 @@ def _execute_document_merge_workflow(
     activity_key = f"file-merge:{run_id}:{task.get('id') or 'task'}"
 
     def collect(action, extensions, max_documents):
+        if action.get('document_selection'):
+            # The snapshot reader is only needed for a guided Merge.
+            from functions_workflow_loop_inputs import reauthorize_workflow_loop_document
+
+            resolved = _resolve_task_document_selection(workflow, action, settings)
+            execution = current_workflow_execution()
+            documents = [
+                reauthorize_workflow_loop_document(
+                    workflow, entry, actor_user_id=user_id,
+                    check=execution.check if execution is not None else None, include_document=True,
+                )[1]
+                for entry in resolved['selection_entries']
+            ]
+            return collect_merge_candidates(documents, extensions, max_documents)
         documents = _collect_merge_workflow_documents(workflow, action, settings, extensions)
         return collect_merge_candidates(documents, extensions, max_documents)
 
@@ -10254,6 +10342,8 @@ def _execute_document_action_workflow(
     )
     action_config = _get_document_action_config(workflow)
     action_config = _resolve_recent_document_action_targets(workflow, action_config, settings)
+    if (action_config.get('selection_summary') or {}).get('status') == 'no_matches':
+        return _no_document_selection_result(action_config)
     workflow = _apply_runtime_document_action_config(workflow, action_config)
     action_type = action_config.get('type')
     debug_print(
@@ -10858,6 +10948,8 @@ def _execute_workflow_dispatch(
     url_access_context,
     file_sync_result=None,
 ):
+    if '_task_document_selection_snapshots' not in execution_workflow:
+        execution_workflow = {**execution_workflow, '_task_document_selection_snapshots': {}}
     prior_signal_count = len(get_workflow_alert_signals()) if current_workflow_execution() is not None else 0
     if execution_workflow.get('_saved_analysis_inputs'):
         output_format = saved_analysis_format_request(execution_workflow.get('task_prompt'))
@@ -10868,6 +10960,13 @@ def _execute_workflow_dispatch(
                 cancel_requested=lambda: _is_workflow_run_cancellation_requested(execution_workflow, run_id),
             )
     document_action = _get_document_action_config(execution_workflow)
+    selection_summary = None
+    if document_action.get('document_selection'):
+        document_action = _resolve_task_document_selection(execution_workflow, document_action, settings)
+        if document_action['selection_summary']['status'] == 'no_matches':
+            return _no_document_selection_result(document_action)
+        execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
+        selection_summary = document_action['selection_summary']
     workflow_search_context = None
     if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
         workflow_search_context = _execute_cancelable_workflow_step(
@@ -10960,6 +11059,8 @@ def _execute_workflow_dispatch(
     if current_workflow_execution() is not None:
         execution_result['_durable_context_budget'] = dict(execution_workflow.get('context_budget') or {})
         execution_result['agent_alert_signals'] = get_workflow_alert_signals()[prior_signal_count:]
+    if selection_summary:
+        execution_result['selection_summary'] = selection_summary
     return execution_result
 
 
@@ -11239,6 +11340,7 @@ def _execute_workflow_task_sequence(
         task_error = ''
         attempt_count = (completed_task.get('attempt_count') or 1) if completed_task is not None else 0
         analysis_checkpoints = None
+        document_selection_snapshots = {}
         for attempt_index in (() if completed_task is not None else range(retry_count + 1)):
             raise_if_cancelled()
             attempt_count = attempt_index + 1
@@ -11370,6 +11472,7 @@ def _execute_workflow_task_sequence(
                     include_document_action=task_index == 0 and not structured_definition,
                     include_file_sync_context=task_index == 0 and not structured_definition,
                 )
+                attempt_workflow['_task_document_selection_snapshots'] = document_selection_snapshots
                 attempt_workflow['consumed_inputs'] = consumed_inputs
                 attempt_workflow['workflow_reference_sources'] = reference_sources
                 if reference_context:

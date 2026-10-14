@@ -2,7 +2,7 @@
 # test_workflow_assist_limits_runtime.py
 """
 Functional test for the AI workflow assistant's limits and its Azure-backed services.
-Version: 0.261.208
+Version: 0.261.329
 Implemented in: 0.261.208
 
 This test ensures that:
@@ -448,9 +448,9 @@ def test_a_lease_that_cannot_be_released_never_changes_the_answer_and_logs_one_w
         assert wa.refusal(wa.request_body(stored=stored), bundle).code == "workflow_definition_conflict"
 
     warnings = [(extra, level) for message, extra, level in bundle.logs
-                if message == "[WorkflowAssist] Rate-limit lease release failed"]
+                if message == "[WORKFLOW_ASSIST] Rate-limit lease release failed"]
     assert warnings == [({
-        "user_id": wa.USER_ID, "submission_id": "submission-0001", "error_type": "AssistLimitStoreError",
+        "turn_id_hash": hashlib.sha256(b"submission-0001").hexdigest(), "error_type": "AssistLimitStoreError",
     }, logging.WARNING)]
     assert wa.finished_log(bundle)["status"] == (200 if answered else 409)
     assert SENTINEL not in json.dumps(bundle.logs)
@@ -1065,7 +1065,7 @@ def test_a_whole_request_writes_only_the_callers_rate_limit_document(monkeypatch
     assert options["max_retries"] == 0 and 0 < options["timeout"] <= core.ASSIST_DEADLINE_SECONDS
     assert parameters["model"] == "gpt-4o" and parameters["response_format"] == {"type": "json_object"}
     # The logs are content-free, and no setting reached the model.
-    [finished] = [extra for message, extra, _level in logged if message == "[WorkflowAssist] Assist request finished"]
+    [finished] = [extra for message, extra, _level in logged if message == "[WORKFLOW_ASSIST] Assist request finished"]
     assert (finished["status"], finished["outcome"], finished["model_calls"]) == (200, "changed", 1)
     assert SENTINEL not in json.dumps(logged, default=str)
     assert SENTINEL not in json.dumps(parameters["messages"][0]) and "azure_openai_gpt_key" not in json.dumps(

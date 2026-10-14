@@ -46,6 +46,9 @@ from functions_workflow_assist_editor import (
     workflow_schedule_for_editor,
 )
 from functions_workflow_definitions import WorkflowAlertValidationError, WorkflowPublicValidationError
+from functions_workflow_document_selection import (
+    FILE_TYPES, MAX_RECENT_WINDOW_MINUTES, filter_schema, normalize_document_selection,
+)
 from functions_workflow_schedules import (
     enforce_workflow_schedule_minimum,
     normalize_workflow_schedule,
@@ -372,6 +375,15 @@ class AssistHandles:
         request_documents = [item for item in request_documents if isinstance(item, dict)]
         self.matcher = IdMatcher(collect_known_ids(draft, self.options, request_documents) | {user_id})
         self._by_handle = {}
+        self.workspaces = []
+        self.workspace_handles = {}
+        for position, workspace in enumerate(self.options.get('document_workspaces', [
+            {'scope_type': 'personal', 'name': 'My workspace'},
+        ]), start=1):
+            handle = f'workspace_{position}'
+            self.workspaces.append((handle, workspace))
+            self.workspace_handles[(workspace['scope_type'], workspace.get('scope_id') or '')] = handle
+            self._register(handle, ('workspace', workspace))
 
         self.task_handles = {}
         for position, task in enumerate(_rows(draft.get('tasks')), start=1):
@@ -589,6 +601,17 @@ def _document_handles(handles, identities):
 
 def _document_target_view(task, handles, user_id, changed_files):
     action = task.get('document_action')
+    if isinstance(action, dict) and action.get('target_mode') == 'recent':
+        selection = action.get('document_selection')
+        scopes = selection.get('scopes', []) if isinstance(selection, dict) else []
+        workspaces = [handles.workspace_handles.get((scope['scope_type'], scope.get('scope_id') or '')) for scope in scopes]
+        return {
+            'action': action.get('type'), 'target_mode': 'recent',
+            'recent_window_minutes': action.get('recent_window_minutes'), 'workspaces': workspaces,
+            'filters': copy.deepcopy(selection.get('filters')) if isinstance(selection, dict) else None,
+            'on_empty': selection.get('on_empty') if isinstance(selection, dict) else 'error',
+            'analysis_mode': action.get('analysis_mode', 'combined'), 'editable': all(workspaces) if scopes else True,
+        }
     mode = document_action_mode(action)
     if mode == 'none':
         return None
@@ -751,6 +774,16 @@ def build_options_view(handles):
     options = handles.options
     schedule = options.get('schedule') if isinstance(options.get('schedule'), dict) else {}
     view = {
+        'document_workspaces': [
+            {'workspace': handle, 'scope_type': workspace['scope_type'],
+             'label': sanitize_label(workspace.get('name') or 'Workspace')}
+            for handle, workspace in handles.workspaces
+        ],
+        'document_selection': {
+            'maximum_window_minutes': MAX_RECENT_WINDOW_MINUTES,
+            'file_types': list(FILE_TYPES), 'maximum_conditions': 32, 'maximum_depth': 4,
+            'new_or_updated': True, 'clock': 'Cosmos metadata last modified time',
+        },
         'agents': [
             {
                 'agent': handle, 'label': handles.agent_label(agent, position),
@@ -926,6 +959,22 @@ OPERATION_SCHEMAS = {
          'then': {'required': ['documents']}},
     ]),
     'clear_task_document_target': _operation('clear_task_document_target', {'task': _TASK}, ['task']),
+    'set_task_document_selection': _operation('set_task_document_selection', {
+        'task': _TASK, 'action': {'enum': ['analyze', 'search', 'comparison']},
+        'workspaces': {'type': 'array', 'minItems': 1, 'maxItems': 20, 'uniqueItems': True,
+                       'items': {'type': 'string', 'pattern': '^workspace_[1-9][0-9]*$'}},
+        'recent_window_minutes': {'type': 'integer', 'minimum': 1, 'maximum': MAX_RECENT_WINDOW_MINUTES},
+        'filters': filter_schema(), 'on_empty': {'enum': ['report', 'error']},
+        'analysis_mode': {'enum': ['combined', 'per_document']},
+    }, ['task', 'action', 'workspaces', 'recent_window_minutes', 'filters', 'on_empty']),
+    'update_task_document_window': _operation('update_task_document_window', {
+        'task': _TASK,
+        'recent_window_minutes': {'type': 'integer', 'minimum': 1, 'maximum': MAX_RECENT_WINDOW_MINUTES},
+    }, ['task', 'recent_window_minutes']),
+    'replace_task_document_filter': _operation('replace_task_document_filter', {
+        'task': _TASK, 'path': {'type': 'array', 'maxItems': 3, 'items': {'type': 'integer', 'minimum': 0, 'maximum': 31}},
+        'filter': filter_schema(depth=1),
+    }, ['task', 'path', 'filter']),
 }
 OPERATION_NAMES = tuple(OPERATION_SCHEMAS)
 
@@ -941,6 +990,15 @@ ENVELOPE_SCHEMA = {
             'items': {'type': 'object', 'required': ['op'], 'properties': {'op': {'enum': list(OPERATION_NAMES)}}},
         },
         'email_tasks': _handles(ASSIST_MAX_TASKS, TASK_HANDLE_PATTERN) | {'minItems': 0},
+        'authoring_complete': {'type': 'boolean'},
+        'clarification': {
+            'type': 'object', 'additionalProperties': False, 'required': ['question', 'fields'],
+            'properties': {
+                'question': {'type': 'string', 'minLength': 1, 'maxLength': 400, 'pattern': TEXT_PATTERN},
+                'fields': {'type': 'array', 'minItems': 1, 'maxItems': 6, 'uniqueItems': True,
+                           'items': {'enum': ['schedule_time', 'lookback', 'workspace', 'task', 'filter', 'runner']}},
+            },
+        },
     },
     'allOf': [
         {'if': {'properties': {'outcome': {'const': 'changed'}}},
@@ -1680,6 +1738,64 @@ class _Applier:
         if document_action_mode(task.get('document_action')) != 'none':
             task['document_action'] = {'type': 'none'}
             self.touched_tasks.add(task['id'])
+
+    def op_set_task_document_selection(self, op):
+        _index, task = self._task(op['task'])
+        self._check_document_target(task)
+        scopes = []
+        for handle in op['workspaces']:
+            resolved = self.handles.resolve(handle)
+            if resolved is None or resolved[0] != 'workspace':
+                raise _OperationError('Choose a workspace from the authorized choices.')
+            workspace = resolved[1]
+            scopes.append({key: workspace[key] for key in ('scope_type', 'scope_id') if key in workspace})
+        try:
+            selection = normalize_document_selection({
+                'scopes': scopes, 'filters': op['filters'], 'on_empty': op['on_empty'],
+            })
+        except ValueError:
+            raise _OperationError('Review the document selector values and regular expression.') from None
+        kinds = {scope['scope_type'] for scope in scopes}
+        task['document_action'] = {
+            'type': op['action'], 'target_mode': 'recent', 'document_ids': [],
+            'doc_scope': next(iter(kinds)) if len(kinds) == 1 else 'all',
+            'active_group_ids': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'group'],
+            'active_public_workspace_id': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'public'],
+            'recent_window_minutes': op['recent_window_minutes'], 'document_selection': selection,
+            'analysis_mode': op.get('analysis_mode', 'combined'),
+        }
+        self.touched_tasks.add(task['id'])
+
+    def _selected_action(self, task_handle):
+        _index, task = self._task(task_handle)
+        self._check_document_target(task)
+        action = task.get('document_action')
+        if not isinstance(action, dict) or action.get('target_mode') != 'recent' or not action.get('document_selection'):
+            raise _OperationError('This task has no guided recent-document selector to update.')
+        return task, action
+
+    def op_update_task_document_window(self, op):
+        task, action = self._selected_action(op['task'])
+        action['recent_window_minutes'] = op['recent_window_minutes']
+        self.touched_tasks.add(task['id'])
+
+    def op_replace_task_document_filter(self, op):
+        task, action = self._selected_action(op['task'])
+        parent = action['document_selection']
+        key = 'filters'
+        for index in op['path']:
+            node = parent[key]
+            if not isinstance(node, dict) or not isinstance(node.get('conditions'), list) or index >= len(node['conditions']):
+                raise _OperationError('Choose a current document filter path from the draft.')
+            parent, key = node['conditions'], index
+        if not isinstance(parent[key], dict) or 'conditions' in parent[key]:
+            raise _OperationError('Replace one metadata condition, not an entire filter group.')
+        parent[key] = copy.deepcopy(op['filter'])
+        try:
+            action['document_selection'] = normalize_document_selection(action['document_selection'])
+        except ValueError:
+            raise _OperationError('Review the document filter values and regular expression.') from None
+        self.touched_tasks.add(task['id'])
 
     # -- finishing ---------------------------------------------------------
 

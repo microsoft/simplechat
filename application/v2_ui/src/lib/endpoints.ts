@@ -1613,8 +1613,41 @@ export function fetchPublicWorkspaceDocuments(
     );
 }
 
-export const fetchGroupDocumentTags = (signal?: AbortSignal) =>
-    api.get<{ tags?: WorkspaceTag[] }>('/api/group_documents/tags', signal);
+export const fetchGroupDocumentTags = (signal?: AbortSignal, groupId?: string) =>
+    api.get<{ tags?: WorkspaceTag[] }>(
+        groupId ? `/api/group_documents/tags?group_id=${encodeURIComponent(groupId)}` : '/api/group_documents/tags', signal,
+    );
+
+export interface TaskDocumentPreview {
+    count: number;
+    count_exact: boolean;
+    limit: number;
+    cutoff_ts: number;
+    within_limit: boolean;
+    advisory: true;
+    items: { document_id: string; file_name: string; scope_type: string; scope_id: string }[];
+}
+export const previewTaskDocuments = (
+    scope: import('./workflowEditor').WorkflowScope,
+    selection: {
+        type: string;
+        recent_window_minutes: number;
+        document_selection: import('./workflowDocumentSelection').TaskDocumentSelection;
+        merge_kind?: string;
+    },
+    signal?: AbortSignal,
+) => api.post<TaskDocumentPreview>(
+    `/api/${scope.type === 'group' ? 'group' : 'user'}/workflows/document-selection/preview${
+        scope.type === 'group' ? `?group_id=${encodeURIComponent(scope.groupId)}` : ''
+    }`, selection, signal,
+);
+
+export const fetchWorkflowScopeTags = (scope: import('./workflowDocumentSelection').DocumentScope, signal?: AbortSignal) =>
+    scope.scope_type === 'personal' ? fetchPersonalDocumentTags(signal)
+        : scope.scope_type === 'group' ? fetchGroupDocumentTags(signal, scope.scope_id)
+            : api.get<{ tags?: WorkspaceTag[] }>(
+                `/api/public-workspaces/${encodeURIComponent(scope.scope_id ?? '')}/documents/tags`, signal,
+            );
 
 export const fetchGroupDocument = (documentId: string, signal?: AbortSignal) =>
     api.get<WorkspaceDocument>(

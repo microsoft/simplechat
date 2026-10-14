@@ -711,7 +711,59 @@ everything is new, so only AI assist changes are pointed out. After you convert
 an ordered workflow to the structured format, changes are still listed, but
 they can only be discarded together, with **Cancel**.
 
-## Ask AI to change a workflow
+## Rolling documents for each task
+
+From **0.261.329**, the V2 task editor can select recently added **or updated**
+documents separately for each task. Under **Runner, inputs, references and
+outputs**, choose **Analyze recent documents**, **Search recent documents**, or
+**Compare recent documents**. A Merge files task also offers recent documents.
+An older recent-document action stays unchanged until you opt into guided filters.
+
+Choose the source workspaces and a window in minutes, hours, days, or weeks.
+The maximum is 365 days. The window is relative to the start of that task's
+selection, not to the day you saved the workflow. It uses the document's Cosmos
+update timestamp, so changing metadata can make an existing document recent.
+Group workflow tasks can select only their own group workspace.
+
+### Build a useful document filter
+
+Use **Add filter** for a metadata condition, or **Add AND / OR group** for
+alternatives inside a larger rule. **Match all** requires every child;
+**Match any** accepts any child. Workspace and time boundaries always apply,
+even when a metadata group uses OR.
+
+For example, to process PDFs or CSVs from the last five days whose names start
+with Tim **or** have tag X, choose five days and create:
+
+- A **Match all** root.
+- A File type condition with PDF and CSV checked.
+- A **Match any** child with File name / Starts with / Tim and Tags / X.
+
+Tags and file types offer searchable choices rather than requiring you to
+remember their spelling. A literal tag can also be entered. Other conditions
+match the recorded classification, authors, or keywords. Missing metadata does
+not match that condition. Authors are document metadata, not necessarily uploaders.
+Matching is case-insensitive unless you select **Match case**. Filename
+regular expressions run only on the server, with syntax and execution limits;
+they never run in your browser.
+
+The plain-language summary shows the whole condition. **Preview matching
+documents** returns the current exact count and up to 50 sample names. Preview
+does not reserve those documents or run a model; execution takes a fresh
+selection. A changed filter clears the old preview. An incomplete catalog,
+invalid expression, unavailable scope, or an over-limit selection produces an
+error instead of a partial list presented as complete.
+
+Each task's selection is frozen for its retries; durable execution also keeps
+it across resume and rechecks access and source versions. A new run selects
+again. Choose **Report no recent documents** to return an informational result
+without calling a processing model, or **Fail this task** to require matches.
+Explicit output contracts remain enforced and do not receive fabricated data.
+Comparison needs at least two matches and uses the newest as its Source.
+Search ranks matching content; Analyze is the choice for processing every
+selected document completely.
+
+## Ask AI to create or change a workflow
 
 Starting in **0.261.213**, the V2 editor's **Ask AI** tab changes a personal
 workflow from a plain-language request, such as "run this at 7 AM on weekdays
@@ -719,6 +771,25 @@ and only alert me when something is urgent". Use it when you know what you want
 the workflow to do but not which fields hold it, or to make the same kind of
 change across many tasks. It never saves. Its changes are highlighted like your
 own, and you review them before you save.
+
+From **0.261.329**, a new-workflow goal can generate a name, description, and
+initial task instead of only explaining how to use the editor. Follow-ups such
+as “Give this a name and a description” use the goal already in the thread.
+Clear edits can be applied while the assistant asks for a missing time,
+lookback window, workspace, or other execution detail. It does not invent a
+time for “Tuesday and Thursday” or a window for “latest”.
+
+For a complete document workflow, include the workspace, selection window,
+filters, task goal, schedule time, and time zone. For example:
+
+> Analyze PDFs or CSVs in My workspace updated in the last five days whose
+> filename starts with Tim or which have tag X. Run Tuesday and Thursday at
+> 9 AM in America/New_York. Report no matches without a processing model call.
+
+Ask AI can author Analyze, Search, and Compare selectors. Configure Merge
+selectors with the guided task controls. Later, ask to change just the window
+or replace one filename condition; the targeted operations preserve other
+filters and other tasks.
 
 From **0.261.315**, you can also ask “Require acknowledgment on Rule 2” or change a rule's
 sound and size. Acknowledgment is separate from task approvals. For an explicit request
@@ -783,7 +854,9 @@ changed fields are framed in blue and labeled **AI assist**.
 - **Revert** on one field, and the editor's Undo, work as they do for your own
   edits.
 
-An answer that explains or asks you something changes nothing. Ask your
+An explanation-only answer or question-only answer changes nothing. An answer
+that applies clear edits and asks a clarification shows both the edits and the
+question. Ask your
 follow-up in the same thread: Ask AI sees the earlier turns, and which of their
 changes you kept or undid.
 

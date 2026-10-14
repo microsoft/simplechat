@@ -204,26 +204,28 @@ export function useWorkflowAssist({
         if (!assistDraftUnchanged(sentDraft, current)) return { ok: false, error: STALE_DRAFT_MESSAGE };
 
         const { response } = result;
+        const reply = response.clarification?.question
+            ? `${response.reply}\n\n${response.clarification.question}` : response.reply;
         const store = useWorkflowAssistStore.getState();
         const turnId = request.submissionId;
         const record = {
             threadKey: sent.key,
             epoch: workflowAssistEpoch(sentBaseline),
             instruction: body.instruction,
-            reply: response.reply,
+            reply,
             warnings: response.warnings,
             contextDocuments: response.contextDocuments,
             undoSequence: 0,
         };
         if (response.outcome !== 'changed' || !response.candidate) {
             store.record(turnId, { ...record, outcome: response.outcome, changes: [], apply: 'none' });
-            return { ok: true, reply: response.reply };
+            return { ok: true, reply };
         }
         const rebased = rebaseAssistCandidate(current, response.candidate);
         const verified = verifyAssistChanges(current, rebased, response.changes);
         if (!verified.changes.length) {
             store.record(turnId, { ...record, outcome: 'explained', changes: [], apply: 'noop' });
-            return { ok: true, reply: response.reply };
+            return { ok: true, reply };
         }
         const applied = sentSession.applyAssist(rebased, {
             turnId, label: workflowAssistTurnLabel('Ask AI', body.instruction),
@@ -236,7 +238,7 @@ export function useWorkflowAssist({
             apply,
             ...(applied.status === 'rejected' ? { applyMessage: applied.message } : {}),
         });
-        return { ok: true, reply: response.reply };
+        return { ok: true, reply };
     }, []);
 
     // Closing the editor, or losing Ask AI, stops waiting for its answer. The server writes nothing,

@@ -435,7 +435,7 @@ def _workflow_inspection_cache_response(response):
             'execution_records', 'execution_provenance', 'loop_items',
             'repeat_iterations', 'repeat_state', 'decisions', 'runtime',
         }
-        or prefix in {'preview_user', 'preview_group'} and operation == 'flow'
+        or prefix in {'preview_user', 'preview_group'} and operation in {'flow', 'document_selection'}
     ):
         response.headers['Cache-Control'] = 'no-store, private'
     return response
@@ -667,6 +667,64 @@ def _workflow_loop_preview_response(*, group=False):
             extra={'error_type': type(exc).__name__}, level=logging.ERROR,
         )
         return jsonify({'error': 'Loop input selection is temporarily unavailable.'}), 503
+
+
+def _workflow_document_selection_preview_response(*, group=False):
+    # Preview uses the same authorized read boundary as dispatch and never starts a task.
+    # Keep cloud-backed selection imports at the authorized request boundary.
+    from functions_document_actions import get_document_action_max_documents
+    from functions_workflow_document_selection import DocumentSelectionError, resolve_document_selection
+    from functions_workflow_limits import WorkflowLoopInputError, WorkflowLoopLimitError
+
+    user_id = get_current_user_id()
+    try:
+        if set(request.args) - ({'group_id'} if group else set()) or any(
+            len(values) != 1 for _, values in request.args.lists()
+        ) or (group and not request.args.get('group_id')):
+            raise ValueError('An explicit, unambiguous workspace scope is required.')
+        if group:
+            group_id, settings = _resolve_active_group_for_workflow_management(user_id)
+            context = {'user_id': user_id, 'group_id': group_id}
+        else:
+            settings = get_settings()
+            _assert_personal_workflow_draft_access(settings)
+            context = {'user_id': user_id}
+        action = request.get_json(silent=True)
+        if not isinstance(action, dict) or action.keys() - {
+            'type', 'recent_window_minutes', 'document_selection', 'merge_kind',
+        } or action.get('type') not in {'analyze', 'search', 'comparison', 'merge'}:
+            return jsonify({'error': 'Invalid task document selection.'}), 400
+        limit = get_document_action_max_documents(
+            'analyze' if action['type'] == 'search' else action['type'], 'workflow', settings=settings,
+        )
+        result = resolve_document_selection(context, action, settings, actor_user_id=user_id, limit=limit)
+        return jsonify({
+            'count': result['count'], 'count_exact': True, 'limit': limit, 'within_limit': True,
+            'cutoff_ts': result['cutoff_ts'], 'items': [entry['document'] for entry in result['entries'][:50]],
+            'advisory': True,
+        })
+    except DocumentSelectionError as exc:
+        result = {'error': exc.public_message, 'code': exc.code, 'within_limit': False}
+        for field in ('count', 'count_exact', 'limit'):
+            if hasattr(exc, field):
+                result[field] = getattr(exc, field)
+        return jsonify(result), 422 if hasattr(exc, 'count') else 400
+    except (WorkflowLoopInputError, WorkflowLoopLimitError) as exc:
+        result = {'error': exc.public_message, 'code': exc.code, 'within_limit': False}
+        for field in ('count', 'count_exact', 'limit'):
+            if hasattr(exc, field):
+                result[field] = getattr(exc, field)
+        return jsonify(result), 422
+    except PermissionError:
+        return jsonify({'error': 'Current workspace access could not be confirmed.'}), 403
+    except (KeyError, TypeError, ValueError):
+        log_event('[WORKFLOW_DOCUMENT_SELECTION] Preview validation refused',
+                  extra={'validation_code': 'document_selection_invalid'})
+        return jsonify({'error': 'Invalid task document selection.'}), 400
+    except (AzureError, RuntimeUnavailable) as exc:
+        log_event('[WORKFLOW_ROUTES] Task selection preview unavailable',
+                  extra={'error_type': type(exc).__name__}, level=logging.ERROR)
+        return jsonify({'error': 'Document selection is temporarily unavailable.'}), 503
 
 
 def _queue_workflow_response(workflow, user_id):
@@ -1290,8 +1348,8 @@ def _workflow_assist_response(payload, status, *, retry_after=None, user_id=None
         body = json.dumps(payload, allow_nan=False, sort_keys=True)
     except (TypeError, ValueError, RecursionError) as exc:
         log_event(
-            '[WorkflowAssist] Assist response could not be serialized',
-            extra={'user_id': user_id, 'status': status, 'error_type': type(exc).__name__},
+            '[WORKFLOW_ASSIST] Assist response could not be serialized',
+            extra={'status': status, 'error_type': type(exc).__name__, 'failure_code': 'assistant_failed'},
             level=logging.ERROR,
         )
         failure = WorkflowAssistError('assistant_failed')
@@ -1470,6 +1528,24 @@ def register_route_backend_workflows(bp):
     @enabled_required('allow_group_workflows')
     def preview_group_workflow_loop_inputs():
         return _workflow_loop_preview_response(group=True)
+
+    @bp.route('/api/user/workflows/document-selection/preview', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def preview_user_workflow_document_selection():
+        return _workflow_document_selection_preview_response()
+
+    @bp.route('/api/group/workflows/document-selection/preview', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def preview_group_workflow_document_selection():
+        return _workflow_document_selection_preview_response(group=True)
 
     @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/executions/<execution_id>/items', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -1784,8 +1860,8 @@ def register_route_backend_workflows(bp):
             body = _read_workflow_assist_body()
         except WorkflowAssistError as exc:
             log_event(
-                '[WorkflowAssist] Assist request refused',
-                extra={'user_id': user_id, 'status': exc.status, 'code': exc.code, 'stage': 'body'},
+                '[WORKFLOW_ASSIST] Assist request refused',
+                extra={'status': exc.status, 'failure_code': exc.code, 'execution_code': 'body'},
                 level=logging.INFO,
             )
             return _workflow_assist_response(exc.payload(settings), exc.status)
@@ -1795,8 +1871,8 @@ def register_route_backend_workflows(bp):
             )
         except Exception as exc:
             log_event(
-                '[WorkflowAssist] Assist services could not start',
-                extra={'user_id': user_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+                '[WORKFLOW_ASSIST] Assist services could not start',
+                extra={'error_type': type(exc).__name__, 'failure_code': 'assistant_failed'}, level=logging.ERROR,
             )
             failure = WorkflowAssistError('assistant_failed')
             return _workflow_assist_response(failure.payload(settings), failure.status)
