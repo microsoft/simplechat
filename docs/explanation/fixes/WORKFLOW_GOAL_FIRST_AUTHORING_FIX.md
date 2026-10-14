@@ -1,4 +1,4 @@
-# Goal-first workflow authoring fix — v0.261.335
+# Goal-first workflow authoring fix — v0.261.336
 
 ## Issue and root cause
 
@@ -87,6 +87,31 @@ the existing 180-second deadline in three cold-import probes; all three passed
 unchanged in isolated retries. The sequential full SDK gate then exited 0 with
 all 718 tests and 231 subtests passing and zero inventory review gaps. No
 timeout, assertion or compatibility baseline was relaxed.
+
+## Review follow-up in v0.261.336
+
+The `py/cyclic-import` notes on the selection-limit and scoped-Search runtime
+imports include pre-existing deferred paths through document analysis, generated
+exports, SimpleChat operations and the workflow runner. A function-local import
+does not remove those static graph cycles. Moving the loop authorizers into
+module initialization would instead change the established service lifecycle;
+rewriting that shared graph is outside this follow-up.
+
+`functional_tests/test_workflow_goal_first_imports.py` verifies the real modules
+in fresh normal and optimized processes, including early pure-contract imports,
+both consumer orders after the real settings bootstrap, web/scheduler wiring,
+shared selection limits, group denials and unavailable public workspaces. Only
+external I/O and scoped service responses are patched; configuration and the
+runtime owners remain real. The shared catalog fixture is now explicitly
+registered in `test_workflow_goal_first_authoring.py` instead of relying on an
+apparently unused fixture import. The current patch version is tracked in
+`application/single_app/config.py`.
+
+Web startup begins at `app`, while headless consumer-order probes begin at the
+real `config`/settings bootstrap and then exercise the scheduler. They do not
+pretend that importing web routes after arbitrary headless initialization is a
+supported startup path; the pre-existing offline agent-decorator issue remains
+documented below.
 
 The broader legacy matrix is not entirely green. Four old source/version
 assertions and a task-sequence golden are stale on the current base; executing

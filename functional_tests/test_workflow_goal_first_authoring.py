@@ -1,7 +1,7 @@
 # test_workflow_goal_first_authoring.py
 """
 Functional tests for complete goal-first drafts and bounded runtime document choice.
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.335
 
 Uses the real assist core, selectors, closed chooser and runner dispatch functions.
@@ -25,17 +25,20 @@ sys.path.insert(0, str(ROOT / 'functional_tests'))
 
 import functions_workflow_action_choice as choice
 import functions_workflow_document_selection as selection
+import test_workflow_document_selection as selection_tests
 from functions_workflow_schedules import normalize_workflow_schedule
 from functions_workflow_execution import workflow_execution_scope
 from functions_workflow_runtime_store import WorkflowRuntimeLease
 from functions_workflow_structured_execution import StructuredWorkflowExecution
 from test_support import workflow_assist as wa
-from test_workflow_document_selection import action, catalog, extracted_runner, resolve
+from test_workflow_document_selection import action, extracted_runner, resolve
 from test_workflow_document_picker_recent_targets import document_actions_over_stubs
 from test_workflow_structured_flow import create_structured_runtime, task as structured_task
 from test_workflow_task_sequence import load_runner_helpers
 
 
+# Register the shared fixture explicitly; pytest injects it by parameter name.
+catalog = selection_tests.catalog
 PROMPT = 'every tuesday i want to summarize new docs added to my workspace over the last week'
 
 
