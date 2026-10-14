@@ -30,6 +30,9 @@ import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
 import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
+import { clearAgentAssistHandoffs, pruneAgentAssistHandoffs } from './lib/editorAssistHandoff';
+import { useEditorAssistStore } from './stores/editorAssistStore';
+import { useAssistThreadStore } from './stores/assistThreadStore';
 import { ContentReviewPage } from './pages/ContentReviewPage';
 import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { AccessRestrictedPage } from './pages/AccessRestrictedPage';
@@ -124,7 +127,16 @@ export function App() {
 
     useEffect(() => {
         clearWorkspaceEditorDrafts();
+        clearAgentAssistHandoffs();
+        for (const record of Object.values(useEditorAssistStore.getState().turns)) {
+            useAssistThreadStore.getState().forgetThread(record.threadKey);
+        }
+        useEditorAssistStore.getState().reset();
     }, [data?.user?.id, authExpired]);
+
+    useEffect(() => {
+        pruneAgentAssistHandoffs(authExpired ? '' : data?.user?.id ?? '', location.pathname, location.search);
+    }, [data?.user?.id, authExpired, location.pathname, location.search]);
 
     useEffect(() => {
         initializeTheme();

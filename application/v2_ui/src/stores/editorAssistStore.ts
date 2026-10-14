@@ -34,6 +34,8 @@ export interface EditorAssistTurnRecord {
     readonly warnings: readonly EditorAssistWarning[];
     readonly undo?: EditorAssistUndoResult;
     readonly undoSequence: number;
+    /** Safe identifiers only; action configuration and credentials stay in the editor draft. */
+    readonly draftedActions?: readonly { reference: string; label: string; type: string; savedId?: string }[];
 }
 
 interface EditorAssistState {
@@ -45,6 +47,7 @@ interface EditorAssistState {
     record: (turnId: string, record: EditorAssistTurnRecord) => void;
     update: (turnId: string, change: (record: EditorAssistTurnRecord) => EditorAssistTurnRecord) => void;
     waitUntil: (time: number) => void;
+    forgetThread: (threadKey: string) => void;
     /** Forget everything, for tests and sign-out. */
     reset: () => void;
 }
@@ -72,6 +75,12 @@ export const useEditorAssistStore = create<EditorAssistState>((set) => ({
     }),
 
     waitUntil: (time) => set((state) => (time > state.retryUntil ? { retryUntil: time } : {})),
+
+    forgetThread: (threadKey) => set((state) => {
+        const order = state.order.filter((id) => state.turns[id]?.threadKey !== threadKey);
+        const turns = Object.fromEntries(order.map((id) => [id, state.turns[id]]));
+        return { order, turns };
+    }),
 
     reset: () => set({ turns: {}, order: [], retryUntil: 0 }),
 }));

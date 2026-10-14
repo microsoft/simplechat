@@ -237,6 +237,7 @@ interface AssistThreadState {
     ) => void;
     /** Forget every thread, for tests and sign-out. */
     resetThreads: () => void;
+    forgetThread: (key: string) => void;
 }
 
 export const useAssistThreadStore = create<AssistThreadState>((set) => ({
@@ -267,6 +268,15 @@ export const useAssistThreadStore = create<AssistThreadState>((set) => ({
     resetThreads: () => {
         set({ threads: {} });
         forgetQuietThreads({});
+    },
+    forgetThread: (key) => {
+        set((state) => {
+            if (!(key in state.threads)) return {};
+            const threads = { ...state.threads };
+            delete threads[key];
+            return { threads };
+        });
+        forgetQuietThreads(useAssistThreadStore.getState().threads);
     },
 }));
 
