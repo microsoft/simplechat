@@ -1,7 +1,7 @@
 # test_action_credentials_orchestration_continuation.py
 """Real orchestration leases/checkpoints and independent credential waits.
 
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.333
 
 Only external action/model/storage I/O is doubled. Retained completed steps,
@@ -51,6 +51,7 @@ def test_owned_continue_consumes_only_selected_wait_and_never_replays_completed_
     raw = manifest()
     fingerprint = contracts.credential_fingerprint(raw)
     monkeypatch.setattr(credentials, "authorized_manifest", lambda user_id, reference: deepcopy(raw))
+    monkeypatch.setattr(credentials, "safe_identities", lambda user_id, requirements: [])
     monkeypatch.setattr(credentials, "authorize_conversation", lambda user_id, conversation_id:
                         harness.bootstrap.read_owned_conversation(user_id, conversation_id))
     waits = {}

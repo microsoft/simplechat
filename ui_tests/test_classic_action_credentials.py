@@ -1,7 +1,7 @@
 # test_classic_action_credentials.py
 """
 UI coverage of private action credentials and YAMCS personal-slot authoring.
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.333
 
 Runs the production card asset, real Bootstrap partial and production stepper
@@ -18,7 +18,6 @@ from playwright.sync_api import expect
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 
 from classic_action_credentials import ClassicCredentialFixture, credential_request
-from playwright_connection import connect_options  # noqa: F401
 
 
 pytestmark = pytest.mark.ui

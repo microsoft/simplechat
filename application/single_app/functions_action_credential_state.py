@@ -194,4 +194,5 @@ def delete_private_state(user_id, *, conversation_id=None):
                 match_condition=MatchConditions.IfNotModified,
             )
         except CosmosResourceNotFoundError:
-            pass
+            # Concurrent deletion already achieved this idempotent lifecycle operation.
+            continue

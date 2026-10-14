@@ -1,12 +1,15 @@
 # test_action_credentials_bootstrap.py
 """Fresh-process application bootstrap and actual chat SDK mapping ownership.
 
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.333
 
 Normal/optimized Python imports real modules in both orders with network blocked.
 The initialized web app owns private state; backup/transfer inventories exclude it.
 """
+
+import ast
+from pathlib import Path
 
 import pytest
 
@@ -28,10 +31,23 @@ def check(value, message):
         raise AssertionError(message)
 
 with offline_app_imports() as environment:
-    if sys.argv[3] == "early":
+    if sys.argv[3].startswith("early"):
         import action_credential_contracts
         import functions_action_credential_state as state
+        if sys.argv[3] == "early-continuation":
+            import functions_action_credential_continuation as continuation
+            import functions_action_credentials as credentials
+        else:
+            import functions_action_credentials as credentials
+            import functions_action_credential_continuation as continuation
         check("config" not in sys.modules, "Pure credential discovery bootstrapped Azure.")
+        for getter in (credentials.credential_services, continuation.continuation_services):
+            try:
+                getter()
+            except action_credential_contracts.ActionCredentialError as error:
+                check(error.code == "credential_runtime_unavailable", "Unexpected uninitialized runtime failure.")
+            else:
+                raise AssertionError("Uninitialized credential runtime silently supplied authority.")
     import app as web
     import config
     import route_backend_chats as chats
@@ -40,6 +56,10 @@ with offline_app_imports() as environment:
     import functions_authentication as authentication
     authentication.get_user_profile_image = lambda: None
     check(state.is_configured(), "Application bootstrap did not configure private state.")
+    import functions_action_credentials as credentials
+    import functions_action_credential_continuation as continuation
+    check(callable(credentials.credential_services().authorize_conversation), "Web authorization callbacks are missing.")
+    check(callable(continuation.continuation_services().authorize_source), "Web retained-source authorization is missing.")
     private = state.create("owner", {
         "id": "credential-bootstrap", "record_type": "credential_checkpoint",
         "conversation_id": "credential-chat", "value": {},
@@ -126,10 +146,14 @@ def check(value, message):
 
 with offline_app_imports() as environment:
     import functions_action_credential_state as state
+    import functions_action_credentials as credentials
+    import functions_action_credential_continuation as continuation
     check("config" not in sys.modules, "Pure state discovery initialized Azure.")
     import simplechat_scheduler
     simplechat_scheduler.initialize_scheduler_runtime()
     check(state.is_configured(), "Dedicated scheduler did not configure credential state.")
+    check(callable(credentials.credential_services().resolve_manifest), "Scheduler action authorization is missing.")
+    check(callable(continuation.continuation_services().resolve_agent), "Scheduler canonical-agent authorization is missing.")
     saved = state.create("owner", {
         "id": "scheduler-credential", "record_type": "credential_checkpoint",
         "conversation_id": "conversation", "value": {},
@@ -143,6 +167,34 @@ print("PASS: real dedicated scheduler credential bootstrap")
 
 
 @pytest.mark.parametrize("optimized", [False, True])
-@pytest.mark.parametrize("order", ["early", "web", "scheduler"])
+@pytest.mark.parametrize("order", ["early", "early-continuation", "web", "scheduler"])
 def test_real_credential_bootstrap_and_chat_owner_boundaries(optimized, order):
     run_probe(SCHEDULER_PROBE if order == "scheduler" else PROBE, (order,), optimized)
+
+
+def test_credential_modules_have_no_transitive_import_cycle_including_local_imports():
+    root = Path(__file__).resolve().parents[1] / "application" / "single_app"
+    graph = {}
+    for path in root.rglob("*.py"):
+        name = ".".join(path.relative_to(root).with_suffix("").parts)
+        imports = set()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if node.level:
+                    module = ".".join([*name.split(".")[:-node.level], module]).rstrip(".")
+                imports.add(module)
+                imports.update(f"{module}.{alias.name}" for alias in node.names)
+        graph[name] = imports
+    for name in ("functions_action_credentials", "functions_action_credential_continuation", "functions_action_credential_runtime"):
+        pending = [(dependency, [name, dependency]) for dependency in graph[name]]
+        visited = set()
+        while pending:
+            dependency, chain = pending.pop()
+            assert dependency != name, f"Credential import cycle: {' -> '.join(chain)}"
+            if dependency in visited:
+                continue
+            visited.add(dependency)
+            pending.extend((item, [*chain, item]) for item in graph.get(dependency, ()))

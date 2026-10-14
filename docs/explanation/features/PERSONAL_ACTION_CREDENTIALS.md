@@ -2,7 +2,7 @@
 
 Fixed/Implemented in version: **0.261.333**.
 
-Current application version: **0.261.335**.
+Current application version: **0.261.336**.
 
 Related version update: `application/single_app/config.py`.
 
@@ -74,6 +74,12 @@ Requests contain safe metadata and compatible identity choices, never entered
 secrets. Action access, conversation ownership, current group membership,
 destination/authentication state, and request revision are rechecked before
 saving or continuing.
+
+Web and scheduler bootstrap supply the existing authorization, identity, and
+source-access owners through `functions_action_credential_runtime.py`. The
+credential resolver and continuation journal never import those owners back;
+an uninitialized runtime fails closed. See the
+[import-boundary fix](../fixes/ACTION_CREDENTIAL_IMPORT_BOUNDARIES_FIX.md).
 
 Private bindings, credential requests, and continuation checkpoints are excluded
 from backup/restore and migration. Restoring an identity does not restore consent
@@ -172,10 +178,11 @@ and private chat cards.
 
 Local validation for **0.261.333** passed 44 dedicated backend tests and 36
 credential browser cases, plus the React type check and production build.
-The broader Cosmos contract run remains non-green: 827 tests passed, but five
-existing cold-import probes exceeded their 180-second limit on this Windows
-host. An isolated rerun also reproduced a timeout. No test limits or assertions
-were relaxed to make that gate pass.
+That initial broader Cosmos contract run was non-green: five existing cold-import
+probes exceeded their 180-second limit on this Windows host. At **0.261.336**,
+the complete network-blocked contract run passed **837 tests and 231 subtests**,
+and the expanded credential slice passed **49 tests**. No test limits or
+assertions were relaxed.
 
 This release exposes personal sources only for Yamcs. SQL/OpenAPI/MCP and other
 compatible static-secret connectors are staged follow-on adapters. Provider

@@ -1,7 +1,7 @@
 # test_action_credentials_sk_continuation.py
 """Real SK direct-action credential suspension and exact tool-boundary resume.
 
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.333
 No model/provider network is used; the existing real SK scripted-provider harness
 proves completed tools are retained rather than replayed.
@@ -24,6 +24,21 @@ from semantic_kernel.functions import kernel_function
 
 from test_orchestration_action_runtime import runtime, execute, tool_message
 from test_action_personal_credentials import CredentialContainer, manifest, module
+
+
+@pytest.fixture(autouse=True)
+def continuation_services(runtime, monkeypatch):
+    continuation = importlib.import_module("functions_action_credential_continuation")
+    screening = importlib.import_module("content_screening.access")
+    agents = importlib.import_module("functions_agent_delegation")
+    settings = importlib.import_module("functions_settings")
+    monkeypatch.setattr(continuation, "_services", continuation.CredentialContinuationServices(
+        collect_sources=lambda: screening.current_request_source_provenance(),
+        authorize_source=lambda *args, **kwargs: screening.assert_document_available(*args, **kwargs),
+        resolve_agent=lambda reference, **kwargs: agents.resolve_delegation_agent(
+            reference, settings=settings.get_settings(), **kwargs,
+        ),
+    ))
 
 
 def continue_classic_route(runtime, monkeypatch, agent, descriptor):

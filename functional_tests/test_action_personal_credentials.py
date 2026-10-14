@@ -1,7 +1,7 @@
 # test_action_personal_credentials.py
 """Backend functional tests for actor-bound personal action credentials.
 
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.333
 
 Exercises real storage owners, identity CRUD, resolver, schema and Flask routes
@@ -9,6 +9,7 @@ with installed-SDK CosmosDict point responses and conditional ETags. No network.
 """
 
 from copy import deepcopy
+from dataclasses import replace
 import importlib
 import json
 import sys
@@ -143,7 +144,7 @@ def environment(monkeypatch):
                 raise LookupError()
             return {"id": "chat", "user_id": "alice"}
 
-        def resolve(user_id, reference):
+        def resolve(user_id, reference, **kwargs):
             if not auth.available or user_id != "alice" or reference != credentials.manifest_reference(current):
                 raise PermissionError()
             return deepcopy(current)
@@ -151,6 +152,16 @@ def environment(monkeypatch):
         monkeypatch.setattr(credentials, "authorize_conversation", authorize)
         monkeypatch.setattr(credentials, "authorized_manifest", resolve)
         monkeypatch.setattr(credentials, "actor_context", lambda: (auth.user, "chat", None))
+        monkeypatch.setitem(sys.modules, "functions_action_catalog", module(
+            "functions_action_catalog", resolve_action_manifest=resolve,
+        ))
+        monkeypatch.setitem(sys.modules, "route_backend_chats", module(
+            "route_backend_chats", _authorize_personal_conversation_access=authorize,
+        ))
+        continuation = importlib.import_module("functions_action_credential_continuation")
+        monkeypatch.setattr(credentials, "_services", None)
+        monkeypatch.setattr(continuation, "_services", None)
+        importlib.import_module("functions_action_credential_runtime").configure_action_credential_runtime()
         monkeypatch.delitem(sys.modules, "route_backend_action_credentials", raising=False)
         routes = importlib.import_module("route_backend_action_credentials")
         monkeypatch.setattr(routes, "authorize_conversation", authorize)
@@ -521,6 +532,31 @@ def test_full_user_private_purge_removes_all_lifecycle_records_and_preserves_oth
     assert len(env.store.items) == 1
 
 
+def test_private_purge_tolerates_concurrent_missing_rows_but_preserves_other_failures(environment, monkeypatch):
+    env = environment
+    env.state.create("alice", {"id": "deleted-first", "record_type": "credential_checkpoint"})
+    env.state.create("alice", {"id": "deleted-second", "record_type": "credential_checkpoint"})
+    original = env.store.delete_item
+
+    def concurrent_delete(item, partition_key, **kwargs):
+        if item == "deleted-first":
+            original(item, partition_key, **kwargs)
+        return original(item, partition_key, **kwargs)
+
+    monkeypatch.setattr(env.store, "delete_item", concurrent_delete)
+    env.state.delete_private_state("alice")
+    assert not env.store.items
+    env.state.create("alice", {"id": "storage-error", "record_type": "credential_checkpoint"})
+
+    def unavailable(*args, **kwargs):
+        raise CosmosHttpResponseError(status_code=503, message="Storage unavailable.")
+
+    monkeypatch.setattr(env.store, "delete_item", unavailable)
+    with pytest.raises(CosmosHttpResponseError):
+        env.state.delete_private_state("alice")
+    assert env.state.read("alice", "storage-error")["id"] == "storage-error"
+
+
 def test_destination_restore_requires_explicit_binding_reconfirmation_before_secret_use(environment, monkeypatch):
     env = environment
     original = challenge(env)
@@ -601,3 +637,21 @@ def test_untrusted_origin_is_never_authority_for_personal_secret_resolution(envi
     with pytest.raises(env.contracts.ActionCredentialError) as stopped:
         env.credentials.resolve_personal_credentials(forged)
     assert stopped.value.code == "trusted_origin_required"
+
+
+def test_initialized_identity_service_outage_is_not_a_new_credential_challenge(environment, monkeypatch):
+    env = environment
+    pending = challenge(env)
+    submit(env, pending)
+
+    def unavailable(*args, **kwargs):
+        raise CosmosHttpResponseError(status_code=503, message="Identity storage unavailable.")
+
+    monkeypatch.setattr(env.credentials, "_services", replace(
+        env.credentials.credential_services(), read_identity_auth=unavailable,
+    ))
+    with pytest.raises(CosmosHttpResponseError):
+        env.credentials.resolve_personal_credentials(env.current)
+    requests = env.state.pending("alice", "chat")
+    assert len(requests) == 1
+    assert requests[0]["status"] == "ready"

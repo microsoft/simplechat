@@ -4,17 +4,47 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass
 import time
+from typing import Callable
+
+from flask import g, has_request_context
 
 from action_credential_contracts import (
     ADAPTERS, ActionCredentialError, ActionCredentialsRequired, credential_fingerprint,
     credential_slots, destination_label,
 )
+from agent_execution_context import current_agent_execution
 from functions_action_manifest import get_action_origin, resolve_action_type
 import functions_action_credential_state as state
 
 
 _continuation = ContextVar("action_credential_continuation", default=None)
+_services = None
+
+
+@dataclass(frozen=True)
+class CredentialServices:
+    current_user_id: Callable
+    authorize_conversation: Callable
+    resolve_manifest: Callable
+    read_identity: Callable
+    list_identities: Callable
+    identity_supports_usage: Callable
+    read_identity_auth: Callable
+    create_identity: Callable
+    update_identity: Callable
+
+
+def configure_action_credential_services(services):
+    global _services
+    _services = services
+
+
+def credential_services():
+    if _services is None:
+        raise ActionCredentialError("credential_runtime_unavailable", 503)
+    return _services
 
 
 @contextmanager
@@ -27,16 +57,11 @@ def credential_continuation(value):
 
 
 def actor_context():
-    # Execution-only dependencies: contracts/catalogue discovery do not bootstrap Flask or Azure.
-    from agent_execution_context import current_agent_execution
-    from functions_authentication import get_current_user_id_or_none
-    from flask import g, has_request_context
-
     frame = current_agent_execution()
     if frame:
         user_id, conversation_id = frame.identity.user_id, frame.identity.conversation_id
     elif has_request_context():
-        user_id, conversation_id = get_current_user_id_or_none(), getattr(g, "conversation_id", None)
+        user_id, conversation_id = credential_services().current_user_id(), getattr(g, "conversation_id", None)
     else:
         raise ActionCredentialError("credentials_need_user_action")
     if not user_id or not conversation_id:
@@ -46,21 +71,11 @@ def actor_context():
 
 
 def authorize_conversation(user_id, conversation_id):
-    # The initialized chat owner implements the authoritative personal-conversation boundary.
-    from route_backend_chats import _authorize_personal_conversation_access
-
-    return _authorize_personal_conversation_access(user_id, conversation_id)
+    return credential_services().authorize_conversation(user_id, conversation_id)
 
 
 def authorized_manifest(user_id, action_ref):
-    from functions_action_catalog import resolve_action_manifest
-    from functions_settings import get_settings
-    from functions_authentication import get_current_user_info
-
-    user = get_current_user_info() or {}
-    return resolve_action_manifest(
-        user_id, action_ref, settings=get_settings(), user_roles=user.get("roles") or [],
-    )
+    return credential_services().resolve_manifest(user_id, action_ref)
 
 
 def manifest_reference(manifest):
@@ -71,23 +86,21 @@ def manifest_reference(manifest):
 
 
 def identity_metadata(user_id, identity_id, auth_type):
-    from functions_workspace_identities import get_workspace_identity, identity_supports_usage
-
-    identity = get_workspace_identity("personal", user_id, identity_id)
-    if not identity_supports_usage(identity, "action", source_type="action", auth_types={auth_type}):
+    services = credential_services()
+    identity = services.read_identity("personal", user_id, identity_id)
+    if not services.identity_supports_usage(identity, "action", source_type="action", auth_types={auth_type}):
         raise ActionCredentialError("identity_incompatible", 400)
     return identity
 
 
 def safe_identities(user_id, requirements):
-    from functions_workspace_identities import list_workspace_identities, identity_supports_usage
-
+    services = credential_services()
     types = {item["auth_type"] for item in requirements}
     return [
         {"id": item["id"], "name": item.get("name") or "Personal identity",
          "auth_type": (item.get("auth") or {}).get("auth_type"), "etag": item.get("_etag")}
-        for item in list_workspace_identities("personal", user_id)
-        if identity_supports_usage(item, "action", source_type="action", auth_types=types)
+        for item in services.list_identities("personal", user_id)
+        if services.identity_supports_usage(item, "action", source_type="action", auth_types=types)
     ]
 
 
@@ -179,11 +192,10 @@ def resolve_personal_credentials(manifest, *, rejected_slots=()):
         identities[slot] = identity
     if missing:
         require_credentials(manifest, missing, reason=reason)
-    from functions_workspace_identities import get_workspace_identity_auth
-
+    services = credential_services()
     prepared = deepcopy(manifest)
     for slot, identity in identities.items():
-        auth = get_workspace_identity_auth("personal", user_id, identity["id"])
+        auth = services.read_identity_auth("personal", user_id, identity["id"])
         latest = identity_metadata(user_id, identity["id"], slots[slot]["auth_type"])
         if latest.get("_etag") != identity.get("_etag"):
             raise ActionCredentialError("identity_changed")
@@ -264,10 +276,7 @@ def submit_credentials(user_id, request_id, expected_etag, slots):
         "status": "saving", "submission_etag": submission_etag, "saving_until": time.time() + 60,
         "submission_selection": selection,
     }, expected_etag)
-    from functions_workspace_identities import (
-        create_workspace_identity, get_workspace_identity, update_workspace_identity_conditional, WorkspaceIdentityConflict,
-    )
-
+    services = credential_services()
     for entry in slots:
         slot = entry["slot"]
         auth_type = item["requirements"][slot]
@@ -276,25 +285,22 @@ def submit_credentials(user_id, request_id, expected_etag, slots):
         if identity_id:
             identity = identity_metadata(user_id, identity_id, auth_type)
             if entry.get("credentials"):
-                try:
-                    identity = update_workspace_identity_conditional(
-                        "personal", user_id, identity_id, {"credentials": entry["credentials"]}, user_id,
-                        entry["expected_identity_etag"], operation_id=operation_id,
-                    )
-                except WorkspaceIdentityConflict:
-                    raise ActionCredentialError("identity_changed") from None
+                identity = services.update_identity(
+                    "personal", user_id, identity_id, {"credentials": entry["credentials"]}, user_id,
+                    entry["expected_identity_etag"], operation_id=operation_id,
+                )
         else:
             identity_id = "action_" + operation_id
             try:
-                identity = get_workspace_identity("personal", user_id, identity_id)
+                identity = services.read_identity("personal", user_id, identity_id)
             except LookupError:
-                create_workspace_identity(
+                services.create_identity(
                     "personal", user_id, {
                         "name": entry["name"], "provider": "generic", "usage_contexts": ["action"],
                         "supported_source_types": ["action"], "credentials": entry["credentials"],
                     }, user_id, stage_secrets=True, identity_id=identity_id,
                 )
-                identity = get_workspace_identity("personal", user_id, identity_id)
+                identity = services.read_identity("personal", user_id, identity_id)
             identity_metadata(user_id, identity_id, auth_type)
         # Access/destination can change during secret storage; never commit a binding to the old target.
         authorize_request(user_id, request_id)

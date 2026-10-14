@@ -25627,10 +25627,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+        "module_sha256": "c07a22361be9feb149558f219a35d5f1acfbb51c5326fc3e00f10a561770da5c"
       },
       "classification": "normalized-strict",
-      "contract": "Normalizes the returned SDK create document before returning private JSON state; preserves the owned partition and ETag for conditional submission/checkpoint consumers.",
+      "contract": "Normalizes the SDK create response before strict private JSON consumers; retains the actor partition and ETag for submission/checkpoint updates.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_action_credentials_bootstrap.py"
@@ -25639,7 +25639,7 @@
     },
     "application/single_app/functions_action_credential_state.py::delete_private_state": {
       "boundary": {
-        "sha256": "a7372b66e56a731f2a21e0e9a209ae7a618d64e5f092183fd60399e65f3883b0",
+        "sha256": "150a694b28f93c81ebe2781565610e857887829533dc513f2e1069851040c65c",
         "points": [
           {
             "method": "delete_item",
@@ -25655,10 +25655,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+        "module_sha256": "c07a22361be9feb149558f219a35d5f1acfbb51c5326fc3e00f10a561770da5c"
       },
       "classification": "response-unused",
-      "contract": "Owned partition query rows supply id and ETag for IfNotModified deletion; delete response bodies are discarded and errors stay visible. Conversation cleanup retains persistent bindings.",
+      "contract": "Owned query rows supply id/ETag for conditional deletion; response bodies are unused. Concurrent not-found is idempotent; all other failures propagate and conversation cleanup retains persistent bindings.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_action_credentials_bootstrap.py"
@@ -25677,10 +25677,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+        "module_sha256": "c07a22361be9feb149558f219a35d5f1acfbb51c5326fc3e00f10a561770da5c"
       },
       "classification": "sdk-compatible",
-      "contract": "Queries yield plain rows; owned read and replace helpers supply normalized documents and preserve conditional ETags while invalidating only the deleted actor's bindings.",
+      "contract": "Plain query rows are rebound through owned normalized read/replace helpers before conditional invalidation of the deleted actor identity bindings.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_action_credentials_bootstrap.py"
@@ -25699,10 +25699,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+        "module_sha256": "c07a22361be9feb149558f219a35d5f1acfbb51c5326fc3e00f10a561770da5c"
       },
       "classification": "sdk-compatible",
-      "contract": "Partition-bound pending queries yield plain SDK JSON rows, copied into ordinary dictionaries before authorized safe DTO projection; they do not consume point wrappers.",
+      "contract": "Partition-bound query rows are plain JSON, copied to dictionaries and reauthorized before safe request projection.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_action_credentials_bootstrap.py"
@@ -25721,10 +25721,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+        "module_sha256": "c07a22361be9feb149558f219a35d5f1acfbb51c5326fc3e00f10a561770da5c"
       },
       "classification": "normalized-strict",
-      "contract": "Normalizes the owned SDK point document before record-type/expiry validation and before strict/deepcopy request, binding and checkpoint consumers; retains ETags.",
+      "contract": "Normalizes the SDK point response before record/expiry validation and strict request, binding and checkpoint consumers; retains actor ownership and ETags.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_action_credentials_bootstrap.py"
@@ -25743,10 +25743,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e014d53c42bbdedfef178fb328381f2ad0af52f84a900ea20d9206273ab00863"
+        "module_sha256": "c07a22361be9feb149558f219a35d5f1acfbb51c5326fc3e00f10a561770da5c"
       },
       "classification": "normalized-strict",
-      "contract": "Owned IfNotModified replace normalizes its returned SDK document before conditional request/binding/checkpoint consumers; rejects changed identity, partition or ETag and preserves conflict errors.",
+      "contract": "Normalizes the IfNotModified SDK replace response before strict request/binding/checkpoint consumers; preserves ETag conflicts and owned partition checks.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
         "functional_tests/test_action_credentials_bootstrap.py"
@@ -32273,7 +32273,7 @@
         "inherited_bases": [
           "CosmosContainer"
         ],
-        "imports_sha256": "5249446487875899092fb53b4ea82c84a8d0bd1fb094ad2af9336d77a83e12ad"
+        "imports_sha256": "3c60a891bc2ca212c159c9619970d0448256e03fdf71912f31c6df713285c75e"
       },
       "classification": "sdk-default",
       "contract": "Inherits the shared installed-SDK CosmosDict point/write default with ETags and partitions. Queries return plain JSON; conditional deletes enforce IfNotModified before the real shared delete.",
@@ -32288,7 +32288,7 @@
           "create_item"
         ],
         "kind": "seam",
-        "imports_sha256": "5249446487875899092fb53b4ea82c84a8d0bd1fb094ad2af9336d77a83e12ad"
+        "imports_sha256": "3c60a891bc2ca212c159c9619970d0448256e03fdf71912f31c6df713285c75e"
       },
       "classification": "fault-injection",
       "contract": "Commits through the real SDK-default fake create/replace before throwing a lost-response outage. Owned point confirmation exercises the real identity owner without overriding response shape.",
@@ -32303,12 +32303,42 @@
           "replace_item"
         ],
         "kind": "seam",
-        "imports_sha256": "5249446487875899092fb53b4ea82c84a8d0bd1fb094ad2af9336d77a83e12ad"
+        "imports_sha256": "3c60a891bc2ca212c159c9619970d0448256e03fdf71912f31c6df713285c75e"
       },
       "classification": "fault-injection",
       "contract": "Commits through the real SDK-default fake create/replace before throwing a lost-response outage. Owned point confirmation exercises the real identity owner without overriding response shape.",
       "tests": [
         "functional_tests/test_action_personal_credentials.py::test_lost_identity_write_responses_keep_committed_keyvault_references"
+      ]
+    },
+    "functional_tests/test_action_personal_credentials.py::test_private_purge_tolerates_concurrent_missing_rows_but_preserves_other_failures::point-seam-1": {
+      "boundary": {
+        "sha256": "e3c717fddf8584360b30dfb42467be61cb94fd756b76510e18abb871a245f4ce",
+        "methods": [
+          "delete_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "3c60a891bc2ca212c159c9619970d0448256e03fdf71912f31c6df713285c75e"
+      },
+      "classification": "fault-injection",
+      "contract": "Scoped delete override delegates to the SDK-default conditional container to simulate concurrent 404, or raises explicit 503; it never substitutes easy point/write documents. Real lifecycle-owner test proves not-found idempotence and outage propagation.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py::test_private_purge_tolerates_concurrent_missing_rows_but_preserves_other_failures"
+      ]
+    },
+    "functional_tests/test_action_personal_credentials.py::test_private_purge_tolerates_concurrent_missing_rows_but_preserves_other_failures::point-seam-2": {
+      "boundary": {
+        "sha256": "74155a9b9c2300e9838a0265cf5bf5d088367bfe9fcb9e82e21eba447bba28a1",
+        "methods": [
+          "delete_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "3c60a891bc2ca212c159c9619970d0448256e03fdf71912f31c6df713285c75e"
+      },
+      "classification": "fault-injection",
+      "contract": "Scoped delete override delegates to the SDK-default conditional container to simulate concurrent 404, or raises explicit 503; it never substitutes easy point/write documents. Real lifecycle-owner test proves not-found idempotence and outage propagation.",
+      "tests": [
+        "functional_tests/test_action_personal_credentials.py::test_private_purge_tolerates_concurrent_missing_rows_but_preserves_other_failures"
       ]
     }
   }

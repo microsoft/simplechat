@@ -7,22 +7,44 @@ history; uncertain calls are never restarted. This is not a chat-message retry.
 
 from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 import inspect
 from copy import deepcopy
+from typing import Callable
 
 from semantic_kernel.agents import ChatHistoryAgentThread
 from semantic_kernel.contents import ChatHistory, ChatMessageContent, FunctionCallContent, FunctionResultContent
 from semantic_kernel.filters import FilterTypes
 
 from action_credential_contracts import ActionCredentialError, find_credential_stop
+from agent_execution_context import current_agent_execution
 from functions_action_manifest import get_action_origin
 import functions_action_credential_state as state
-from functions_action_credentials import _continuation, credential_continuation
+from functions_action_credentials import _continuation
 
 
 _journal = ContextVar("action_credential_journal", default=None)
 _call_id = ContextVar("action_credential_call_id", default=None)
 WAIT_MARKER = "simplechat_action_credentials_waiting"
+_services = None
+
+
+@dataclass(frozen=True)
+class CredentialContinuationServices:
+    collect_sources: Callable
+    authorize_source: Callable
+    resolve_agent: Callable
+
+
+def configure_action_credential_continuation_services(services):
+    global _services
+    _services = services
+
+
+def continuation_services():
+    if _services is None:
+        raise ActionCredentialError("credential_runtime_unavailable", 503)
+    return _services
 
 
 def journal_active():
@@ -48,6 +70,7 @@ async def _function_boundary(context, next):
         elif isinstance(error, ActionCredentialError):
             journal.failure = error
         raise
+    return None
 
 
 async def _auto_boundary(context, next):
@@ -103,10 +126,7 @@ class CredentialJournal:
                 parent.sources.extend(deepcopy(self.sources))
 
     def collect_sources(self):
-        # Source authority is initialized by the actual invocation owner.
-        from content_screening.access import current_request_source_provenance
-
-        for source in current_request_source_provenance():
+        for source in continuation_services().collect_sources():
             if source not in self.sources:
                 self.sources.append(source)
 
@@ -126,11 +146,9 @@ class CredentialJournal:
             return None
         if entry["signature"] != self.signature:
             raise ActionCredentialError("credential_execution_changed")
-        from content_screening.access import assert_document_available
-
         for value in checkpoint["value"].values():
             for source in value.get("sources") or []:
-                assert_document_available(source, user_id=self.user_id, purpose="model")
+                continuation_services().authorize_source(source, user_id=self.user_id, purpose="model")
         self.sources = deepcopy(entry.get("sources") or [])
         self.loaded = entry
         return ChatHistory.restore_chat_history(entry["history"])
@@ -185,19 +203,12 @@ class CredentialJournal:
 
 
 def _signature(agent):
-    from agent_execution_context import current_agent_execution
-
     frame = current_agent_execution()
     configuration = None
     if frame and frame.caller.get("scope_type") and frame.caller.get("id"):
         # Fresh canonical configuration includes knowledge, model and attached
         # action selections; a slim catalogue reference is not a change guard.
-        from functions_agent_delegation import resolve_delegation_agent
-        from functions_settings import get_settings
-
-        configuration = resolve_delegation_agent(
-            frame.caller, user_id=frame.identity.user_id, settings=get_settings(),
-        )
+        configuration = continuation_services().resolve_agent(frame.caller, user_id=frame.identity.user_id)
     manifests = []
     for plugin in agent.kernel.plugins.values():
         for function in plugin.functions.values():
@@ -226,8 +237,6 @@ def _signature(agent):
 
 
 def _journal_for(agent, messages):
-    from agent_execution_context import current_agent_execution
-
     frame = current_agent_execution()
     descriptor = _continuation.get()
     if (

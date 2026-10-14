@@ -1,7 +1,7 @@
 # test_v2_action_credentials.py
 """
 Functional UI test for private credential cards in React V2.
-Version: 0.261.335
+Version: 0.261.336
 Implemented in: 0.261.333
 
 Exercises the real card and shared chat continuation, with closed local API fixtures.
