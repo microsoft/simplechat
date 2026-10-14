@@ -1,7 +1,7 @@
 # test_classic_action_credentials.py
 """
 UI coverage of private action credentials and YAMCS personal-slot authoring.
-Version: 0.261.336
+Version: 0.261.337
 Implemented in: 0.261.333
 
 Runs the production card asset, real Bootstrap partial and production stepper

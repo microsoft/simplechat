@@ -10,6 +10,7 @@ import {
     type DocumentScope, type WindowUnit,
 } from '../../lib/workflowDocumentSelection';
 import type { WorkflowDocumentAction, WorkflowEditorOptions, WorkflowScope } from '../../lib/workflowEditor';
+import { WorkflowWorkspacePicker } from './WorkflowWorkspacePicker';
 
 const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
 const buttonClass = 'rounded-lg border border-edge px-3 py-2 text-sm text-text-1 hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50';
@@ -226,27 +227,23 @@ function DocumentSelectionFields({ scope, action, options, onChange }: Selection
         <div>
             <h4 className="text-sm font-semibold text-text-1">Documents for this task</h4>
             <p className="mt-1 max-w-[72ch] text-sm leading-relaxed text-text-2">
-                Select new or updated documents at the start of each run. Each task has its own selection;
-                a retry keeps the same captured documents. Updates include metadata changes.
+                Capture matching documents at the start of each run. Each task has its own selection;
+                a retry keeps the same captured documents.
             </p>
         </div>
-        <fieldset className="space-y-2">
-            <legend className="mb-2 text-sm font-medium text-text-1">Source workspaces</legend>
-            {workspaces.map((workspace) => <label key={documentScopeKey(workspace)} className="flex items-center gap-2 text-sm text-text-2">
-                <input type="checkbox" checked={selection.scopes.some((item) => documentScopeKey(item) === documentScopeKey(workspace))}
-                    onChange={(event) => changeSelection({ ...selection, scopes: event.target.checked
-                        ? [...selection.scopes, { scope_type: workspace.scope_type, ...(workspace.scope_id ? { scope_id: workspace.scope_id } : {}) }]
-                        : selection.scopes.filter((item) => documentScopeKey(item) !== documentScopeKey(workspace)) })} />
-                {workspace.name}
-            </label>)}
-            {selection.scopes.filter((item) => !workspaces.some((workspace) => documentScopeKey(item) === documentScopeKey(workspace))).map((item) =>
-                <div key={documentScopeKey(item)} className="space-y-2">
-                    <p role="alert" className="text-sm text-danger">A selected workspace is unavailable. Remove it or restore access before running.</p>
-                    <button type="button" className={buttonClass} onClick={() => changeSelection({
-                        ...selection, scopes: selection.scopes.filter((workspace) => documentScopeKey(workspace) !== documentScopeKey(item)),
-                    })}>Remove unavailable workspace</button>
-                </div>)}
-        </fieldset>
+        <WorkflowWorkspacePicker workspaces={workspaces} selected={selection.scopes}
+            onChange={(scopes) => changeSelection({ ...selection, scopes })} />
+        <label className="block text-sm text-text-2">Document event
+            <select aria-label="Document event" className={`${inputClass} mt-1`} value={selection.time_basis ?? 'added_or_updated'}
+                onChange={(event) => changeSelection({ ...selection, time_basis: event.target.value as 'added' | 'added_or_updated' })}>
+                <option value="added">Added</option><option value="added_or_updated">Added or updated</option>
+            </select>
+        </label>
+        <p className="max-w-[72ch] text-sm leading-relaxed text-text-2">
+            {selection.time_basis === 'added'
+                ? 'Added uses the current file record’s upload time, including newly uploaded revisions. Missing upload dates do not match.'
+                : 'Added or updated includes metadata changes, using the last modification time.'}
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-sm text-text-2">Within the last
                 <input className={`${inputClass} mt-1`} type="number" min={1} step={1} value={minutes / WINDOW_UNITS[unit]}
@@ -275,7 +272,7 @@ function DocumentSelectionFields({ scope, action, options, onChange }: Selection
         </label>
         <p className="break-words text-sm leading-relaxed text-text-1" aria-label="Document selection summary">
             In {selection.scopes.map((item) => workspaces.find((workspace) => documentScopeKey(item) === documentScopeKey(workspace))?.name ?? 'unavailable workspace').join(', ') || 'no workspace'},
-            {' '}within the last {minutes / WINDOW_UNITS[unit]} {unit}, matching {documentFilterSummary(selection.filters)}.
+            {' '}{selection.time_basis === 'added' ? 'added' : 'added or updated'} within the last {minutes / WINDOW_UNITS[unit]} {minutes === WINDOW_UNITS[unit] ? unit.slice(0, -1) : unit}, matching {documentFilterSummary(selection.filters)}.
         </p>
         {errors.length ? <ul role="alert" className="space-y-1 text-sm text-danger">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : null}
         <button type="button" className={buttonClass} disabled={loading || errors.length > 0} onClick={() => void runPreview()}>

@@ -1,7 +1,7 @@
 # test_action_credentials_sk_continuation.py
 """Real SK direct-action credential suspension and exact tool-boundary resume.
 
-Version: 0.261.336
+Version: 0.261.337
 Implemented in: 0.261.333
 No model/provider network is used; the existing real SK scripted-provider harness
 proves completed tools are retained rather than replayed.

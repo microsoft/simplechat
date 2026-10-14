@@ -2,7 +2,7 @@
 
 Fixed/Implemented in version: **0.261.333**.
 
-Current application version: **0.261.336**.
+Current application version: **0.261.337**.
 
 Related version update: `application/single_app/config.py`.
 
@@ -183,6 +183,12 @@ probes exceeded their 180-second limit on this Windows host. At **0.261.336**,
 the complete network-blocked contract run passed **837 tests and 231 subtests**,
 and the expanded credential slice passed **49 tests**. No test limits or
 assertions were relaxed.
+
+After integrating the updated V2 base at **0.261.337**, the credential slice
+again passed **49 tests**, both credential interfaces passed **36 browser cases**,
+and the complete network-blocked Cosmos gate passed **843 tests and 231 subtests**.
+The merged inventory retains both credential and workflow boundary reviews:
+**1057 owners, 400 doubles, and zero review gaps**.
 
 This release exposes personal sources only for Yamcs. SQL/OpenAPI/MCP and other
 compatible static-secret connectors are staged follow-on adapters. Provider

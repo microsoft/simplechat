@@ -52,7 +52,7 @@ export type WorkflowTaskRunnerType = 'inherit' | 'agent' | 'model';
 export type WorkflowInputProcessing = 'full' | 'saved_record_report';
 export type WorkflowInputOutput = WorkflowOutputKind | 'authoritative' | 'documents';
 export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
-export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison' | 'merge';
+export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison' | 'merge' | 'choose';
 export type WorkflowMergeKind = 'tabular' | 'workbook' | 'pdf' | 'docx' | 'pptx';
 export type WorkflowMergeTargetMode = 'selected' | 'all' | 'recent' | 'changed';
 export type WorkflowMergeOutputFormat = 'csv' | 'xlsx' | 'pdf' | 'docx' | 'pptx';
@@ -456,11 +456,14 @@ export interface WorkflowDocumentAction {
     target_mode?: 'selected' | 'current_item' | WorkflowMergeTargetMode;
     loop_id?: string;
     analysis_mode?: 'combined' | 'per_document';
+    search_mode?: 'selected' | 'relevance';
     left_document_id?: string;
     right_document_ids?: string[];
     merge_kind?: WorkflowMergeKind;
     recent_window_minutes?: number;
     document_selection?: import('./workflowDocumentSelection').TaskDocumentSelection;
+    document_sources?: (import('./workflowDocumentSelection').DocumentScope & { document_id: string })[];
+    relevance_scopes?: import('./workflowDocumentSelection').DocumentScope[];
     output_format?: WorkflowMergeOutputFormat;
     output_file_name?: string;
     merge_options?: WorkflowMergeOptions;
@@ -707,6 +710,7 @@ export interface WorkflowRunItem {
         outputs?: Record<string, unknown>;
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
+        document_action_choice?: unknown;
     };
     consumed_inputs?: WorkflowConsumedInput[];
     context_budget?: Record<string, unknown>;
@@ -1145,7 +1149,7 @@ function legacyWorkflowTask(record: Record<string, unknown>): WorkflowTask | nul
 }
 
 export function documentActionFromSelection(
-    type: Exclude<WorkflowDocumentActionType, 'none' | 'comparison' | 'merge'>,
+    type: 'analyze' | 'search',
     documents: WorkflowReferenceInput[],
     options: { mode?: 'selected' | 'relevance'; analysisMode?: 'combined' | 'per_document' } = {},
 ): WorkflowDocumentAction {
@@ -1169,6 +1173,7 @@ export function documentActionFromSelection(
         document_ids: documents.map((document) => document.document_id),
         target_mode: 'selected',
         analysis_mode: options.analysisMode ?? 'combined',
+        ...(type === 'search' ? { search_mode: 'selected' as const } : {}),
     };
 }
 
@@ -2181,6 +2186,11 @@ export function workflowValidationErrors(
             errors.push(`${task.name || `Task ${index + 1}`} needs a nonnegative whole-number expected count.`);
         }
         const action = task.document_action;
+        if (action?.relevance_scopes) {
+            errors.push(...documentSelectionErrors({
+                scopes: action.relevance_scopes, filters: { operator: 'and', conditions: [] }, on_empty: 'report',
+            }, 60).map((message) => `${task.name}: ${message}`));
+        }
         if (action?.document_selection) {
             errors.push(...documentSelectionErrors(action.document_selection, action.recent_window_minutes ?? 0)
                 .map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
@@ -2190,8 +2200,20 @@ export function workflowValidationErrors(
                 errors.push('Group tasks can select only documents in this group workspace.');
             }
         }
-        if (action && !['none', 'search', 'analyze', 'comparison', 'merge'].includes(String(action.type))) {
+        if (action && !['none', 'search', 'analyze', 'comparison', 'merge', 'choose'].includes(String(action.type))) {
             errors.push(`${task.name || `Task ${index + 1}`} has an unsupported document action type.`);
+        }
+        if (action?.type === 'choose') {
+            if (action.target_mode !== 'recent' && action.target_mode !== 'selected' ||
+                action.target_mode === 'recent' && !action.document_selection) {
+                errors.push(`${task.name}: runtime choice requires selected documents or guided recent criteria.`);
+            }
+            if (action.target_mode === 'selected' && (!action.document_sources?.length ||
+                action.document_sources.length > 50 || action.document_sources.some((source, position) =>
+                    source.document_id !== action.document_ids?.[position]) ||
+                action.document_sources.length !== action.document_ids?.length)) {
+                errors.push(`${task.name}: select between 1 and 50 documents with explicit workspaces for runtime choice.`);
+            }
         }
         if (action?.type === 'merge') {
             if (!workflowMergeEnabled(options)) {
@@ -2202,7 +2224,7 @@ export function workflowValidationErrors(
                 maxSelectedDocuments: workflowMergeDocumentLimit(options),
             }).map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
         }
-        if (action?.type === 'analyze' && action.target_mode !== 'current_item' && action.target_mode !== 'recent' && !changedFileTargets &&
+        if (action?.type === 'analyze' && action.target_mode !== 'all' && action.target_mode !== 'current_item' && action.target_mode !== 'recent' && !changedFileTargets &&
             (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for Analyze.`);
         }
@@ -2214,7 +2236,8 @@ export function workflowValidationErrors(
                 errors.push(`${task.name}: choose a loop-eligible local agent or model. Hosted runners are not supported inside For each or Repeat.`);
             }
         }
-        if (action?.type === 'search' && action.doc_scope !== 'all' && action.target_mode !== 'recent' &&
+        if (action?.type === 'search' && !action.relevance_scopes &&
+            (action.search_mode === 'selected' || action.doc_scope !== 'all') && action.target_mode !== 'recent' &&
             (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for selected Search.`);
         }

@@ -3,6 +3,8 @@
 Fixed/Implemented in version: **0.261.336**, recorded in
 `application/single_app/config.py`.
 
+Current application version: **0.261.337**.
+
 Related pull request: [#1766](https://github.com/microsoft/simplechat/pull/1766).
 
 ## Issue and root cause
@@ -53,6 +55,11 @@ The classic UI suite passed **28 cases**. A broader delegation compatibility run
 had 72 passes and nine failures in existing AST-extracted entrypoint fixtures
 with missing globals; their loader, workflow, and chat source files were not
 changed by this fix.
+
+The **0.261.337** base merge preserved both sets of reviewed inventory entries.
+The credential suites still passed **49 tests**; both credential interfaces
+passed **36 browser cases**, and the full network-blocked Cosmos gate passed
+**843 tests and 231 subtests**.
 
 Before this fix, runtime owners could import themselves indirectly through
 credential execution. After it, initialized owners supply their operations

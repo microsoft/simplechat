@@ -1,7 +1,7 @@
 # test_action_credentials_orchestration_continuation.py
 """Real orchestration leases/checkpoints and independent credential waits.
 
-Version: 0.261.336
+Version: 0.261.337
 Implemented in: 0.261.333
 
 Only external action/model/storage I/O is doubled. Retained completed steps,

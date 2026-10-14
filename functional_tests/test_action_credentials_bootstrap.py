@@ -1,7 +1,7 @@
 # test_action_credentials_bootstrap.py
 """Fresh-process application bootstrap and actual chat SDK mapping ownership.
 
-Version: 0.261.336
+Version: 0.261.337
 Implemented in: 0.261.333
 
 Normal/optimized Python imports real modules in both orders with network blocked.

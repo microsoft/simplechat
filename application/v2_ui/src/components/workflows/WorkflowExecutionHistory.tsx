@@ -37,6 +37,7 @@ import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
 import { WorkflowLoopSelectionDetails } from './WorkflowLoopSelectionDetails';
 import { WorkflowPublicationDetails } from './WorkflowPublicationDetails';
+import { WorkflowDocumentChoiceDetails } from './WorkflowDocumentChoiceDetails';
 import { WorkflowRepeatProgress } from './WorkflowRepeatProgress';
 import { isRecord } from '../../lib/workspaceAuthoring';
 
@@ -582,6 +583,7 @@ function AttemptHistory({
                             {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
                             {attempt.iteration_path?.length ? <DetailLine label="Iteration path">{formatIterationPath(attempt.iteration_path)}</DetailLine> : null}
                             <ConsumedInputs inputs={inputs} />
+                            <WorkflowDocumentChoiceDetails choice={attempt.workflow_result?.document_action_choice} />
                             <WorkflowPublicationDetails publication={attempt.workflow_result?.publication}
                                 label={`Publication for execution ${attempt.execution_id} attempt ${attempt.attempt}`} />
                             <ReportingDiagnostics value={attempt.workflow_result?.reporting} />
@@ -1011,6 +1013,7 @@ function ScopedWorkflowExecutionInspector({
                 {resultSummary ? <DetailLine label="Result ref">{resultSummary}</DetailLine> : null}
             </div>
             <ConsumedInputs inputs={inputs} />
+            <WorkflowDocumentChoiceDetails choice={execution.workflow_result?.document_action_choice} />
             <WorkflowPublicationDetails publication={execution.workflow_result?.publication}
                 label={`Publication for execution ${executionId}`} />
             {expanded ? (

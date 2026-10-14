@@ -1,5 +1,5 @@
 // test_v2_action_personal_credentials.mjs
-// Version: 0.261.336
+// Version: 0.261.337
 // Implemented in: 0.261.333
 // Exercises real authoring, safe DTO projection, credential transport, and stream waiting.
 

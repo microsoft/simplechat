@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.329)
+# Workflow AI Assistant (v0.261.335)
 
 ## Overview
 
@@ -9,7 +9,7 @@ workflow editor shows it as highlighted, attributed, revertible changes that the
 before saving. The assistant never saves anything.
 
 The server half is `POST /api/user/workflows/assist`, added in 0.261.208. It takes one
-instruction and the editor's current draft, asks the model for a small set of allowlisted
+instruction and the editor's current draft, asks the model for a bounded set of allowlisted
 operations, applies them to a copy of the draft, checks the result the way a save would, and
 returns a candidate draft. It writes nothing.
 
@@ -48,6 +48,23 @@ Dependencies:
   `assistThreadStore`, see [V2 shared assist thread](V2_SHARED_ASSIST_THREAD.md)), Track A2's
   `#` references in `lib/planReferences.ts`, and 3a's `applyAssist`, `revertTurn` and **Changes**
   tab.
+
+## Goal-first document authoring
+
+Implemented in version: **0.261.335**, tracked in `application/single_app/config.py`.
+
+Ask AI applies all supported known details within the existing 64-operation bound,
+not just workflow metadata. A missing schedule time no longer blocks useful task
+instructions, document action, authorized workspace or selection criteria.
+The requested recurrence remains visible with blank time. Only draft-calendar
+validation allows that blank; save/run validation remains strict.
+
+For “every Tuesday summarize new docs added to My workspace over the last week”,
+the draft uses Analyze, Added, seven days, real instructions and a Tuesday
+recurrence, asking only for time. A time follow-up preserves the document policy.
+Authoring normally chooses a concrete action. Explicitly requested **Choose at
+run time** opts into one bounded document action per task/visit; it never adds a
+planner or changes frozen replay. See [document selection](WORKFLOW_DOCUMENT_SELECTION.md).
 
 ## Native alert editing
 
@@ -283,11 +300,14 @@ properties) before anything is applied. At most 64 operations are accepted per r
 | Alerts | `set_alert_mode` (`off`, `every_run` with a priority, or `rules`), `add_alert_rule`, `update_alert_rule`, `remove_alert_rule`; rules support acknowledgment, sound and size |
 | Runner | `set_workflow_runner`, `set_task_runner` (inherit, an agent handle or a model handle) |
 | Tasks | `add_task`, `remove_task`, `move_task`, `set_task_name`, `set_task_instructions`, `set_task_inputs` |
-| Documents | `bind_reference`, `set_task_references`, `unbind_reference`, `set_task_document_target`, `clear_task_document_target` |
+| Documents | `bind_reference`, `set_task_references`, `unbind_reference`, `set_task_document_target`, `clear_task_document_target`, `set_task_document_selection`, `update_task_document_window`, `replace_task_document_filter`, `set_task_document_scope`, `set_task_merge_options` |
 
 Schedules go through the same normalizer and minimum-interval rule a save uses. A calendar
 schedule keeps its current time zone unless the user names one; a new calendar schedule uses the
 request's `time_zone`, and without one the model is told to ask.
+The explicit incomplete-calendar draft path validates all known recurrence fields
+separately before checking unrelated save fields. It inserts no default time into
+the returned candidate. Blank time requires a schedule-time clarification.
 
 `email_tasks` lists the tasks whose instructions send email. The server adds any changed task whose
 instructions mention email, so the email warning doesn't depend on the model remembering.
