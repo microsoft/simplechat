@@ -2,7 +2,7 @@
 # test_workflow_assist_scenarios.py
 """
 Functional test for the AI workflow assistant's end-to-end scenarios.
-Version: 0.261.332
+Version: 0.261.333
 Implemented in: 0.261.208
 
 This test ensures that the assistant turns an instruction into the candidate the roadmap's "Done
@@ -698,7 +698,8 @@ def test_a_reply_cut_off_at_the_token_limit_is_corrected_once():
     result = wa.run(wa.request_body(), bundle)
     assert result["candidate"]["name"] == "Nightly review"
     assert model.envelope(1)["previous_attempt_errors"] == [
-        "The reply was cut off before it ended. Reply with fewer operations or a shorter reply.",
+        "The reply was cut off. Shorten prose, not the requested edits. Return every requested operation; "
+        "if they cannot fit, ask the user to split the request and apply no partial changes.",
     ]
     assert wa.finished_log(bundle)["invalid_stage"] == "length"
 

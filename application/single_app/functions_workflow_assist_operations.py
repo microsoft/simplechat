@@ -50,7 +50,9 @@ from functions_workflow_definitions import WorkflowAlertValidationError, Workflo
 from functions_workflow_document_selection import (
     FILE_TYPES, MAX_RECENT_WINDOW_MINUTES, filter_schema, normalize_document_selection,
 )
+from functions_workflow_merge_schema import workflow_merge_options_schema
 from functions_workflow_schedules import (
+    normalize_workflow_calendar_draft,
     enforce_workflow_schedule_minimum,
     normalize_workflow_schedule,
     workflow_schedule_minimum_applies,
@@ -264,6 +266,9 @@ def action_document_identities(action, user_id):
     """The identities of a ``document_action``'s selected documents, in order and without repeats."""
     if not isinstance(action, dict):
         return []
+    if isinstance(action.get('document_sources'), list):
+        return [(source['scope_type'], source.get('scope_id') or user_id, source['document_id'])
+                for source in action['document_sources']]
     document_ids = action.get('document_ids')
     if not isinstance(document_ids, list):
         return []
@@ -289,7 +294,9 @@ def document_action_mode(action):
         return 'comparison'
     if action_type == 'search':
         document_ids = action.get('document_ids')
-        return 'search_selected' if isinstance(document_ids, list) and document_ids else 'search_relevance'
+        return 'search_selected' if action.get('search_mode') == 'selected' or isinstance(document_ids, list) and document_ids else 'search_relevance'
+    if action_type in ('merge', 'choose'):
+        return action_type
     return 'preserve'
 
 
@@ -318,6 +325,7 @@ def document_action_from_selection(action_type, identities, *, relevance=False, 
         'type': action_type, 'doc_scope': doc_scope, 'active_group_ids': group_ids,
         'active_public_workspace_id': public_ids, 'document_ids': [identity[2] for identity in identities],
         'target_mode': 'selected', 'analysis_mode': analysis_mode,
+        **({'search_mode': 'selected'} if action_type == 'search' else {}),
     }
 
 
@@ -613,6 +621,8 @@ def _document_target_view(task, handles, user_id, changed_files):
             'recent_window_minutes': action.get('recent_window_minutes'), 'workspaces': workspaces,
             'filters': copy.deepcopy(selection.get('filters')) if isinstance(selection, dict) else None,
             'on_empty': selection.get('on_empty') if isinstance(selection, dict) else 'error',
+            'time_basis': selection.get('time_basis', 'added_or_updated') if isinstance(selection, dict) else 'added_or_updated',
+            **{key: action[key] for key in ('merge_kind', 'output_format', 'output_file_name', 'merge_options') if key in action},
             'analysis_mode': action.get('analysis_mode', 'combined'), 'editable': all(workspaces) if scopes else True,
         }
     mode = document_action_mode(action)
@@ -641,11 +651,14 @@ def _document_target_view(task, handles, user_id, changed_files):
             'right': _document_handles(handles, right),
         }
     if mode == 'search_relevance':
-        return {'action': 'search', 'search_mode': 'relevance', 'analysis_mode': analysis_mode}
+        return {'action': 'search', 'search_mode': 'relevance', 'analysis_mode': analysis_mode,
+                'workspaces': [handles.workspace_handles.get((source['scope_type'], source.get('scope_id') or ''))
+                               for source in action.get('relevance_scopes', [])]}
     view = {
-        'action': 'analyze' if mode == 'analyze' else 'search',
+        'action': mode if mode in ('analyze', 'merge', 'choose') else 'search',
         'documents': _document_handles(handles, identities),
         'analysis_mode': analysis_mode,
+        **{key: action[key] for key in ('target_mode', 'merge_kind', 'output_format', 'output_file_name', 'merge_options') if key in action},
     }
     if mode == 'search_selected':
         view['search_mode'] = 'selected'
@@ -785,7 +798,7 @@ def build_options_view(handles):
         'document_selection': {
             'maximum_window_minutes': MAX_RECENT_WINDOW_MINUTES,
             'file_types': list(FILE_TYPES), 'maximum_conditions': 32, 'maximum_depth': 4,
-            'new_or_updated': True, 'clock': 'Cosmos metadata last modified time',
+            'time_bases': {'added': 'Current record upload_date', 'added_or_updated': 'Cosmos metadata last modified time'},
         },
         'agents': [
             {
@@ -871,7 +884,7 @@ OPERATION_SCHEMAS = {
         'days_of_week': {'type': 'array', 'minItems': 1, 'maxItems': 7, 'uniqueItems': True,
                          'items': {'enum': list(WORKFLOW_SCHEDULE_DAYS)}},
         'day_of_month': {'type': 'integer', 'minimum': 1, 'maximum': 31},
-        'time_of_day': {'type': 'string', 'pattern': TIME_OF_DAY_PATTERN},
+        'time_of_day': {'type': 'string', 'anyOf': [{'pattern': TIME_OF_DAY_PATTERN}, {'const': ''}]},
         'timezone': _str(ASSIST_TIMEZONE_MAX_LENGTH),
     }, ['frequency', 'time_of_day'], [
         _when('frequency', 'weekly', {'required': ['days_of_week'], **_forbid('day_of_month')}),
@@ -945,16 +958,21 @@ OPERATION_SCHEMAS = {
     'unbind_reference': _operation('unbind_reference', {'reference': _handle()}, ['reference']),
     'set_task_document_target': _operation('set_task_document_target', {
         'task': _TASK,
-        'action': {'enum': ['analyze', 'search', 'comparison']},
+        'action': {'enum': ['analyze', 'search', 'comparison', 'merge', 'choose']},
         'documents': _handles(ASSIST_MAX_TARGET_DOCUMENTS),
         'left': _handle(),
         'right': _handles(ASSIST_MAX_TARGET_DOCUMENTS - 1),
         'search_mode': {'enum': ['selected', 'relevance']},
         'analysis_mode': {'enum': ['combined', 'per_document']},
+        'merge_kind': {'enum': ['tabular', 'workbook', 'pdf', 'docx', 'pptx']},
+        'output_format': {'enum': ['csv', 'xlsx', 'pdf', 'docx', 'pptx']},
+        'output_file_name': _str(100),
     }, ['task', 'action'], [
         _when('action', 'comparison', {'required': ['left', 'right'], **_forbid('documents', 'search_mode', 'analysis_mode')}),
         _when('action', 'analyze', {'required': ['documents'], **_forbid('left', 'right', 'search_mode')}),
         _when('action', 'search', _forbid('left', 'right')),
+        _when('action', 'merge', {'required': ['documents', 'merge_kind', 'output_format'], **_forbid('left', 'right', 'search_mode')}),
+        _when('action', 'choose', {'required': ['documents'], **_forbid('left', 'right', 'search_mode')}),
         {'if': {'required': ['action', 'search_mode'], 'properties': {'action': {'const': 'search'}, 'search_mode': {'const': 'relevance'}}},
          'then': _forbid('documents')},
         {'if': {'required': ['action'], 'properties': {'action': {'const': 'search'}},
@@ -962,13 +980,34 @@ OPERATION_SCHEMAS = {
          'then': {'required': ['documents']}},
     ]),
     'clear_task_document_target': _operation('clear_task_document_target', {'task': _TASK}, ['task']),
+    'set_task_document_scope': _operation('set_task_document_scope', {
+        'task': _TASK, 'action': {'enum': ['analyze', 'search', 'merge']},
+        'target_mode': {'enum': ['all', 'relevance', 'changed']},
+        'workspaces': {'type': 'array', 'minItems': 1, 'maxItems': 20, 'uniqueItems': True,
+                       'items': {'type': 'string', 'pattern': '^workspace_[1-9][0-9]*$'}},
+        'merge_kind': {'enum': ['tabular', 'workbook', 'pdf', 'docx', 'pptx']},
+        'output_format': {'enum': ['csv', 'xlsx', 'pdf', 'docx', 'pptx']},
+    }, ['task', 'action', 'target_mode', 'workspaces'], [
+        _when('action', 'search', {'properties': {'target_mode': {'const': 'relevance'}}}),
+        _when('action', 'analyze', {'properties': {'target_mode': {'const': 'all'}}}),
+        _when('action', 'merge', {'required': ['merge_kind', 'output_format'],
+                                'properties': {'target_mode': {'enum': ['all', 'changed']}}}),
+    ]),
+    'set_task_merge_options': _operation('set_task_merge_options', {
+        'task': _TASK, 'merge_options': workflow_merge_options_schema(),
+        'output_file_name': _str(100, min_length=0),
+    }, ['task', 'merge_options']),
     'set_task_document_selection': _operation('set_task_document_selection', {
-        'task': _TASK, 'action': {'enum': ['analyze', 'search', 'comparison']},
+        'task': _TASK, 'action': {'enum': ['analyze', 'search', 'comparison', 'merge', 'choose']},
         'workspaces': {'type': 'array', 'minItems': 1, 'maxItems': 20, 'uniqueItems': True,
                        'items': {'type': 'string', 'pattern': '^workspace_[1-9][0-9]*$'}},
         'recent_window_minutes': {'type': 'integer', 'minimum': 1, 'maximum': MAX_RECENT_WINDOW_MINUTES},
         'filters': filter_schema(), 'on_empty': {'enum': ['report', 'error']},
         'analysis_mode': {'enum': ['combined', 'per_document']},
+        'time_basis': {'enum': ['added', 'added_or_updated']},
+        'merge_kind': {'enum': ['tabular', 'workbook', 'pdf', 'docx', 'pptx']},
+        'output_format': {'enum': ['csv', 'xlsx', 'pdf', 'docx', 'pptx']},
+        'output_file_name': _str(100),
     }, ['task', 'action', 'workspaces', 'recent_window_minutes', 'filters', 'on_empty']),
     'update_task_document_window': _operation('update_task_document_window', {
         'task': _TASK,
@@ -1334,14 +1373,23 @@ class _Applier:
                 raise _OperationError('No time zone is known for this schedule. Ask the user which time zone to use.', 'schedule_invalid')
         frequency = op['frequency']
         days = op.get('days_of_week') or []
-        self._set_schedule({
+        schedule = {
             'kind': 'calendar',
             'frequency': frequency,
             'days_of_week': [day for day in WORKFLOW_SCHEDULE_DAYS if day in days] if frequency == 'weekly' else [],
             'day_of_month': op['day_of_month'] if frequency == 'monthly' else None,
             'time_of_day': op['time_of_day'],
             'timezone': timezone,
-        })
+        }
+        if op['time_of_day'] == '':
+            current = workflow_schedule_for_editor(self.candidate.get('schedule'))
+            if current and current.get('kind') == 'calendar' and current.get('time_of_day'):
+                raise _OperationError('Preserve the existing schedule time unless a replacement time is supplied.')
+            normalize_workflow_calendar_draft(schedule)
+            self._set(self.candidate, 'trigger_type', 'interval')
+            self._set(self.candidate, 'schedule', schedule)
+        else:
+            self._set_schedule(schedule)
 
     # -- alerts ------------------------------------------------------------
 
@@ -1738,6 +1786,15 @@ class _Applier:
                 if identity not in placed:
                     placed.append(identity)
             new_action = document_action_from_selection(action, placed, analysis_mode=analysis_mode)
+            if action in ('merge', 'choose'):
+                new_action.update({
+                    'type': action, 'target_mode': 'selected',
+                    'document_sources': [
+                        {'scope_type': kind, **({'scope_id': scope_id} if kind != 'personal' else {}), 'document_id': identity}
+                        for kind, scope_id, identity in placed
+                    ],
+                    **{key: op[key] for key in ('merge_kind', 'output_format', 'output_file_name') if key in op},
+                })
         if not (isinstance(current, dict) and same_editor_value(current, new_action)):
             task['document_action'] = new_action
             self.touched_tasks.add(task['id'])
@@ -1749,6 +1806,41 @@ class _Applier:
         if document_action_mode(task.get('document_action')) != 'none':
             task['document_action'] = {'type': 'none'}
             self.touched_tasks.add(task['id'])
+
+    def op_set_task_document_scope(self, op):
+        _index, task = self._task(op['task'])
+        self._check_document_target(task)
+        scopes = []
+        for handle in op['workspaces']:
+            resolved = self.handles.resolve(handle)
+            if resolved is None or resolved[0] != 'workspace':
+                raise _OperationError('Choose workspaces from the authorized choices.')
+            scopes.append({key: resolved[1][key] for key in ('scope_type', 'scope_id') if key in resolved[1]})
+        kinds = {scope['scope_type'] for scope in scopes}
+        if op['action'] != 'search' and len(kinds) > 1 and 'personal' not in kinds:
+            raise _OperationError('This all-files mode cannot combine group and public sources without My workspace. Use separate tasks.')
+        task['document_action'] = {
+            'type': op['action'], 'target_mode': 'selected' if op['target_mode'] == 'relevance' else op['target_mode'],
+            'doc_scope': next(iter(kinds)) if len(kinds) == 1 else 'all', 'document_ids': [],
+            'active_group_ids': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'group'],
+            'active_public_workspace_id': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'public'],
+            **({'relevance_scopes': scopes} if op['action'] == 'search' else {}),
+            **{key: op[key] for key in ('merge_kind', 'output_format') if key in op},
+        }
+        self.touched_tasks.add(task['id'])
+
+    def op_set_task_merge_options(self, op):
+        _index, task = self._task(op['task'])
+        action = task.get('document_action') or {}
+        if action.get('type') not in ('merge', 'choose'):
+            raise _OperationError('Set a Merge action or explicit runtime Merge constraints before editing Merge options.')
+        options = copy.deepcopy(op['merge_options'])
+        if 'column_aliases' in options:
+            options['column_aliases'] = {item['column']: item['aliases'] for item in options['column_aliases']}
+        action['merge_options'] = options
+        if 'output_file_name' in op:
+            action['output_file_name'] = op['output_file_name']
+        self.touched_tasks.add(task['id'])
 
     def op_set_task_document_selection(self, op):
         _index, task = self._task(op['task'])
@@ -1763,6 +1855,7 @@ class _Applier:
         try:
             selection = normalize_document_selection({
                 'scopes': scopes, 'filters': op['filters'], 'on_empty': op['on_empty'],
+                **({'time_basis': op['time_basis']} if 'time_basis' in op else {}),
             })
         except ValueError:
             raise _OperationError('Review the document selector values and regular expression.') from None
@@ -1774,6 +1867,7 @@ class _Applier:
             'active_public_workspace_id': [scope['scope_id'] for scope in scopes if scope['scope_type'] == 'public'],
             'recent_window_minutes': op['recent_window_minutes'], 'document_selection': selection,
             'analysis_mode': op.get('analysis_mode', 'combined'),
+            **{key: op[key] for key in ('merge_kind', 'output_format', 'output_file_name') if key in op},
         }
         self.touched_tasks.add(task['id'])
 

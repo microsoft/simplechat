@@ -4,6 +4,7 @@
 import copy
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime, timezone
 import hashlib
 import os
 import time
@@ -27,7 +28,7 @@ _selected_sources = ContextVar('workflow_selected_document_sources', default=Non
 
 
 @contextmanager
-def selected_document_sources(entries, actor):
+def selected_document_sources(entries, actor, *, restrict_ids=False):
     scopes = {}
     for entry in entries:
         document = entry['document']
@@ -39,7 +40,17 @@ def selected_document_sources(entries, actor):
                 'Selected documents share an identifier across workspaces. Choose one of those workspaces for this task.',
             )
         scopes[identity] = scope
-    token = _selected_sources.set((actor, scopes))
+    token = _selected_sources.set((actor, scopes, restrict_ids, None))
+    try:
+        yield
+    finally:
+        _selected_sources.reset(token)
+
+
+@contextmanager
+def selected_workspace_sources(scopes, actor):
+    allowed = {(source['scope_type'], source.get('scope_id') or actor) for source in scopes}
+    token = _selected_sources.set((actor, {}, False, allowed))
     try:
         yield
     finally:
@@ -49,8 +60,12 @@ def selected_document_sources(entries, actor):
 def selected_source_matches(actor, document_id, scope, scope_id=None):
     """Bind native ID-based readers to the exact selected workspace, never cached permission."""
     active = _selected_sources.get()
-    if active is None or active[0] != actor or document_id not in active[1]:
+    if active is None or active[0] != actor:
         return True
+    if active[3] is not None:
+        return (scope, actor if scope == 'personal' else scope_id) in active[3]
+    if document_id not in active[1]:
+        return not active[2]
     expected_scope, expected_id = active[1][document_id]
     return scope == expected_scope and (scope == 'personal' or scope_id == expected_id)
 
@@ -96,8 +111,10 @@ def validate_recent_window(value):
 
 
 def normalize_document_selection(value):
-    if not isinstance(value, dict) or value.keys() - {'scopes', 'filters', 'on_empty'}:
+    if not isinstance(value, dict) or value.keys() - {'scopes', 'filters', 'on_empty', 'time_basis'}:
         raise DocumentSelectionError('document_selection_invalid', 'Review the document selection settings.')
+    if value.get('time_basis', 'added_or_updated') not in ('added', 'added_or_updated'):
+        raise DocumentSelectionError('document_selection_invalid', 'Choose Added or Added or updated.')
     scopes = value.get('scopes')
     if not isinstance(scopes, list) or not 1 <= len(scopes) <= 20:
         raise DocumentSelectionError('document_selection_scope_invalid', 'Choose between 1 and 20 workspaces.')
@@ -187,8 +204,22 @@ class DocumentSelectionMatcher:
                 )
         compile_patterns(self.selection['filters'])
 
-    def matches(self, document):
+    def timestamp(self, document):
         timestamp = document.get('_ts')
+        if self.selection.get('time_basis') == 'added':
+            raw = document.get('upload_date')
+            if not isinstance(raw, str):
+                return None
+            try:
+                uploaded = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                # Historical naive upload metadata was written in UTC, never browser local time.
+                timestamp = uploaded.replace(tzinfo=timezone.utc).timestamp() if uploaded.tzinfo is None else uploaded.timestamp()
+            except (ValueError, OverflowError, OSError):
+                return None
+        return timestamp
+
+    def matches(self, document):
+        timestamp = self.timestamp(document)
         if type(timestamp) not in (int, float) or not self.cutoff <= timestamp <= self.captured_at:
             return False
 
@@ -295,7 +326,7 @@ def resolve_document_selection(workflow, action, settings, *, actor_user_id, lim
             merge_extensions is None or os.path.splitext(str(document.get('file_name') or ''))[1].lower() in merge_extensions
         )
         if matched:
-            timestamps[document.get('id')] = document.get('_ts', 0)
+            timestamps[document.get('id')] = matcher.timestamp(document)
         return matched
 
     capture = {}

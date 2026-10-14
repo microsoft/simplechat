@@ -42,7 +42,7 @@ from functions_m365_workflow_checkpoints import (
     read_m365_task_checkpoint,
     save_m365_task_checkpoint,
 )
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAIError
 from semantic_kernel import Kernel
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
@@ -484,7 +484,15 @@ def _execute_cancelable_workflow_step(workflow, run_id, operation):
             # Legacy steps need no selector context; load the binding only for captured selections.
             from functions_workflow_document_selection import selected_document_sources
 
-            with selected_document_sources(entries, str(workflow.get('user_id') or '').strip()):
+            with selected_document_sources(
+                entries, str(workflow.get('user_id') or '').strip(),
+                restrict_ids=bool((workflow.get('document_action') or {}).get('runtime_choice_resolved')),
+            ):
+                result = operation()
+        elif (workflow.get('document_action') or {}).get('relevance_scopes'):
+            from functions_workflow_document_selection import selected_workspace_sources
+
+            with selected_workspace_sources(workflow['document_action']['relevance_scopes'], workflow['user_id']):
                 result = operation()
         else:
             result = operation()
@@ -7021,6 +7029,7 @@ def _get_document_action_config(workflow):
             settings=settings,
         ),
         allowed_action_types=get_enabled_document_action_types(settings=settings, include_merge=True),
+        allow_runtime_choice=True,
     )
 
 
@@ -7150,6 +7159,11 @@ def _get_workflow_search_max_documents(settings):
 
 
 def _get_recent_workflow_document_limit(action_type, settings):
+    if action_type == 'choose':
+        # Shared with the advisory preview, loaded only when runtime choice is selected.
+        from functions_document_actions import get_workflow_document_selection_limit
+
+        return get_workflow_document_selection_limit(action_type, settings=settings)
     if action_type in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON, DOCUMENT_ACTION_TYPE_MERGE}:
         return get_document_action_max_documents(
             action_type,
@@ -7387,6 +7401,137 @@ def _no_document_selection_result(action):
     }
 
 
+def _resolve_workflow_runtime_choice(workflow, action, settings, run_id, *, allow_model=True):
+    # Workflow-owned selection and decision; never invoke the unrestricted chat planner.
+    from functions_workflow_action_choice import (
+        WorkflowActionChoiceError, apply_choice, choice_digest, choice_messages, parse_choice, retained_choice,
+    )
+    from functions_workflow_loop_inputs import iter_workflow_loop_documents, reauthorize_workflow_loop_document
+
+    execution = current_workflow_execution()
+    check = execution.check if execution is not None else lambda: _raise_if_workflow_run_cancelled(workflow, run_id)
+    task = workflow.get('active_task') or {}
+    snapshots = workflow['_task_document_selection_snapshots']
+
+    def retain(key, operation, inputs):
+        if execution is not None:
+            state = execution.unit(key).get('state')
+            if (not allow_model and state != 'completed') or (
+                key.startswith('document-choice:') and state in {'running', 'failed'}
+            ):
+                raise WorkflowActionChoiceError('workflow_choice_missing', 'The saved document selection or decision is unavailable. Start a new run; this task will not be replanned.')
+            return execution.run_unit(key, operation, inputs=inputs, replay_safe=True)
+        previous = snapshots.get(key)
+        if previous is not None and previous['inputs'] != inputs:
+            raise WorkflowActionChoiceError('workflow_choice_changed', 'Task choice settings changed during this run. Start a new run.')
+        if previous is None:
+            if not allow_model:
+                raise WorkflowActionChoiceError('workflow_choice_missing', 'The saved document selection or decision is unavailable. Start a new run; this task will not be replanned.')
+            # A worker interruption after sending the model request has an unknown outcome.
+            # Keep that visit non-replannable even when it has no completed decision yet.
+            if key.startswith('document-choice:'):
+                snapshots[key] = {'inputs': copy.deepcopy(inputs), 'selection': None}
+                snapshots[key]['selection'] = operation()
+            else:
+                snapshots[key] = {'inputs': copy.deepcopy(inputs), 'selection': operation()}
+        return snapshots[key]['selection']
+
+    check()
+    if action.get('document_selection'):
+        if not allow_model:
+            key = f"document-selection:{task.get('id') or 'task'}"
+            retained = execution.unit(key).get('state') == 'completed' if execution is not None else key in snapshots
+            if not retained:
+                raise WorkflowActionChoiceError('workflow_choice_missing', 'The saved document capture is unavailable. Start a new run.')
+        captured = _resolve_task_document_selection(workflow, action, settings)
+        if captured['selection_summary']['status'] == 'no_matches':
+            return captured, None
+        entries = captured['selection_entries']
+    else:
+        descriptors = action['document_sources']
+        inputs = {'sources': descriptors, 'limit': _get_recent_workflow_document_limit('choose', settings)}
+        entries = retain(
+            f"document-choice-inputs:{task.get('id') or 'task'}",
+            lambda: list(iter_workflow_loop_documents(
+                workflow, {'kind': 'documents', 'documents': descriptors},
+                actor_user_id=workflow['user_id'], max_items=inputs['limit'], settings=settings, check=check,
+            )), inputs,
+        )
+    entries = [reauthorize_workflow_loop_document(workflow, entry, actor_user_id=workflow['user_id'], check=check) for entry in entries]
+    enabled = get_enabled_document_action_types(settings=get_settings(), include_merge=True) - {'none'}
+    goal = task.get('instructions') or workflow.get('task_prompt')
+    inputs = {'goal': goal, 'output_contract': task.get('output_contract'), 'action': action, 'entries': entries}
+    messages = choice_messages(goal, task.get('output_contract'), action, entries, enabled)
+    model_called = False
+
+    def invoke():
+        nonlocal model_called
+        check()
+        model_called = True
+        client, model, _provider = _resolve_model_workflow_client(workflow, settings)
+        parameters = {'model': model, 'messages': messages, 'response_format': {'type': 'json_object'}}
+        if any(marker in str(model).lower() for marker in ('o1', 'o3', 'gpt-5')):
+            parameters['max_completion_tokens'] = 4000
+        else:
+            parameters.update({'max_tokens': 1500, 'temperature': 0})
+        try:
+            response = client.with_options(timeout=45, max_retries=0).chat.completions.create(**parameters)
+        except OpenAIError as exc:
+            log_event('[WORKFLOW_DOCUMENT_ACTION] Runtime selection model failed', extra={
+                'failure_code': type(exc).__name__, 'input_count': len(entries), 'selection_model_call_count': 1,
+            })
+            return {'decision': None, 'decision_digest': choice_digest(None),
+                    'failure_code': 'workflow_choice_model_failed', 'token_usage': {}}
+        check()
+        choices = getattr(response, 'choices', None) or []
+        failure = None
+        decision = None
+        if not choices or choices[0].finish_reason != 'stop' or getattr(choices[0].message, 'refusal', None):
+            failure = 'workflow_choice_model_incomplete'
+        else:
+            try:
+                decision = parse_choice(choices[0].message.content)
+            except WorkflowActionChoiceError:
+                failure = 'workflow_choice_invalid'
+        return {'decision': decision, 'decision_digest': choice_digest(decision),
+                'failure_code': failure, 'token_usage': _extract_token_usage(response) or {}}
+
+    record = retained_choice(inputs, invoke, lambda operation, fields: retain(
+        f"document-choice:{task.get('id') or 'task'}", operation, fields,
+    ))
+    summary = {
+        'action': (record.get('decision') or {}).get('action', 'refuse'),
+        'summary': (record.get('decision') or {}).get('summary', 'No valid document action was selected.'),
+        'input_count': len(entries), 'selection_token_usage': record['token_usage'],
+        **({'reason_code': record['decision']['reason']} if (record.get('decision') or {}).get('action') == 'refuse' else {}),
+    }
+    workflow['_document_action_choice'] = summary
+    if record.get('failure_code'):
+        log_event('[WORKFLOW_DOCUMENT_ACTION] Runtime selection failed', extra={
+            'failure_code': record['failure_code'], 'input_count': len(entries),
+            'selection_model_call_count': int(model_called),
+        })
+        message = ('The action selection model was unavailable. Start a new run; no document action was executed.'
+                   if record['failure_code'] == 'workflow_choice_model_failed' else
+                   'The selection model returned an invalid or incomplete decision. Clarify the task and start a new run; no document action was executed.')
+        raise WorkflowActionChoiceError(record['failure_code'], message)
+    check()
+    # Permissions, source proofs, and live gates may have changed during the model call.
+    entries = [reauthorize_workflow_loop_document(workflow, entry, actor_user_id=workflow['user_id'], check=check) for entry in entries]
+    current_settings = get_settings()
+    enabled = get_enabled_document_action_types(settings=current_settings, include_merge=True) - {'none'}
+    limits = {kind: _get_recent_workflow_document_limit(kind, current_settings) for kind in enabled}
+    try:
+        resolved = apply_choice(action, entries, record['decision'], enabled, limits)
+    except WorkflowActionChoiceError as exc:
+        log_event('[WORKFLOW_DOCUMENT_ACTION] Runtime choice refused', extra={'failure_code': exc.code, 'input_count': len(entries)})
+        raise
+    log_event('[WORKFLOW_DOCUMENT_ACTION] Runtime choice selected', extra={
+        'action_type': summary['action'], 'input_count': len(entries), 'selection_model_call_count': int(model_called),
+    })
+    return resolved, summary
+
+
 def _is_document_search_workflow(action_config):
     return (action_config or {}).get('type') == DOCUMENT_ACTION_TYPE_SEARCH
 
@@ -7548,7 +7693,8 @@ def _prepare_workflow_search_context(
 
     resolved_action = _resolve_recent_document_action_targets(workflow, action_config, settings)
     document_ids = normalize_search_id_list(resolved_action.get('document_ids'))
-    if resolved_action.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT and not document_ids:
+    relevance_scopes = resolved_action.get('relevance_scopes')
+    if resolved_action.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT and not document_ids and not relevance_scopes:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
     # Prefer the task's own instructions. task_prompt also carries injected File Sync context and
@@ -7579,17 +7725,36 @@ def _prepare_workflow_search_context(
     scoped_action['active_group_ids'] = manifest_group_ids
     scoped_action['active_public_workspace_id'] = manifest_public_workspace_ids
 
-    if not is_mixed_source_chat_search_enabled(settings):
+    if relevance_scopes or not is_mixed_source_chat_search_enabled(settings):
         search_top_n = normalize_search_top_n(max(50, len(document_ids) * 3 if document_ids else 50))
-        search_result = search_documents(
-            query=query,
-            user_id=user_id,
-            top_n=search_top_n,
-            doc_scope=manifest_doc_scope,
-            document_ids=document_ids,
-            active_group_ids=manifest_group_ids,
-            active_public_workspace_id=manifest_public_workspace_ids,
-        )
+        if relevance_scopes:
+            # Unlike doc_scope=all, this union never implicitly adds the personal workspace.
+            from functions_workflow_loop_inputs import _authorize, _scope
+
+            execution = current_workflow_execution()
+            rows = []
+            for source in relevance_scopes:
+                _authorize(_scope(workflow, source, user_id), user_id, None, execution.check if execution is not None else None)
+                page = search_documents(
+                    query=query, user_id=user_id, top_n=search_top_n, doc_scope=source['scope_type'],
+                    active_group_ids=[source['scope_id']] if source['scope_type'] == 'group' else [],
+                    active_public_workspace_id=[source['scope_id']] if source['scope_type'] == 'public' else [],
+                )
+                rows.extend(page.get('results') or [])
+            rows.sort(key=lambda row: row.get('score') or 0, reverse=True)
+            rows = rows[:search_top_n]
+            search_result = {'results': rows, 'result_count': len(rows),
+                             'document_count': len({row.get('document_id') for row in rows}), 'query': query}
+        else:
+            search_result = search_documents(
+                query=query,
+                user_id=user_id,
+                top_n=search_top_n,
+                doc_scope=manifest_doc_scope,
+                document_ids=document_ids,
+                active_group_ids=manifest_group_ids,
+                active_public_workspace_id=manifest_public_workspace_ids,
+            )
         retrieved_content, citations = _format_workflow_search_results(search_result.get('results') or [])
         prepared_workflow = _apply_runtime_document_action_config(workflow, scoped_action)
         prepared_workflow['task_prompt'] = _build_workflow_search_prompt(workflow.get('task_prompt', ''), {
@@ -10223,11 +10388,12 @@ def _execute_document_merge_workflow(
     activity_key = f"file-merge:{run_id}:{task.get('id') or 'task'}"
 
     def collect(action, extensions, max_documents):
-        if action.get('document_selection'):
+        if action.get('document_selection') or action.get('selection_entries'):
             # The snapshot reader is only needed for a guided Merge.
             from functions_workflow_loop_inputs import reauthorize_workflow_loop_document
 
-            resolved = _resolve_task_document_selection(workflow, action, settings)
+            captured_action = action_config if action_config.get('selection_entries') else action
+            resolved = captured_action if captured_action.get('selection_entries') else _resolve_task_document_selection(workflow, captured_action, settings)
             execution = current_workflow_execution()
             documents = [
                 reauthorize_workflow_loop_document(
@@ -10961,7 +11127,23 @@ def _execute_workflow_dispatch(
             )
     document_action = _get_document_action_config(execution_workflow)
     selection_summary = None
-    if document_action.get('document_selection'):
+    choice_summary = None
+    if document_action.get('type') == 'choose':
+        document_action, choice_summary = _resolve_workflow_runtime_choice(execution_workflow, document_action, settings, run_id)
+        if (document_action.get('selection_summary') or {}).get('status') == 'no_matches':
+            return _no_document_selection_result(document_action)
+        if document_action['type'] == DOCUMENT_ACTION_TYPE_ANALYZE and not execution_workflow.get('_analysis_checkpoints'):
+            task = execution_workflow.get('active_task') or {}
+            execution_workflow['_analysis_checkpoints'] = _prepare_workflow_analysis_checkpoints(
+                execution_workflow, run_id, task.get('id'), execution_workflow['user_id'], settings,
+            )
+        execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
+        # Runtime selection grants only a document action, never agent tools or URL access.
+        execution_workflow['runner_type'] = 'model'
+        execution_workflow['chat_capabilities_enabled'] = False
+        execution_workflow['allow_url_access'] = False
+        url_access_context = {}
+    elif document_action.get('document_selection'):
         document_action = _resolve_task_document_selection(execution_workflow, document_action, settings)
         if document_action['selection_summary']['status'] == 'no_matches':
             return _no_document_selection_result(document_action)
@@ -11061,6 +11243,12 @@ def _execute_workflow_dispatch(
         execution_result['agent_alert_signals'] = get_workflow_alert_signals()[prior_signal_count:]
     if selection_summary:
         execution_result['selection_summary'] = selection_summary
+    if choice_summary:
+        execution_result['document_action_choice'] = choice_summary
+        aggregate = _create_token_usage_aggregate()
+        _accumulate_token_usage_summary(aggregate, execution_result.get('token_usage') or {})
+        _accumulate_token_usage_summary(aggregate, choice_summary['selection_token_usage'])
+        execution_result['token_usage'] = _finalize_token_usage(aggregate)
     return execution_result
 
 
@@ -11277,6 +11465,16 @@ def _execute_workflow_task_sequence(
                     'The saved workflow task checkpoint has no complete task result.'
                 )
             saved_result = completed_task['result']
+            if (task.get('document_action') or (
+                resolved_workflow.get('document_action') if task_index == 0 and not structured_definition else {}
+            ) or {}).get('type') == 'choose':
+                saved_action = _resolve_workflow_task_document_action(
+                    resolved_workflow, task, include_document_action=task_index == 0 and not structured_definition,
+                )
+                _resolve_workflow_runtime_choice(
+                    {**resolved_workflow, 'active_task': task, '_task_document_selection_snapshots': {}},
+                    saved_action, settings, run_id, allow_model=False,
+                )
             summary = saved_result.get('workflow_result') or {}
             checkpoint_ref = summary.get('result_ref')
             if checkpoint_ref:
@@ -11528,6 +11726,18 @@ def _execute_workflow_task_sequence(
                     consumed_inputs=consumed_inputs,
                 )
                 task_stage = 'execution'
+                if (
+                    durable is not None and (attempt_workflow.get('document_action') or {}).get('type') == 'choose'
+                    and durable.unit(task_unit_key).get('state') == 'completed'
+                ):
+                    replay_action, _summary = _resolve_workflow_runtime_choice(
+                        attempt_workflow, _get_document_action_config(attempt_workflow), settings, run_id, allow_model=False,
+                    )
+                    if replay_action['type'] == DOCUMENT_ACTION_TYPE_ANALYZE:
+                        analysis_checkpoints = _prepare_workflow_analysis_checkpoints(
+                            workflow, run_id, task_id, actor_id, settings,
+                        )
+                        attempt_workflow['_analysis_checkpoints'] = analysis_checkpoints
                 operation_inputs = {
                     'task': task, 'prompt': attempt_workflow['task_prompt'],
                     'consumed_inputs': consumed_inputs, 'references': reference_sources,
@@ -11540,7 +11750,7 @@ def _execute_workflow_task_sequence(
                     attempt_workflow.get('runner_type') == 'model'
                     and not attempt_workflow.get('chat_capabilities_enabled')
                     and (attempt_workflow.get('document_action') or {}).get('type') in {None, 'none'}
-                ) or (attempt_workflow.get('document_action') or {}).get('type') == 'merge'
+                ) or (attempt_workflow.get('document_action') or {}).get('type') in {'merge', 'choose'}
                 def dispatch_task():
                     nonlocal analysis_checkpoints
                     if structured_definition:
@@ -11560,6 +11770,12 @@ def _execute_workflow_task_sequence(
                         if flow_runner and (flow_runner.has_loops or task.get('input_processing') == 'saved_record_report'):
                             durable.pause_input(str(exc), code='workflow_context_limit')
                         raise
+                    finally:
+                        analysis_checkpoints = attempt_workflow.get('_analysis_checkpoints', analysis_checkpoints)
+                        if structured_definition and attempt_workflow.get('_document_action_choice'):
+                            durable.record_execution(workflow_result={
+                                'document_action_choice': attempt_workflow['_document_action_choice'],
+                            })
 
                 with m365_workflow_task_context(m365_task_key), workflow_context_budget_scope(attempt_workflow):
                     task_result = workflow_unit(
@@ -11922,12 +12138,17 @@ def _execute_workflow_task_sequence(
             runner_audit=runner_audit,
             context_budget=(attempt_workflow or {}).get('context_budget'),
             consumed_inputs=(attempt_workflow or {}).get('consumed_inputs'),
+            result_summary=({'document_action_choice': attempt_workflow['_document_action_choice']}
+                            if (attempt_workflow or {}).get('_document_action_choice') else None),
+            token_usage=((attempt_workflow or {}).get('_document_action_choice') or {}).get('selection_token_usage'),
         )
         task_results.append({
             'task': task,
             'status': 'failed',
             'attempt_count': attempt_count,
-            'result': {},
+            'result': ({'document_action_choice': attempt_workflow['_document_action_choice'],
+                        'token_usage': attempt_workflow['_document_action_choice']['selection_token_usage']}
+                       if (attempt_workflow or {}).get('_document_action_choice') else {}),
             'error': task_error,
             'runner': runner_audit,
             'consumed_inputs': (attempt_workflow or {}).get('consumed_inputs') or [],

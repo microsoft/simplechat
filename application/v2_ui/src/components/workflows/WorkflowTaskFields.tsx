@@ -7,6 +7,7 @@ import { GlassButton, Toggle } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowDocumentSelection } from './WorkflowDocumentSelection';
+import { WorkflowWorkspacePicker } from './WorkflowWorkspacePicker';
 import { defaultDocumentSelection } from '../../lib/workflowDocumentSelection';
 import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
@@ -733,6 +734,11 @@ function TaskApprovalFields({
 }
 
 function evidenceFromAction(action: WorkflowDocumentAction | undefined): WorkflowReferenceInput[] {
+    if (action?.type === 'choose' && action.document_sources) return action.document_sources.map((source) => ({
+        id: `${source.scope_type}:${source.scope_id ?? ''}:${source.document_id}`,
+        name: safeWorkflowAlias(source.document_id, 'evidence'), document_id: source.document_id,
+        scope_type: source.scope_type, scope_id: source.scope_id ?? '',
+    }));
     const ids = Array.isArray(action?.document_ids)
         ? action.document_ids.filter((item): item is string => typeof item === 'string' && Boolean(item))
         : [];
@@ -757,6 +763,7 @@ function actionMode(action: WorkflowDocumentAction | undefined): string {
     if (!action || action.type === 'none') {
         return 'none';
     }
+    if (action.type === 'choose') return action.target_mode === 'recent' ? 'choose_recent' : 'choose';
     if (action.target_mode === 'recent' && action.type !== 'merge') return `${action.type}_recent`;
     if (action.type === 'analyze') {
         return action.target_mode === 'current_item' ? 'current_item' : 'analyze';
@@ -768,7 +775,7 @@ function actionMode(action: WorkflowDocumentAction | undefined): string {
         return 'merge';
     }
     if (action.type === 'search') {
-        return Array.isArray(action.document_ids) && action.document_ids.length
+        return action.search_mode === 'selected' || Array.isArray(action.document_ids) && action.document_ids.length
             ? 'search_selected'
             : 'search_relevance';
     }
@@ -863,6 +870,7 @@ function MergeActionFields({
     evidence,
     changedFileTargets,
     maxSelectedDocuments,
+    hideSource = false,
     onActionChange,
     onEvidenceChange,
 }: {
@@ -870,6 +878,7 @@ function MergeActionFields({
     evidence: WorkflowReferenceInput[];
     changedFileTargets: boolean;
     maxSelectedDocuments?: number;
+    hideSource?: boolean;
     onActionChange: (updates: {
         mergeKind?: WorkflowMergeKind;
         targetMode?: WorkflowMergeTargetMode;
@@ -925,7 +934,7 @@ function MergeActionFields({
                     </select>
                     <span className="mt-1 block text-xs text-text-3">Inputs: {WORKFLOW_MERGE_KIND_INPUTS[kind]}</span>
                 </label>
-                <label className="text-sm text-text-2">
+                {!hideSource ? <label className="text-sm text-text-2">
                     Files to merge
                     <select
                         className={`${inputClass} mt-1`}
@@ -943,7 +952,7 @@ function MergeActionFields({
                     <span className="mt-1 block text-xs text-text-3">
                         Selected files keep your order. Other choices merge every matching file, ordered by file name.
                     </span>
-                </label>
+                </label> : null}
             </div>
             {targetMode === 'recent' && !action?.document_selection ? (
                 <label className="block text-sm text-text-2">
@@ -1252,6 +1261,7 @@ function DocumentActionFields({
     const [evidence, setEvidence] = useState(() => evidenceFromAction(task.document_action));
     const [analysisMode, setAnalysisMode] = useState<'combined' | 'per_document'>(() =>
         task.document_action?.analysis_mode === 'per_document' ? 'per_document' : 'combined');
+    const [sourceError, setSourceError] = useState('');
     useEffect(() => {
         setMode(actionMode(task.document_action));
         setEvidence((current) => evidenceFromAction(task.document_action).map((reference) =>
@@ -1267,7 +1277,7 @@ function DocumentActionFields({
         ? { scope_type: 'group', scope_id: scope.groupId } : { scope_type: 'personal' });
 
     const currentMergeActionOptions = (): WorkflowMergeActionOptions => {
-        const action = task.document_action?.type === 'merge' ? task.document_action : undefined;
+        const action = ['merge', 'choose'].includes(task.document_action?.type ?? '') ? task.document_action : undefined;
         const kind = mergeKind(action);
         return {
             mergeKind: kind,
@@ -1291,9 +1301,14 @@ function DocumentActionFields({
         nextRight = comparison.right,
     ) => {
         if (nextMode.endsWith('_recent')) {
-            const type = nextMode === 'search_recent' ? 'search' : nextMode === 'comparison_recent' ? 'comparison' : 'analyze';
+            const type = nextMode === 'search_recent' ? 'search' : nextMode === 'comparison_recent' ? 'comparison'
+                : nextMode === 'choose_recent' ? 'choose' : 'analyze';
             onChange({ ...task, document_action: {
-                ...(task.document_action?.document_selection ? task.document_action : {}),
+                ...(['merge', 'choose'].includes(type) ? Object.fromEntries(Object.entries(task.document_action ?? {})
+                    .filter(([key]) => ['merge_kind', 'output_format', 'output_file_name', 'merge_options'].includes(key))) : {}),
+                doc_scope: task.document_action?.doc_scope ?? 'all',
+                active_group_ids: task.document_action?.active_group_ids ?? [],
+                active_public_workspace_id: task.document_action?.active_public_workspace_id ?? [],
                 type, target_mode: 'recent', document_ids: [], analysis_mode: nextAnalysisMode,
                 recent_window_minutes: task.document_action?.recent_window_minutes ?? 60,
                 document_selection: task.document_action?.document_selection ?? newSelection(),
@@ -1301,7 +1316,10 @@ function DocumentActionFields({
         } else if (nextMode === 'none') {
             onChange({ ...task, document_action: { type: 'none' } });
         } else if (nextMode === 'search_relevance') {
-            onChange({ ...task, document_action: documentActionFromSelection('search', [], { mode: 'relevance', analysisMode: nextAnalysisMode }) });
+            onChange({ ...task, document_action: {
+                ...documentActionFromSelection('search', [], { mode: 'relevance', analysisMode: nextAnalysisMode }),
+                relevance_scopes: task.document_action?.relevance_scopes ?? task.document_action?.document_selection?.scopes ?? newSelection().scopes,
+            } });
         } else if (nextMode === 'search_selected') {
             onChange({ ...task, document_action: documentActionFromSelection('search', nextEvidence, { mode: 'selected', analysisMode: nextAnalysisMode }) });
         } else if (nextMode === 'analyze') {
@@ -1312,6 +1330,17 @@ function DocumentActionFields({
             onChange({ ...task, document_action: { type: 'analyze', target_mode: 'current_item', loop_id: loopId, analysis_mode: 'combined' } });
         } else if (nextMode === 'comparison') {
             onChange({ ...task, document_action: comparisonActionFromSelection(nextLeft, nextRight) });
+        } else if (nextMode === 'choose') {
+            const selected = documentActionFromSelection('analyze', nextEvidence);
+            onChange({ ...task, document_action: {
+                ...selected, type: 'choose',
+                ...Object.fromEntries(Object.entries(task.document_action ?? {}).filter(([key]) =>
+                    ['merge_kind', 'output_format', 'output_file_name', 'merge_options'].includes(key))),
+                document_sources: nextEvidence.map((item) => ({
+                    scope_type: item.scope_type, ...(item.scope_type !== 'personal' ? { scope_id: item.scope_id } : {}),
+                    document_id: item.document_id,
+                })),
+            } });
         } else if (nextMode === 'merge') {
             onChange({ ...task, document_action: workflowMergeActionFromSelection(nextEvidence, currentMergeActionOptions()) });
         }
@@ -1357,38 +1386,144 @@ function DocumentActionFields({
     };
 
     const mergeNeedsSelectedEvidence = mode === 'merge' && mergeTargetMode(task.document_action) === 'selected';
-    const needsSelectedEvidence = ['analyze', 'search_selected', 'comparison'].includes(mode) || mergeNeedsSelectedEvidence;
+    const needsSelectedEvidence = (['analyze', 'search_selected', 'comparison', 'choose'].includes(mode) &&
+        task.document_action?.target_mode !== 'all') || mergeNeedsSelectedEvidence;
     const syncedAnalyzeTargets = mode === 'analyze' && changedFileTargets && evidence.length === 0;
     const missingEvidence = needsSelectedEvidence && evidence.length === 0 && !syncedAnalyzeTargets;
     const missingComparison = mode === 'comparison' && (!comparison.left || comparison.right.length === 0);
+    const concreteAction = mode === 'none' || mode === 'merge' || mode === 'preserve' ? mode
+        : mode.startsWith('choose') ? 'choose' : mode.startsWith('search') ? 'search'
+        : mode.startsWith('comparison') ? 'comparison' : 'analyze';
+    const sourceMode = mode === 'current_item' ? 'current_item' : mode === 'search_relevance' ? 'relevance'
+        : task.document_action?.target_mode ?? 'selected';
+    const selectSource = (source: string, action = concreteAction) => {
+        setSourceError('');
+        let allScope: WorkflowMergeActionOptions = {};
+        if (source === 'all') {
+            const sources = task.document_action?.document_selection?.scopes ?? evidence;
+            const kinds = new Set(sources.map((item) => item.scope_type));
+            if (kinds.size > 1 && !kinds.has('personal')) {
+                setSourceError('All-files mode cannot combine only group and public workspaces. Keep recent criteria or selected documents; no sources were changed.');
+                return;
+            }
+            if (sources.length) {
+                allScope = {
+                    docScope: kinds.size === 1 ? sources[0].scope_type : 'all',
+                    activeGroupIds: [...new Set(sources.flatMap((item) => item.scope_type === 'group' && item.scope_id ? [item.scope_id] : []))],
+                    activePublicWorkspaceIds: [...new Set(sources.flatMap((item) => item.scope_type === 'public' && item.scope_id ? [item.scope_id] : []))],
+                };
+            }
+        }
+        if (action === 'merge') {
+            updateMergeAction(evidence, { ...allScope, targetMode: source as WorkflowMergeTargetMode });
+            setMode('merge');
+        } else if (source === 'all' && action === 'analyze') {
+            onChange({ ...task, document_action: { type: 'analyze', target_mode: 'all',
+                doc_scope: allScope.docScope ?? task.document_action?.doc_scope ?? 'all',
+                active_group_ids: allScope.activeGroupIds ?? task.document_action?.active_group_ids ?? [],
+                active_public_workspace_id: allScope.activePublicWorkspaceIds ?? task.document_action?.active_public_workspace_id ?? [] } });
+            setMode('analyze');
+        } else {
+            const next = source === 'current_item' ? 'current_item' : source === 'recent' ? `${action}_recent`
+                : action === 'search' ? source === 'relevance' ? 'search_relevance' : 'search_selected' : action;
+            setMode(next);
+            writeAction(next);
+        }
+    };
+    const descriptions: Record<string, string> = {
+        analyze: 'Read the documents for a full review or summary.',
+        search: 'Retrieve relevant passages. Search does not promise complete document coverage.',
+        comparison: 'Evaluate differences between a source document and its targets.',
+        merge: 'Assemble compatible files into one output file.',
+        choose: 'Choose one supported action from this task’s goal and captured documents at run time. Missing or ambiguous details fail the task under its error policy. This adds a selection-model call, even when it chooses Merge.',
+    };
 
     return (
-        <div className="space-y-3">
+        <section className="min-w-0 space-y-3" aria-label={`Documents for ${task.name || 'task'}`}>
+            <h3 className="text-sm font-semibold text-text-1">Documents</h3>
             <label className="text-sm text-text-2">
                 Document action
                 <select
                     className={`${inputClass} mt-1`}
                     aria-label="Document action"
-                    value={mode}
+                    value={concreteAction}
                     onChange={(event) => {
+                        setSourceError('');
                         const nextMode = event.target.value;
-                        setMode(nextMode);
-                        writeAction(nextMode);
+                        if (nextMode === 'none') { setMode('none'); writeAction('none'); }
+                        else selectSource(['recent', 'selected'].includes(sourceMode) ? sourceMode : 'selected', nextMode);
                     }}
                 >
                     <option value="none">No document action</option>
-                    <option value="analyze">Analyze selected evidence</option>
-                    <option value="analyze_recent">Analyze recent documents</option>
-                    {loops.length || mode === 'current_item' ? <option value="current_item">Analyze current loop document</option> : null}
-                    <option value="search_selected">Search selected evidence</option>
-                    <option value="search_recent">Search recent documents</option>
-                    <option value="search_relevance">Search by relevance</option>
-                    <option value="comparison">Compare source and target documents</option>
-                    <option value="comparison_recent">Compare recent documents</option>
-                    {mergeEnabled || mode === 'merge' ? <option value="merge">Merge files</option> : null}
+                    <option value="analyze">Analyze</option>
+                    <option value="search">Search</option>
+                    <option value="comparison">Compare</option>
+                    {mergeEnabled || mode === 'merge' ? <option value="merge">Merge</option> : null}
+                    <option value="choose">Choose at run time</option>
                     {mode === 'preserve' ? <option value="preserve">Existing advanced action (preserved)</option> : null}
                 </select>
             </label>
+            {descriptions[concreteAction] ? <p className="max-w-[72ch] text-sm leading-relaxed text-text-2">{descriptions[concreteAction]}</p> : null}
+            {!['none', 'preserve'].includes(concreteAction) ? <label className="block text-sm text-text-2">
+                Document source
+                <select aria-label="Document source" className={`${inputClass} mt-1`} value={sourceMode} onChange={(event) => selectSource(event.target.value)}>
+                    <option value="selected">Selected documents</option>
+                    <option value="recent">Recent documents by criteria</option>
+                    {concreteAction === 'search' ? <option value="relevance">Relevant content across authorized workspaces (no time filter)</option> : null}
+                    {concreteAction === 'analyze' || concreteAction === 'merge' ? <option value="all">All matching files in scope</option> : null}
+                    {concreteAction === 'analyze' && (loops.length || mode === 'current_item')
+                        ? <option value="current_item">Current loop document</option> : null}
+                    {concreteAction === 'merge' && (changedFileTargets || sourceMode === 'changed')
+                        ? <option value="changed">Files changed by File Sync</option> : null}
+                </select>
+            </label> : null}
+            {!['none', 'preserve'].includes(concreteAction) ? <p className="text-xs text-text-3">
+                Changing the source mode replaces its document IDs or criteria. Compatible recent filters are retained when changing only the action.
+            </p> : null}
+            {sourceError ? <p role="alert" className="text-sm text-danger">{sourceError}</p> : null}
+            {sourceMode === 'all' ? <p className="text-sm text-text-2">
+                All eligible files in: {scope.type === 'group' ? 'this group' : [
+                    ...(['all', 'personal'].includes(task.document_action?.doc_scope ?? 'all') ? ['My workspace'] : []),
+                    ...(task.document_action?.active_group_ids ?? []).map((id) =>
+                        options.document_workspaces?.find((item) => item.scope_type === 'group' && item.scope_id === id)?.name ?? 'Unavailable group'),
+                    ...(task.document_action?.active_public_workspace_id ?? []).map((id) =>
+                        options.document_workspaces?.find((item) => item.scope_type === 'public' && item.scope_id === id)?.name ?? 'Unavailable public workspace'),
+                ].join(', ') || 'no workspaces configured'}. The input limit is checked before processing.
+            </p> : null}
+            {concreteAction === 'choose' ? <details className="workflow-disclosure">
+                <summary>Optional runtime Merge output constraints</summary>
+                <div className="workflow-disclosure-body space-y-3">
+                    <p className="text-sm text-text-2">Without explicit output settings, runtime choice refuses a Merge goal rather than guessing.</p>
+                    <label className="block text-sm text-text-2">Runtime Merge type
+                        <select aria-label="Runtime Merge type" className={`${inputClass} mt-1`} value={task.document_action?.merge_kind ?? ''}
+                            onChange={(event) => {
+                                const action = { ...task.document_action, type: 'choose' as const };
+                                if (!event.target.value) {
+                                    delete action.merge_kind; delete action.output_format;
+                                    delete action.output_file_name; delete action.merge_options;
+                                } else {
+                                    action.merge_kind = event.target.value as WorkflowMergeKind;
+                                    action.output_format = mergeOutputFormat(action, action.merge_kind);
+                                    action.merge_options = {};
+                                }
+                                onChange({ ...task, document_action: action });
+                            }}>
+                            <option value="">Not specified</option>
+                            {WORKFLOW_MERGE_KINDS_AVAILABLE.map((kind) => <option key={kind} value={kind}>{WORKFLOW_MERGE_KIND_LABELS[kind]}</option>)}
+                        </select>
+                    </label>
+                    {task.document_action?.merge_kind ? <label className="block text-sm text-text-2">Runtime Merge output format
+                        <select aria-label="Runtime Merge output format" className={`${inputClass} mt-1`} value={task.document_action.output_format ?? ''}
+                            onChange={(event) => onChange({ ...task, document_action: {
+                                ...task.document_action, type: 'choose', output_format: event.target.value as WorkflowMergeOutputFormat,
+                            } })}>
+                            {(task.document_action.merge_kind === 'tabular' ? ['csv', 'xlsx']
+                                : [task.document_action.merge_kind === 'workbook' ? 'xlsx' : task.document_action.merge_kind])
+                                .map((format) => <option key={format} value={format}>{format.toUpperCase()}</option>)}
+                        </select>
+                    </label> : null}
+                </div>
+            </details> : null}
             {mode === 'merge' && !mergeEnabled ? (
                 <p role="alert" className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
                     File merging is turned off by an administrator, so this workflow can't be saved with a
@@ -1415,7 +1550,7 @@ function DocumentActionFields({
                     <span className="mt-1 block text-xs text-text-3">Analyzes only this visit's authorized frozen document, with combined analysis. It never repeats the whole selection or trusts a record's document ID.</span>
                 </label>
             ) : null}
-            {mode !== 'none' && mode !== 'preserve' && mode !== 'current_item' && mode !== 'merge' ? (
+            {concreteAction === 'analyze' && mode !== 'current_item' ? (
                 <label className="text-sm text-text-2">
                     Analysis mode
                     <select
@@ -1425,7 +1560,9 @@ function DocumentActionFields({
                         onChange={(event) => {
                             const next = event.target.value === 'per_document' ? 'per_document' : 'combined';
                             setAnalysisMode(next);
-                            writeAction(mode, evidence, next);
+                            if (task.document_action?.target_mode === 'all') {
+                                onChange({ ...task, document_action: { ...task.document_action, analysis_mode: next } });
+                            } else writeAction(mode, evidence, next);
                         }}
                     >
                         <option value="combined">Combined</option>
@@ -1434,10 +1571,19 @@ function DocumentActionFields({
                 </label>
             ) : null}
             {mode === 'search_relevance' ? (
-                <p className="rounded-xl border border-edge p-3 text-xs text-text-3">
-                    Search by relevance lets the runner choose matching documents from the
-                    authorized scope. No fixed document IDs are posted.
-                </p>
+                <div className="space-y-3">
+                    <p className="rounded-xl border border-edge p-3 text-xs text-text-3">
+                        Search retrieves relevant passages without a time filter. It does not read every file.
+                        {task.document_action?.relevance_scopes ? ' Only the chosen workspaces are searched.'
+                            : ' This existing task uses its saved broad authorized scope; add workspaces to narrow it.'}
+                    </p>
+                    <WorkflowWorkspacePicker
+                        workspaces={options.document_workspaces ?? [{ ...newSelection().scopes[0], name: scope.type === 'group' ? 'This group' : 'My workspace' }]}
+                        selected={task.document_action?.relevance_scopes ?? []}
+                        onChange={(relevance_scopes) => onChange({ ...task, document_action: {
+                            ...task.document_action, type: 'search', relevance_scopes,
+                        } })} />
+                </div>
             ) : null}
             {needsSelectedEvidence ? (
                 <WorkflowDocumentPicker
@@ -1468,6 +1614,7 @@ function DocumentActionFields({
                     evidence={evidence}
                     changedFileTargets={changedFileTargets}
                     maxSelectedDocuments={maxMergeDocuments}
+                    hideSource
                     onEvidenceChange={(references) => {
                         setEvidence(references);
                         updateMergeAction(references, {});
@@ -1528,7 +1675,7 @@ function DocumentActionFields({
             {missingComparison ? (
                 <p role="alert" className="text-xs text-danger">Choose one source and at least one target document for comparison.</p>
             ) : null}
-        </div>
+        </section>
     );
 }
 
@@ -1696,6 +1843,11 @@ export function WorkflowTaskFields({
                     ) : null}
                 </WorkflowChangedField>
             ) : null}
+            {!task.publication ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'document_action')}>
+                <DocumentActionFields scope={scope} task={task} onChange={onChange} options={options}
+                    changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow)}
+                    loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} />
+            </WorkflowChangedField> : null}
             <details className="workflow-disclosure">
                 <summary><ChevronRight size={14} aria-hidden="true" className="workflow-disclosure-chevron" />Runner, inputs, references and outputs</summary>
                 <div className="workflow-disclosure-body space-y-5">
@@ -1718,11 +1870,6 @@ export function WorkflowTaskFields({
                         onChange={onChange}
                     />
                     </WorkflowChangedField>
-                    {!task.publication ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'document_action')}>
-                        <DocumentActionFields scope={scope} task={task} onChange={onChange} options={options}
-                        changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow)}
-                        loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} />
-                    </WorkflowChangedField> : null}
                     <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'inputs')}>
                     {structuredNode ? (
                         <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}
