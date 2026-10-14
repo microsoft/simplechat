@@ -71,6 +71,7 @@ from functions_tabular_analysis import (
     orchestrate_tabular_request as _shared_orchestrate_tabular_request,
     queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
+from functions_tabular_model_diagnostics import close_tabular_model_http_client
 from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
@@ -12239,6 +12240,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
+    chat_service = None
     try:
         plugin_logger = get_plugin_logger()
         execution_mode = execution_mode if execution_mode in {
@@ -13325,6 +13327,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
     except Exception as e:
         log_event(f"[TABULAR_SK_ANALYSIS] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
+    finally:
+        await close_tabular_model_http_client(chat_service)
 
 def _build_tabular_sk_citations_from_invocations(plugin_invocations):
     """Convert selected tabular invocations to the existing tool-citation shape."""
