@@ -79,6 +79,8 @@ export interface AssistThreadProps {
     className?: string;
     logClassName?: string;
     composerClassName?: string;
+    /** Optional in-memory reading position for an editor returning from a setup detour. */
+    logPosition?: { scrollTop: number };
 }
 
 /** Seconds since a request started. Hidden from assistive technology so it is not read out every second. */
@@ -149,11 +151,13 @@ export function AssistThread({
     className,
     logClassName,
     composerClassName,
+    logPosition,
 }: AssistThreadProps) {
     const id = useId();
     const counterId = `${id}-counter`;
     const limitId = `${id}-limit`;
     const logRef = useRef<HTMLDivElement>(null);
+    const firstLogRender = useRef(true);
     const { exchanges, pending } = thread;
     const inputDisabled = disabled || !thread.key;
     const canSubmit = !inputDisabled && !busy && !pending && !thread.overLimit
@@ -170,7 +174,8 @@ export function AssistThread({
     useEffect(() => {
         const log = logRef.current;
         if (log) {
-            log.scrollTop = log.scrollHeight;
+            log.scrollTop = firstLogRender.current && logPosition ? logPosition.scrollTop : log.scrollHeight;
+            firstLogRender.current = false;
         }
     }, [turns.length, exchanges.length, pending?.id]);
 
@@ -261,6 +266,7 @@ export function AssistThread({
         <div className={clsx('flex min-h-0 flex-1 flex-col', className)}>
             <div
                 ref={logRef}
+                onScroll={logPosition ? (event) => { logPosition.scrollTop = event.currentTarget.scrollTop; } : undefined}
                 role="log"
                 aria-live="polite"
                 aria-label={logLabel}

@@ -4,7 +4,7 @@ title: "Use your own credentials with a shared action"
 description: "Provide a private personal identity when a shared Yamcs action needs your sign-in."
 section: "Guides"
 audience: user
-version: "0.261.333"
+version: "0.261.335"
 ---
 
 ## What this does

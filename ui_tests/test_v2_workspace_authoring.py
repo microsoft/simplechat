@@ -1,8 +1,9 @@
 # test_v2_workspace_authoring.py
 """
 Real-SPA browser workflows for native V2 My Workspace Agents and Actions.
-Version: 0.261.137
+Version: 0.261.333
 Implemented in: 0.261.096
+Contextual action return labels extended in: 0.261.333
 
 Run against a fresh production V2 build with the existing pytest-playwright
 runner. The imported connect_options fixture supports an authenticated Azure
@@ -77,7 +78,8 @@ def save_resource(ui, resource, *, identifier=None):
     with ui.page.expect_response(
         lambda response: response.request.method == method and urlsplit(response.url).path == path
     ) as response:
-        ui.page.get_by_role("button", name=f"Save {resource}", exact=True).click()
+        label = "Save action and return to agent" if resource == "action" and return_to else f"Save {resource}"
+        ui.page.get_by_role("button", name=label, exact=True).click()
     result = response.value
     if result.ok:
         destination = "/workspace/agents" if resource == "agent" else "/workspace/actions"

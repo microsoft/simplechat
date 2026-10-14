@@ -1,7 +1,7 @@
 // workspaceEditorDrafts.ts
-// Drafts live only in this tab's memory, and only while they contain unsaved changes.
+// Drafts live only in this tab's memory while dirty, or during an explicit action-setup detour.
 
-import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import {
     agentEditorReturnPath,
@@ -60,7 +60,7 @@ function warnBeforeDraftUnload(event: BeforeUnloadEvent): void {
 
 function syncDraftUnloadProtection(): void {
     if (typeof window === 'undefined') return;
-    if (drafts.size || createdActions.size) {
+    if ([...drafts.values()].some((state) => !sameEditorValue(state.draft, state.baseline)) || createdActions.size) {
         window.addEventListener('beforeunload', warnBeforeDraftUnload);
     } else {
         window.removeEventListener('beforeunload', warnBeforeDraftUnload);
@@ -97,6 +97,7 @@ export function useWorkspaceEditorDraft<T extends Configuration>(
     original: AuthoringResource<T> | null;
     load: (resource: AuthoringResource<T>) => void;
     clear: () => void;
+    retain: () => void;
     dirty: boolean;
     restored: boolean;
 } {
@@ -109,6 +110,14 @@ export function useWorkspaceEditorDraft<T extends Configuration>(
         const initial = createDraft();
         return { draft: structuredClone(initial), baseline: initial, original: null };
     });
+
+    useEffect(() => {
+        const cached = drafts.get(cacheKey);
+        if (cached && sameEditorValue(cached.draft, cached.baseline)) {
+            drafts.delete(cacheKey);
+            syncDraftUnloadProtection();
+        }
+    }, [cacheKey, state]);
 
     const setDraft: Dispatch<SetStateAction<T>> = useCallback((update) => setState((current) => {
         const draft = typeof update === 'function' ? update(current.draft) : update;
@@ -145,6 +154,10 @@ export function useWorkspaceEditorDraft<T extends Configuration>(
         dirty: !sameEditorValue(state.baseline, state.draft),
         load,
         clear,
+        retain: () => {
+            drafts.set(cacheKey, state);
+            syncDraftUnloadProtection();
+        },
     };
 }
 

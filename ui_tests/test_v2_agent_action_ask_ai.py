@@ -1,9 +1,10 @@
 # test_v2_agent_action_ask_ai.py
 """
 Offline real-bundle browser regressions for Ask AI in the agent and action editors.
-Version: 0.261.329
+Version: 0.261.333
 Implemented in: 0.261.288
 SQL draft and debug-diagnostic coverage extended in: 0.261.329
+Inline action handoff continuity extended in: 0.261.333
 
 Covers the agent editor applying a proposal to the unsaved draft with Undo, an agent turn that
 drafts a new action that blocks saving until the person finishes it in the action editor and is
@@ -188,7 +189,7 @@ def test_agent_ask_ai_drafts_an_action_created_only_on_save(ask_ai_ui):
     page.get_by_label(re.compile(r"^Endpoint(?:\s*\*)?\s*$")).fill("https://tickets.example.test/api")
     with page.expect_response(lambda response: response.request.method == "POST"
                               and response.url.endswith("/api/user/plugins?view=editor")) as created:
-        page.get_by_role("button", name="Save action", exact=True).click()
+        page.get_by_role("button", name="Save action and return to agent", exact=True).click()
     assert created.value.status == 201
     expect(page).to_have_url(re.compile(rf"/v2/workspace/agents/{AGENT_ID}$"))
     expect(page.get_by_role("list", name="New actions from Ask AI", exact=True)).to_have_count(0)
@@ -222,6 +223,209 @@ def test_action_ask_ai_never_sends_stored_credentials(ask_ai_ui):
     serialized = json.dumps(body)
     assert STORED_KEY not in serialized
     assert '"/auth/key"' not in serialized
+
+
+def editor_section(page, label):
+    if page.viewport_size["width"] < 1024:
+        page.get_by_role("combobox", name=re.compile("^Jump to section")).select_option(label=label)
+    else:
+        page.get_by_role("navigation", name="Editor sections", exact=True).get_by_role(
+            "button", name=re.compile(rf"^{re.escape(label)}(?:$|\s)")
+        ).click()
+
+
+def draft_ticket_action(request, _handles):
+    return {
+        "reply": "I drafted a ticket lookup action and assigned it.",
+        "operations": [{
+            "op": "create_item", "handle": "N1", "type": "fixture_custom",
+            "values": {"/displayName": NEW_ACTION_NAME, "/description": "Look up support tickets."},
+        }],
+    }
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_sql_setup_inline_handoff_preserves_conversation_and_composer(ask_ai_ui, width):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    instruction = "I want to connect to a SQL database."
+    ui.script = lambda _request, _handles: {
+        "reply": "I drafted a read-only SQL action. Enter the database details before saving.",
+        "operations": [{
+            "op": "create_item", "handle": "N1", "type": "sql_query",
+            "values": {"/displayName": "SQL lookup", "/additionalFields/read_only": True},
+        }],
+    }
+    ui.open("/workspace/agents/new", width=width)
+    panel = ask(page, instruction)
+    card = panel.locator("[data-editor-assist-action]")
+    expect(card).to_contain_text("Needs attention before saving:")
+    expect(card).to_contain_text("Database")
+    panel.get_by_role("textbox", name="Message Ask AI", exact=True).fill("What should I do next?")
+    setup = card.get_by_role("button", name="Finish setup for SQL lookup in Actions", exact=True)
+    setup.focus()
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("button", name="Back to agent", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Save action and return to agent", exact=True)).to_be_visible()
+    expect(page.get_by_label(re.compile(r"^Action name"))).to_have_value("SQL lookup")
+    editor_section(page, "Configuration")
+    page.get_by_label(re.compile(r"^Database engine")).select_option("azure_sql")
+    page.get_by_label(re.compile(r"^Database server")).fill("example.database.windows.net")
+    page.get_by_label(re.compile(r"^Database name or SQLite path")).fill("support")
+    editor_section(page, "Authentication")
+    page.get_by_label("Authentication method", exact=True).select_option("managed_identity")
+    with page.expect_response(lambda response: response.request.method == "POST"
+                              and "/api/user/plugins?view=editor" in response.url) as saved:
+        page.get_by_role("button", name="Save action and return to agent", exact=True).click()
+    assert saved.value.status == 201
+    expect(page).to_have_url(re.compile(r"/v2/workspace/agents/new$"))
+    panel = page.get_by_role("complementary", name="Ask AI", exact=True)
+    expect(panel).to_be_visible()
+    expect(panel.get_by_text(instruction, exact=True)).to_be_visible()
+    card = panel.locator("[data-editor-assist-action]")
+    expect(card.get_by_role("status")).to_have_text("Action saved and selected—agent not saved yet.")
+    expect(card).to_be_focused()
+    expect(card.get_by_role("button")).to_have_count(0)
+    expect(panel.get_by_role("textbox", name="Message Ask AI", exact=True)).to_have_text("What should I do next?")
+    assert len(ui.editor_writes) == 1
+    assert ui.editor_writes[0].path == "/api/user/plugins"
+    artifacts = ROOT / "ui_tests" / "artifacts" / "ask_ai_handoff"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(artifacts / f"returned-sql-{width}.png"))
+    overflow = page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
+    assert not overflow
+
+    ui.script = lambda _request, _handles: {"reply": "The saved action is selected. Review and save your agent.", "operations": []}
+    panel.get_by_role("button", name="Send to Ask AI", exact=True).click()
+    expect(panel.get_by_text("The saved action is selected. Review and save your agent.", exact=True)).to_be_visible()
+    _, request = ui.assist_requests[-1]
+    assert any(turn["text"] == instruction for turn in request["conversation"])
+    assert CREATED_ACTION_ID in request["values"]["/actions"]
+    assert len(ui.editor_writes) == 1
+
+
+@pytest.mark.parametrize("return_control", ["Back to agent", "Cancel", "browser-back"])
+def test_setup_return_without_save_keeps_thread_and_safe_undo(ask_ai_ui, return_control):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    ui.script = draft_ticket_action
+    ui.open(f"/workspace/agents/{AGENT_ID}")
+    panel = ask(page, "Add ticket lookup.")
+    card = panel.locator("[data-editor-assist-action]")
+    card.get_by_role("button", name=f"Finish setup for {NEW_ACTION_NAME} in Actions").click()
+    expect(page.get_by_label(re.compile(r"^Action name"))).to_have_value(NEW_ACTION_NAME)
+    if return_control == "browser-back":
+        page.go_back()
+    else:
+        page.get_by_role("button", name=return_control, exact=True).click()
+    dialog = page.get_by_role("dialog", name="Discard unsaved changes?", exact=True)
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="Keep editing", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/v2/workspace/actions/new\?"))
+    page.get_by_role("button", name="Back to agent", exact=True).click()
+    dialog.get_by_role("button", name="Discard changes", exact=True).click()
+    panel = page.get_by_role("complementary", name="Ask AI", exact=True)
+    expect(panel).to_be_visible()
+    expect(panel.get_by_text("Add ticket lookup.", exact=True)).to_be_visible()
+    expect(panel.locator("[data-editor-assist-action]").get_by_role("button")).to_be_enabled()
+    assert not ui.editor_writes
+    panel.get_by_role("button", name=re.compile("^Undo this change")).click()
+    expect(panel.get_by_text("This action was removed from the draft.", exact=True)).to_be_visible()
+    expect(panel.get_by_role("button", name=re.compile("^Finish setup for"))).to_have_count(0)
+    assert not ui.editor_writes
+
+
+def test_saved_action_does_not_get_overwritten_by_earlier_undo(ask_ai_ui):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    original_description = ui.agents[AGENT_ID]["description"]
+    ui.script = lambda request, handles: {
+        **draft_ticket_action(request, handles),
+        "operations": [
+            *draft_ticket_action(request, handles)["operations"],
+            {"op": "set", "path": "/description", "value": NEW_DESCRIPTION},
+        ],
+    }
+    ui.open(f"/workspace/agents/{AGENT_ID}")
+    panel = ask(page, "Add ticket lookup and update the description.")
+    panel.get_by_role("button", name=f"Finish setup for {NEW_ACTION_NAME} in Actions").click()
+    editor_section(page, "Configuration")
+    page.get_by_label(re.compile(r"^Endpoint")).fill("https://tickets.example.test/api")
+    ui.reject_next("POST", "/api/user/plugins", error="Could not save the action.")
+    page.get_by_role("button", name="Save action and return to agent", exact=True).click()
+    expect(page.get_by_text("Could not save the action.", exact=True)).to_be_visible()
+    expect(page).to_have_url(re.compile(r"/v2/workspace/actions/new\?"))
+    page.get_by_role("button", name="Save action and return to agent", exact=True).click()
+    panel = page.get_by_role("complementary", name="Ask AI", exact=True)
+    expect(panel.locator("[data-editor-assist-action]").get_by_role("status")).to_contain_text("Action saved and selected")
+    panel.get_by_role("button", name=re.compile("^Undo this change")).click()
+    expect(page.get_by_label("Description", exact=True)).to_have_value(original_description)
+    expect(panel.get_by_text(re.compile("skipped because it changed later"))).to_be_visible()
+    assert ui.created_counts["plugins"] == 1
+    editor_section(page, "Actions")
+    assigned = page.get_by_role("checkbox", name=f"Assign {NEW_ACTION_NAME}", exact=True)
+    expect(assigned).to_be_checked()
+    assigned.uncheck()
+    expect(panel.locator("[data-editor-assist-action]").get_by_role("status")).to_have_text(
+        "Action saved—not selected for this agent."
+    )
+    assert ui.actions[CREATED_ACTION_ID]["displayName"] == NEW_ACTION_NAME
+
+
+def test_clean_explanation_thread_survives_new_action_detour_but_not_reopen(ask_ai_ui):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    ui.script = lambda _request, _handles: {"reply": "This agent reviews workspace work.", "operations": []}
+    ui.open(f"/workspace/agents/{AGENT_ID}")
+    page.get_by_role("button", name="Ask AI", exact=True).click()
+    panel = page.get_by_role("complementary", name="Ask AI", exact=True)
+    panel.get_by_role("textbox", name="Message Ask AI", exact=True).fill("Explain the agent.")
+    panel.get_by_role("button", name="Send to Ask AI", exact=True).click()
+    expect(panel.get_by_text("This agent reviews workspace work.", exact=True)).to_be_visible()
+    editor_section(page, "Actions")
+    page.get_by_role("button", name="New action", exact=True).click()
+    page.get_by_role("button", name="Back to agent", exact=True).click()
+    expect(panel).to_be_visible()
+    expect(panel.get_by_text("Explain the agent.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Back", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/v2/workspace/agents$"))
+    page.get_by_role("button", name="New agent", exact=True).click()
+    page.get_by_role("button", name="Ask AI", exact=True).click()
+    expect(panel.get_by_text("Explain the agent.", exact=True)).to_have_count(0)
+    page.reload()
+    page.get_by_role("button", name="Ask AI", exact=True).click()
+    expect(panel.get_by_text("Explain the agent.", exact=True)).to_have_count(0)
+    assert not ui.editor_writes
+
+
+def test_multiple_inline_actions_keep_their_own_status_across_repeated_detours(ask_ai_ui):
+    ui, page = ask_ai_ui, ask_ai_ui.page
+    labels = ["First lookup", "Second lookup"]
+    ui.script = lambda _request, _handles: {
+        "reply": "I drafted two actions.",
+        "operations": [{
+            "op": "create_item", "handle": f"N{index + 1}", "type": "fixture_custom",
+            "values": {"/displayName": label},
+        } for index, label in enumerate(labels)],
+    }
+    ui.open(f"/workspace/agents/{AGENT_ID}")
+    panel = ask(page, "Add two lookup actions.")
+    expect(panel.locator("[data-editor-assist-action]")).to_have_count(2)
+    panel.get_by_role("button", name="Finish setup for Second lookup in Actions", exact=True).click()
+    expect(page.get_by_label(re.compile(r"^Action name"))).to_have_value("Second lookup")
+    page.get_by_label(re.compile(r"^Action name")).fill("Saved second lookup")
+    editor_section(page, "Configuration")
+    page.get_by_label(re.compile(r"^Endpoint")).fill("https://second.example.test")
+    page.get_by_role("button", name="Save action and return to agent", exact=True).click()
+    expect(panel.get_by_text("Saved second lookup", exact=True)).to_be_visible()
+    expect(panel.get_by_role("button", name="Finish setup for First lookup in Actions", exact=True)).to_be_visible()
+    expect(panel.get_by_role("button", name="Finish setup for Second lookup in Actions", exact=True)).to_have_count(0)
+    expect(panel.get_by_role("status")).to_contain_text("Action saved and selected")
+    panel.get_by_role("button", name="Finish setup for First lookup in Actions", exact=True).click()
+    expect(page.get_by_label(re.compile(r"^Action name"))).to_have_value("First lookup")
+    page.get_by_role("button", name="Back to agent", exact=True).click()
+    page.get_by_role("dialog").get_by_role("button", name="Discard changes", exact=True).click()
+    expect(panel.get_by_role("button", name="Finish setup for First lookup in Actions", exact=True)).to_be_enabled()
+    expect(panel.get_by_text("Saved second lookup", exact=True)).to_be_visible()
+    expect(panel.get_by_role("status")).to_contain_text("Action saved and selected")
+    assert ui.created_counts["plugins"] == 1
+    assert len(ui.assist_requests) == 1
 
 
 @pytest.mark.parametrize('first_defect', [None, 'blank_connection', 'unprefixed_common_fields'])

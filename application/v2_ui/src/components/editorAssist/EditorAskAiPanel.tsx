@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
-import { AlertTriangle, Loader2, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
 import { AssistThread } from '../chat/AssistThread';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowAssistElapsed } from '../workflows/WorkflowAskAiTab';
@@ -15,6 +15,15 @@ import type { AssistExchange } from '../../lib/assistThread';
 import type { EditorAssistKind } from '../../lib/editorAssist';
 import type { EditorAssistTurnRecord } from '../../stores/editorAssistStore';
 import { editorAssistTurnState, type EditorAssist } from './useEditorAssist';
+import type { AgentAssistSession } from '../../lib/editorAssistHandoff';
+
+interface ActionSetup {
+    pending: readonly { reference: string; label: string; type: string; issues: readonly string[] }[];
+    selected: readonly string[];
+    onFinish: (reference: string) => void;
+    disabled: boolean;
+    restoring: boolean;
+}
 
 interface QuickAction {
     readonly label: string;
@@ -69,10 +78,11 @@ export function EditorAskAiToggle({ id, open, controls, onToggle }: {
 }
 
 /** One answer's card: the reply, then what it did to the draft. */
-function EditorAssistTurnCard({ turnId, record, assist }: {
+function EditorAssistTurnCard({ turnId, record, assist, actionSetup }: {
     turnId: string;
     record: EditorAssistTurnRecord;
     assist: EditorAssist;
+    actionSetup?: ActionSetup;
 }) {
     const state = editorAssistTurnState(record);
     const undoRef = useRef<HTMLDivElement>(null);
@@ -97,6 +107,36 @@ function EditorAssistTurnCard({ turnId, record, assist }: {
     return (
         <div data-editor-assist-card={turnId} data-outcome={record.outcome} data-state={state} className="space-y-2">
             {record.reply ? <p className="whitespace-pre-wrap break-words" data-editor-assist-reply>{record.reply}</p> : null}
+            {actionSetup && record.draftedActions?.map((item) => {
+                const pending = actionSetup.pending.find((action) => action.reference === item.reference);
+                const selected = Boolean(item.savedId && actionSetup.selected.includes(item.savedId));
+                return (
+                    <div key={item.reference} data-editor-assist-action={item.reference} tabIndex={-1}
+                        aria-label={`Action setup: ${pending?.label ?? item.label}`}
+                        className="space-y-2 rounded-lg border border-edge-strong p-3 text-text-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                        <p className="break-words font-semibold">{pending?.label ?? item.label}</p>
+                        <p className="text-text-2">{pending?.type ?? item.type}</p>
+                        {pending ? <>
+                            <p className="break-words text-text-2">{pending.issues.length
+                                ? `Needs attention before saving: ${pending.issues.join(' ')}`
+                                : 'Drafted for this agent. Review its setup before saving.'}</p>
+                            <GlassButton type="button" size="sm" className="h-auto max-w-full whitespace-normal text-left"
+                                disabled={actionSetup.disabled || locked}
+                                aria-label={`Finish setup for ${pending.label} in Actions`}
+                                onClick={() => actionSetup.onFinish(item.reference)}>
+                                Finish setup in Actions <ArrowRight size={13} className="shrink-0" aria-hidden="true" />
+                            </GlassButton>
+                            <p className="text-[11px] text-text-2">Enter credentials in the action editor, not in Ask AI.</p>
+                        </> : item.savedId ? (
+                            <p role="status" className="flex items-start gap-1.5 text-text-1">
+                                <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
+                                <span>{selected ? 'Action saved and selected—agent not saved yet.'
+                                    : 'Action saved—not selected for this agent.'}</span>
+                            </p>
+                        ) : <p className="text-text-2">This action was removed from the draft.</p>}
+                    </div>
+                );
+            })}
             {record.changes.length ? (
                 <div className="rounded-lg border border-change-ai/40 bg-surface-1 p-2">
                     <p className="font-medium text-text-1" data-editor-assist-state>{stateText}</p>
@@ -157,25 +197,42 @@ function EditorAssistTurnCard({ turnId, record, assist }: {
 }
 
 /** The Ask AI panel. Rendered beside the editor's form, never inside it: the thread has its own form. */
-export function EditorAskAiPanel({ assist, id, inputId, onClose }: {
+export function EditorAskAiPanel({ assist, id, inputId, onClose, actionSetup, session }: {
     assist: EditorAssist;
     id: string;
     inputId: string;
     onClose: () => void;
+    actionSetup?: ActionSetup;
+    session?: AgentAssistSession;
 }) {
     const { thread, kind } = assist;
     const quickDisabled = assist.busy || Boolean(assist.pending);
+    const panelRef = useRef<HTMLElement>(null);
+
+    useEffect(() => {
+        if (!session?.focusReference || actionSetup?.restoring) return undefined;
+        const reference = session.focusReference;
+        const frame = requestAnimationFrame(() => {
+            const card = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('[data-editor-assist-action]') ?? [])
+                .find((element) => element.dataset.editorAssistAction === reference);
+            if (card) {
+                (card.querySelector<HTMLButtonElement>('button') ?? card).focus({ preventScroll: true });
+                session.focusReference = null;
+            }
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [session, actionSetup?.restoring]);
 
     const renderReply = (exchange: AssistExchange) => {
         const record = assist.turns[exchange.id];
         if (!record || record.threadKey !== thread.key) {
             return <p className="whitespace-pre-wrap break-words">{exchange.reply}</p>;
         }
-        return <EditorAssistTurnCard turnId={exchange.id} record={record} assist={assist} />;
+        return <EditorAssistTurnCard turnId={exchange.id} record={record} assist={assist} actionSetup={actionSetup} />;
     };
 
     return (
-        <aside id={id} aria-label="Ask AI" data-editor-ask-ai={kind}
+        <aside ref={panelRef} id={id} aria-label="Ask AI" data-editor-ask-ai={kind}
             className="flex min-h-0 w-full flex-1 flex-col border-edge bg-surface-0 xl:w-[400px] xl:flex-none xl:border-l">
             <div className="flex shrink-0 items-center gap-2 border-b border-edge px-3 py-2">
                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-change-ai-soft text-change-ai">
@@ -215,6 +272,7 @@ export function EditorAskAiPanel({ assist, id, inputId, onClose }: {
                     placeholder="Ask for a change or a question."
                     emptyState={<p>{EMPTY_STATE[kind]}</p>}
                     composerClassName="mt-2"
+                    logPosition={session}
                     composerNote={assist.waitSeconds > 0 ? (
                         <p className="mt-2 text-[11px] text-text-3" data-editor-assist-wait>
                             {`You can send again in ${assist.waitSeconds} s.`}

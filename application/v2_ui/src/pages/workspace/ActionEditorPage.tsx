@@ -382,7 +382,7 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
         <p role="alert" className="text-sm text-danger">{loadError}</p>
         <div className="flex flex-wrap gap-2">
             <GlassButton type="button" onClick={() => setVersion((current) => current + 1)}>Retry action</GlassButton>
-            <GlassButton type="button" onClick={() => navigate(returnTo || adapter.basePath)}>Back to actions</GlassButton>
+            <GlassButton type="button" onClick={() => navigate(returnTo || adapter.basePath)}>{returnTo ? 'Back to agent' : 'Back to actions'}</GlassButton>
         </div>
         {restored ? <p className="text-xs text-text-3">The unsaved draft remains in this tab; it has not been overwritten by this failed read.</p> : null}
     </GlassPanel>;
@@ -392,10 +392,10 @@ function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: st
             <WorkspaceEditorFrame title={readOnly ? 'Action details' : isNew ? 'New action' : canAuthor ? 'Edit action' : 'Action details'} icon={Plug}
                 description={readOnly ? 'This provided action is managed by an administrator.' :
                     isNew ? 'Configure an action, then explicitly save it. Connectors run only when you choose a discovery or test command.' : draft.displayName || draft.name}
-                backTo={returnTo || adapter.basePath} sections={sections.map((section) => ({
+                backTo={returnTo || adapter.basePath} backLabel={returnTo ? 'Back to agent' : undefined} sections={sections.map((section) => ({
                     ...section, content: <div key={editorGeneration} className="min-w-0">{section.content}</div>,
                 }))} dirty={dirty || Object.keys(validity).some((key) => key.startsWith('json:'))} saving={saving} readOnly={readOnly}
-                error={loadError || error} saveLabel="Save action" onSave={() => void save()} onDiscard={clear}
+                error={loadError || error} saveLabel={returnTo ? 'Save action and return to agent' : 'Save action'} onSave={() => void save()} onDiscard={clear}
                 saveDisabled={!canAuthor || catalogueLoading || Boolean(catalogueError) || Boolean(loadError) || !definition}
                 sidePanel={assist.available ? <EditorAskAiPanel assist={assist} id="action-ask-ai-panel" inputId="action-ask-ai-input"
                     onClose={() => setAssistOpen(false)} /> : undefined}

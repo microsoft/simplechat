@@ -31,11 +31,13 @@ import {
     agentAssistValues, applyAgentAssistPatch, buildAgentAssistView, newPendingActionReference, pendingAgentActions,
     prunePendingAgentActions, resolvePendingAgentAction, type AgentAssistContext,
 } from '../../lib/agentEditorAssist';
-import { actionForSave, createActionDraft, validateActionDraft } from '../../lib/workspaceActionLogic';
+import { actionForSave, actionTypeLabel, createActionDraft, validateActionDraft } from '../../lib/workspaceActionLogic';
 import type { ModelCatalogEntry } from '../../lib/models';
 import { useEditorAssist } from '../../components/editorAssist/useEditorAssist';
 import { EditorAskAiPanel, EditorAskAiToggle, EditorAssistLockBanner } from '../../components/editorAssist/EditorAskAiPanel';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { makeSubmissionId } from '../../lib/assistThread';
+import { readAgentAssist, resumeAgentAssist, suspendAgentAssist, type AgentAssistSession } from '../../lib/editorAssistHandoff';
 
 function message(cause: unknown): string {
     return cause instanceof Error ? cause.message : 'The operation could not be completed.';
@@ -49,7 +51,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const canCreateActions = adapter.scope.kind === 'personal' ? personalCanCreateActions : adapter.canCreateActions;
     const refreshBootstrap = useBootstrapStore((state) => state.refresh);
     const isNew = resourceId === 'new';
-    const { draft, setDraft: setStoredDraft, original, load, clear, dirty, restored } =
+    const { draft, setDraft: setStoredDraft, original, load, clear, retain, dirty, restored } =
         useWorkspaceEditorDraft<AgentConfiguration>('agents', `${scope}:${resourceId}`, newAgentDraft, adapter.draftScope);
     const setDraft: Dispatch<SetStateAction<AgentConfiguration>> = (update) => setStoredDraft((current) =>
         applySafeAgentDraft(current, prunePendingAgentActions(typeof update === 'function' ? update(current) : update), original));
@@ -74,9 +76,12 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const [knowledgeRevision, setKnowledgeRevision] = useState(0);
     const [actionTypes, setActionTypes] = useState<ActionTypeDefinition[] | null>(null);
     // Drafted actions an undo may bring back after a later turn or Remove dropped them.
-    const pendingStash = useRef(new Map<string, ActionConfiguration>());
+    const [assistSession] = useState<AgentAssistSession>(() => readAgentAssist(ownerId, location.pathname, adapter.draftScope)
+        ?? { visit: makeSubmissionId(), open: false, stash: new Map(), scrollTop: 0, focusReference: null });
+    const pendingStash = useRef(assistSession.stash);
     const returnedAction = useRef<ActionConfiguration | null>(null);
     const handoffChecked = useRef(false);
+    const [handoffReady, setHandoffReady] = useState(false);
     // A member without the edit hint sees the group editor read-only; personal scope always authors.
     const canAuthor = adapter.allows(isNew ? 'create' : 'edit', original?.record ?? draft);
     const readOnly = accessReadOnly || original?.read_only === true || !canAuthor;
@@ -84,7 +89,8 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     const arraySecretError = agentText(draft._editor_array_secret_error) || null;
     const assistEnabled = useBootstrapStore((state) => state.data?.features?.enable_agent_ai_assistant === true);
     const models = useBootstrapStore((state) => state.data?.catalogs?.models) as ModelCatalogEntry[] | undefined;
-    const [assistOpen, setAssistOpen] = useState(false);
+    const [assistOpen, setAssistOpen] = useState(assistSession.open);
+    assistSession.open = assistOpen;
     const [jumpTo, setJumpTo] = useState<{ section: string; sequence: number } | null>(null);
     // Ask AI reads and changes the latest draft between renders, so it works from a ref.
     const draftRef = useRef(draft);
@@ -104,6 +110,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
         available: assistEnabled && !readOnly && !bootLoading && !bootError && Boolean(options),
         scope: adapter.scope.kind === 'group' ? { kind: 'group', id: adapter.scope.id } : { kind: adapter.scope.kind },
         recordKey: `${scope}:${resourceId}`,
+        sessionId: assistSession.visit,
         blocked: saving || iconBusy || Boolean(advancedError),
         buildView: () => {
             const context = assistContext(draftRef.current);
@@ -121,8 +128,16 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             return agentAssistValues(next, { ...context, reasoningLevels: agentReasoningLevels(next, context.options, models) });
         },
         onJump: (section) => setJumpTo((current) => ({ section, sequence: (current?.sequence ?? 0) + 1 })),
+        draftedActions: () => pendingAgentActions(draftRef.current).map(({ reference, action }) => ({
+            reference, label: agentText(action.displayName) || agentText(action.name) || 'New action', type: actionTypeLabel(action.type),
+        })),
     });
     const assistShown = assist.available && assistOpen;
+
+    useEffect(() => {
+        if (bootLoading) return;
+        resumeAgentAssist(ownerId, location.pathname, adapter.draftScope, assistSession);
+    }, [ownerId, location.pathname, adapter.draftScope, assistSession, bootLoading]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -155,9 +170,14 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
     useEffect(() => {
         if (bootLoading || bootError || readOnly || handoffChecked.current) return;
         handoffChecked.current = true;
+        setHandoffReady(true);
         const action = takeCreatedWorkspaceAction(location.pathname, adapter.draftScope);
         if (!action) return;
         const handoff = takeWorkspaceActionHandoff(location.pathname, adapter.draftScope);
+        if (handoff) {
+            assist.rememberAction(handoff, action.id, agentText(action.displayName) || action.name, actionTypeLabel(action.type));
+            pendingStash.current.delete(handoff);
+        }
         returnedAction.current = action;
         setActions((current) => [...current.filter((item) => item.id !== action.id || item.is_global !== action.is_global), action]);
         setDraft((current) => {
@@ -229,7 +249,10 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
 
     const finishPendingAction = (reference: string) => {
         const pending = pendingActions.find((item) => item.reference === reference);
-        if (!pending || !actionWorkbench) return;
+        if (!pending || !actionWorkbench || !canCreateActions || readOnly || saving || assist.busy || assist.pending) return;
+        retain();
+        assistSession.focusReference = reference;
+        suspendAgentAssist(ownerId, location.pathname, adapter.draftScope, assistSession, assist.thread.key);
         seedNewWorkspaceActionDraft(location.pathname, pending.action, createActionDraft(), actionWorkbench.draftScope, reference);
         navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`,
             { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } });
@@ -279,6 +302,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             if (!resource.record?.id) throw new Error('The save response did not include an agent identifier. Reload before trying again.');
             load(resource);
             clear();
+            assist.forget();
             await refreshBootstrap();
             navigate(adapter.basePath, { replace: true, state: { workspaceEditorSaved: true, workspaceEditorFrom: location.key } });
         } catch (cause) {
@@ -310,10 +334,20 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             iconNode={draft.icon ? <AgentIcon icon={draft.icon} /> : undefined}
             description={isNew ? 'Configure a reusable assistant. Changes are saved only when you choose Save agent.' : draft.description || undefined}
             backTo={adapter.basePath} dirty={dirty || iconBusy} saving={saving} readOnly={readOnly} error={arraySecretError || saveError}
-            onSave={() => void save()} onDiscard={clear} saveLabel="Save agent" saveDisabled={Boolean(advancedError) || iconBusy}
+            onSave={() => void save()} onDiscard={() => { clear(); assist.forget(); }} saveLabel="Save agent" saveDisabled={Boolean(advancedError) || iconBusy}
             initialSection={new URLSearchParams(location.search).get('templates') === '1' ? 'templates' : undefined}
             sidePanel={assist.available ? <EditorAskAiPanel assist={assist} id="agent-ask-ai-panel" inputId="agent-ask-ai-input"
-                onClose={() => setAssistOpen(false)} /> : undefined}
+                onClose={() => setAssistOpen(false)} session={assistSession}
+                actionSetup={{
+                    pending: pendingActions.map(({ reference, action }) => ({
+                        reference, label: agentText(action.displayName) || agentText(action.name) || 'New action',
+                        type: actionTypeFor(action)?.display || actionTypeLabel(action.type), issues: pendingIssues[reference] ?? [],
+                    })),
+                    selected: draft.actions_to_load,
+                    onFinish: finishPendingAction,
+                    disabled: readOnly || !canCreateActions || !actionWorkbench || saving || assist.busy || Boolean(assist.pending),
+                    restoring: !handoffReady,
+                }} /> : undefined}
             sidePanelOpen={assistShown} aiChangedSections={assist.changedSections}
             locked={Boolean(assist.pending)} jumpTo={jumpTo}
             lockBanner={assist.pending ? <EditorAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : undefined}
@@ -352,6 +386,10 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
                     onFinishPendingAction={actionWorkbench ? finishPendingAction : undefined}
                     onRefresh={() => setActionsRevision((value) => value + 1)}
                     onNewAction={() => {
+                        if (readOnly || saving || assist.pending || !canCreateActions) return;
+                        retain();
+                        assistSession.focusReference = null;
+                        suspendAgentAssist(ownerId, location.pathname, adapter.draftScope, assistSession, assist.thread.key);
                         clearWorkspaceActionHandoff(location.pathname, adapter.draftScope);
                         navigate(`${adapter.actionsBasePath}/new?returnTo=${encodeURIComponent(location.pathname)}`, { state: { preserveWorkspaceDraft: true, workspaceEditorFrom: location.key } });
                     }} />) },
@@ -380,7 +418,8 @@ function readAgentKnowledgeEnabled(draft: AgentConfiguration): boolean {
 
 export function AgentEditorPage({ adapter = PERSONAL_AGENT_WORKBENCH }: { adapter?: AgentWorkbenchAdapter }) {
     const { resourceId = 'new' } = useParams<{ resourceId?: string }>();
+    const owner = useBootstrapStore((state) => state.data?.user?.id ?? '');
     const location = useLocation();
     const scope = new URLSearchParams(location.search).get('scope') === 'global' ? 'global' : 'personal';
-    return <AgentEditorSession key={JSON.stringify([adapter.basePath, scope, resourceId])} resourceId={resourceId} scope={scope} adapter={adapter} />;
+    return <AgentEditorSession key={JSON.stringify([owner, adapter.basePath, scope, resourceId])} resourceId={resourceId} scope={scope} adapter={adapter} />;
 }

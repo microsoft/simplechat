@@ -1,7 +1,7 @@
 # test_action_personal_credentials.py
 """Backend functional tests for actor-bound personal action credentials.
 
-Version: 0.261.333
+Version: 0.261.335
 Implemented in: 0.261.333
 
 Exercises real storage owners, identity CRUD, resolver, schema and Flask routes

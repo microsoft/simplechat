@@ -4,7 +4,7 @@ title: "Create an action"
 description: "Create a reusable tool that an agent can call when chat alone is not enough."
 section: "Guides"
 audience: user
-version: "0.261.096"
+version: "0.261.333"
 ---
 
 ## What this does
@@ -49,6 +49,27 @@ specifications. Nothing is saved until you choose **Save action**.
 
 Administrators can turn the panel off with **Enable Ask AI in the Action Editor**
 in [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
+
+### Finish an action while building an agent
+
+An agent's Ask AI answer can include an action setup card. Choose **Finish setup
+in Actions** to open this workbench with that action's draft already filled in.
+The existing configuration and authentication fields show what you still need
+to provide; Ask AI does not collect your credentials.
+
+**Save action and return to agent** saves this action and selects it in the
+agent's unsaved draft. It returns to the previous Ask AI conversation, including
+an unsent follow-up, rather than starting again. Saving the action does not save
+the agent or prove the connection works.
+
+Use **Back to agent** at the top to leave without saving. If the action has
+unsaved edits, choose whether to keep editing or discard them before returning.
+The original agent draft and its pending setup card remain available.
+
+Implemented in **0.261.333** (`application/single_app/config.py`). This return
+keeps the agent's conversation in tab memory only; it is not history that
+survives refreshes or later visits. Actions opened independently keep the normal
+**Save action** command and return to the Actions list.
 
 ## Classic interface steps
 
