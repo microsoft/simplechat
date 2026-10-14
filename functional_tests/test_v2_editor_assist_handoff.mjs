@@ -1,11 +1,13 @@
 // test_v2_editor_assist_handoff.mjs
-// Version: 0.261.333
+// Version: 0.261.334
 // Implemented in: 0.261.333
 // Tests explicit, bounded, owner/workspace-scoped in-memory editor-session handoffs.
 
 import assert from 'node:assert/strict';
+import { webcrypto } from 'node:crypto';
 import './test_support/tsResolve.mjs';
 
+const { makeSubmissionId } = await import('../application/v2_ui/src/lib/assistThread.ts');
 const {
     MAX_AGENT_ASSIST_HANDOFFS, suspendAgentAssist, readAgentAssist, resumeAgentAssist,
     pruneAgentAssistHandoffs, clearAgentAssistHandoffs,
@@ -32,6 +34,25 @@ function seedThread(key) {
 }
 
 try {
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    try {
+        Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
+        const uuid = makeSubmissionId();
+        assert.match(uuid, /^[0-9a-f-]{36}$/);
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) },
+        });
+        const ids = Array.from({ length: 50 }, () => makeSubmissionId());
+        assert.equal(new Set(ids).size, ids.length);
+        for (const id of ids) assert.match(id, /^assist-[0-9a-f]{32}$/);
+        Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
+        assert.throws(() => makeSubmissionId(), /Secure randomness is unavailable/);
+    } finally {
+        if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+        else delete globalThis.crypto;
+    }
+
     for (const [scope, path, actionPath] of [
         [personal, '/workspace/agents/new', '/workspace/actions/new'],
         [group, '/groups/group-a/agents/new', '/groups/group-a/actions/new'],

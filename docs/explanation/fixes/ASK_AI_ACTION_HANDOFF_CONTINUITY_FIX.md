@@ -2,6 +2,8 @@
 
 Fixed in version: **0.261.333**
 
+Cryptographic identifier hardening in version: **0.261.334**
+
 ## Issue and root cause
 
 Ask AI could draft an action while building a React agent, but its setup card
@@ -38,6 +40,11 @@ panel's local open state. Draft restoration alone did not preserve this session.
   authentication changes.
 - `application/single_app/config.py` increments the patch version from
   `0.261.332` to `0.261.333`.
+- The review follow-up in `0.261.334` replaces the shared
+  `makeSubmissionId()` weak-random fallback with 128 bits from
+  `crypto.getRandomValues()`. HTTP development hosts without `randomUUID()`
+  retain support; environments without Web Crypto fail explicitly instead of
+  generating insecure handoff or submission identifiers.
 
 ## Behavior and boundaries
 
@@ -63,6 +70,8 @@ transcript limits still apply.
 `functional_tests/test_v2_editor_assist_handoff.mjs` executes the real handoff
 and thread stores to cover repeated render reads, scoped paths, owner isolation,
 retention during thread eviction, bounded cleanup and abandonment.
+It also checks UUID generation, the cryptographic HTTP-compatible fallback,
+uniqueness and explicit failure when Web Crypto is unavailable.
 
 `ui_tests/test_v2_agent_action_ask_ai.py` exercises the real production bundle
 and scripted server assist pipeline: SQL setup at desktop and mobile widths,
