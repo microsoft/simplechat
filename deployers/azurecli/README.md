@@ -201,6 +201,7 @@ The script contains editable configuration variables for:
 - Azure OpenAI GPT and embedding model names, versions, deployment names, and capacities
 - optional Entra security group creation
 - `param_EnablePrivateNetworking`
+- `param_EnableAzureMonitorPrivateLink` (default false; requires private networking)
 - `param_ExistingVirtualNetworkId`
 - `param_ExistingAppServiceSubnetId`
 - `param_ExistingPrivateEndpointSubnetId`
@@ -210,6 +211,14 @@ The script contains editable configuration variables for:
 - `param_PrivateDnsZoneConfigs`
 
 Review those values before running the script.
+
+### AMPLS and Fresh Versus Existing Networks
+
+Set `$param_EnableAzureMonitorPrivateLink = $true` to opt into private-only Application Insights and Log Analytics in either cloud. The script deploys the generated [shared template](../bicep/modules/azureMonitorPrivateNetworking.json), then disables public ingestion/queries only after that deployment succeeds. Keep the adjacent Bicep directory available. Monitoring clients need private routing/DNS and a `/27` or larger endpoint subnet with sufficient free IPs. Use `/26` or larger when sharing a platform subnet with ACR and Key Vault. Coordinate one AMPLS per shared DNS boundary.
+
+A fresh private-network deployment without existing network IDs creates `10.0.0.0/21` and two `/24` subnets. The [Commercial tables](../../docs/guides/enterprise-networking.md#networking-in-azure-commercial) and [Government tables](../../docs/guides/enterprise-networking.md#networking-in-azure-government) show script defaults and the compact `10.42.0.0/24` enterprise reference. Existing-network reuse still directs endpoints to one supplied subnet; segmented placement requires customization.
+
+DNS reuse accepts `monitor`, `monitorOms`, `monitorOds`, `monitorAgent`, and `monitorAdx` (Government), with `blobStorage` and `videoIndexer`, using `zoneResourceId`/`createVNetLink`. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`; Commercial Video Indexer uses `privatelink.api.videoindexer.ai`. The Government Video Indexer profile has no PE, and this script does not provision Redis.
 
 ## Azure OpenAI deployment types and quota handling
 

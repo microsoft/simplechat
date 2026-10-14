@@ -56,9 +56,70 @@ Enterprise networking for Simple Chat involves:
 
 ![Architecture with Private Endpoints in Azure Commercial](../images/architecture-private-endpoints-commercial.png)
 
+**Fresh deployment defaults:** With private networking enabled and no existing VNet or subnet IDs supplied, Bicep/AZD, Terraform, and the Azure CLI script create the following network. Terraform and CLI address ranges can be overridden; these are their defaults.
+
+| Network/Subnet | Address space | Addresses | Azure-usable | Delegation / Notes |
+|---|---|---:|---:|---|
+| **VNet** | **`10.0.0.0/21`** | **2048** | - | Fresh deployment; no existing network supplied |
+| `AppServiceIntegration` | `10.0.0.0/24` | 256 | 251 | `Microsoft.Web/serverFarms`; outbound only |
+| `PrivateEndpoints` | `10.0.2.0/24` | 256 | 251 | All created private endpoints, including app inbound and optional AMPLS |
+| **Unallocated** | **`10.0.1.0/24`, `10.0.3.0/24`, `10.0.4.0/22`** | **1536** | - | Reserved for future subnets |
+
+**Compact existing-network reference:** This is a segmented design for an enterprise-managed network, not the automatic output of the scripts.
+
+| Network/Subnet | Address space | Addresses | Azure-usable | Delegation / Notes |
+|---|---|---:|---:|---|
+| **VNet** | **`10.42.0.0/24`** | **256** | - | Example nonoverlapping enterprise allocation |
+| `snet-app-outbound` | `10.42.0.0/26` | 64 | 59 | `Microsoft.Web/serverFarms`; App Service integration |
+| `snet-platform-pe` | `10.42.0.64/26` | 64 | 59 | ACR, Key Vault, optional AMPLS |
+| `snet-data-pe` | `10.42.0.128/27` | 32 | 27 | Cosmos DB, Blob Storage, optional Managed Redis |
+| `snet-ai-pe` | `10.42.0.160/27` | 32 | 27 | OpenAI, Search, Document Intelligence; optional Content Safety, Speech, Video Indexer |
+| `snet-app-inbound-pe` | `10.42.0.192/28` | 16 | 11 | Primary App Service private endpoint |
+| **Unallocated** | **`10.42.0.208-10.42.0.255`** | **48** | - | Future growth; divisible into `/28` and `/27` blocks |
+
 ### Networking in Azure Government
 
 ![Architecture with Private Endpoints in Azure Government](../images/architecture-private-endpoints-government.png)
+
+**Fresh deployment defaults:** With private networking enabled and no existing VNet or subnet IDs supplied, all three deployers create the same network shape as Commercial. DNS zones and optional service availability differ.
+
+| Network/Subnet | Address space | Addresses | Azure-usable | Delegation / Notes |
+|---|---|---:|---:|---|
+| **VNet** | **`10.0.0.0/21`** | **2048** | - | Fresh deployment; no existing network supplied |
+| `AppServiceIntegration` | `10.0.0.0/24` | 256 | 251 | `Microsoft.Web/serverFarms`; outbound only |
+| `PrivateEndpoints` | `10.0.2.0/24` | 256 | 251 | All supported private endpoints, including optional Government AMPLS |
+| **Unallocated** | **`10.0.1.0/24`, `10.0.3.0/24`, `10.0.4.0/22`** | **1536** | - | Reserved for future subnets |
+
+**Compact existing-network reference:** Use classic Azure Cache for Redis instead of Managed Redis, and do not assume a Government Video Indexer private endpoint exists.
+
+| Network/Subnet | Address space | Addresses | Azure-usable | Delegation / Notes |
+|---|---|---:|---:|---|
+| **VNet** | **`10.42.0.0/24`** | **256** | - | Example nonoverlapping enterprise allocation |
+| `snet-app-outbound` | `10.42.0.0/26` | 64 | 59 | `Microsoft.Web/serverFarms`; App Service integration |
+| `snet-platform-pe` | `10.42.0.64/26` | 64 | 59 | ACR, Key Vault, optional Government AMPLS |
+| `snet-data-pe` | `10.42.0.128/27` | 32 | 27 | Cosmos DB, Blob Storage, optional classic Redis |
+| `snet-ai-pe` | `10.42.0.160/27` | 32 | 27 | OpenAI, Search, Document Intelligence; Content Safety/Speech where available |
+| `snet-app-inbound-pe` | `10.42.0.192/28` | 16 | 11 | Primary App Service private endpoint |
+| **Unallocated** | **`10.42.0.208-10.42.0.255`** | **48** | - | Future growth; divisible into `/28` and `/27` blocks |
+
+Azure reserves five addresses **per subnet**, not per VNet. Unallocated counts are raw addresses; reservations apply when those ranges become subnets. AMPLS requires at least 11 private IPs and a `/27` or larger subnet; `/26` is recommended when sharing with platform endpoints. ACR consumes at least two IPs and Cosmos DB consumes a global IP plus regional IPs. Budget for replicas, additional regions, and future endpoints.
+
+### Script Deployment Versus Reference Segmentation
+
+The current scripts accept **one** App Service integration subnet and **one shared** private endpoint subnet. Supplying an existing VNet does not distribute private endpoints among the five reference subnets. To implement the compact segmented diagram, customize endpoint subnet assignments in IaC or provision them through enterprise network tooling. PaaS services remain outside the VNet; their private endpoint NICs occupy these subnets. Private DNS zones are linked to the VNet, not placed inside subnets.
+
+| Dependency | Bicep/AZD private endpoint | Terraform / Azure CLI | Compact reference placement |
+|---|---|---|---|
+| Primary App Service | Yes, inbound | Yes, inbound | App inbound |
+| Cosmos DB NoSQL, Blob Storage | Yes | Yes | Data |
+| Azure Container Registry, Key Vault | Yes | Yes | Platform |
+| OpenAI, AI Search, Document Intelligence | Yes; external OpenAI needs resource metadata | Yes; external OpenAI needs resource metadata | AI |
+| Redis | Optional; Managed in Commercial, select `classic` in Government | Not provisioned | Data |
+| Content Safety, Speech | Optional; subject to regional availability | Not provisioned | AI |
+| Video Indexer | Optional PE in supported Commercial API profile; no Government PE | Same cloud limitation | AI only where PE supported |
+| AMPLS | Optional, default off in both clouds | Optional, default off in both clouds | Platform |
+
+Endpoint entries assume private networking and the corresponding optional resource are enabled. Separate Foundry project/Agent Service runtime networking and optional native/V2 frontend inbound endpoints are not provisioned by this networking module.
 
 ## Prerequisites
 
@@ -89,14 +150,7 @@ If you are unsure which public egress IP is being used, run the lookup from the 
 
 ### Network Topology Planning
 
-**Decide on VNet structure:**
-```
-Production VNet (10.0.0.0/16):
-├── App Service Subnet (10.0.1.0/24)
-├── Private Endpoint Subnet (10.0.2.0/24)  
-├── Database Subnet (10.0.3.0/24)
-└── Management Subnet (10.0.4.0/24)
-```
+Choose between the fresh-deployment defaults and compact enterprise reference above. Avoid ranges overlapping corporate networks, VPNs, or peered VNets. App Service inbound endpoints must not use the delegated outbound subnet.
 
 **Consider connectivity requirements:**
 - On-premises connectivity (ExpressRoute/VPN)
@@ -115,6 +169,10 @@ Production VNet (10.0.0.0/16):
 - Azure Document Intelligence
 - Azure Content Safety
 - Azure Speech Services (if used)
+- Azure Container Registry and Key Vault
+- Redis when enabled through Bicep/AZD
+- Video Indexer only where its private endpoint API is supported
+- AMPLS when opted in
 
 ## Step 2: Create Virtual Network Infrastructure
 
@@ -130,28 +188,24 @@ Production VNet (10.0.0.0/16):
 
 3. **Configure IP addresses:**
    ```
-   IPv4 address space: 10.0.0.0/16
+   IPv4 address space: 10.0.0.0/21
    ```
 
 4. **Create subnets:**
    ```
    Subnet 1:
-   Name: app-service-subnet  
-   Address range: 10.0.1.0/24
+   Name: AppServiceIntegration
+   Address range: 10.0.0.0/24
    
    Subnet 2:
-   Name: private-endpoint-subnet
+   Name: PrivateEndpoints
    Address range: 10.0.2.0/24
-   
-   Subnet 3:  
-   Name: database-subnet
-   Address range: 10.0.3.0/24
    ```
 
 ### Configure Subnet Delegation
 
 **For App Service integration:**
-1. **Select app-service-subnet**
+1. **Select AppServiceIntegration**
 2. **Configure delegation:**
    - Delegate subnet to: `Microsoft.Web/serverFarms`
    - This allows App Service to integrate with the subnet
@@ -193,7 +247,7 @@ Outbound Rules:
 4. **Configure:**
    ```
    Virtual Network: simplechat-prod-vnet
-   Subnet: app-service-subnet
+   Subnet: AppServiceIntegration
    ```
 
 ### Configure Route All Traffic
@@ -280,12 +334,23 @@ Create Private Endpoints for each Azure service Simple Chat uses.
 
 ### Verify DNS Zone Creation
 
-Private DNS zones should be created automatically with Private Endpoints:
-- `privatelink.documents.azure.com`
-- `privatelink.openai.azure.com`  
-- `privatelink.search.windows.net`
-- `privatelink.blob.core.windows.net`
-- `privatelink.cognitiveservices.azure.com`
+Use the cloud-specific zones below. Optional zones are only created when their endpoints are deployed.
+
+| Service | Azure Commercial zone | Azure Government zone |
+|---|---|---|
+| App Service | `privatelink.azurewebsites.net` | `privatelink.azurewebsites.us` |
+| Cosmos DB NoSQL | `privatelink.documents.azure.com` | `privatelink.documents.azure.us` |
+| Blob Storage | `privatelink.blob.core.windows.net` | `privatelink.blob.core.usgovcloudapi.net` |
+| ACR | `privatelink.azurecr.io` | `privatelink.azurecr.us` |
+| Key Vault | `privatelink.vaultcore.azure.net` | `privatelink.vaultcore.usgovcloudapi.net` |
+| AI Search | `privatelink.search.windows.net` | `privatelink.search.azure.us` |
+| OpenAI | `privatelink.openai.azure.com` | `privatelink.openai.azure.us` |
+| Document Intelligence, Content Safety, Speech | `privatelink.cognitiveservices.azure.com` | `privatelink.cognitiveservices.azure.us` |
+| Managed Redis | `privatelink.redis.azure.net` | Not available |
+| Classic Redis | `privatelink.redis.cache.windows.net` | `privatelink.redis.cache.usgovcloudapi.net` |
+| Video Indexer | `privatelink.api.videoindexer.ai` | No PE in the Government API profile used by these scripts |
+
+Keep normal service hostnames in application configuration. Private DNS resolves them to private IPs; do not replace URLs with private IP addresses or intermediary `privatelink` hostnames. Ensure all ACR registry/data endpoint records exist. App Service app and SCM records share one private zone. Modern Foundry resources may need additional endpoint-specific zones; separate Foundry resource/project endpoints are not deployed here.
 
 ### Link DNS Zones to VNet
 
@@ -314,6 +379,37 @@ nslookup your-search-service.search.windows.net
 - No public IP addresses should be returned
 
 ## Step 6: Secure Service Access
+
+### Optional Private Monitoring with AMPLS
+
+Implemented in version: **0.261.333**; deployer **1.0.34**. Related issue: [#1765](https://github.com/microsoft/simplechat/issues/1765).
+
+AMPLS provides private Application Insights telemetry ingestion and Log Analytics ingestion/queries. This is a deployment option, not an in-app Admin Settings switch. It is **off by default**, even for private-network deployments.
+
+| Deployer | Opt-in |
+|---|---|
+| Bicep/AZD | `azd env set ENABLE_AZURE_MONITOR_PRIVATE_LINK true`, with `ENABLE_PRIVATE_NETWORKING=true` |
+| Terraform | `param_enable_azure_monitor_private_link = true`, with `param_enable_private_networking = true` |
+| Azure CLI PowerShell | `$param_EnableAzureMonitorPrivateLink = $true`, with `$param_EnablePrivateNetworking = $true` |
+
+The option creates an AMPLS, associates the deployed Application Insights and Log Analytics resources, and creates one `azuremonitor` endpoint in the shared endpoint subnet. Both access modes are `PrivateOnly`; public ingestion and queries are disabled on the monitoring resources. Portal, identity, and control-plane endpoints still require approved outbound access. AMPLS does not privatize Entra, Microsoft Graph, or external tools.
+
+| DNS override key | Azure Commercial zone | Azure Government zone |
+|---|---|---|
+| `monitor` | `privatelink.monitor.azure.com` | `privatelink.monitor.azure.us` |
+| `monitorOms` | `privatelink.oms.opinsights.azure.com` | `privatelink.oms.opinsights.azure.us` |
+| `monitorOds` | `privatelink.ods.opinsights.azure.com` | `privatelink.ods.opinsights.azure.us` |
+| `monitorAgent` | `privatelink.agentsvc.azure-automation.net` | `privatelink.agentsvc.azure-automation.us` |
+| `blobStorage` | `privatelink.blob.core.windows.net` | `privatelink.blob.core.usgovcloudapi.net` |
+| `monitorAdx` | Not created | `privatelink.adx.monitor.azure.us` |
+
+Blob DNS is reused rather than created twice. Azure permits five zones in a PE DNS group. The four core monitoring zones plus Blob use that group; Government ADX DNS is linked separately, with any matching DNS/IP metadata from the endpoint NIC written as A-record sets. If the endpoint uses `adx.privatelink.monitor.azure.us`, its record remains in the core Monitor zone. Reprovision after changing Government endpoint IPs or returned DNS metadata.
+
+Reuse centrally managed zones using `privateDnsZoneConfigs` (Terraform: `param_private_dns_zone_configs`). Use `zoneResourceId` and `createVNetLink` for Bicep/CLI, or `zone_resource_id` and `create_vnet_link` for Terraform. Disable link creation only when the zone already has the necessary VNet link. Custom/on-premises DNS must forward the appropriate public service namespaces to a resolver in a VNet linked to these zones.
+
+Coordinate with your monitoring team: use **one AMPLS per shared DNS boundary**. A new private-only scope can redirect shared endpoints for monitoring resources outside that scope. Do not enable this automatic new-scope option if enterprise AMPLS already serves the same DNS boundary; have its owner associate these resources instead. All telemetry senders and monitoring users need private routing and DNS. Validate ingestion and queries before rollout.
+
+Bicep/AZD keeps Redis public during bootstrap so post-configuration can connect and publish settings. `azd up` closes Redis public access in `postup`, after deployment; `azd provision` or `azd deploy` alone does not run that final hook. For separate workflows, run equivalent lockdown only after configuration succeeds. Future provisioning resets Managed Redis bootstrap access, so lockdown must run again. Disabling AMPLS in an incremental Bicep/CLI deployment does not delete its old scope, endpoint, links, or DNS records; coordinate explicit cleanup.
 
 ### Disable Public Access
 

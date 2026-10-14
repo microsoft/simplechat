@@ -161,13 +161,18 @@ The architecture consists of a single VNet with multiple subnets and a set of Pr
 - **App Inbound:** Hosts the Private Endpoint for inbound traffic to the App Service (front end). This allows secure, private access from internal users or jump hosts.
 - **App Outbound:** Used for VNet Integration, enabling the App Service to make outbound calls to private endpoints of backend services (Cosmos DB, Redis, Storage, etc.).
 - **Data:** Hosts Private Endpoints for data services (Cosmos DB, Redis, Storage).
-- **AI Services:** Hosts Private Endpoints for AI-related services (OpenAI, AI Search, Document Intelligence, Content Safety, Speech, Video Indexer).
+- **AI Services:** Hosts Private Endpoints where supported (OpenAI, AI Search, Document Intelligence, Content Safety, Speech, and Commercial Video Indexer).
+- **Platform:** Hosts ACR, Key Vault, and optional Azure Monitor Private Link Scope (AMPLS).
+
+These are reference architecture segments, not the unmodified deployer output. A **fresh private-network deployment without existing VNet/subnet IDs** creates a `10.0.0.0/21` VNet, delegated `10.0.0.0/24` App Service integration subnet, and shared `10.0.2.0/24` private endpoint subnet. This is identical in Commercial and Government; the scripts do not automatically split endpoint subnets by service.
+
+The [Commercial subnet tables](../guides/enterprise-networking.md#networking-in-azure-commercial) and [Government subnet tables](../guides/enterprise-networking.md#networking-in-azure-government) show **fresh deployment defaults** and a **compact existing-network reference** using `10.42.0.0/24`, with address counts, Azure-usable counts, delegation, and reserved growth space. The compact reference needs enterprise-managed endpoint placement or IaC customization; existing-VNet reuse still sends script-created endpoints to one supplied endpoint subnet.
 
 **Key Points:**
 - The App Service has **two network connections**:
   - **Private Endpoint (Inbound):** Exposes the app privately for internal access (e.g., from a corporate network or jump box).
   - **VNet Integration (Outbound):** Allows the app to reach private endpoints of backend services via the VNet.
-- All backend services are deployed with Private Endpoints in their respective subnets.
+- Script-created endpoints share one subnet; segmented placement requires customization. Government Video Indexer has no private endpoint in these scripts.
 - Each service type requires a corresponding Private DNS Zone for name resolution.
 
 #### **Required Private DNS Zones**
@@ -178,16 +183,19 @@ For each Azure service with a Private Endpoint, you must create and link the fol
 |------------------------|----------------------------------------------|
 | App Service            | privatelink.azurewebsites.net                |
 | Cosmos DB              | privatelink.documents.azure.com              |
-| Redis Cache            | privatelink.redis.cache.windows.net          |
+| Managed Redis          | privatelink.redis.azure.net                  |
+| Classic Redis          | privatelink.redis.cache.windows.net          |
+| Container Registry     | privatelink.azurecr.io                       |
+| Key Vault              | privatelink.vaultcore.azure.net              |
 | Storage Account        | privatelink.blob.core.windows.net            |
 | Azure AI Search        | privatelink.search.windows.net               |
 | Azure OpenAI           | privatelink.openai.azure.com                 |
 | Document Intelligence  | privatelink.cognitiveservices.azure.com      |
 | Content Safety         | privatelink.cognitiveservices.azure.com      |
 | Speech Service         | privatelink.cognitiveservices.azure.com      |
-| Video Indexer          | privatelink.cognitiveservices.azure.com      |
+| Video Indexer          | privatelink.api.videoindexer.ai              |
 
-> **Note:** Some services (like Document Intelligence, Content Safety, Speech, Video Indexer) share the same DNS zone: `privatelink.cognitiveservices.azure.com`.
+This table is **Azure Commercial**. Document Intelligence, Content Safety, and Speech share Cognitive Services DNS, but Video Indexer does not. See the [cloud-specific DNS matrix and AMPLS setup](../guides/enterprise-networking.md#step-5-configure-private-dns) for Government and monitoring. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`; Government Redis uses `privatelink.redis.cache.usgovcloudapi.net`.
 
 **You must link each DNS zone to the VNet and ensure the correct records are created for each private endpoint.**
 
@@ -199,7 +207,7 @@ For each Azure service with a Private Endpoint, you must create and link the fol
 
 #### **Summary of Steps for Enterprise Network Isolation**
 
-1. **Create a VNet** with at least four subnets: App Inbound, App Outbound, Data, and AI Services.
+1. **Choose fresh-deployment defaults or the compact enterprise layout**, avoiding ranges overlapping connected networks.
 2. **Deploy Private Endpoints** for each backend service (Cosmos DB, Redis, Storage, AI Search, OpenAI, etc.) into the appropriate subnet.
 3. **Create and link Private DNS Zones** for each service type to the VNet.
 4. **Configure App Service:**
@@ -208,6 +216,6 @@ For each Azure service with a Private Endpoint, you must create and link the fol
 5. **Restrict public network access** on all backend services (set "Deny public network access" to "Yes").
 6. **Test connectivity** from the App Service to each backend service to ensure all traffic is private.
 
-> This architecture is recommended for all production, government, and regulated environments. The pattern is identical for Azure Commercial, Azure Government, and custom/sovereign clouds—only the region and service endpoints differ.
+AMPLS is a default-off deployment option in both clouds. Its endpoint needs at least 11 IPs and a `/27` or larger subnet; the compact reference uses a `/26` platform subnet. Review shared-DNS impacts before enabling private-only monitoring. Service and private-endpoint availability differ between clouds, not just hostname suffixes.
 
 For more details, see the [Azure documentation on Private Endpoints](https://learn.microsoft.com/azure/private-link/private-endpoint-overview) and [App Service VNet Integration](https://learn.microsoft.com/azure/app-service/overview-vnet-integration).

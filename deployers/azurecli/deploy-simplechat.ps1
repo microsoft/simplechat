@@ -107,7 +107,7 @@ For Azure Government, use the corresponding sovereign-cloud private DNS zones su
 - `privatelink.search.azure.us`
 - `privatelink.openai.azure.us`
 - `privatelink.cognitiveservices.azure.us`
-- `privatelink.vaultcore.azure.us`
+- `privatelink.vaultcore.usgovcloudapi.net`
 - `privatelink.azurecr.us`
 
 For detailed private networking guidance, see:
@@ -217,6 +217,7 @@ $param_Existing_ResourceGroupName = "RG-SimpleChat-Experiemental" # Leave empty 
 
 # Private networking
 $param_EnablePrivateNetworking = $false
+$param_EnableAzureMonitorPrivateLink = $false
 $param_ExistingVirtualNetworkId = "" # Optional existing VNet resource ID to reuse.
 $param_ExistingAppServiceSubnetId = "" # Required when reusing an existing VNet for App Service regional integration.
 $param_ExistingPrivateEndpointSubnetId = "" # Required when reusing an existing VNet for private endpoints.
@@ -293,7 +294,7 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
         cognitiveServices = "privatelink.cognitiveservices.azure.us"
         containerRegistry = "privatelink.azurecr.us"
         cosmosDb          = "privatelink.documents.azure.us"
-        keyVault          = "privatelink.vaultcore.azure.us"
+        keyVault          = "privatelink.vaultcore.usgovcloudapi.net"
         openAi            = "privatelink.openai.azure.us"
         webSites          = "privatelink.azurewebsites.us"
     }
@@ -329,7 +330,12 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
 $paramDateTime_ScriptStart = Get-Date
 $paramDateTimeStamp = ($paramDateTime_ScriptStart).ToString("yyyy-MM-dd HH:mm:ss")
 
-$script:SupportedPrivateDnsZoneKeys = @("keyVault", "cosmosDb", "containerRegistry", "aiSearch", "blobStorage", "cognitiveServices", "openAi", "webSites")
+$script:SupportedPrivateDnsZoneKeys = @("keyVault", "cosmosDb", "containerRegistry", "aiSearch", "blobStorage", "cognitiveServices", "openAi", "webSites", "videoIndexer", "monitor", "monitorOms", "monitorOds", "monitorAgent", "monitorAdx")
+$monitorDnsNames = Get-Content (Join-Path $PSScriptRoot '../bicep/modules/privateDNSZones.json') -Raw | ConvertFrom-Json -AsHashtable
+$dnsCloud = if ($globalWhichAzurePlatform -eq 'AzureUSGovernment') { 'azureusgovernment' } else { 'azurecloud' }
+foreach ($zoneKey in @('videoIndexer', 'monitor', 'monitorOms', 'monitorOds', 'monitorAgent', 'monitorAdx')) {
+    $script:PrivateDnsZoneNames[$zoneKey] = $monitorDnsNames[$dnsCloud][$zoneKey]
+}
 $script:PrivateDnsZoneLinkSuffixes = @{
     aiSearch          = "searchService"
     blobStorage       = "storage"
@@ -339,6 +345,7 @@ $script:PrivateDnsZoneLinkSuffixes = @{
     keyVault          = "kv"
     openAi            = "openAiService"
     webSites          = "webApp"
+    videoIndexer      = "videoIndexer"
 }
 $script:UseExistingPrivateNetwork = $false
 $script:ResolvedVirtualNetworkId = ""
@@ -1083,7 +1090,10 @@ function Show-PrivateNetworkingChecklist {
 
     Write-Host "`nPrivate DNS zone plan:" -ForegroundColor Yellow
     foreach ($zoneKey in $script:SupportedPrivateDnsZoneKeys) {
+        if ($zoneKey -like 'monitor*' -and -not $param_EnableAzureMonitorPrivateLink) { continue }
+        if ($zoneKey -eq 'videoIndexer' -and (-not $param_DeployVideoIndexerService -or $param_VideoIndexerArmApiVersion -ne '2025-04-01' -or $globalWhichAzurePlatform -eq 'AzureUSGovernment')) { continue }
         $zoneConfig = Get-PrivateDnsZoneConfig -ZoneKey $zoneKey
+        if ([string]::IsNullOrWhiteSpace($zoneConfig.ZoneName)) { continue }
         if ([string]::IsNullOrWhiteSpace($zoneConfig.ZoneResourceId)) {
             $zoneAction = "create in deployment resource group"
         } else {
@@ -1109,6 +1119,9 @@ function Show-PrivateNetworkingChecklist {
 }
 
 function Test-PrivateNetworkingConfiguration {
+    if ($param_EnableAzureMonitorPrivateLink -and -not $param_EnablePrivateNetworking) {
+        throw 'param_EnableAzureMonitorPrivateLink requires param_EnablePrivateNetworking=true.'
+    }
     if (-not $param_EnablePrivateNetworking) {
         return
     }
@@ -1281,12 +1294,9 @@ function Ensure-PrivateEndpoint {
         if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create private endpoint '$privateEndpointName'."; exit 1 }
     }
 
-    $existingDnsZoneGroup = az network private-endpoint dns-zone-group show --resource-group $resourceGroupName --endpoint-name $privateEndpointName --name $dnsZoneGroupName --query id --output tsv 2>$null
-    if (-not $existingDnsZoneGroup) {
-        Write-Host "Associating private endpoint '$privateEndpointName' with private DNS zone '$($zoneConfig.ZoneName)'."
-        az network private-endpoint dns-zone-group create --resource-group $resourceGroupName --endpoint-name $privateEndpointName --name $dnsZoneGroupName --private-dns-zone $zoneResourceId --zone-name $zoneConfig.ZoneName | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create the DNS zone group for private endpoint '$privateEndpointName'."; exit 1 }
-    }
+    Write-Host "Ensuring private endpoint '$privateEndpointName' uses private DNS zone '$($zoneConfig.ZoneName)'."
+    az network private-endpoint dns-zone-group create --resource-group $resourceGroupName --endpoint-name $privateEndpointName --name $dnsZoneGroupName --private-dns-zone $zoneResourceId --zone-name $zoneConfig.ZoneName | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to reconcile the DNS zone group for private endpoint '$privateEndpointName'."; exit 1 }
 }
 
 function Update-ResourcePropertiesById {
@@ -1318,6 +1328,16 @@ function Configure-PrivateNetworkingForDeployment {
 
     Ensure-PrivateNetworkingInfrastructure
 
+    if ($param_EnableAzureMonitorPrivateLink) {
+        $subnetJson = az network vnet subnet show --ids $script:ResolvedPrivateEndpointSubnetId --output json
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to validate the AMPLS subnet.' }
+        $subnet = $subnetJson | ConvertFrom-Json
+        $prefixes = if ($subnet.addressPrefixes) { @($subnet.addressPrefixes) } else { @($subnet.addressPrefix) }
+        $supportedPrefixes = @($prefixes | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+/(\d+)$' -and [int]$Matches[1] -le 27 })
+        if ($supportedPrefixes.Count -eq 0) { throw 'AMPLS requires an IPv4 subnet of /27 or larger; use /26 or larger when sharing with platform endpoints.' }
+        Write-Host 'AMPLS opted in: monitoring ingestion and queries will require private routing and DNS. Coordinate one AMPLS per shared DNS boundary.'
+    }
+
     Write-Host "`n=====> Configuring App Service VNet integration and web app network settings..."
     Update-ResourcePropertiesById -ResourceId $(az webapp show --name $appServiceName --resource-group $resourceGroupName --query id --output tsv) -PropertyAssignments @(
         "properties.publicNetworkAccess=Disabled",
@@ -1344,6 +1364,35 @@ function Configure-PrivateNetworkingForDeployment {
     Ensure-PrivateEndpoint -NameSuffix "storage" -ServiceResourceId $storageResourceId -GroupId "blob" -ZoneKey "blobStorage"
     Ensure-PrivateEndpoint -NameSuffix "docintel" -ServiceResourceId $docIntelResourceId -GroupId "account" -ZoneKey "cognitiveServices"
     Ensure-PrivateEndpoint -NameSuffix "webapp" -ServiceResourceId $webAppResourceId -GroupId "sites" -ZoneKey "webSites"
+
+    if ($param_DeployVideoIndexerService -and $param_VideoIndexerArmApiVersion -eq '2025-04-01' -and $globalWhichAzurePlatform -ne 'AzureUSGovernment') {
+        $videoIndexerResourceId = az resource show --resource-group $resourceGroupName --name $videoIndexerName --resource-type Microsoft.VideoIndexer/accounts --api-version $param_VideoIndexerArmApiVersion --query id -o tsv
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($videoIndexerResourceId)) { throw 'Unable to resolve Video Indexer for its private endpoint.' }
+        Ensure-PrivateEndpoint -NameSuffix 'videoIndexer' -ServiceResourceId $videoIndexerResourceId -GroupId 'account' -ZoneKey 'videoIndexer'
+    }
+
+    if ($param_EnableAzureMonitorPrivateLink) {
+        $appInsightsResourceId = az monitor app-insights component show --app $appInsightsName --resource-group $resourceGroupName --query id -o tsv
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($appInsightsResourceId) -or [string]::IsNullOrWhiteSpace($logAnalyticsWorkspaceId)) { throw 'Unable to resolve monitoring resources for AMPLS.' }
+        $monitorParameters = @{
+            location = @{ value = $paramLocation }
+            appName = @{ value = $paramBaseName }
+            environment = @{ value = $paramEnvironment }
+            tags = @{ value = $tags }
+            virtualNetworkId = @{ value = $script:ResolvedVirtualNetworkId }
+            privateEndpointSubnetId = @{ value = $script:ResolvedPrivateEndpointSubnetId }
+            privateDnsZoneConfigs = @{ value = $param_PrivateDnsZoneConfigs }
+            blobStorageDnsZoneId = @{ value = (Ensure-PrivateDnsZone -ZoneKey 'blobStorage') }
+            monitoringResourceIds = @{ value = @($logAnalyticsWorkspaceId, $appInsightsResourceId) }
+        } | ConvertTo-Json -Depth 20 -Compress
+        $monitorTemplate = Join-Path $PSScriptRoot '../bicep/modules/azureMonitorPrivateNetworking.json'
+        az deployment group create --resource-group $resourceGroupName --name azureMonitorPrivateNetworking --template-file $monitorTemplate --parameters $monitorParameters | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Failed to deploy AMPLS; monitoring public access has not been disabled.' }
+        foreach ($monitorResourceId in @($logAnalyticsWorkspaceId, $appInsightsResourceId)) {
+            az resource update --ids $monitorResourceId --set properties.publicNetworkAccessForIngestion=Disabled properties.publicNetworkAccessForQuery=Disabled | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to disable monitoring public access.' }
+        }
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($OpenAiResourceId)) {
         Ensure-PrivateEndpoint -NameSuffix "openai" -ServiceResourceId $OpenAiResourceId -GroupId "account" -ZoneKey "openAi"

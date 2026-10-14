@@ -7,7 +7,15 @@
     "cosmosDb": "privatelink.documents.azure.com",
     "keyVault": "privatelink.vaultcore.azure.net",
     "openAi": "privatelink.openai.azure.com",
-    "webSites": "privatelink.azurewebsites.net"
+    "webSites": "privatelink.azurewebsites.net",
+    "redisClassic": "privatelink.redis.cache.windows.net",
+    "redisManaged": "privatelink.redis.azure.net",
+    "videoIndexer": "privatelink.api.videoindexer.ai",
+    "monitor": "privatelink.monitor.azure.com",
+    "monitorOms": "privatelink.oms.opinsights.azure.com",
+    "monitorOds": "privatelink.ods.opinsights.azure.com",
+    "monitorAgent": "privatelink.agentsvc.azure-automation.net",
+    "monitorAdx": ""
   },
   "azureusgovernment": {
     "aisearch": "privatelink.search.azure.us",
@@ -15,8 +23,16 @@
     "cognitiveServices": "privatelink.cognitiveservices.azure.us",
     "containerRegistry": "privatelink.azurecr.us",
     "cosmosDb": "privatelink.documents.azure.us",
-    "keyVault": "privatelink.vaultcore.azure.us",
+    "keyVault": "privatelink.vaultcore.usgovcloudapi.net",
     "openAi": "privatelink.openai.azure.us",
-    "webSites": "privatelink.azurewebsites.us"
+    "webSites": "privatelink.azurewebsites.us",
+    "redisClassic": "privatelink.redis.cache.usgovcloudapi.net",
+    "redisManaged": "",
+    "videoIndexer": "",
+    "monitor": "privatelink.monitor.azure.us",
+    "monitorOms": "privatelink.oms.opinsights.azure.us",
+    "monitorOds": "privatelink.ods.opinsights.azure.us",
+    "monitorAgent": "privatelink.agentsvc.azure-automation.us",
+    "monitorAdx": "privatelink.adx.monitor.azure.us"
   }
 }

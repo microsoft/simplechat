@@ -65,6 +65,9 @@
     "enablePrivateNetworking": {
       "value": "${ENABLE_PRIVATE_NETWORKING}"
     },
+    "enableAzureMonitorPrivateLink": {
+      "value": "${ENABLE_AZURE_MONITOR_PRIVATE_LINK=false}"
+    },
     "existingVirtualNetworkId": {
       "value": "${EXISTING_VNET_RESOURCE_ID}"
     },
