@@ -113,6 +113,8 @@ export function ActionConnectionCheck({
 }) {
     const { draft, original } = props;
     const readOnly = props.readOnly || Boolean(original?.read_only);
+    const personalCredentials = Boolean(draft.credential_requirements &&
+        Object.keys(draft.credential_requirements.slots ?? {}).length);
     const request = useConnectorRequest(props);
     if (kind === 'native') {
         const native = nativeActionDefinition(draft.type);
@@ -121,11 +123,14 @@ export function ActionConnectionCheck({
             <EditorPanel title="Connection check"
                 description="Test connection makes a small request using this draft. An edited action uses its owned stored credentials when their masked values are unchanged. Saving does not run this test.">
                 <div>
-                    <GlassButton type="button" size="sm" variant="subtle" disabled={readOnly || Boolean(request.busy)}
+                    <GlassButton type="button" size="sm" variant="subtle" disabled={readOnly || Boolean(request.busy) || personalCredentials}
                         onClick={() => void request.run('Testing connection…', (signal) => testWorkspaceAction(draft, original, definition, signal, connectorTestScope(props)))}>
                         <FlaskConical size={15} />{request.busy || 'Test connection'}
                     </GlassButton>
                 </div>
+                {personalCredentials ? <p className="text-sm text-text-2">
+                    Save this action, then use it in chat to configure and check your own personal identity. Connection testing never substitutes shared credentials for a personal slot.
+                </p> : null}
                 <ConnectorFeedbackPanel feedback={request.feedback} stale={request.stale} />
             </EditorPanel>
         );

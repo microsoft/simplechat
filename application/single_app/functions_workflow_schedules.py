@@ -124,7 +124,7 @@ def _normalize_day_of_month(value):
     return value
 
 
-def _normalize_calendar_schedule(schedule_payload):
+def _normalize_calendar_schedule(schedule_payload, *, allow_missing_time=False):
     frequency = str(schedule_payload.get('frequency') or '').strip().lower()
     if frequency not in WORKFLOW_SCHEDULE_FREQUENCIES:
         raise WorkflowPublicValidationError(SCHEDULE_FREQUENCY_ERROR)
@@ -138,7 +138,7 @@ def _normalize_calendar_schedule(schedule_payload):
 
     time_of_day = schedule_payload.get('time_of_day')
     time_of_day = time_of_day.strip() if isinstance(time_of_day, str) else ''
-    if not WORKFLOW_SCHEDULE_TIME_PATTERN.fullmatch(time_of_day):
+    if not WORKFLOW_SCHEDULE_TIME_PATTERN.fullmatch(time_of_day) and not (allow_missing_time and time_of_day == ''):
         raise WorkflowPublicValidationError(SCHEDULE_TIME_ERROR)
 
     timezone_name = schedule_payload.get('timezone')
@@ -154,6 +154,16 @@ def _normalize_calendar_schedule(schedule_payload):
         'time_of_day': time_of_day,
         'timezone': timezone_name,
     }
+
+
+def normalize_workflow_calendar_draft(schedule):
+    """Validate calendar authoring fields without inventing an executable missing time.
+
+    Save and runtime callers continue using normalize_workflow_schedule, which rejects blanks.
+    """
+    if not isinstance(schedule, dict) or schedule.get('kind') != WORKFLOW_SCHEDULE_KIND_CALENDAR:
+        raise WorkflowPublicValidationError(SCHEDULE_KIND_ERROR)
+    return _normalize_calendar_schedule(schedule, allow_missing_time=True)
 
 
 def normalize_workflow_schedule(schedule_payload):

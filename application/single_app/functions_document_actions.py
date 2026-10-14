@@ -20,6 +20,7 @@ DOCUMENT_ACTION_TYPE_SEARCH = 'search'
 DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_TYPE_MERGE = 'merge'
+DOCUMENT_ACTION_TYPE_CHOOSE = 'choose'
 DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED = 'combined'
 DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT = 'per_document'
 DOCUMENT_ACTION_TARGET_MODE_ALL = 'all'
@@ -43,6 +44,7 @@ VALID_DOCUMENT_ACTION_TYPES = {
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_MERGE,
+    DOCUMENT_ACTION_TYPE_CHOOSE,
 }
 DOCUMENT_ACTION_LIMIT_BOUNDS = {
     DOCUMENT_ACTION_CONTEXT_CHAT: {
@@ -325,6 +327,15 @@ def get_document_action_max_documents_by_type(execution_context, settings=None):
     }
 
 
+def get_workflow_document_selection_limit(action_type, settings=None):
+    """The same conservative input bound for preview and runtime choice."""
+    if action_type == DOCUMENT_ACTION_TYPE_CHOOSE:
+        enabled = get_enabled_document_action_types(settings=settings, include_merge=True) - {DOCUMENT_ACTION_TYPE_NONE}
+        return min(get_document_action_max_documents(kind, DOCUMENT_ACTION_CONTEXT_WORKFLOW, settings=settings)
+                   for kind in enabled)
+    return get_document_action_max_documents(action_type, DOCUMENT_ACTION_CONTEXT_WORKFLOW, settings=settings)
+
+
 def _resolve_max_documents(action_type, max_documents=None, max_documents_by_type=None):
     if isinstance(max_documents_by_type, dict):
         resolved_value = max_documents_by_type.get(action_type)
@@ -485,6 +496,7 @@ def normalize_document_action_config(
     max_documents=None,
     max_documents_by_type=None,
     allowed_action_types=None,
+    allow_runtime_choice=False,
 ):
     action_payload = action_payload if isinstance(action_payload, dict) else {}
     existing_action = existing_action if isinstance(existing_action, dict) else {}
@@ -523,6 +535,51 @@ def normalize_document_action_config(
         })
     if action_type == DOCUMENT_ACTION_TYPE_NONE:
         return normalized_action
+    if action_type == DOCUMENT_ACTION_TYPE_CHOOSE:
+        # Workflow-only, opt-in, closed source contract. Never becomes broad relevance Search.
+        if not allow_runtime_choice:
+            raise ValueError('Runtime document action choice is available only in workflows.')
+        if allowed_action_types is not None and DOCUMENT_ACTION_TYPE_MERGE not in allowed_action_types and not (
+            DOCUMENT_ACTION_TYPE_ANALYZE in allowed_action_types or DOCUMENT_ACTION_TYPE_COMPARISON in allowed_action_types
+            or DOCUMENT_ACTION_TYPE_SEARCH in allowed_action_types
+        ):
+            raise ValueError('No document action is available for runtime choice.')
+        mode = source_action.get('target_mode')
+        if mode not in ('selected', 'recent') or (mode == 'recent' and 'document_selection' not in normalized_action):
+            raise ValueError('Runtime choice requires selected documents or guided recent criteria.')
+        sources = source_action.get('document_sources')
+        if mode == 'selected':
+            if not isinstance(sources, list) or not 1 <= len(sources) <= 50:
+                raise ValueError('Select between 1 and 50 documents for runtime choice.')
+            ids = []
+            for entry in sources:
+                if not isinstance(entry, dict) or entry.keys() - {'scope_type', 'scope_id', 'document_id'}:
+                    raise ValueError('Review the selected document workspaces.')
+                normalize_document_selection({'scopes': [{key: value for key, value in entry.items() if key != 'document_id'}],
+                                              'filters': {'operator': 'and', 'conditions': []}, 'on_empty': 'report'})
+                identity = entry.get('document_id')
+                if not isinstance(identity, str) or not identity.strip() or identity != identity.strip() or len(identity) > 256 or identity in ids:
+                    raise ValueError('Choose unique available documents for runtime choice.')
+                ids.append(identity)
+            if source_action.get('document_ids') != ids:
+                raise ValueError('Selected document sources must match the selected documents.')
+            normalized_action['document_sources'] = copy.deepcopy(sources)
+            normalized_action['document_ids'] = ids
+        normalized_action.update({
+            'target_mode': mode,
+            'recent_window_minutes': source_action.get('recent_window_minutes', DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES),
+            'doc_scope': source_action.get('doc_scope', 'all'),
+            'active_group_ids': normalize_search_id_list(source_action.get('active_group_ids')),
+            'active_public_workspace_id': normalize_search_id_list(source_action.get('active_public_workspace_id')),
+        })
+        if any(key in source_action for key in ('merge_kind', 'output_format', 'output_file_name', 'merge_options')):
+            if not source_action.get('merge_kind') or not source_action.get('output_format'):
+                raise MergeActionError('Runtime Merge needs an explicit file kind and output format.')
+            merge = _normalize_merge_action({**source_action, 'target_mode': 'recent'}, {}, None)
+            for key in ('merge_kind', 'output_format', 'output_file_name', 'merge_options'):
+                if key in merge:
+                    normalized_action[key] = merge[key]
+        return normalized_action
 
     resolved_max_documents = _resolve_max_documents(
         action_type,
@@ -535,6 +592,12 @@ def normalize_document_action_config(
         if target_mode == DOCUMENT_ACTION_TARGET_MODE_ALL:
             raise ValueError('All Documents is exhaustive only for Analyze.')
         document_ids = normalize_search_id_list(source_action.get('document_ids'))
+        if 'search_mode' in source_action:
+            if source_action['search_mode'] not in ('selected', 'relevance'):
+                raise ValueError('Search source must be selected documents or workspace relevance.')
+            if source_action['search_mode'] == 'selected' and target_mode == 'selected' and not document_ids:
+                raise ValueError('Select documents for this Search task or explicitly choose workspace relevance.')
+            normalized_action['search_mode'] = source_action['search_mode']
         if resolved_max_documents is not None and len(document_ids) > resolved_max_documents:
             raise ValueError(f'Document search supports up to {resolved_max_documents} documents at a time.')
 
@@ -546,6 +609,14 @@ def normalize_document_action_config(
             'target_mode': target_mode,
             'recent_window_minutes': normalize_recent_document_window_minutes(source_action.get('recent_window_minutes')),
         })
+        if 'relevance_scopes' in source_action:
+            if target_mode != 'selected' or document_ids or 'document_selection' in source_action:
+                raise ValueError('Relevance workspaces cannot be combined with selected or recent documents.')
+            scopes = normalize_document_selection({
+                'scopes': source_action['relevance_scopes'],
+                'filters': {'operator': 'and', 'conditions': []}, 'on_empty': 'report',
+            })['scopes']
+            normalized_action['relevance_scopes'] = scopes
         if bool(source_action.get('recent_targets_resolved')):
             normalized_action['recent_targets_resolved'] = True
         return normalized_action
@@ -658,7 +729,8 @@ def normalize_document_action_config(
     return normalized_action
 
 
-def get_document_action_config(document_source, max_documents=None, max_documents_by_type=None, allowed_action_types=None):
+def get_document_action_config(document_source, max_documents=None, max_documents_by_type=None, allowed_action_types=None,
+                               allow_runtime_choice=False):
     document_source = document_source if isinstance(document_source, dict) else {}
     return normalize_document_action_config(
         action_payload=document_source.get('document_action'),
@@ -667,6 +739,7 @@ def get_document_action_config(document_source, max_documents=None, max_document
         max_documents=max_documents,
         max_documents_by_type=max_documents_by_type,
         allowed_action_types=allowed_action_types,
+        allow_runtime_choice=allow_runtime_choice,
     )
 
 

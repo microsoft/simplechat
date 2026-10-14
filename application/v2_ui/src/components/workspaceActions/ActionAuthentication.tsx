@@ -6,7 +6,8 @@ import { ActionConnectionCheck } from './ActionConnectionCheck';
 import { ActionField, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
 import {
     actionAuthMethod, actionAuthModes, actionFieldError, actionText, actionValueAt,
-    changeActionAuth, changeActionField, selectActionIdentity,
+    changeActionAuth, changeActionCredentialSource, changeActionField, selectActionIdentity,
+    usesPersonalActionCredential,
 } from '../../lib/workspaceActionLogic';
 import { nativeActionDefinition, sqlConnectionMethod } from '../../lib/workspaceActionRegistry';
 import type { ActionTypeDefinition } from '../../lib/workspaceAuthoring';
@@ -30,6 +31,20 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
     // "kept as is". A manager whose list loaded but lacks the bound id gets the actionable copy.
     const keptAsIs = groupScoped && !props.identitiesResolvable;
     const sql = ['sql_query', 'sql_schema'].includes(draft.type);
+    const personalService = usesPersonalActionCredential(draft, 'service');
+    const personalProxy = usesPersonalActionCredential(draft, 'proxy');
+    const credentialSource = (slot: 'service' | 'proxy', personal: boolean) => (
+        <ActionField id={`${id}-${slot}-source`} label={slot === 'proxy' ? 'Proxy credential source' : 'Yamcs credential source'}
+            help="Each user’s personal identity is requested privately in chat when this action needs it. Users never edit the shared action."
+            error={actionFieldError(props.errors, '/credential_requirements')}>
+            <select id={`${id}-${slot}-source`} className={ACTION_INPUT_CLASS}
+                value={personal ? 'personal' : 'shared'} disabled={readOnly}
+                onChange={(event) => onChange((current) => changeActionCredentialSource(current, slot, event.target.value === 'personal'))}>
+                <option value="shared">Configured action credentials or workspace identity</option>
+                <option value="personal">Each user’s personal identity — request in chat</option>
+            </select>
+        </ActionField>
+    );
 
     const textField = (path: string, label: string, help?: string, required = false) => props.original?.secret_paths.includes(path)
         ? secretField(path, label, help) : (
@@ -50,9 +65,15 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
             description="Use this only when an HTTP Basic reverse proxy sits in front of Yamcs. It is separate from the primary Yamcs authentication method above.">
             <EditorSwitch lead checked={actionValueAt(draft, '/additionalFields/enable_basic_auth') === true}
                 disabled={readOnly} label="Send Basic auth to a reverse proxy"
-                description="Stores the same Yamcs basic-auth keys the backend expects; it does not change the Yamcs API auth method."
-                onChange={(value) => onChange((current) => changeActionField(current, '/additionalFields/enable_basic_auth', value))} />
+                description="The proxy credential is independent of Yamcs service credentials."
+                onChange={(value) => onChange((current) => {
+                    const changed = changeActionField(current, '/additionalFields/enable_basic_auth', value);
+                    return !value && usesPersonalActionCredential(current, 'proxy')
+                        ? changeActionCredentialSource(changed, 'proxy', false) : changed;
+                })} />
             {actionValueAt(draft, '/additionalFields/enable_basic_auth') === true ? <EditorDependents>
+                {credentialSource('proxy', personalProxy)}
+                {personalProxy ? <p className="text-sm text-text-2">Each user supplies their own proxy username and password in chat.</p> : <>
                 {textField('/additionalFields/basic_auth_username', 'Proxy username', 'Username sent to the reverse proxy. A selected reusable identity can supply this value at runtime.', !proxyIdentityId)}
                 <ActionField id={`${id}-proxy-identity`} label="Proxy reusable identity" width="standard"
                     help="Optional username/password identity for the reverse proxy credential."
@@ -68,7 +89,10 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                         </option>)}
                     </select>
                 </ActionField>
-                {!proxyIdentityId ? secretField('/additionalFields/basic_auth_password', 'Proxy password', 'Password sent to the reverse proxy. Stored in Key Vault.') : null}
+                {!proxyIdentityId ? secretField('/additionalFields/basic_auth_password', 'Proxy password', 'Password sent to the reverse proxy. Uses the configured secret storage.') : null}
+                </>}
+                {actionFieldError(props.errors, '/additionalFields/enable_basic_auth')
+                    ? <p role="alert" className="text-sm text-danger">{actionFieldError(props.errors, '/additionalFields/enable_basic_auth')}</p> : null}
             </EditorDependents> : null}
         </EditorPanelFieldset>
     ) : null;
@@ -93,7 +117,8 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
 
     return (
         <div className="space-y-5">
-            {identityTypes.length || draft.identity_id ? (
+            {draft.type === 'yamcs' && method !== 'none' ? credentialSource('service', personalService) : null}
+            {!personalService && (identityTypes.length || draft.identity_id) ? (
                 <div className="space-y-2">
                     <ActionField id={`${id}-identity`} label="Reusable identity"
                         help="Use an existing identity from My Workspace, or enter credentials for this action. Credentials are resolved on the server."
@@ -137,6 +162,9 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                         {modes.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
                     </select>
                 </ActionField>
+                {personalService ? <p role="status" className="text-sm text-text-2">
+                    No shared service credentials are saved here. Each user selects or creates a personal identity in chat.
+                </p> : <>
                 {sql && method === 'service_principal' ? <p role="status" className="rounded-xl bg-warn-soft p-3 text-sm text-warn">
                     These service-principal fields are retained for compatibility, but the current SQL action runtime does not use them.
                     Use a supported authentication mode or a complete connection string instead. A connection test will not report these fields as working credentials.
@@ -177,6 +205,7 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
                     Key authentication is supported only by custom Log Analytics-compatible endpoints.
                 </p> : null}
                 {draft.auth.type === 'NoAuth' ? <p className="text-xs text-text-3">No authentication headers or credentials will be used.</p> : null}
+                </>}
             </> : null}
             {draft.identity_id && draft.type === 'tableau' && (identity?.auth_type === 'api_key' || method === 'personal_access_token')
                 ? textField('/additionalFields/pat_name', 'Personal access token name', 'The reusable identity contains the PAT secret; its token name is configured on this action.', true) : null}

@@ -56,6 +56,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     # Access restricted pages, which only describe the signed-in user's own restriction.
     "access_restriction": ("login_required",),
     "backend_analysis_results": ("login_required", "user_required"),
+    "backend_action_credentials": ("login_required", "user_required"),
     "backend_chats": ("login_required", "user_required"),
     "backend_collaboration": ("login_required", "user_required"),
     "backend_content_screening": ("login_required", "user_required"),

@@ -385,7 +385,20 @@ class OperationJournal:
             return
         try:
             await next(invocation)
-        except Exception:
+        except Exception as error:
+            from action_credential_contracts import find_credential_stop
+            safe_pause = False
+            if find_credential_stop(error) is not None:
+                # Connector classes are loaded only at invocation, not during bootstrap.
+                from semantic_kernel_plugins.yamcs_plugin import YamcsPlugin
+                from semantic_kernel_plugins.agent_plugin import AgentPlugin
+
+                safe_pause = isinstance(plugin, (YamcsPlugin, AgentPlugin))
+            if safe_pause:
+                # The YAMCS adapter only reads; a suspended local-agent call
+                # retains its completed child tools in the credential journal.
+                self.finish(key, {"status": "credential_wait"}, refused=True)
+                raise
             self.failure = OperationRecoveryError()
             raise
         value = invocation.result.value if invocation.result is not None else None

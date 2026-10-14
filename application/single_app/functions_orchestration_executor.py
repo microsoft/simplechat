@@ -44,6 +44,7 @@ from copy import copy, deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from werkzeug.utils import secure_filename
+from action_credential_deadline import execution_deadline
 
 from content_screening.access import assert_current_request_sources_available
 from content_screening.contracts import ScreeningError
@@ -1002,6 +1003,10 @@ def _run_dependency_step(
         if step['role'] == 'render':
             return _validate_render_step_result(step, result)
         task = result.get('task_result')
+        if result.get("status") == STEP_STATUS_WAITING and (result.get("wait") or {}).get("kind") == "action_credentials":
+            from functions_orchestration_result_contracts import TaskResult
+
+            task = TaskResult(context.result_producer(step), step["role"], "pending", ())
         if result['status'] in (STEP_STATUS_FAILED, STEP_STATUS_CANCELLED):
             if result['status'] == STEP_STATUS_FAILED and task is not None:
                 validate_task_diagnostics(step, context, task)
@@ -1202,7 +1207,7 @@ def resume_native_dependency_step(
     if task.status != 'pending' or type(wait) is not dict or not wait:
         raise ResultContractError('result_wait_required')
     if context.execution_deadline_at is not None:
-        deadline = datetime.fromisoformat(context.execution_deadline_at)
+        deadline = execution_deadline(context)
         if deadline.tzinfo is None:
             raise ResultContractError('result_deadline_invalid')
         if datetime.now(timezone.utc) >= deadline:
@@ -1225,6 +1230,35 @@ def resume_waiting_dependency_step(
     wait = context.pending_results.get(step['step_id'])
     if type(wait) is not dict:
         raise ResultContractError('result_wait_required')
+    if wait.get("kind") == "action_credentials":
+        from functions_action_credentials import authorize_request, credential_continuation
+        from functions_orchestration_adapters import _credential_step_continuation
+
+        if (
+            set(wait) != {"kind", "request_id"} or user_id != context.user_id
+            or step.get("capability_id") not in {"action_invoke", "agent_invoke"}
+        ):
+            raise ResultContractError("result_wait_invalid")
+        request, _manifest = authorize_request(user_id, wait["request_id"])
+        descriptor = _credential_step_continuation(step, context)
+        if any(
+            request["continuation"].get(key) != descriptor.get(key) for key in ("run_id", "step_id", "checkpoint_id")
+        ):
+            raise ResultContractError("result_wait_invalid")
+        if request["status"] in {"pending", "ready", "saving"}:
+            # A sibling's explicit Continue never consumes this credential interaction.
+            return build_step_result(
+                status=STEP_STATUS_WAITING, task_result=context.task_results[step["step_id"]],
+                wait=wait, summary="Waiting for personal action credentials.",
+            )
+        if request["status"] != "continuing":
+            raise ResultContractError("result_wait_invalid")
+        # The adapter's SK journal resumes the paused tool; completed sibling
+        # steps continue to come from ContinuationCheckpoints.
+        return _run_dependency_step(
+            step, context, settings=settings, user_id=user_id, emit=emit, cancel_probe=cancel_requested,
+            resolver=_dependency_adapter, input_fingerprint=input_fingerprint,
+        )
     if wait.get('kind') == 'native_tabular_compute':
         return resume_native_dependency_step(
             step, context, settings=settings, user_id=user_id, input_fingerprint=input_fingerprint,
@@ -1272,7 +1306,7 @@ def resume_waiting_dependency_step(
         return build_step_result(status=STEP_STATUS_CANCELLED, failure=build_failure('user_cancelled'))
     if type(context.execution_deadline_at) is not str:
         raise ResultContractError('result_deadline_invalid')
-    deadline = datetime.fromisoformat(context.execution_deadline_at)
+    deadline = execution_deadline(context)
     if deadline.tzinfo is None:
         raise ResultContractError('result_deadline_invalid')
     if datetime.now(timezone.utc) >= deadline:
@@ -1341,7 +1375,7 @@ def _execute_dependency_plan(
         context.durable_checkpoints = True
         checkpoints = checkpoints(context) if callable(checkpoints) else checkpoints
         checkpoints.initialize()
-    deadline = datetime.fromisoformat(context.execution_deadline_at)
+    deadline = execution_deadline(context)
     if deadline.tzinfo is None:
         raise ResultContractError('result_deadline_invalid')
     _persist(persist, 'run', {

@@ -1,7 +1,7 @@
 # test_v2_workflow_loops.py
 """
 Closed browser regressions for serial For each, exact Collect and explicit saved-record reporting.
-Version: 0.261.271
+Version: 0.261.335
 Implemented in: 0.261.117
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 
@@ -103,7 +103,8 @@ def test_author_selected_documents_current_analyze_exports_and_collect(workflow_
     move.select_option(destination)
     task = task_block(page, "Analyze one source")
     details(task)
-    task.get_by_label("Document action", exact=True).select_option("current_item")
+    task.get_by_label("Document action", exact=True).select_option("analyze")
+    task.get_by_label("Document source", exact=True).select_option("current_item")
     task.get_by_label("Output contract for Analyze one source", exact=True).select_option("records")
     task.get_by_label("Record field name", exact=True).fill("finding_id")
     task.get_by_label("Record field type", exact=True).select_option("string")

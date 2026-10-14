@@ -1900,12 +1900,36 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
     return citations
 
 
+def _credential_step_continuation(step, context):
+    from functions_action_credential_state import key_for
+
+    descriptor = {
+        "mode": "orchestration", "run_id": _ctx(context, "run_id"),
+        "step_id": step["step_id"], "turn_id": _ctx(context, "turn_id"),
+        "checkpoint_id": "checkpoint_" + key_for(_ctx(context, "run_id"), step["step_id"]),
+    }
+    wait = (_ctx(context, "pending_results", {}) or {}).get(step["step_id"])
+    if isinstance(wait, dict) and wait.get("kind") == "action_credentials":
+        descriptor["resume"] = True
+    return descriptor
+
+
+def _credential_wait_result(error, emit):
+    _emit(emit, error.event)
+    return build_step_result(
+        status="waiting", summary="Waiting for personal action credentials.",
+        wait={"kind": "action_credentials", "request_id": error.credential_request["id"]},
+    )
+
+
 def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requested):
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Action execution was cancelled.')
     # Action dependencies initialize SK/Azure; keep them out of the adapter import path.
     import asyncio
     from agent_execution_context import AgentExecutionCancelled
+    from action_credential_contracts import ActionCredentialsRequired
+    from functions_action_credentials import credential_continuation
 
     arguments = _arguments(step)
     action_ref = _text(arguments.get('action_ref'))
@@ -1953,6 +1977,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
 
         # Microsoft 365 email and event times are shown in the turn's browser time zone.
         with (
+            credential_continuation(_credential_step_continuation(step, context)),
             orchestration_action_card_events(_m365_card_callback(step, context, emit)),
             m365_display_time_zone(_ctx(context, 'time_zone')),
             operation_step_scope(step, context, user_id, named_inputs),
@@ -1964,6 +1989,8 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             ))
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Action execution was cancelled.')
+    except ActionCredentialsRequired as error:
+        return _credential_wait_result(error, emit)
     except (
         OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
         OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,
@@ -2092,6 +2119,8 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     # Flask state, and all steps share the run's root delegation budget.
     import asyncio
     from agent_execution_context import AgentExecutionCancelled, DelegationBudget
+    from action_credential_contracts import ActionCredentialsRequired
+    from functions_action_credentials import credential_continuation
 
     try:
         from functions_agent_delegation import agent_reference
@@ -2147,6 +2176,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
         from functions_m365_citations import m365_display_time_zone
 
         with (
+            credential_continuation(_credential_step_continuation(step, context)),
             orchestration_action_card_events(_m365_card_callback(step, context, emit)),
             m365_display_time_zone(_ctx(context, 'time_zone')),
             operation_step_scope(step, context, user_id, named_inputs) as journal,
@@ -2166,6 +2196,8 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             operation_receipts = deepcopy(journal.receipts) if journal is not None else []
     except (AgentExecutionCancelled, OrchestrationInvocationCancelledError):
         return _cancelled_result('Agent execution was cancelled.')
+    except ActionCredentialsRequired as error:
+        return _credential_wait_result(error, emit)
     except (
         OrchestrationInvocationServiceError, OrchestrationInvocationControlError,
         OrchestrationInvocationDeniedError, OrchestrationInvocationHeldError,

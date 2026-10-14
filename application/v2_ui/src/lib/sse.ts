@@ -10,6 +10,7 @@
 
 import { apiUrl, API_BASE } from './apiClient';
 import type { ChatStreamEvent, ChatStreamRequest } from './types';
+import { publishCredentialRequest } from './actionCredentialEvents';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
@@ -110,6 +111,7 @@ export interface ChatStreamResult {
     errored: boolean;
     /** True when the answer was finished by a reattached stream rather than the original. */
     reconnected: boolean;
+    credentialWaiting?: boolean;
 }
 
 /**
@@ -198,13 +200,19 @@ export async function readSsePost<TEvent>(
         if (!json) {
             return false;
         }
+        let decoded: unknown;
         try {
-            return onEvent(JSON.parse(json) as TEvent);
+            decoded = JSON.parse(json);
         } catch {
             // A malformed frame is skipped rather than killing an otherwise healthy stream;
             // the terminal frame is what decides completion.
             return false;
         }
+        if (decoded && typeof decoded === 'object' && !Array.isArray(decoded) && !('type' in decoded) &&
+            frame.split('\n').some((line) => line.startsWith('event:') && line.slice(6).trim() === 'action_credentials_required')) {
+            decoded = { ...decoded, type: 'action_credentials_required' };
+        }
+        return onEvent(decoded as TEvent);
     };
 
     const drainBuffer = (flush: boolean): boolean => {
@@ -284,6 +292,11 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
+        if (event.type === 'action_credentials_required') {
+            publishCredentialRequest(event.credential_request);
+            result.credentialWaiting = true;
+            return true;
+        }
         // Reported before the error check: a failed run can still have saved an action.
         if (carriesPendingActions(event)) handlers.onM365PendingActions?.(event);
         if (event.replace_content === true) {
@@ -372,6 +385,16 @@ async function consumeStreamResponse(
  * Returns false when there is nothing to attach to, which is the normal case: the server
  * answers 404 once the session is no longer active.
  */
+export async function consumeCredentialChatResponse(
+    response: Response, handlers: ChatStreamHandlers, signal?: AbortSignal,
+): Promise<ChatStreamResult> {
+    const result: ChatStreamResult = {
+        accumulated: '', completed: false, cancelled: false, errored: false, reconnected: false,
+    };
+    await consumeStreamResponse(response, handlers, result, signal, (message, event) => handlers.onError?.(message, event));
+    return result;
+}
+
 async function attachToLiveStream(
     conversationId: string,
     handlers: ChatStreamHandlers,

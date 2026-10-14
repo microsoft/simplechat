@@ -1,6 +1,8 @@
 # Yamcs Action
 
 Implemented in version: **0.250.212**
+Personal service/proxy credential sources implemented in: **0.261.333**,
+recorded in `application/single_app/config.py`.
 
 Related config.py version update: `application/single_app/config.py` is **0.250.212** for this implementation.
 
@@ -155,6 +157,28 @@ both. An identity resolves within the workspace scope that owns the action, so a
 action paired with a personal identity uses that user's own credential. A shared group
 action resolves one group-scoped credential rather than a distinct credential per member.
 
+### Personal credentials on a shared action
+
+With `credential_requirements.version = 1`, a Yamcs action can request a
+personal `service` or `proxy` identity from each invoking user. An omitted slot
+keeps configured credentials and same-scope identity behavior. Choosing a
+personal source explicitly clears competing inline credentials and shared
+identity references for that slot.
+
+Users configure the required personal identity in a private chat card on first
+use, then **Save and continue** the blocked work. A confirmed authentication
+rejection can require replacement. Group/global action authors do not manage or
+see the user's secret, and ordinary personal authoring permissions are not
+required solely to satisfy an authorized shared action's request.
+
+Personal source does not permit Yamcs username/password or bearer auth alongside
+proxy Basic. The same HTTP-header restrictions apply. Connection testing for a
+personal slot occurs through saved-action use in chat, not by silently falling
+back to an administrator credential.
+
+See [Personal action credentials](PERSONAL_ACTION_CREDENTIALS.md) for the
+framework, storage behavior, continuation, and limitations.
+
 ## Usage Instructions
 
 Create a new action from a personal, group, or admin action surface and choose **Yamcs**. Enter the Yamcs server URL and the instance name, and optionally change the processor from the `realtime` default.
@@ -185,5 +209,5 @@ After saving the action, assign it to agents that need Yamcs telemetry or archiv
 - Streaming and subscription APIs (parameter, packet, event, and alarm subscriptions) are not exposed, because agent tool calls are request/response.
 - Testing a connection that uses a reusable identity requires saving the action first.
 - Reverse proxy HTTP Basic authentication cannot be combined with Yamcs username/password or access token authentication, because only one `Authorization` header can be sent.
-- A shared group action resolves a single group-scoped proxy credential. Per-user credentials on one shared action are not supported; use a personal action with a personal identity where each operator must present their own credential.
+- Ordinary shared identity references resolve in the action's own workspace. Use an explicit personal credential source when every operator must supply their own identity; only Yamcs supports that source in this release.
 - Live connectivity is validated only when credentials and a reachable Yamcs server are configured in the running app.

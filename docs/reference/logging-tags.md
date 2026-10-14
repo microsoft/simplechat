@@ -21,6 +21,13 @@ match counts, window minutes, and elapsed time. `run_id_hash` and `step_id_hash`
 correlate runtime captures. An over-limit count is explicitly a lower bound;
 zero matches is distinct from an incomplete catalog or denied access.
 
+Since **0.261.333**, the existing `[WORKFLOW_DOCUMENT_ACTION]` tag also records
+runtime-choice success, refusal, invalid/incomplete decisions, and provider
+failures. Fields are action/failure codes, captured-input counts and
+`selection_model_call_count`; replayed decisions report zero new calls. Numeric
+selection-model usage is retained separately from processing usage in run
+results, not included as model response text in telemetry.
+
 These diagnostics do not emit prompts, replies, document text/names, tags, regex
 literals, or raw actor identifiers. Their categorical/count fields survive the
 Application Insights sanitization boundary with debug logging on or off.
@@ -169,6 +176,7 @@ Application Insights sanitization boundary with debug logging on or off.
 - `[GROUP_WORKFLOW_STORE]`
 - `[HISTORY_CONTEXT]`
 - `[HISTORY_FALLBACK]`
+- `[IDENTITIES]`
 - `[IMAGE_CONTEXT]`
 - `[IMAGE_GENERATION]`
 - `[INBOUND_MCP]`

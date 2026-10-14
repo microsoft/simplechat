@@ -30,6 +30,10 @@ import * as sharing from '../../../application/v2_ui/src/lib/sharing';
 
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
+import { CredentialRequestCards } from '../../../application/v2_ui/src/components/chat/CredentialRequestCard';
+import * as credentialEvents from '../../../application/v2_ui/src/lib/actionCredentialEvents';
+import { ActionAuthentication } from '../../../application/v2_ui/src/components/workspaceActions/ActionAuthentication';
+import type { ActionConfiguration, ActionTypeDefinition } from '../../../application/v2_ui/src/lib/workspaceAuthoring';
 import { OrchestrationPlanPanel } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanPanel';
 import { OrchestrationRunView } from '../../../application/v2_ui/src/components/chat/OrchestrationRunView';
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
@@ -58,6 +62,18 @@ import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields'
 
 function ChatExperience() {
     return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
+}
+
+function ActionCredentialAuthoring({ initial, definition }: {
+    initial: ActionConfiguration; definition: ActionTypeDefinition;
+}) {
+    const [draft, setDraft] = useState(initial);
+    return <>
+        <ActionAuthentication draft={draft} definition={definition} onChange={setDraft} original={null}
+            readOnly={false} errors={{}} onValidityChange={() => {}} identities={[]}
+            identitiesLoading={false} identitiesError={null} identitiesResolvable globalScope />
+        <output aria-label="Action credential requirements">{JSON.stringify(draft.credential_requirements ?? {})}</output>
+    </>;
 }
 
 function HeaderExperience({ count = 2, loading = false, saving = false, secondary = true, disabled = false }: {
@@ -190,6 +206,8 @@ type ComponentName =
     | 'ModelCatalogManager'
     | 'OrchestrationPlanCard'
     | 'ElicitationCard'
+    | 'CredentialRequestCards'
+    | 'ActionCredentialAuthoring'
     | 'OrchestrationPlanPanel'
     | 'OrchestrationRunView'
     | 'OrchestrationMapView'
@@ -218,6 +236,8 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     ModelCatalogManager,
     OrchestrationPlanCard,
     ElicitationCard,
+    CredentialRequestCards,
+    ActionCredentialAuthoring,
     OrchestrationPlanPanel,
     OrchestrationRunView,
     OrchestrationMapView,
@@ -378,6 +398,7 @@ const harness = {
     resume,
     sharing,
     components,
+    credentialEvents,
 };
 
 declare global {

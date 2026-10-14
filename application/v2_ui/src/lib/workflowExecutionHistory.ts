@@ -65,6 +65,7 @@ export interface WorkflowExecutionRecord {
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
         reporting?: unknown;
+        document_action_choice?: unknown;
         publication?: WorkflowPublicationStatus;
     };
     workflow_validation?: WorkflowValidationResult;
@@ -90,6 +91,7 @@ export interface WorkflowExecutionAttemptRecord {
         authoritative_output?: string;
         consumed_inputs?: WorkflowConsumedInput[];
         reporting?: unknown;
+        document_action_choice?: unknown;
         publication?: WorkflowPublicationStatus;
     };
     workflow_validation?: WorkflowValidationResult;

@@ -461,6 +461,7 @@ def _normalize_task_document_action_config(action_payload, allow_empty_file_sync
         action_payload=action_payload,
         max_documents_by_type=max_documents_by_type,
         allowed_action_types=allowed_action_types,
+        allow_runtime_choice=True,
     ))
 
 

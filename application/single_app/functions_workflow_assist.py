@@ -70,7 +70,7 @@ from functions_workflow_assist_operations import (
     operation_schema_catalog,
     validate_assist_output,
 )
-from functions_workflow_schedules import workflow_schedule_timezones
+from functions_workflow_schedules import normalize_workflow_calendar_draft, workflow_schedule_timezones
 
 
 # ---------------------------------------------------------------------------
@@ -527,14 +527,20 @@ Missing execution details do not prevent these metadata edits. Use changed plus 
 alone, when these edits can be made. For example, "summarize my latest documents on Tuesday and Thursday"
 on a blank draft produces set_name, set_description, set_task_name, and clarification for schedule_time.
 It must not create a second task, invent a time/lookback, or ask the user to invent a name.
-For that example, a valid response is:
-{"outcome":"changed","reply":"Named the draft and its summary task.","operations":[
-{"op":"set_name","name":"Recent document summaries"},{"op":"set_description","description":"Summarize recent documents on Tuesday and Thursday."},
-{"op":"set_task_name","task":"task_1","name":"Summarize documents"}],
-"clarification":{"question":"What time should it run on Tuesday and Thursday?","fields":["schedule_time"]}}
+For "every tuesday i want to summarize new docs added to my workspace over the last week", apply
+ALL known details, not just metadata. A valid response (using the authorized My workspace handle) is:
+{"outcome":"changed","reply":"Prepared a full-document summary of files added to My workspace in the last seven days, every Tuesday. The run time is still needed.","operations":[
+{"op":"set_name","name":"Recent document summaries"},{"op":"set_description","description":"Summarize documents added in the last week every Tuesday."},
+{"op":"set_task_name","task":"task_1","name":"Summarize new documents"},
+{"op":"set_task_instructions","task":"task_1","instructions":"Summarize the selected documents, covering the key points and identifying each source. Highlight important developments and any uncertainties."},
+{"op":"set_task_document_selection","task":"task_1","action":"analyze","workspaces":["workspace_1"],"recent_window_minutes":10080,"time_basis":"added","filters":{"operator":"and","conditions":[]},"on_empty":"report"},
+{"op":"set_schedule_calendar","frequency":"weekly","days_of_week":["tuesday"],"time_of_day":""}],
+"clarification":{"question":"What time should it run on Tuesday?","fields":["schedule_time"]}}
 Use set_task_name to rename an existing task. Specific weekdays use frequency=weekly plus days_of_week.
 frequency=weekdays means every Monday through Friday and must NOT include days_of_week.
-When asking for a missing schedule_time, do NOT emit ANY schedule operation. When asking for a missing
+When schedule_time is missing, author the known calendar recurrence with time_of_day="" and explicitly
+ask for schedule_time. This is an incomplete editable draft, not an executable schedule. Preserve any
+existing valid time unless the user requests its replacement. When asking for a missing
 lookback or workspace, do NOT emit a document selection operation. A request to confirm a guessed value
 is not permission to apply it.
 When clarification is present, put the question only in clarification.question; reply describes actual edits.
@@ -544,8 +550,9 @@ Apply edits that are clear. When more execution details are needed, return "chan
 operations and "clarification": {"question": "one focused question", "fields": ["schedule_time" |
 "lookback" | "workspace" | "task" | "filter" | "runner"]}. Question-only responses have no operations.
 Never invent an execution detail: Tuesday/Thursday does not specify a time, and "latest" does not
-specify a lookback. Ask for them one at a time. On an incomplete new draft, leave initial task instructions
-blank until requested execution details are established. Never make an executable manual/static substitute
+specify a lookback. Ask for them one at a time. Fill useful task instructions from the established goal
+immediately; a missing schedule time, runner or selector detail does not block known instructions.
+Never make an executable manual/static substitute
 for a requested schedule or rolling selection. Never change enablement.
 Once all required execution details are provided for a new workflow goal, you MUST set task instructions
 with set_task_instructions. A name and document selection alone do not make a runnable workflow.
@@ -554,11 +561,24 @@ instructions and a valid save without placeholders. Metadata-only edits need no 
 If the user asks you to name/describe an already named draft, use the conversational goal to improve it
 or state its existing name and description; do not demand that the user write them.
 
-set_task_document_selection selects new OR updated documents afresh for each new run by Cosmos
-metadata modification time. Minutes/hours/days/weeks convert exactly to minutes; maximum 365 days.
+set_task_document_selection selects documents afresh for each new run. time_basis="added" means
+the current record's upload_date (including newly uploaded revisions); "added_or_updated" means
+Cosmos metadata modification time. Omission preserves the legacy added-or-updated meaning.
+Use added when the user requests newly added/uploaded files, not updated files.
+Minutes/hours/days/weeks convert exactly to minutes; maximum 365 days.
 Choose authorized workspace handles from choices.document_workspaces, never raw workspace IDs.
 Each task owns its window and filters. Use Analyze for whole-document summarization; Search is
 ranked retrieval, not exhaustive analysis. Compare needs two matches.
+Choose a concrete action during authoring from the user's goal and explain it. Use action="choose"
+ONLY when the user explicitly requests choosing at run time. It selects one bounded action per task
+visit, never new tasks or arbitrary tools. Runtime choice needs selected documents or bounded recent
+criteria. Merge needs explicitly grounded merge_kind and output_format; never invent output requirements.
+Use set_task_document_scope for broad Search across named workspaces (target_mode=relevance), or
+Analyze/Merge all-files and File Sync changed-file Merge. Use set_task_merge_options for supported
+Merge options and output naming after choosing the action. Changing the source replaces its old IDs
+or criteria; targeted window/filter operations preserve unrelated settings.
+Use multiple tasks for multi-step goals. Apply every supported edit (up to 64 operations), not just
+three metadata changes. Keep responses compact without omitting requested changes.
 Workspace and time boundaries ALWAYS apply, even outside nested OR groups. Inside those boundaries,
 combine predicates with nested and/or groups. An empty root group means no extra metadata restriction.
 Filename supports equals/starts_with/contains/regex. Matching is case-insensitive unless explicitly requested.
@@ -805,6 +825,15 @@ def validation_copy(projection):
                 task['instructions'] = _PLACEHOLDER_INSTRUCTIONS
     if tasks and isinstance(tasks[0], dict):
         payload['task_prompt'] = js_trim(tasks[0]['instructions'])
+    schedule = payload.get('schedule')
+    if payload.get('trigger_type') == 'interval' and isinstance(schedule, dict) and (
+        schedule.get('kind') == 'calendar' and schedule.get('time_of_day') == ''
+    ):
+        # Validate every known calendar field separately, then validate unrelated save fields.
+        # This copy is never returned, persisted or executed; no fake execution time is supplied.
+        normalize_workflow_calendar_draft(schedule)
+        payload.pop('schedule')
+        payload['trigger_type'] = 'manual'
     return payload
 
 
@@ -857,7 +886,8 @@ class _Evaluator:
             raise WorkflowAssistError('assistant_refused')
         if finish_reason == 'length':
             raise _Correctable(
-                ['The reply was cut off before it ended. Reply with fewer operations or a shorter reply.'], 'length',
+                ['The reply was cut off. Shorten prose, not the requested edits. Return every requested operation; '
+                 'if they cannot fit, ask the user to split the request and apply no partial changes.'], 'length',
                 diagnostics=[{'assist_rule': 'output_truncated'}],
             )
         output = parse_model_output(content)
@@ -877,7 +907,7 @@ class _Evaluator:
         operation_count = len(output.get('operations') or [])
         if clarification:
             blocked = {
-                'schedule_time': {'set_schedule_calendar', 'set_schedule_interval'},
+                'schedule_time': {'set_schedule_interval'},
                 'lookback': {'set_task_document_selection', 'update_task_document_window'},
                 'workspace': {'set_task_document_selection'},
                 'filter': {'set_task_document_selection', 'replace_task_document_filter'},
@@ -885,18 +915,16 @@ class _Evaluator:
             for field in clarification['fields']:
                 if any(operation['op'] in blocked.get(field, ()) for operation in output.get('operations') or []):
                     raise _Correctable([f'Omit operations for {field} while asking for that missing detail.'], 'validation')
-        if (
-            self.request.base is None and clarification
-            and len(self.request.draft.get('tasks') or []) == 1
-            and not (self.request.draft['tasks'][0].get('instructions') or '').strip()
-            and any(field in ('schedule_time', 'lookback', 'workspace', 'runner') for field in clarification['fields'])
+            if 'schedule_time' in clarification['fields'] and any(
+                operation['op'] == 'set_schedule_calendar' and operation.get('time_of_day') != ''
+                for operation in output.get('operations') or []
+            ):
+                raise _Correctable(['Leave the missing schedule time blank, not guessed.'], 'validation')
+        if any(operation['op'] == 'set_schedule_calendar' and operation.get('time_of_day') == ''
+               for operation in output.get('operations') or []) and (
+            not clarification or 'schedule_time' not in clarification['fields']
         ):
-            if any(operation.get('op') in ('set_task_instructions', 'add_task')
-                   and operation.get('instructions') for operation in output.get('operations') or []):
-                raise _Correctable(
-                    ['An incomplete new workflow must leave task instructions blank until execution details are provided.'],
-                    'validation',
-                )
+            raise _Correctable(['An incomplete calendar draft must ask for schedule_time.'], 'validation')
         if output['outcome'] != 'changed':
             return _Attempt(output['outcome'], reply, clarification=clarification)
 

@@ -80,7 +80,7 @@ function AiEditedBadge() {
  * because an editor saves one record as a whole.
  */
 export function WorkspaceEditorFrame({
-    title, description, icon: TitleIcon, iconNode, backTo, sections, dirty, saving, readOnly = false, error,
+    title, description, icon: TitleIcon, iconNode, backTo, backLabel = 'Back', sections, dirty, saving, readOnly = false, error,
     onSave, onDiscard, saveLabel = 'Save changes', actions, saveDisabled = false, initialSection,
     sidePanel, sidePanelOpen = false, aiChangedSections, locked = false, lockBanner, jumpTo,
 }: {
@@ -91,6 +91,7 @@ export function WorkspaceEditorFrame({
     /** The record's own icon, such as an agent's uploaded image; shown in place of `icon` when given. */
     iconNode?: ReactNode;
     backTo: string;
+    backLabel?: string;
     sections: WorkspaceEditorSection[];
     dirty: boolean;
     saving: boolean;
@@ -282,7 +283,7 @@ export function WorkspaceEditorFrame({
                 }}>
                 <header className="shrink-0 border-b border-edge pb-4">
                     <GlassButton type="button" size="sm" variant="ghost" className="-ml-2" onClick={() => navigate(backTo)}>
-                        <ArrowLeft size={15} /> Back
+                        <ArrowLeft size={15} /> {backLabel}
                     </GlassButton>
                     <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
                         <div className="flex min-w-0 flex-[1_1_20rem] items-start gap-3">

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileJson, Loader2 } from 'lucide-react';
 import { WorkflowExecutionHistory } from './WorkflowExecutionHistory';
+import { WorkflowDocumentChoiceDetails } from './WorkflowDocumentChoiceDetails';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunAskInChat } from './WorkflowRunAskInChat';
@@ -351,6 +352,7 @@ function RunItems({
                             {resultRef ? <p className="text-xs text-text-3">Result ref: {stringify(resultRef)}</p> : null}
                             {outputs ? <p className="text-xs text-text-3">Outputs: {Object.keys(outputs).join(', ')}</p> : null}
                             {authoritative ? <p className="text-xs text-text-3">Authoritative output: {authoritative}</p> : null}
+                            <WorkflowDocumentChoiceDetails choice={item.workflow_result?.document_action_choice} />
                             {audit ? <p className="text-xs text-text-3">Context budget: {audit}</p> : null}
                             {planReplayResult ? <PlanReplayRunBlock result={planReplayResult} /> : null}
                             <ResultExcerpt scope={scope} workflowId={workflowId} runId={runId} item={item} />

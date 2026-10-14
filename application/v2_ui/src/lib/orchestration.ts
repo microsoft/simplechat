@@ -35,6 +35,9 @@ import {
     hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
 } from './orchestrationOutputs';
 import { LEGACY_PLAN_ERROR_CODE } from './orchestrationErrors';
+import { publishCredentialRequest } from './actionCredentialEvents';
+import { openCredentialContinuation } from './actionCredentials';
+import type { CredentialRequest } from './actionCredentialTypes';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
 // part of this contract's surface. Re-exported here (rather than making consumers reach into
@@ -1401,6 +1404,7 @@ export async function runOrchestration(
     body: OrchestrationRunRequest,
     handlers: RunStreamHandlers,
     signal?: AbortSignal,
+    credentialRequest?: CredentialRequest,
 ): Promise<RunStreamResult> {
     const result: RunStreamResult = {
         accumulated: '',
@@ -1411,7 +1415,17 @@ export async function runOrchestration(
     };
     let requiresExecutionOutcome = false;
 
-    const response = await openOrchestrationStream(
+    let credentialResponse: Response | undefined;
+    if (credentialRequest) {
+        try {
+            credentialResponse = await openCredentialContinuation(credentialRequest, signal);
+        } catch (error) {
+            result.transportUnknown = true;
+            handlers.onError?.(error instanceof Error ? error.message : 'The action could not be continued.');
+            return result;
+        }
+    }
+    const response = credentialResponse ?? await openOrchestrationStream(
         ORCHESTRATION_RUN_PATH,
         body,
         signal,
@@ -1458,6 +1472,12 @@ export async function runOrchestration(
     const onEvent = (event: RunStreamEvent): boolean => {
         if ((event.conversation_id && event.conversation_id !== body.conversation_id)
             || (event.run_id && event.run_id !== body.run_id)) return false;
+        if (event.type === 'action_credentials_required') {
+            publishCredentialRequest(event.credential_request);
+            result.waiting = true;
+            handlers.onWaiting?.({ ...event, status: 'waiting' });
+            return true;
+        }
         if (event.type === 'm365_pending_action') {
             if (event.conversation_id === body.conversation_id && event.run_id === body.run_id
                 && typeof event.step_id === 'string' && event.step_id

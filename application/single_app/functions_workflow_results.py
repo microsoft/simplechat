@@ -308,6 +308,7 @@ def _build_task_result(result, identity, contract_version):
         ],
         "coverage": _json_copy(coverage),
         **({"document_selection": _json_copy(result["selection_summary"])} if result.get("selection_summary") else {}),
+        **({"document_action_choice": _json_copy(result["document_action_choice"])} if result.get("document_action_choice") else {}),
         "validation": public_analysis_validation(validation) if analysis.get("analysis_result_version") == "analyze-final-v1" else _json_copy(validation),
         "provenance": {
             "sources": _provenance_references(
@@ -948,6 +949,7 @@ def workflow_result_summary(envelope, reference):
         "consumed_inputs": _json_copy(envelope.get("consumed_inputs") or []),
         "workflow_validation": _json_copy(envelope.get("workflow_validation") or {}),
         **({"document_selection": _json_copy(envelope["document_selection"])} if envelope.get("document_selection") else {}),
+        **({"document_action_choice": _json_copy(envelope["document_action_choice"])} if envelope.get("document_action_choice") else {}),
     }
     if envelope.get("contract_version") == "workflow-result-v2":
         summary["producer"] = _json_copy(envelope["identity"])

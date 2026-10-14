@@ -20,6 +20,7 @@ import {
 } from './workflowAlerts';
 import { DEFAULT_FLOW_LIMITS, isLegacyWorkflowBinding } from './workflowFlow';
 import { isRecord } from './workspaceAuthoring';
+import { workflowScheduleForSave } from './workflowSettings';
 import {
     workflowAgentKey,
     workflowFileSyncConfig,
@@ -176,6 +177,10 @@ function limitsMeta(workflow: WorkflowDefinition): string {
 /** When a workflow runs, in a few words: manual, its schedule, or the File Sync check. */
 export function workflowTriggerSummary(workflow: WorkflowDefinition, timezones: ReadonlySet<string> | null = null): string {
     if (workflow.trigger_type === 'manual') return 'Manual · runs only when started';
+    if (workflow.trigger_type === 'interval' && workflow.schedule && 'kind' in workflow.schedule &&
+        workflow.schedule.kind === 'calendar' && !workflow.schedule.time_of_day) {
+        return `${workflow.schedule.frequency === 'weekly' ? workflow.schedule.days_of_week.join(', ') : workflow.schedule.frequency} · run time needed`;
+    }
     const label = workflowScheduleLabel(workflow.trigger_type, workflow.schedule, timezones);
     if (label) return label;
     return workflow.trigger_type === 'file_sync' ? 'Monitor File Sync changes' : 'Schedule';
@@ -227,7 +232,8 @@ export function workflowEditorSections(
         {
             id: 'trigger',
             label: WORKFLOW_EDITOR_SECTION_LABELS.trigger,
-            status: workflow.is_enabled === false ? 'off' : 'ready',
+            status: workflow.trigger_type !== 'manual' && workflowScheduleForSave(workflow.schedule, timezones).error
+                ? 'incomplete' : workflow.is_enabled === false ? 'off' : 'ready',
             meta: workflowTriggerSummary(workflow, timezones),
         },
         {

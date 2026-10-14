@@ -44,6 +44,7 @@ import {
     reattachChatStream,
     resolveStreamContent,
     streamChat,
+    consumeCredentialChatResponse,
     type ChatStreamHandlers,
     type ChatStreamOptions,
 } from '../lib/sse';
@@ -104,6 +105,8 @@ import {
 } from '../lib/workflowResults';
 import { readM365Citations } from '../lib/m365Citations';
 import type { RunStreamEvent } from '../lib/orchestration';
+import type { CredentialRequest } from '../lib/actionCredentialTypes';
+import { openCredentialContinuation } from '../lib/actionCredentials';
 import {
     applySelection,
     pruneSelection,
@@ -1569,7 +1572,7 @@ function buildStreamHandlers(
  * reuse this rather than duplicating the event handling.
  */
 async function runChatStream(
-    requestBody: ChatStreamRequest,
+    requestBody: ChatStreamRequest | null,
     conversationId: string,
     options: {
         isNewConversation?: boolean;
@@ -1580,6 +1583,7 @@ async function runChatStream(
         stream?: ChatStreamOptions;
         /** Optimistic user message to reconcile with the server's id. */
         pendingUserMessageId?: string | null;
+        transport?: (handlers: ChatStreamHandlers, signal: AbortSignal) => Promise<unknown>;
     } = {},
 ): Promise<void> {
     const { set, getState } = {
@@ -1619,19 +1623,19 @@ async function runChatStream(
             .setLiveStream({ conversationId, userMessageId: liveUserMessageId });
     }
 
-    await streamChat(
-        requestBody,
-        buildStreamHandlers(
+    const handlers = buildStreamHandlers(
             conversationId,
             isCurrent,
             set,
             getState,
             options.pendingUserMessageId,
             options.kind ?? 'personal',
-        ),
-        controller.signal,
-        options.stream,
-    );
+        );
+    if (options.transport) {
+        await options.transport(handlers, controller.signal);
+    } else if (requestBody) {
+        await streamChat(requestBody, handlers, controller.signal, options.stream);
+    }
 
     // Only tear down if this stream is still the active one; a newer send may already have
     // installed its own controller. Captured before the teardown because clearing the
@@ -1671,6 +1675,36 @@ async function runChatStream(
  *
  * Returns false when there is nothing live to attach to, which is the ordinary case.
  */
+export async function continueCredentialChat(credentialRequest: CredentialRequest): Promise<void> {
+    const state = useChatStore.getState();
+    if (state.activeConversationId !== credentialRequest.conversation_id || state.streaming) {
+        throw new Error('Open this conversation and wait for its current response before continuing.');
+    }
+    useChatStore.setState({
+        streaming: true,
+        orchestrationSurface: null,
+        streamingContent: '',
+        streamingReasoningAdjustments: [],
+        streamError: null, streamAuthUrl: null, thoughts: [],
+    });
+    let failure: Error | null = null;
+    await runChatStream(null, credentialRequest.conversation_id, {
+        reloadOnDone: true,
+        transport: async (handlers, signal) => {
+            try {
+                const response = await openCredentialContinuation(credentialRequest, signal);
+                const result = await consumeCredentialChatResponse(response, handlers, signal);
+                if (result.errored) failure = new Error('The action could not finish. Review the conversation before continuing.');
+            } catch (error) {
+                if (signal.aborted) return;
+                failure = error instanceof Error ? error : new Error('The action could not be continued.');
+                handlers.onError?.(failure.message);
+            }
+        },
+    });
+    if (failure) throw failure;
+}
+
 async function resumeChatStream(conversationId: string): Promise<boolean> {
     const set = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
         useChatStore.setState(partial as never);

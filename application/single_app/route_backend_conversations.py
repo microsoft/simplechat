@@ -2149,6 +2149,10 @@ def register_route_backend_conversations(bp):
         )
         
         try:
+            # Ephemeral credential history is never archived with ordinary messages.
+            from functions_action_credential_state import delete_private_state
+
+            delete_private_state(user_id, conversation_id=conversation_id)
             cosmos_conversations_container.delete_item(
                 item=conversation_id,
                 partition_key=conversation_id
@@ -2282,6 +2286,9 @@ def register_route_backend_conversations(bp):
                 
                 # Delete the conversation
                 stage = 'conversation_delete'
+                from functions_action_credential_state import delete_private_state
+
+                delete_private_state(user_id, conversation_id=conversation_id)
                 cosmos_conversations_container.delete_item(
                     item=conversation_id,
                     partition_key=conversation_id

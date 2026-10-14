@@ -27,6 +27,32 @@ let currentStreamContext = null;
 const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
 const USER_MESSAGE_PERSISTED_EVENT_TYPE = 'user_message_persisted';
 
+window.SimpleChatActionCredentials?.setContinuationConsumer(continueActionCredentialStream);
+
+export function continueActionCredentialStream(requestFactory, conversationId) {
+    if (!isConversationCurrentlyActive(conversationId)) {
+        return Promise.reject(new Error('The active conversation changed.'));
+    }
+    return new Promise((resolve, reject) => {
+        let completed = false;
+        consumeStreamingResponse(requestFactory, createStreamingPlaceholder('Continuing'), null, {
+            allowRecovery: false,
+            recoveryConversationId: conversationId,
+            onDone: data => {
+                completed = true;
+                resolve(data);
+            },
+            onError: () => {
+                completed = true;
+                reject(new Error('Unable to continue the blocked action.'));
+            },
+            onFinally: () => {
+                if (!completed) reject(new Error('The continuation was interrupted.'));
+            },
+        });
+    });
+}
+
 window.addEventListener('m365-chat-resumed', event => {
     const conversationId = event.detail?.conversationId;
     if (!isConversationCurrentlyActive(conversationId)) {
@@ -780,6 +806,27 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         );
     }
 
+    function pauseForActionCredentials(data) {
+        if (data?.type !== 'action_credentials_required') return false;
+        streamCompleted = true;
+        stopThoughtPolling();
+        clearStreamingThoughtSession(tempAiMessageId);
+        removeStreamingStopButton(tempAiMessageId);
+        clearCurrentStreamController(abortController);
+        finalizePendingUserMessageMetadata();
+        enablePersistedUserMessageActions();
+        if (accumulatedContent) {
+            updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            getStreamingMessageElement(tempAiMessageId)?.querySelector('.streaming-cursor')?.remove();
+        } else {
+            removeStreamingPlaceholder(tempAiMessageId);
+        }
+        window.SimpleChatActionCredentials?.handleEvent(data);
+        if (typeof onDone === 'function') onDone({ status: 'waiting_for_credentials' });
+        if (typeof onFinally === 'function') onFinally();
+        return true;
+    }
+
     function pauseForMicrosoft365SignIn(data) {
         if (!isM365SignInRequired(data)) {
             return false;
@@ -816,6 +863,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         if (response.headers?.get('Content-Type')?.includes('application/json')) {
             return response.json().then(data => {
                 capturePendingActions(data);
+                if (pauseForActionCredentials(data)) return;
                 if (pauseForMicrosoft365SignIn(data)) {
                     recoverPendingActions();
                     return;
@@ -863,6 +911,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+            if (pauseForActionCredentials(data)) return true;
             if (Array.isArray(data.reasoning_adjustments) || Array.isArray(data.metadata?.reasoning_adjustments)) {
                 reasoningAdjustments = getMessageReasoningAdjustments(data, reasoningAdjustments);
                 renderMessageReasoningAdjustments(getStreamingMessageElement(tempAiMessageId), reasoningAdjustments);
@@ -1088,6 +1137,10 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
             try {
                 const data = JSON.parse(jsonStr);
+                const eventName = eventBlock.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim();
+                if (eventName === 'action_credentials_required' && !data.type) {
+                    data.type = eventName;
+                }
                 return processStreamData(data);
             } catch (error) {
                 console.error('Error parsing SSE data:', error);
@@ -1279,6 +1332,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         if (pauseForMicrosoft365SignIn(getStreamErrorPayload(error))) {
             return;
         }
+        if (pauseForActionCredentials(getStreamErrorPayload(error))) return;
 
         stopThoughtPolling();
         console.error('Streaming request error:', error);

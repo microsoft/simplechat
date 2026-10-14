@@ -4,7 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
-version: "0.261.317"
+version: "0.261.333"
 ---
 
 ## What this does
@@ -713,16 +713,34 @@ they can only be discarded together, with **Cancel**.
 
 ## Rolling documents for each task
 
-From **0.261.332**, the V2 task editor can select recently added **or updated**
-documents separately for each task. Under **Runner, inputs, references and
-outputs**, choose **Analyze recent documents**, **Search recent documents**, or
-**Compare recent documents**. A Merge files task also offers recent documents.
+From **0.261.333**, each task has a visible **Documents** section beside its
+instructions, outside **Runner, inputs, references and outputs**. Choose an
+action first: **Analyze** reads whole documents, **Search** retrieves relevant
+passages, **Compare** evaluates differences, and **Merge** assembles compatible
+files. Then choose **Selected documents** or **Recent documents by criteria**.
+Search also offers relevant content across chosen workspaces without a time
+filter; this is not exhaustive file processing. Merge and Analyze retain their
+all-files modes, and applicable loop/File Sync inputs remain available.
 An older recent-document action stays unchanged until you opt into guided filters.
+All-files mode shows its effective workspace scope. A group/public-only union
+that the older all-files contract cannot express is refused without adding
+My workspace; keep recent criteria or explicit documents for that combination.
 
-Choose the source workspaces and a window in minutes, hours, days, or weeks.
+Find source workspaces by name and source kind, choose **Add**, and review the
+separate selected list. **Remove** changes only the selected source, not other
+filters. Search covers all authorized workspace names, while at most 25 results
+are rendered at once. The 20-workspace limit applies to selections, not discovery.
+
+Choose **Added** for current files uploaded during the window, including newly
+uploaded revisions. It uses the current record's upload time, not the creation
+date of its original revision family. Records with missing or invalid upload
+metadata do not qualify; modification time is never silently substituted.
+**Added or updated** includes metadata/content edits through Cosmos `_ts` and
+remains the meaning of older selectors without an explicit event.
+
+Choose a window in minutes, hours, days, or weeks.
 The maximum is 365 days. The window is relative to the start of that task's
-selection, not to the day you saved the workflow. It uses the document's Cosmos
-update timestamp, so changing metadata can make an existing document recent.
+selection, not to the day you saved the workflow.
 Group workflow tasks can select only their own group workspace.
 
 ### Build a useful document filter
@@ -763,6 +781,33 @@ Comparison needs at least two matches and uses the newest as its Source.
 Search ranks matching content; Analyze is the choice for processing every
 selected document completely.
 
+### Choose the action at run time
+
+Select **Choose at run time** only when the goal should determine the action
+on each visit. The source must still be explicit selected files or bounded
+recent criteria. This is one Analyze, Search, Compare, or Merge action, not an
+unrestricted planner. For several steps, author several workflow tasks.
+
+The workflow captures authorized inputs before choosing. The chooser cannot add
+documents, workspaces, tasks or external tools. Compare needs at least two
+inputs and clear source/target roles. Merge requires explicit type/output
+settings and compatible files; provide them under **Optional runtime Merge
+output constraints**, rather than asking the chooser to guess.
+
+Ambiguous goals, missing details, unavailable capabilities or changed source
+proofs fail the task under its normal error/alert policy. No background chat
+asks for more information. Retries and durable resume reuse the same capture
+and decision, rechecking access, integrity and capabilities, rather than
+silently replanning. A new run chooses again.
+If a worker is interrupted after sending a selection request but before retaining
+its response, the outcome is unknown and that visit refuses to replan. Start a
+new run rather than silently issuing another decision request.
+
+This option adds a selection-model call even if it chooses non-model Merge.
+Run history shows the selected action, brief outcome summary, input count and
+selection-model tokens separately from processing. No matches avoid both model
+selection and document processing. Frozen chat-plan replay remains unchanged.
+
 ## Ask AI to create or change a workflow
 
 Starting in **0.261.213**, the V2 editor's **Ask AI** tab changes a personal
@@ -779,6 +824,14 @@ Clear edits can be applied while the assistant asks for a missing time,
 lookback window, workspace, or other execution detail. It does not invent a
 time for “Tuesday and Thursday” or a window for “latest”.
 
+From **0.261.333**, “every Tuesday summarize new docs added to My workspace over
+the last week” fills the name, description, task instructions, Analyze action,
+workspace, Added event and seven-day window. It also creates a visibly incomplete
+Tuesday recurrence with **Time** blank and asks only for that time. Saving and
+running remain blocked until it is supplied. A time follow-up completes the same
+schedule without replacing the document policy. The assistant never saves,
+enables or runs the draft.
+
 For a complete document workflow, include the workspace, selection window,
 filters, task goal, schedule time, and time zone. For example:
 
@@ -786,8 +839,9 @@ filters, task goal, schedule time, and time zone. For example:
 > filename starts with Tim or which have tag X. Run Tuesday and Thursday at
 > 9 AM in America/New_York. Report no matches without a processing model call.
 
-Ask AI can author Analyze, Search, and Compare selectors. Configure Merge
-selectors with the guided task controls. Later, ask to change just the window
+Ask AI can author Analyze, Search, Compare and Merge, choosing a concrete action
+from your goal and explaining it for review. It authors runtime choice only
+when explicitly requested. Later, ask to change just the window
 or replace one filename condition; the targeted operations preserve other
 filters and other tasks.
 

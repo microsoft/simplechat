@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import timedelta
+from action_credential_deadline import execution_deadline
 
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -1482,13 +1483,14 @@ def resume_render_file(
         ):
             raise OutputUnavailableError("output_binding_invalid")
         if parse_time(getattr(context, "execution_deadline_at", None)).isoformat() != record["deadline_at"]:
-            raise OutputError("output_deadline_invalid")
+            if execution_deadline(context).isoformat() != record["deadline_at"]:
+                raise OutputError("output_deadline_invalid")
         run = service._read_metadata(service.store.current_run, record)
         if record["state"] != "completed" and (
             run.get("cancellation_requested_at") or run.get("status") in {"cancelled", "canceled"}
         ):
             raise OutputUnavailableError("output_cancelled")
-        if run.get("execution_deadline_at") and parse_time(run["execution_deadline_at"]) < parse_time(
+        if run.get("execution_deadline_at") and execution_deadline(run) < parse_time(
             record["deadline_at"],
         ):
             raise OutputError("output_deadline_invalid")
@@ -1572,7 +1574,7 @@ def execute_render_file(
             export_request=export_request,
             file_name=file_name,
             approved_work_id=getattr(context, "approved_work_id", None) or producer.run_id,
-            deadline_at=context.execution_deadline_at,
+            deadline_at=execution_deadline(context).isoformat(),
         )
         output = service.render_attempt(
             output["output_id"], stop=cancel_requested, observe=observe_render,

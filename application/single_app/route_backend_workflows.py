@@ -672,7 +672,7 @@ def _workflow_loop_preview_response(*, group=False):
 def _workflow_document_selection_preview_response(*, group=False):
     # Preview uses the same authorized read boundary as dispatch and never starts a task.
     # Keep cloud-backed selection imports at the authorized request boundary.
-    from functions_document_actions import get_document_action_max_documents
+    from functions_document_actions import get_workflow_document_selection_limit
     from functions_workflow_document_selection import DocumentSelectionError, resolve_document_selection
     from functions_workflow_limits import WorkflowLoopInputError, WorkflowLoopLimitError
 
@@ -692,11 +692,9 @@ def _workflow_document_selection_preview_response(*, group=False):
         action = request.get_json(silent=True)
         if not isinstance(action, dict) or action.keys() - {
             'type', 'recent_window_minutes', 'document_selection', 'merge_kind',
-        } or action.get('type') not in {'analyze', 'search', 'comparison', 'merge'}:
+        } or action.get('type') not in {'analyze', 'search', 'comparison', 'merge', 'choose'}:
             return jsonify({'error': 'Invalid task document selection.'}), 400
-        limit = get_document_action_max_documents(
-            'analyze' if action['type'] == 'search' else action['type'], 'workflow', settings=settings,
-        )
+        limit = get_workflow_document_selection_limit(action['type'], settings=settings)
         result = resolve_document_selection(context, action, settings, actor_user_id=user_id, limit=limit)
         return jsonify({
             'count': result['count'], 'count_exact': True, 'limit': limit, 'within_limit': True,
