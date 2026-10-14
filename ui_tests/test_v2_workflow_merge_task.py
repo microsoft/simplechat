@@ -1,7 +1,7 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.333
+Version: 0.261.335
 Implemented in: 0.261.241; PDF merge authoring added in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 The Workflows workbench and the routed editor page replace the list rows and the editor dialog: 0.261.271
 

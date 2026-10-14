@@ -3,8 +3,9 @@
 // POST /api/agents/assist or /api/actions/assist, and what it does with each answer.
 //
 // The thread is the shared assist thread in local mode, so the conversation lasts only while the
-// editor is open. Each editor describes its draft through `buildView` and changes it through
-// `apply`; this hook never touches the draft itself. Before anything is applied, the answer is
+// editor is open, including an explicit action-setup detour. Each editor describes its draft
+// through `buildView` and changes it through `apply`; this hook never touches the draft itself.
+// Before anything is applied, the answer is
 // checked against the draft it was sent with, and the patch is computed here rather than trusting
 // the change list that came with it. Nothing is saved: the person reviews and saves the draft.
 
@@ -22,6 +23,7 @@ import {
 } from '../../lib/editorAssist';
 import { selectAssistThread, useAssistThreadStore } from '../../stores/assistThreadStore';
 import { useEditorAssistStore, type EditorAssistTurnRecord } from '../../stores/editorAssistStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 const UNAVAILABLE_MESSAGE = "Ask AI isn't available for this editor.";
 const NOT_APPLIED_MESSAGE = "Ask AI's changes couldn't be applied to this draft. Nothing was changed.";
@@ -40,6 +42,8 @@ export interface UseEditorAssistOptions {
     readonly scope: EditorAssistScope;
     /** The record being edited, such as its id, or a stable value for a new draft. */
     readonly recordKey: string;
+    /** Reuse only for an explicit handoff back to the same live agent draft. */
+    readonly sessionId?: string;
     /** The editor cannot take a change now, such as while it saves. */
     readonly blocked: boolean;
     /** The draft as the assistant sees it, read from the editor's latest state. */
@@ -51,6 +55,7 @@ export interface UseEditorAssistOptions {
     readonly apply: (patch: Readonly<Record<string, unknown>>, newItems: readonly EditorAssistNewItem[]) => EditorAssistValues | null;
     /** Show a section of the editor. */
     readonly onJump: (section: string) => void;
+    readonly draftedActions?: () => NonNullable<EditorAssistTurnRecord['draftedActions']>;
 }
 
 export interface EditorAssist {
@@ -70,6 +75,8 @@ export interface EditorAssist {
     readonly undo: (turnId: string) => void;
     readonly jump: (section: string | null) => void;
     readonly cancel: () => void;
+    readonly rememberAction: (reference: string, savedId: string, label: string, type: string) => void;
+    readonly forget: () => void;
 }
 
 /** What became of a turn's changes. */
@@ -108,21 +115,23 @@ interface LiveState {
     buildView: UseEditorAssistOptions['buildView'];
     apply: UseEditorAssistOptions['apply'];
     onJump: UseEditorAssistOptions['onJump'];
+    draftedActions: UseEditorAssistOptions['draftedActions'];
 }
 
 export function useEditorAssist({
-    kind, available, scope, recordKey, blocked, buildView, apply, onJump,
+    kind, available, scope, recordKey, sessionId, blocked, buildView, apply, onJump, draftedActions,
 }: UseEditorAssistOptions): EditorAssist {
     // One thread per editor visit: a reopened editor starts a fresh conversation, so an old turn's
-    // Undo can never reach a draft it didn't change.
-    const [visit] = useState(() => makeSubmissionId());
-    const key = available ? `${kind}:${scope.kind}:${scope.id ?? ''}:${recordKey}:${visit}` : null;
+    // Undo can never reach a draft it didn't change. A setup detour preserves that same visit.
+    const [visit] = useState(() => sessionId ?? makeSubmissionId());
+    const owner = useBootstrapStore((state) => state.data?.user?.id ?? '');
+    const key = available ? JSON.stringify([kind, owner, scope.kind, scope.id ?? '', recordKey, visit]) : null;
     const turns = useEditorAssistStore((state) => state.turns);
     const retryUntil = useEditorAssistStore((state) => state.retryUntil);
     const [waitSeconds, setWaitSeconds] = useState(0);
 
-    const live = useRef<LiveState>({ available, key, scope, kind, buildView, apply, onJump });
-    live.current = { available, key, scope, kind, buildView, apply, onJump };
+    const live = useRef<LiveState>({ available, key, scope, kind, buildView, apply, onJump, draftedActions });
+    live.current = { available, key, scope, kind, buildView, apply, onJump, draftedActions };
 
     const send = useCallback(async (request: AssistSendRequest): Promise<AssistSendResult> => {
         const sent = live.current;
@@ -186,6 +195,7 @@ export function useEditorAssist({
             store.record(request.submissionId, explained);
             return { ok: true, reply: response.reply };
         }
+        const previousActions = new Set(now.draftedActions?.().map((item) => item.reference));
         const after = now.apply(patch, newItems);
         if (!after) return { ok: false, error: NOT_APPLIED_MESSAGE };
         const paths = new Set([...Object.keys(patch), ...Object.keys(currentView.values), ...Object.keys(after)]);
@@ -201,6 +211,7 @@ export function useEditorAssist({
             entries,
             newItems,
             warnings: changes.length ? response.warnings : [],
+            draftedActions: now.draftedActions?.().filter((item) => !previousActions.has(item.reference)) ?? [],
         });
         return { ok: true, reply: response.reply };
     }, []);
@@ -285,6 +296,23 @@ export function useEditorAssist({
         if (pending) thread.cancel(pending.id);
     };
 
+    const rememberAction = (reference: string, savedId: string, label: string, type: string) => {
+        if (!key) return;
+        for (const [id, record] of Object.entries(useEditorAssistStore.getState().turns)) {
+            if (record.threadKey !== key || !record.draftedActions?.some((item) => item.reference === reference)) continue;
+            useEditorAssistStore.getState().update(id, (current) => ({
+                ...current,
+                draftedActions: current.draftedActions?.map((item) => item.reference === reference ? { ...item, savedId, label, type } : item),
+            }));
+        }
+    };
+
+    const forget = () => {
+        if (!key) return;
+        useEditorAssistStore.getState().forgetThread(key);
+        useAssistThreadStore.getState().forgetThread(key);
+    };
+
     return {
         kind,
         available,
@@ -298,5 +326,7 @@ export function useEditorAssist({
         undo,
         jump,
         cancel,
+        rememberAction,
+        forget,
     };
 }

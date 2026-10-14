@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.333)
+# Workflow AI Assistant (v0.261.335)
 
 ## Overview
 
@@ -51,7 +51,7 @@ Dependencies:
 
 ## Goal-first document authoring
 
-Implemented in version: **0.261.333**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.335**, tracked in `application/single_app/config.py`.
 
 Ask AI applies all supported known details within the existing 64-operation bound,
 not just workflow metadata. A missing schedule time no longer blocks useful task

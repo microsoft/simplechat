@@ -1,8 +1,8 @@
 # test_workflow_goal_first_authoring.py
 """
 Functional tests for complete goal-first drafts and bounded runtime document choice.
-Version: 0.261.333
-Implemented in: 0.261.333
+Version: 0.261.335
+Implemented in: 0.261.335
 
 Uses the real assist core, selectors, closed chooser and runner dispatch functions.
 Authoritative paged catalog readers and model transport are local fixtures, never Azure.

@@ -1,8 +1,9 @@
 # test_v2_admin_global_agents_actions.py
 """
 Browser coverage for V2 Admin Settings categories and the global agents and actions.
-Version: 0.261.271
+Version: 0.261.333
 Implemented in: 0.261.271
+Global action return coverage extended in: 0.261.333
 
 Run against the real built SPA with the real Admin Settings field schema and a
 closed in-memory API (fixtures/v2_admin_global_editors.py). Check that choosing a
@@ -374,6 +375,28 @@ def test_a_call_agent_action_is_an_ordinary_global_action(global_ui):
     assert write["expected_revision"] == revision
     assert write["updates"] == {"actions_to_load": [CREATED_ACTION_ID]}
     assert ui.agents[RESEARCH_AGENT_ID]["actions_to_load"] == [CREATED_ACTION_ID]
+    assert not _personal_requests(ui)
+
+
+def test_global_action_handoff_returns_to_its_unsaved_agent(global_ui):
+    ui, page = global_ui, global_ui.page
+    ui.open(ready_region="Global Agents")
+    page.get_by_role("link", name="Research assistant", exact=True).click()
+    page.get_by_label("Description", exact=True).fill("Unsaved global agent with a companion action.")
+    _editor_section(page, "Actions")
+    page.get_by_role("button", name="New action", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/v2/admin/actions/new\?returnTo="))
+    expect(page.get_by_role("button", name="Back to agent", exact=True)).to_be_visible()
+    _action_field(page, "Action type").select_option("fixture_custom")
+    _action_field(page, "Action name").fill("Global companion")
+    _editor_section(page, "Configuration")
+    _action_field(page, "Endpoint").fill("https://companion.example.test")
+    assert _save(ui, "Save action and return to agent", "POST", "/api/v2/admin/actions").status == 201
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/agents/{RESEARCH_AGENT_ID}")
+    expect(page.get_by_label("Description", exact=True)).to_have_value("Unsaved global agent with a companion action.")
+    _editor_section(page, "Actions")
+    expect(page.get_by_role("checkbox", name="Assign Global companion", exact=True)).to_be_checked()
+    assert not ui.writes_to("PATCH", f"/api/v2/admin/agents/{RESEARCH_AGENT_ID}")
     assert not _personal_requests(ui)
 
 

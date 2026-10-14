@@ -1,4 +1,4 @@
-# Per-task rolling document selection — v0.261.333
+# Per-task rolling document selection — v0.261.335
 
 ## Overview
 
@@ -6,7 +6,7 @@
 `application/single_app/config.py`.
 
 Unified controls, Added semantics and runtime choice implemented in version:
-**0.261.333**, also tracked in `application/single_app/config.py`.
+**0.261.335**, also tracked in `application/single_app/config.py`.
 
 Workflow tasks can select documents at execution time using an explicit
 workspace, rolling update window, and typed metadata conditions. This makes

@@ -2,7 +2,7 @@
 # test_workflow_assist_scenarios.py
 """
 Functional test for the AI workflow assistant's end-to-end scenarios.
-Version: 0.261.333
+Version: 0.261.335
 Implemented in: 0.261.208
 
 This test ensures that the assistant turns an instruction into the candidate the roadmap's "Done

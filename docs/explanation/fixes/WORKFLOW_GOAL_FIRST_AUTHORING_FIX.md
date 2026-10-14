@@ -1,8 +1,8 @@
-# Goal-first workflow authoring fix — v0.261.333
+# Goal-first workflow authoring fix — v0.261.335
 
 ## Issue and root cause
 
-**Fixed/Implemented in version: 0.261.333**, tracked in
+**Fixed/Implemented in version: 0.261.335**, tracked in
 `application/single_app/config.py`.
 
 A request to summarize newly added documents every Tuesday could change only
@@ -38,6 +38,10 @@ Core changes are in `functions_workflow_assist.py`,
 and `functions_workflow_runner.py`; the shared V2 task, selection and history
 components expose those contracts. See [the feature contract](../features/WORKFLOW_DOCUMENT_SELECTION.md)
 and [the workflow guide](../../guides/create-a-workflow.md).
+
+Base integration preserves the Ask AI action-handoff continuity changes from
+v0.261.334. This follow-up uses v0.261.335 rather than overwriting the newer
+base version.
 
 ## Validation
 
@@ -75,6 +79,14 @@ correcting an empty-field assertion in the test fixture. The remaining 159
 editor/calendar/loop/Changes/Ask AI browser cases passed in the compatibility
 run. All 12 synthetic model scenarios
 passed in 14 calls, with a largest response of 638 output tokens.
+
+After integrating the v0.261.334 base, the shared Ask AI handoff regression,
+production frontend build, 90 goal/selection-route/documentation checks and
+52 document-selection/Ask AI browser cases passed. A concurrent SDK run hit
+the existing 180-second deadline in three cold-import probes; all three passed
+unchanged in isolated retries. The sequential full SDK gate then exited 0 with
+all 718 tests and 231 subtests passing and zero inventory review gaps. No
+timeout, assertion or compatibility baseline was relaxed.
 
 The broader legacy matrix is not entirely green. Four old source/version
 assertions and a task-sequence golden are stale on the current base; executing
