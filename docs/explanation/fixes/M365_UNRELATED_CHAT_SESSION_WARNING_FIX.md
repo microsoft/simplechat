@@ -1,4 +1,4 @@
-# Unrelated M365 Chat Warnings and Session Recovery (v0.261.339)
+# Unrelated M365 Chat Warnings and Session Recovery (v0.261.340)
 
 Fixed/Implemented in version: **0.261.338**
 
@@ -50,6 +50,20 @@ workflow requires a separate explicit action.
 
 No backend authorization, Graph permissions, token lifetime, delivery policy or
 classic UI behavior changes.
+
+### URL-independent verification
+
+Fixed in version: **0.261.340** (`application/single_app/config.py`).
+CodeQL `js/user-controlled-bypass` identified that comparing the caller's request
+path with `/api/v2/bootstrap` could skip the transport-failure session check.
+Verification no longer depends on the requested path. Recursion is prevented by
+the verifier's direct fetch to the fixed bootstrap endpoint, outside the API
+wrapper, rather than by exempting a caller-controlled URL.
+
+Regression tests cover the exact bootstrap path, query variants and dynamic
+feature URLs, and prove that a failed bootstrap read triggers at most one direct
+verification probe. The existing timeout, cooldown, abort handling, identity
+guards and no-mutation-replay behavior remain unchanged.
 
 ## Validation
 

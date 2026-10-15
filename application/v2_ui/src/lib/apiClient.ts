@@ -85,7 +85,7 @@ async function fetchWithSessionCheck(path: string, init: RequestInit): Promise<R
     try {
         return await fetch(apiUrl(path), init);
     } catch (error) {
-        if (error instanceof TypeError && !init.signal?.aborted && path !== '/api/v2/bootstrap' &&
+        if (error instanceof TypeError && !init.signal?.aborted &&
             useAppSessionStore.getState().viewerId) {
             await verifyAppSession();
             if (useAppSessionStore.getState().status === 'required') throw sessionError();

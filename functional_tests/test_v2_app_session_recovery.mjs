@@ -1,5 +1,5 @@
 // test_v2_app_session_recovery.mjs
-// Version: 0.261.338
+// Version: 0.261.340
 // Implemented in: 0.261.338
 // Executes real request, bootstrap, replay and pending-action modules with only HTTP replaced.
 
@@ -101,6 +101,35 @@ test('offline failures remain connection failures and do not recursively probe',
     assert.equal(useAppSessionStore.getState().status, 'ready');
     await assert.rejects(api.get('/another-preview'), TypeError);
     assert.equal(requests.length, 3, 'verification is rate limited');
+});
+
+for (const path of [
+    '/api/v2/bootstrap',
+    '/api/v2/bootstrap?refresh=1',
+    '/api/approvals?request_id=caller-selected',
+    '/api/user/agents/caller-selected',
+]) {
+    test(`a request URL cannot bypass session verification: ${path}`, async () => {
+        let first = true;
+        handler = (url) => {
+            if (first) {
+                first = false;
+                return Promise.reject(new TypeError('Failed to fetch'));
+            }
+            assert.equal(url, '/api/v2/bootstrap', 'verification always uses the fixed app endpoint');
+            return expired();
+        };
+        await assert.rejects(api.get(path), isAppSessionError);
+        assert.deepEqual(requests.map((item) => item.path), [path, '/api/v2/bootstrap']);
+        assert.equal(useAppSessionStore.getState().status, 'required');
+    });
+}
+
+test('a rejected bootstrap request has one direct probe, never recursive verification', async () => {
+    handler = () => Promise.reject(new TypeError('offline'));
+    await assert.rejects(api.get('/api/v2/bootstrap'), TypeError);
+    assert.deepEqual(requests.map((item) => item.path), ['/api/v2/bootstrap', '/api/v2/bootstrap']);
+    assert.equal(useAppSessionStore.getState().status, 'ready');
 });
 
 test('provider reconnect and object-level denial never mark the app session expired', async () => {
