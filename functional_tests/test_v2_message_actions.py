@@ -1,9 +1,11 @@
+# test_v2_message_actions.py
 #!/usr/bin/env python3
 """
 Functional test for V2 chat per-message actions.
 
-Version: 0.261.007
+Version: 0.261.338
 Implemented in: 0.261.007
+Scheduling action placement implemented in: 0.261.338
 
 This test ensures the V2 message action row agrees with the message API contracts it
 drives. The retry and edit endpoints are the subtle ones: neither generates a reply on its
@@ -216,6 +218,28 @@ def test_version_is_at_least_implementation_version():
     return True
 
 
+def test_plan_replay_uses_the_message_action_row():
+    """Scheduling has one icon trigger and a controlled, lazily loaded panel."""
+    actions = _read(V2_SRC / "components" / "chat" / "MessageActions.tsx")
+    messages = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
+    card = _read(V2_SRC / "components" / "chat" / "PlanReplaySaveCard.tsx")
+
+    assert 'label="Repeat on a schedule"' in actions
+    assert "<CalendarClock size={15}" in actions
+    assert 'aria-label="Message actions"' in actions
+    assert "aria-expanded={expanded}" in actions
+    assert "aria-controls={controls}" in actions
+    assert "planReplay={canRepeatPlan ?" in messages
+    assert messages.index("<PlanReplaySaveCard") > messages.index("<InlinePendingActions anchor={message.id}")
+    assert "key={replayRunKey}" in messages
+    assert "expanded={replayExpanded}" in messages
+    assert "if (!expanded) return null;" in card
+    assert "if (expanded) void load();" in card
+    assert "Repeat on a schedule" not in card
+    assert_app_version_at_least("0.261.338")
+    return True
+
+
 if __name__ == "__main__":
     tests = [
         test_message_action_endpoints_exist,
@@ -225,6 +249,7 @@ if __name__ == "__main__":
         test_feedback_payload_matches_the_route,
         test_action_row_differs_by_role,
         test_version_is_at_least_implementation_version,
+        test_plan_replay_uses_the_message_action_row,
     ]
 
     results = []

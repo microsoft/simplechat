@@ -6,6 +6,8 @@ Application version tracking: `application\single_app\config.py`.
 
 Shared schedule policy implemented in version: **0.261.317**.
 
+Calendar message action implemented in version: **0.261.338**.
+
 Related issue: part of #1550, under #1543. Builds on
 [Chat orchestration workflow proposals](CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md),
 [Chat orchestration workflow runs](CHAT_ORCHESTRATION_WORKFLOW_RUNS.md),
@@ -289,8 +291,15 @@ withholds `plan_replay` along with the rest of the result.
 
 ## Creation path
 
-Creation path **B**: a **Repeat on a schedule** button under a finished
-orchestrated answer opens a **Save this chat plan** card.
+Creation path **B**: a **Repeat on a schedule** calendar icon in a finished
+orchestrated answer's message action bar opens a **Save this chat plan** card.
+The icon shares the existing Copy/Retry controls' hover and keyboard-focus
+reveal behavior, with an accessible name, tooltip, and expanded-state
+announcement. There is no standalone scheduling button inside the answer.
+The card expands below the message, outside the fading action bar, and stays
+visible until collapsed. Collapse restores focus to the calendar icon; the
+icon can also close an open card. Moving the control does not change the
+workflow defaults or create anything automatically.
 
 Why B rather than asking the planner: the plan being saved is one the user
 already saw run, so the card can show exactly that plan. The planner never
@@ -444,7 +453,7 @@ settings instead.
 
 ### When the setting is turned off or a capability is removed
 
-Nothing is deleted or rewritten. The **Repeat on a schedule** button
+Nothing is deleted or rewritten. The **Repeat on a schedule** calendar icon
 disappears, the routes refuse with `replay_disabled`, and every existing replay
 workflow fails its next run with the fixed `replay_disabled` reason before
 running any step. With the default alert, the creator sees that reason in the
@@ -477,7 +486,7 @@ builds and run-history redaction against a golden captured from base
 | `functions_orchestration_registry.py` | The setting's name. |
 | `functions_saved_analysis.py` | Redaction withholds `plan_replay`. |
 | `static/js/workspace/workspace_workflows.js` | The Classic page routes replay workflows to V2. |
-| `v2_ui/src/components/chat/PlanReplaySaveCard.tsx`, `MessageList.tsx` | The card and when it shows. |
+| `v2_ui/src/components/chat/PlanReplaySaveCard.tsx`, `MessageList.tsx`, `MessageActions.tsx` | The on-demand card, calendar message action, and shared availability conditions. |
 | `v2_ui/src/lib/workflowPlanReplay.ts` | API client, parsing and disclosure text. |
 | `v2_ui/src/components/workflows/WorkflowEditorDialog.tsx`, `WorkflowRunHistory.tsx`, `lib/workflowEditor.ts`, `lib/workflowEditorSections.ts` | Read-only editor section and the run inspector block. |
 
@@ -492,7 +501,8 @@ builds and run-history redaction against a golden captured from base
 | `functional_tests/test_workflow_plan_replay_boundaries.py` | Import order and boundaries, scheduler exclusion. |
 | `functional_tests/route_tests/test_route_blueprint_policy_inventory.py`, `test_route_unauthenticated_policy_contract.py` | Route policy for the two new routes. |
 | `functional_tests/test_v2_workflow_plan_replay_client.mjs` | V2 client parsing, disclosure text, time-zone fallback, editor payloads, and the alert notice naming the server's rule. |
-| `ui_tests/test_v2_workflow_plan_replay_card.py` | The card, refusals, the alert notice and save in a browser, with hostile step titles and workflow names. |
+| `functional_tests/test_v2_message_actions.py` | Calendar action wiring, controlled panel, and lazy-preview contract alongside existing message actions. |
+| `ui_tests/test_v2_workflow_plan_replay_card.py` | Calendar placement, hover/keyboard reveal, desktop/mobile layout, eligibility, collapse/reopen, run/masking changes, errors, refusals, the alert notice and save in a browser, with hostile step titles and workflow names. |
 | `ui_tests/test_workflow_classic_advanced_guard.py` | The Classic page routes replay workflows to V2. |
 
 ## Limits and follow-ups

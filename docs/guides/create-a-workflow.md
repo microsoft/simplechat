@@ -172,14 +172,18 @@ proposal, described above, writes new workflow tasks for you. A saved plan
 instead repeats the exact steps that ran in chat, so the steps you approved are
 the steps that run.
 
-**Repeat on a schedule** appears under an orchestrated answer when your
+Starting in **0.261.338**, **Repeat on a schedule** is the calendar icon in an
+orchestrated answer's message action bar, beside Copy and Retry. Hover over the
+answer or tab into its actions to reveal the icon. It is available when your
 administrator has turned on **Repeat Chat Plans On A Schedule**, you can create
 personal workflows, the conversation is private to you and the plan finished.
 It doesn't appear under a masked answer, or under a plan that proposed, started
 or handed off a workflow.
 
-Choosing it opens **Save this chat plan**. Before anything is saved, the card
-shows:
+Choosing the calendar icon expands **Save this chat plan** below the answer.
+The card stays visible while you review it, even after moving the pointer away.
+**Collapse** hides it and returns focus to the icon; choosing the icon again
+also closes the card. Before anything is saved, the card shows:
 
 - **Request**: what you asked, as each run will repeat it.
 - **Time**: dates written in the plan stay as written, so "March 3" always
