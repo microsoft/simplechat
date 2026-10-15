@@ -3,8 +3,9 @@
 """
 Functional test for Microsoft 365 pending-action cards in the V2 chat.
 
-Version: 0.261.325
+Version: 0.261.338
 Implemented in: 0.261.307
+Contextual warnings and session recovery added in: 0.261.338
 
 A Microsoft 365 action the assistant saves for review (an email or a calendar change waiting
 behind Send, Send now and Cancel) used to be drawn only by the classic chat page. V2 sent every
@@ -68,6 +69,7 @@ XSS_CHECKER_FILE = REPO_ROOT / "scripts" / "check_xss_sinks.py"
 LOGIC_TEST = REPO_ROOT / "functional_tests" / "test_v2_m365_pending_actions_logic.mjs"
 STORE_TEST = REPO_ROOT / "functional_tests" / "test_v2_m365_pending_actions_store.mjs"
 STREAM_TEST = REPO_ROOT / "functional_tests" / "test_v2_m365_pending_actions_stream.mjs"
+SESSION_TEST = REPO_ROOT / "functional_tests" / "test_v2_app_session_recovery.mjs"
 NODE_MODULES = REPO_ROOT / "application" / "v2_ui" / "node_modules"
 
 NEW_FILES = (
@@ -508,6 +510,11 @@ def test_the_live_paths_behave():
     return _run_node_test(STREAM_TEST)
 
 
+def test_app_session_recovery_behaves():
+    """App sign-in, provider auth, connectivity and stale identities stay distinct."""
+    return _run_node_test(SESSION_TEST)
+
+
 def test_version_was_incremented():
     """The application version records when this shipped."""
     print("Testing version...")
@@ -535,6 +542,7 @@ if __name__ == "__main__":
         test_pure_rules_behave,
         test_store_behaves,
         test_the_live_paths_behave,
+        test_app_session_recovery_behaves,
         test_version_was_incremented,
     ]
 

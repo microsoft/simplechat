@@ -1,7 +1,8 @@
 // workflowPlanReplay.ts
 // Client contract for saving a completed chat orchestration plan as a read-only replay workflow.
 
-import { ApiError, api, requestWithStatus } from './apiClient';
+import { ApiError, api, isAppSessionError, requestWithStatus } from './apiClient';
+import { SESSION_REQUIRED_MESSAGE } from '../stores/appSessionStore';
 import type { WorkflowDefinition } from './workflowEditor';
 
 export const PLAN_REPLAY_INVALID_RESPONSE = 'The saved chat plan returned an invalid response.';
@@ -266,6 +267,9 @@ function errorTextFor(code: string, status: number, serverText: string): string 
 
 export function planReplayError(cause: unknown): WorkflowPlanReplayError {
     if (cause instanceof WorkflowPlanReplayError) return cause;
+    if (isAppSessionError(cause)) {
+        return new WorkflowPlanReplayError('app_session_required', 401, SESSION_REQUIRED_MESSAGE, []);
+    }
     if (cause instanceof ApiError) {
         const payload = isRecord(cause.payload) ? cause.payload : {};
         const code = typeof payload.code === 'string' ? payload.code : '';

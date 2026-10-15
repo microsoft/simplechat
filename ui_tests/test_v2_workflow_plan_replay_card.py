@@ -1,8 +1,9 @@
 # test_v2_workflow_plan_replay_card.py
 """
 Real-component browser tests for saving a completed chat orchestration plan as a replay workflow.
-Version: 0.261.308
+Version: 0.261.338
 Implemented in: 0.261.308
+Session recovery coverage added in: 0.261.338
 Refs: microsoft/simplechat#1550, microsoft/simplechat#1543
 
 The production MessageList, PlanReplaySaveCard, WorkflowEditorDialog and WorkflowRunHistory run in
@@ -170,6 +171,9 @@ class PlanReplayApi:
         self.preview = preview()
         self.save_created = True
         self.expected_errors = set()
+        self.session_expired = False
+        self.list_denied = False
+        self.reject_preview = False
 
     def expect(self, condition, description):
         if not condition:
@@ -189,12 +193,31 @@ class PlanReplayApi:
         if path == "/favicon.ico":
             route.fulfill(status=204)
             return
+        if path == "/api/action-credentials/pending" and request.method == "GET":
+            route.fulfill(json={"requests": []})
+            return
         if is_pending_actions_list(request.method, path):
-            route.fulfill(json=pending_actions_payload())
+            if self.list_denied:
+                route.fulfill(status=403, json={"error": "forbidden"})
+            else:
+                route.fulfill(json=pending_actions_payload())
             return
         query = parse_qs(parsed.query)
         body = request.post_data_json if request.method == "POST" else None
         self.requests.append({"method": request.method, "path": path, "query": query, "body": body})
+        if path == "/api/v2/bootstrap" and request.method == "GET":
+            if self.session_expired:
+                route.fulfill(status=401, json={"error": "Session expired", "requires_reauth": True})
+            else:
+                route.fulfill(json={"user": {"id": "plan-replay-tester"}})
+            return
+        if self.session_expired and (path == PREVIEW_PATH or
+                                    (path == EDITOR_OPTIONS_PATH and not self.reject_preview)):
+            if self.reject_preview and path == PREVIEW_PATH:
+                route.abort("failed")
+            else:
+                route.fulfill(status=401, json={"error": "Session expired", "requires_reauth": True})
+            return
         if path == PREVIEW_PATH and request.method == "GET":
             self.expect(query == {"conversation_id": [CONVERSATION]}, f"preview query {query}")
             route.fulfill(json=copy.deepcopy(self.preview))
@@ -277,7 +300,7 @@ def plan_replay_ui(editor_browser, editor_assets):
     assert not dialogs, f"Unexpected browser dialogs: {dialogs}"
 
 
-def mount_messages(page, *, feature=True, messages=None, kind="personal", conversation=CONVERSATION):
+def mount_messages(page, *, feature=True, messages=None, kind="personal", conversation=CONVERSATION, shell=False):
     page.goto(ORIGIN + HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     page.evaluate(
@@ -285,7 +308,7 @@ def mount_messages(page, *, feature=True, messages=None, kind="personal", conver
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.308', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.338', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: {
                     enable_chat_orchestration: true,
                     allow_user_workflows: true,
@@ -302,9 +325,14 @@ def mount_messages(page, *, feature=True, messages=None, kind="personal", conver
                 streamError: null, thoughts: [], messages: spec.messages,
                 conversations: [{ id: spec.conversation, title: 'Plan replay' }],
             });
-            H.mount('mount-a', 'MessageList', {}, { strictMode: true });
+            if (spec.shell) {
+                H.stores.appSession.useAppSessionStore.setState({
+                    status: 'ready', viewerId: 'plan-replay-tester', revision: 0,
+                });
+            }
+            H.mount('mount-a', spec.shell ? 'SessionChatExperience' : 'MessageList', {}, { strictMode: true });
         }""",
-        {"feature": feature, "conversation": conversation, "kind": kind,
+        {"feature": feature, "conversation": conversation, "kind": kind, "shell": shell,
          "messages": messages if messages is not None else answer(conversation)},
     )
     expect(page.get_by_text("Summarize invoices.")).to_be_visible()
@@ -416,3 +444,85 @@ def test_run_inspector_renders_typed_replay_result(plan_replay_ui):
     expect(page.get_by_text("Final <script>inert</script> answer")).to_be_visible()
     expect(page.get_by_text("image: image-1")).to_be_visible()
     expect(page.get_by_text("The full answer is in the workflow's conversation.", exact=False)).to_be_visible()
+
+
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
+@pytest.mark.parametrize("transport_failure", [False, True])
+def test_expired_session_preserves_chat_and_recovers_preview_without_unrelated_m365_warning(
+    plan_replay_ui, viewport, transport_failure,
+):
+    page, api = plan_replay_ui
+    page.set_viewport_size(viewport)
+    api.list_denied = True
+    api.expected_errors.add(("/api/msgraph/pending-actions", 403))
+    mount_messages(page, shell=True)
+    for url in api.assets:
+        if url.endswith(".css"):
+            page.add_style_tag(url=ORIGIN + url)
+
+    composer = page.get_by_role("textbox", name="Message", exact=True)
+    composer.fill("Keep this unsent draft")
+    composer.evaluate("(element) => { window.__originalComposer = element; }")
+    expect(page.get_by_test_id("v2-session-notice")).to_have_count(0)
+    expect(page.get_by_role("region", name="Microsoft 365 outgoing actions for this conversation")).to_have_count(0)
+    api.session_expired = True
+    api.reject_preview = transport_failure
+    api.expected_errors.update({(PREVIEW_PATH, 401), (EDITOR_OPTIONS_PATH, 401)})
+    api.expected_errors.add(("/api/v2/bootstrap", 401))
+    if transport_failure:
+        api.expected_errors.add((PREVIEW_PATH, "net::ERR_FAILED"))
+    page.get_by_role("button", name="Repeat on a schedule").click()
+
+    notice = page.get_by_test_id("v2-session-notice")
+    expect(notice).to_have_count(1)
+    expect(notice).to_contain_text("Your SimpleChat session needs to be renewed.")
+    expect(notice.get_by_role("button", name="Check sign-in")).to_be_visible()
+    expect(notice.get_by_role("link", name="Sign in again")).to_have_attribute("target", "_blank")
+    bounds = notice.bounding_box()
+    assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= viewport["width"]
+    expect(composer).to_have_value("Keep this unsent draft")
+    assert composer.evaluate("(element) => element === window.__originalComposer")
+    expect(page.get_by_role("region", name="Save chat plan as workflow")).to_be_visible()
+    expect(page.get_by_text("SimpleChat could not be reached.", exact=False)).to_have_count(0)
+    expect(page.get_by_role("region", name="Microsoft 365 outgoing actions for this conversation")).to_have_count(0)
+
+    api.expected_errors.add(("/api/v2/bootstrap", 401))
+    notice.get_by_role("button", name="Check sign-in").click()
+    expect(notice.get_by_role("status")).to_contain_text("Your sign-in could not be confirmed.")
+    api.session_expired = False
+    notice.get_by_role("button", name="Check sign-in").click()
+    expect(notice).to_have_count(0)
+    expect(composer).to_have_value("Keep this unsent draft")
+    assert composer.evaluate("(element) => element === window.__originalComposer")
+    assert all(request["method"] == "GET" for request in api.requests)
+
+    page.get_by_role("button", name="Collapse", exact=True).click()
+    page.get_by_role("button", name="Repeat on a schedule").click()
+    expect(page.get_by_role("textbox", name="Workflow name")).to_be_visible()
+    expect(page.get_by_role("button", name="Save workflow")).to_be_enabled()
+    assert all(request["method"] == "GET" for request in api.requests)
+
+
+def test_session_notice_does_not_reset_an_open_schedule_form(plan_replay_ui):
+    page, api = plan_replay_ui
+    mount_messages(page, shell=True)
+    page.get_by_role("button", name="Repeat on a schedule").click()
+    name = page.get_by_role("textbox", name="Workflow name")
+    name.fill("My reviewed schedule")
+    description = page.get_by_role("textbox", name="Description")
+    description.fill("Keep this schedule draft")
+    page.get_by_role("checkbox", name="Run on a schedule").check()
+    api.session_expired = True
+    api.expected_errors.update({(PREVIEW_PATH, 401), (EDITOR_OPTIONS_PATH, 401)})
+    page.get_by_role("button", name="Save workflow").click()
+    expect(page.get_by_test_id("v2-session-notice")).to_have_count(1)
+    expect(name).to_have_value("My reviewed schedule")
+    expect(description).to_have_value("Keep this schedule draft")
+    expect(page.get_by_role("checkbox", name="Run on a schedule")).to_be_checked()
+    writes_before = len([request for request in api.requests if request["method"] == "POST"])
+    assert writes_before == 1
+    api.session_expired = False
+    page.get_by_test_id("v2-session-notice").get_by_role("button", name="Check sign-in").click()
+    expect(page.get_by_test_id("v2-session-notice")).to_have_count(0)
+    expect(name).to_have_value("My reviewed schedule")
+    assert len([request for request in api.requests if request["method"] == "POST"]) == writes_before

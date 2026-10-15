@@ -16,6 +16,7 @@ import { WorkflowAlertLiveRegion } from '../notifications/WorkflowAlertLiveRegio
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
+import { SessionNotice } from './SessionNotice';
 
 function ClassificationBanner() {
     const banner = useBootstrapStore((state) => state.data?.branding?.classification_banner);
@@ -69,6 +70,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <MobileNavigationContext.Provider value={{ mobile, register }}>
             <div className="app-shell flex h-full min-h-0 flex-col">
                     <ClassificationBanner />
+                    <SessionNotice />
                     <div className="relative flex min-h-0 min-w-0 flex-1">
                         {mobile && mobileNavOpen && (
                             <button

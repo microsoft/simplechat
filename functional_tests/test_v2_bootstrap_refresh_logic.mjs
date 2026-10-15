@@ -1,7 +1,7 @@
 // test_v2_bootstrap_refresh_logic.mjs
 //
 // Runtime test for the V2 bootstrap store's refresh action.
-// Version: 0.261.305
+// Version: 0.261.338
 // Implemented in: 0.261.046
 // Required authoring selection refresh added in: 0.261.096
 // Scope-only refresh for group switching added in: 0.261.305 (#1725)
@@ -57,6 +57,7 @@ let fetchImpl = () => {
 globalThis.fetch = (...args) => fetchImpl(...args);
 
 const { useBootstrapStore } = await import(STORE_URL);
+const { useAppSessionStore } = await import('../application/v2_ui/src/stores/appSessionStore.ts');
 
 /** A minimal Response the api client is happy to read. */
 function jsonResponse(body, status = 200) {
@@ -328,6 +329,8 @@ async function testScopeRefreshRejectsAnotherViewer() {
     fetchImpl = async () => jsonResponse({ user: { id: 'someone-else' }, scope: { active_group_id: 'g2' } });
     await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /sign-in changed/);
     await assert.rejects(useBootstrapStore.getState().refreshScope('not-u1'), /sign-in changed/);
+    assert.equal(useAppSessionStore.getState().status, 'changed');
+    useAppSessionStore.setState({ status: 'ready', viewerId: 'u1', revision: 0 });
     fetchImpl = async () => jsonResponse({ user: { id: 'u1' } });
     await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /could not be read/);
     assert.equal(useBootstrapStore.getState().data, loaded);
@@ -425,6 +428,7 @@ let passed = 0;
 for (const test of tests) {
     console.log(`\nRunning ${test.name}...`);
     try {
+        useAppSessionStore.setState({ status: 'ready', viewerId: 'u1', revision: 0 });
         await test();
         passed += 1;
     } catch (error) {

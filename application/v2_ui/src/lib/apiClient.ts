@@ -5,6 +5,8 @@
 // Service later" decision cheap: switching origins is a change to API_BASE alone, not a
 // change to every call site.
 
+import { SESSION_REQUIRED_MESSAGE, useAppSessionStore } from '../stores/appSessionStore';
+
 /**
  * Base URL for API requests.
  *
@@ -41,6 +43,99 @@ export class ApiError extends Error {
     get isAuthError(): boolean {
         return this.status === 401 || this.status === 403;
     }
+}
+
+export function isAppSessionRequired(status: number, payload: unknown): boolean {
+    if ((status !== 401 && status !== 403) || !payload || typeof payload !== 'object') return false;
+    const body = payload as Record<string, unknown>;
+    return body.requires_reauth === true ||
+        (status === 401 && (body.error === 'not_logged_in' ||
+            (body.error === 'Unauthorized' && body.message === 'Authentication required')));
+}
+
+export function isAppSessionError(error: unknown): boolean {
+    return error instanceof ApiError && isAppSessionRequired(error.status, error.payload);
+}
+
+function sessionError(): ApiError {
+    return new ApiError(SESSION_REQUIRED_MESSAGE, 401, { requires_reauth: true });
+}
+
+function isSignInRedirect(response: Response): boolean {
+    if (!response.redirected || !response.url) return false;
+    const url = new URL(response.url);
+    return url.pathname === '/login' || url.pathname.startsWith('/.auth/login/') ||
+        /^(login\.microsoftonline\.(com|us|de)|login\.partner\.microsoftonline\.cn)$/.test(url.hostname);
+}
+
+let sessionVerification: Promise<boolean> | null = null;
+let lastSessionVerification = 0;
+
+function checkWriteSession(method: string): void {
+    if (method === 'GET' || method === 'HEAD') return;
+    const { status } = useAppSessionStore.getState();
+    if (status === 'required') throw sessionError();
+    if (status === 'changed') {
+        throw new ApiError('Your signed-in account changed. Reload SimpleChat before continuing.',
+            409, { error: 'app_account_changed' });
+    }
+}
+
+async function fetchWithSessionCheck(path: string, init: RequestInit): Promise<Response> {
+    try {
+        return await fetch(apiUrl(path), init);
+    } catch (error) {
+        if (error instanceof TypeError && !init.signal?.aborted && path !== '/api/v2/bootstrap' &&
+            useAppSessionStore.getState().viewerId) {
+            await verifyAppSession();
+            if (useAppSessionStore.getState().status === 'required') throw sessionError();
+        }
+        throw error;
+    }
+}
+
+/** A read-only check, never a retry of the request that failed. */
+export function verifyAppSession(force = false): Promise<boolean> {
+    if (sessionVerification) return sessionVerification;
+    if (!force && Date.now() - lastSessionVerification < 15_000) return Promise.resolve(false);
+    lastSessionVerification = Date.now();
+    const { revision } = useAppSessionStore.getState();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    sessionVerification = (async () => {
+        try {
+            const response = await fetch(apiUrl('/api/v2/bootstrap'), {
+                credentials: CREDENTIALS_MODE,
+                cache: 'no-store',
+                headers: { Accept: 'application/json' },
+                signal: controller.signal,
+            });
+            if (isSignInRedirect(response)) {
+                useAppSessionStore.getState().requireSignIn(revision);
+                return false;
+            }
+            if (!response.headers.get('content-type')?.includes('application/json')) return false;
+            const data: unknown = await response.json();
+            if (!response.ok) {
+                if (isAppSessionRequired(response.status, data)) {
+                    useAppSessionStore.getState().requireSignIn(revision);
+                }
+                followServerGate(response.status, data);
+                return false;
+            }
+            const user = (data as { user?: { id?: unknown } } | null)?.user;
+            return typeof user?.id === 'string' &&
+                useAppSessionStore.getState().confirmUser(user.id, revision);
+        } catch (error) {
+            if (error instanceof TypeError || error instanceof SyntaxError ||
+                (error instanceof Error && error.name === 'AbortError')) return false;
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            sessionVerification = null;
+        }
+    })();
+    return sessionVerification;
 }
 
 export function apiUrl(path: string): string {
@@ -193,6 +288,8 @@ export interface ApiResponse<T> {
 
 export async function requestWithStatus<T>(path: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
     const { method = 'GET', body, signal, headers = {}, cache } = options;
+    checkWriteSession(method);
+    const sessionRevision = useAppSessionStore.getState().revision;
 
     const init: RequestInit = {
         method,
@@ -213,11 +310,20 @@ export async function requestWithStatus<T>(path: string, options: RequestOptions
         init.body = JSON.stringify(body);
     }
 
-    const response = await fetch(apiUrl(path), init);
+    const response = await fetchWithSessionCheck(path, init);
+
+    if (isSignInRedirect(response)) {
+        useAppSessionStore.getState().requireSignIn(sessionRevision);
+        throw sessionError();
+    }
 
     if (!response.ok) {
         const { message, payload } = await readErrorMessage(response);
         followServerGate(response.status, payload);
+        if (isAppSessionRequired(response.status, payload)) {
+            useAppSessionStore.getState().requireSignIn(sessionRevision);
+            throw sessionError();
+        }
         throw new ApiError(message, response.status, payload);
     }
 
@@ -260,16 +366,26 @@ export async function uploadFileWithStatus<T>(
     formData: FormData,
     signal?: AbortSignal,
 ): Promise<ApiResponse<T>> {
-    const response = await fetch(apiUrl(path), {
+    checkWriteSession('POST');
+    const sessionRevision = useAppSessionStore.getState().revision;
+    const response = await fetchWithSessionCheck(path, {
         method: 'POST',
         credentials: CREDENTIALS_MODE,
         body: formData,
         signal,
     });
 
+    if (isSignInRedirect(response)) {
+        useAppSessionStore.getState().requireSignIn(sessionRevision);
+        throw sessionError();
+    }
     if (!response.ok) {
         const { message, payload } = await readErrorMessage(response);
         followServerGate(response.status, payload);
+        if (isAppSessionRequired(response.status, payload)) {
+            useAppSessionStore.getState().requireSignIn(sessionRevision);
+            throw sessionError();
+        }
         throw new ApiError(message, response.status, payload);
     }
 

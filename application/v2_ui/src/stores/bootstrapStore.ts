@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { fetchActiveScope, fetchBootstrap } from '../lib/endpoints';
 import { ApiError, isAccessRestricted, isTermsOfUseRequired } from '../lib/apiClient';
 import type { BootstrapPayload, PromptOption } from '../lib/types';
+import { useAppSessionStore } from './appSessionStore';
 
 /**
  * Orders concurrent refreshes so a slower earlier one cannot land after a newer one.
@@ -120,8 +121,13 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
         set({ loading: true, error: null, authExpired: false });
         const settle = startBootstrapRead();
         const startedAtScope = scopeSequence;
+        const sessionRevision = useAppSessionStore.getState().revision;
         try {
             const data = await fetchBootstrap();
+            if (!useAppSessionStore.getState().confirmUser(data.user.id, sessionRevision)) {
+                set({ loading: false });
+                return;
+            }
             set({ data: withCurrentScope(data, startedAtScope, get().data), loading: false });
         } catch (error) {
             // The terms gate or the access gate refused the call and apiClient is already
@@ -152,9 +158,11 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
         const sequence = ++refreshSequence;
         const settle = startBootstrapRead();
         const startedAtScope = scopeSequence;
+        const sessionRevision = useAppSessionStore.getState().revision;
         try {
             const data = await fetchBootstrap();
-            if (sequence === refreshSequence) {
+            if (sequence === refreshSequence &&
+                useAppSessionStore.getState().confirmUser(data.user.id, sessionRevision)) {
                 set({ data: withCurrentScope(data, startedAtScope, get().data) });
             }
         } catch {
@@ -180,6 +188,7 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
         const sequence = ++refreshSequence;
         const settle = startBootstrapRead();
         const startedAtScope = scopeSequence;
+        const sessionRevision = useAppSessionStore.getState().revision;
         let data: BootstrapPayload;
         try {
             data = await fetchBootstrap();
@@ -188,6 +197,9 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
         }
         if (sequence !== refreshSequence) {
             throw new Error('Application availability changed during refresh. Try again.');
+        }
+        if (!useAppSessionStore.getState().confirmUser(data.user.id, sessionRevision)) {
+            throw new Error('Your sign-in changed during refresh. Reload the workspace.');
         }
         if (expectedViewerId && (get().authExpired || get().data?.user?.id !== expectedViewerId
             || data?.user?.id !== expectedViewerId)) {
@@ -204,9 +216,13 @@ export const useBootstrapStore = create<BootstrapState>((set, get) => ({
             throw new Error('Your sign-in changed during refresh. Reload the workspace.');
         }
         const sequence = ++scopeSequence;
+        const sessionRevision = useAppSessionStore.getState().revision;
         const result = await fetchActiveScope();
         if (sequence !== scopeSequence) {
             throw new Error('The active workspace changed during refresh. Try again.');
+        }
+        if (!useAppSessionStore.getState().confirmUser(result?.user?.id, sessionRevision)) {
+            throw new Error('Your sign-in changed during refresh. Reload the workspace.');
         }
         const current = get().data;
         if (!current || get().authExpired || current.user?.id !== expectedViewerId
