@@ -1,8 +1,12 @@
-# Unrelated M365 Chat Warnings and Session Recovery
+# Unrelated M365 Chat Warnings and Session Recovery (v0.261.339)
 
 Fixed/Implemented in version: **0.261.338**
 
 Application version: `application/single_app/config.py`.
+
+Integrated with the message-action calendar control in version **0.261.339**.
+The merged browser harness retains both calendar placement/eligibility coverage
+and app-session recovery scenarios, including draft preservation after expiry.
 
 ## Issue and root cause
 
@@ -69,6 +73,13 @@ cause of the original production incident.
 The affected browser suites, runtime regression suites, pending-action functional
 wrapper, production V2 build, TypeScript check and documentation coverage/quality
 checks passed. The UI mechanical detector reported no findings.
+
+After base integration in **0.261.339**, all 32 plan-replay and 18 M365 browser
+tests passed, including the calendar message action and session-recovery scenarios.
+The message-action functional suite passed 7 of 8 checks: its existing retry/edit
+source assertion expects `'chat_request': chat_request`, but the unchanged base
+route returns `'chat_request': body`. The new calendar-placement check passed;
+the unrelated retry/edit assertion was not changed by this merge.
 
 See [V2 pending-action cards](../features/V2_M365_PENDING_ACTION_CARDS.md) and
 [chat sign-in controls](../../reference/chat-controls.md#react-v2-sign-in-recovery).

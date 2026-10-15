@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.338"
+version: "0.261.339"
 ---
 
 ## How to use this reference
@@ -908,12 +908,18 @@ steps on a schedule. The steps are frozen when you save them, and each run
 repeats them as you, in the workflow's own conversation. See
 [Repeat a chat plan on a schedule]({{ '/guides/create-a-workflow/' | relative_url }}#repeat-a-chat-plan-on-a-schedule).
 
+Starting in **0.261.338**, the entry point is a calendar icon beside Copy and
+Retry in the answer's message action bar. Hover over the answer or tab into its
+actions to reveal it. The scheduling card stays out of the conversation until
+you choose the icon; it then expands below the answer and remains visible
+until collapsed.
+
 {% include media.html src="reference/chat-controls-saved-chat-plan-card.png" alt="Save this chat plan card under an orchestrated answer, showing the request, time handling, cadence, step cap, the numbered steps and the Save workflow button." title="Save this chat plan card" capture="Capture an expanded Save this chat plan card under a finished orchestrated answer, showing the Request, Time, Cadence, Step cap, Runs as and Alerts lines, the numbered steps with their kind of work, the schedule fields and the Save workflow button. Redact the conversation title, the request and the step titles." %}
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Repeat on a schedule | Opens the **Save this chat plan** card and loads what would be saved: the request, how dates are handled, the shortest schedule allowed, the step cap, who the runs act as, the **Run failed** bell alert the workflow starts with, and every step with its title and kind of work. If a step can't be repeated, the card lists why under **This plan has replay notes** and offers no way to save. | See exactly what a saved workflow would repeat before anything is created. | `enable_workflow_plan_replay`, `enable_chat_orchestration` and `allow_user_workflows`, under a finished answer in a conversation that's private to you. Not shown on a masked answer, or under a plan that proposed, started or handed off a workflow |
-| Collapse | Hides the card again. | Put the card away without saving. | The card is open |
+| Repeat on a schedule (calendar icon) | Opens the **Save this chat plan** card from the message action bar and loads what would be saved: the request, how dates are handled, the shortest schedule allowed, the step cap, who the runs act as, the **Run failed** bell alert the workflow starts with, and every step with its title and kind of work. If a step can't be repeated, the card lists why under **This plan has replay notes** and offers no way to save. | See exactly what a saved workflow would repeat before anything is created, without a permanent button inside every completed answer. | `enable_workflow_plan_replay`, `enable_chat_orchestration` and `allow_user_workflows`, on a finished answer in a conversation that's private to you. Not shown on a masked answer, or on a plan that proposed, started or handed off a workflow |
+| Collapse | Hides the card again and returns focus to the calendar icon. Choosing the calendar icon while the card is open also closes it. | Put the card away without saving. | The card is open |
 | Reload plan | Loads the plan again after the server reports it changed since the card loaded. | Review the current plan instead of saving one you haven't seen. | Saving was refused because the plan changed |
 | Workflow name and Description | Name and describe the workflow. Leave the name empty and SimpleChat picks one. | Find the workflow later in Workflows. | The plan can be saved |
 | Run on a schedule | Shows the schedule fields. When it's off, the workflow runs only when you start it from Workflows. | Choose between a recurring and a manual workflow. | The plan can be saved |

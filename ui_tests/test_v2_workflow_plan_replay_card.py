@@ -1,9 +1,10 @@
 # test_v2_workflow_plan_replay_card.py
 """
 Real-component browser tests for saving a completed chat orchestration plan as a replay workflow.
-Version: 0.261.338
+Version: 0.261.339
 Implemented in: 0.261.308
 Session recovery coverage added in: 0.261.338
+Calendar message action implemented in: 0.261.338
 Refs: microsoft/simplechat#1550, microsoft/simplechat#1543
 
 The production MessageList, PlanReplaySaveCard, WorkflowEditorDialog and WorkflowRunHistory run in
@@ -43,6 +44,7 @@ from v2_pending_action_stubs import is_pending_actions_list, pending_actions_pay
 
 pytestmark = pytest.mark.ui
 IMPLEMENTED_IN = "0.261.308"
+ACTION_IMPLEMENTED_IN = "0.261.338"
 CONVERSATION = "plan-replay-chat"
 RUN_ID = "plan-replay-run"
 WORKFLOW_ID = "plan-replay-workflow"
@@ -169,6 +171,8 @@ class PlanReplayApi:
         self.requests = []
         self.unexpected = []
         self.preview = preview()
+        self.preview_paths = {PREVIEW_PATH}
+        self.preview_error = None
         self.save_created = True
         self.expected_errors = set()
         self.session_expired = False
@@ -186,6 +190,14 @@ class PlanReplayApi:
         if f"{parsed.scheme}://{parsed.netloc}" != ORIGIN:
             self.unexpected.append(request.url)
             route.abort()
+            return
+        if request.method == "GET" and path == HARNESS:
+            styles = "".join(
+                f'<link rel="stylesheet" href="{url}">'
+                for url in self.assets if url.endswith(".css")
+            )
+            document = self.assets[path].read_text(encoding="utf-8")
+            route.fulfill(content_type="text/html", body=document.replace("</head>", styles + "</head>"))
             return
         if request.method == "GET" and path in self.assets:
             route.fulfill(path=str(self.assets[path]))
@@ -211,15 +223,21 @@ class PlanReplayApi:
             else:
                 route.fulfill(json={"user": {"id": "plan-replay-tester"}})
             return
-        if self.session_expired and (path == PREVIEW_PATH or
+        if self.session_expired and (path in self.preview_paths or
                                     (path == EDITOR_OPTIONS_PATH and not self.reject_preview)):
-            if self.reject_preview and path == PREVIEW_PATH:
+            if self.reject_preview and path in self.preview_paths:
                 route.abort("failed")
             else:
                 route.fulfill(status=401, json={"error": "Session expired", "requires_reauth": True})
             return
-        if path == PREVIEW_PATH and request.method == "GET":
+        if path == "/api/message/answer-1/metadata" and request.method == "GET":
+            route.fulfill(json=answer()[-1])
+            return
+        if path in self.preview_paths and request.method == "GET":
             self.expect(query == {"conversation_id": [CONVERSATION]}, f"preview query {query}")
+            if self.preview_error:
+                route.fulfill(status=503, json=self.preview_error)
+                return
             route.fulfill(json=copy.deepcopy(self.preview))
             return
         if path == PREVIEW_PATH and request.method == "POST":
@@ -235,6 +253,14 @@ class PlanReplayApi:
             return
         if path == EDITOR_OPTIONS_PATH and request.method == "GET":
             route.fulfill(json=editor_options())
+            return
+        workflow_lists = {
+            f"/api/v2/orchestration/runs/{RUN_ID}/workflow-proposals": "proposals",
+            f"/api/v2/orchestration/runs/{RUN_ID}/workflow-runs": "workflow_runs",
+            f"/api/v2/orchestration/runs/{RUN_ID}/workflow-handoffs": "handoffs",
+        }
+        if path in workflow_lists and request.method == "GET":
+            route.fulfill(json={"run_id": RUN_ID, workflow_lists[path]: []})
             return
         if path == "/api/user/workflows/file-sync-sources" and request.method == "GET":
             route.fulfill(json={"sources": [], "file_sync_enabled": True})
@@ -300,7 +326,9 @@ def plan_replay_ui(editor_browser, editor_assets):
     assert not dialogs, f"Unexpected browser dialogs: {dialogs}"
 
 
-def mount_messages(page, *, feature=True, messages=None, kind="personal", conversation=CONVERSATION, shell=False):
+def mount_messages(
+    page, *, feature=True, features=None, messages=None, kind="personal", conversation=CONVERSATION, shell=False,
+):
     page.goto(ORIGIN + HARNESS)
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     page.evaluate(
@@ -308,11 +336,13 @@ def mount_messages(page, *, feature=True, messages=None, kind="personal", conver
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.338', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.339', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: {
                     enable_chat_orchestration: true,
                     allow_user_workflows: true,
                     enable_workflow_plan_replay: spec.feature,
+                    enable_user_feedback: true,
+                    ...spec.features,
                 },
                 user: { id: 'plan-replay-tester', display_name: 'Plan Replay Tester' },
                 scope: { groups: [], public_workspaces: [] },
@@ -330,9 +360,16 @@ def mount_messages(page, *, feature=True, messages=None, kind="personal", conver
                     status: 'ready', viewerId: 'plan-replay-tester', revision: 0,
                 });
             }
+            H.stores.orchestration.useOrchestrationStore.setState({
+                runRecovery: Object.fromEntries(spec.messages
+                    .filter((message) => message.metadata?.orchestration?.run_id)
+                    .map((message) => [message.metadata.orchestration.run_id, {
+                        ...message.metadata.orchestration, detailLoaded: true,
+                    }])),
+            });
             H.mount('mount-a', spec.shell ? 'SessionChatExperience' : 'MessageList', {}, { strictMode: true });
         }""",
-        {"feature": feature, "conversation": conversation, "kind": kind, "shell": shell,
+        {"feature": feature, "features": features or {}, "conversation": conversation, "kind": kind, "shell": shell,
          "messages": messages if messages is not None else answer(conversation)},
     )
     expect(page.get_by_text("Summarize invoices.")).to_be_visible()
@@ -340,6 +377,7 @@ def mount_messages(page, *, feature=True, messages=None, kind="personal", conver
 
 def test_version_is_at_least_the_implementing_release():
     assert_app_version_at_least(IMPLEMENTED_IN)
+    assert_app_version_at_least(ACTION_IMPLEMENTED_IN)
 
 
 def test_card_absent_when_feature_flag_is_off(plan_replay_ui):
@@ -352,6 +390,7 @@ def test_card_absent_when_feature_flag_is_off(plan_replay_ui):
 def test_card_fetches_on_click_discloses_steps_and_saves_paused(plan_replay_ui):
     page, api = plan_replay_ui
     mount_messages(page)
+    page.locator("#message-answer-1").hover()
     expect(page.get_by_role("button", name="Repeat on a schedule")).to_be_visible()
     assert not api.requests
 
@@ -372,10 +411,167 @@ def test_card_fetches_on_click_discloses_steps_and_saves_paused(plan_replay_ui):
     assert post["body"]["trigger_type"] == "manual"
 
 
+@pytest.mark.parametrize("width,dark", [(1440, False), (390, True)])
+def test_calendar_action_reveals_on_hover_and_keyboard_and_expands_inline(plan_replay_ui, width, dark):
+    page, api = plan_replay_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    mount_messages(page)
+    page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", dark)
+    row = page.locator("#message-answer-1")
+    actions = row.get_by_role("group", name="Message actions")
+    calendar = actions.get_by_role("button", name="Repeat on a schedule", exact=True)
+    panel = row.get_by_role("region", name="Save chat plan as workflow")
+    reveal = actions.locator("..")
+    page.mouse.move(0, 0)
+    expect(reveal).to_have_css("opacity", "0")
+    expect(panel).to_have_count(0)
+    expect(calendar).to_have_attribute("aria-expanded", "false")
+    expect(calendar).to_have_attribute("title", "Repeat on a schedule")
+    expect(calendar.locator("svg.lucide-calendar-clock")).to_have_count(1)
+    assert calendar.text_content().strip() == ""
+    assert not api.requests
+
+    row.hover()
+    expect(reveal).to_have_css("opacity", "1")
+    expect(actions.get_by_role("button", name="Copy", exact=True)).to_be_visible()
+    expect(actions.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+    expect(actions.get_by_role("button", name="Good response")).to_be_visible()
+    assert not api.requests
+    page.mouse.move(0, 0)
+    actions.get_by_role("button", name="Copy", exact=True).focus()
+    page.keyboard.press("Tab")
+    expect(actions.get_by_role("button", name="Retry", exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(calendar).to_be_focused()
+    expect(reveal).to_have_css("opacity", "1")
+    page.keyboard.press("Enter")
+    expect(panel).to_be_visible()
+    expect(calendar).to_have_attribute("aria-expanded", "true")
+    expect(panel).to_have_attribute("id", calendar.get_attribute("aria-controls"))
+    expect(panel.get_by_text(HOSTILE_REQUEST)).to_be_visible()
+    assert actions.locator("section").count() == 0
+    assert row.evaluate("(row) => row.scrollWidth <= row.clientWidth") is True
+    assert calendar.evaluate("(el) => el.getBoundingClientRect().right <= innerWidth") is True
+    panel.get_by_role("textbox", name="Workflow name").fill("My recurring summary")
+    actions.get_by_role("button", name="Message details").click()
+    expect(row.get_by_text("Message ID", exact=True)).to_be_visible()
+    expect(row.get_by_role("button", name="Close message details")).to_be_visible()
+    expect(panel).to_be_visible()
+    page.mouse.move(0, 0)
+    expect(reveal).to_have_css("opacity", "1")
+
+    screenshot = Path(__file__).resolve().parent / "artifacts" / f"plan-replay-calendar-{width}.png"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(screenshot), full_page=True)
+    panel.get_by_role("button", name="Collapse", exact=True).click()
+    expect(panel).to_have_count(0)
+    expect(calendar).to_be_focused()
+    expect(calendar).to_have_attribute("aria-expanded", "false")
+    page.keyboard.press("Space")
+    expect(panel).to_be_visible()
+    expect(panel.get_by_role("textbox", name="Workflow name")).to_have_value("My recurring summary")
+    assert len([request for request in api.requests if request["path"] == PREVIEW_PATH]) == 2
+    calendar.click()
+    expect(panel).to_have_count(0)
+
+
+@pytest.mark.parametrize("disabled", [
+    "enable_workflow_plan_replay", "enable_chat_orchestration", "allow_user_workflows",
+])
+def test_calendar_requires_all_prerequisite_flags(plan_replay_ui, disabled):
+    page, api = plan_replay_ui
+    mount_messages(page, features={disabled: False})
+    expect(page.get_by_role("button", name="Repeat on a schedule")).to_have_count(0)
+    assert not api.requests
+
+
+@pytest.mark.parametrize("case", [
+    "shared", "inactive", "user", "masked", "fully-masked", "missing-run",
+    "failed", "partial", "cancelled", "running",
+    "workflow_propose", "workflow_run", "workflow_handoff",
+])
+def test_calendar_preserves_answer_eligibility(plan_replay_ui, case):
+    page, api = plan_replay_ui
+    messages = answer()
+    metadata = messages[-1]["metadata"]
+    if case == "user":
+        messages[-1]["role"] = "user"
+    elif case == "masked":
+        metadata["masked_ranges"] = [{"start": 0, "end": 2}]
+    elif case == "fully-masked":
+        metadata["masked"] = True
+    elif case == "missing-run":
+        del metadata["orchestration"]["run_id"]
+    elif case in {"failed", "partial", "cancelled", "running"}:
+        metadata["orchestration"]["outcome"] = case
+    elif case.startswith("workflow_"):
+        metadata["orchestration"]["plan_summary"]["capabilities_used"] = [case]
+    mount_messages(page, messages=messages,
+                   kind="collaborative" if case == "shared" else "personal",
+                   conversation="another-chat" if case == "inactive" else CONVERSATION)
+    expect(page.get_by_role("button", name="Repeat on a schedule")).to_have_count(0)
+    expect(page.get_by_role("region", name="Save chat plan as workflow")).to_have_count(0)
+    assert not [request for request in api.requests if request["path"] in {PREVIEW_PATH, EDITOR_OPTIONS_PATH}]
+
+
+def test_open_panel_closes_when_answer_becomes_masked_or_changes_run(plan_replay_ui):
+    page, api = plan_replay_ui
+    mount_messages(page)
+    row = page.locator("#message-answer-1")
+    calendar = row.get_by_role("button", name="Repeat on a schedule")
+    panel = row.get_by_role("region", name="Save chat plan as workflow")
+    row.hover()
+    calendar.click()
+    expect(panel.get_by_role("textbox", name="Workflow name")).to_be_visible()
+    panel.get_by_role("textbox", name="Workflow name").fill("Old plan name")
+
+    masked = answer(masked=True)
+    page.evaluate("(messages) => window.OrchHarness.stores.chat.useChatStore.setState({ messages })", masked)
+    expect(calendar).to_have_count(0)
+    expect(panel).to_have_count(0)
+    page.evaluate("(messages) => window.OrchHarness.stores.chat.useChatStore.setState({ messages })", answer())
+    expect(calendar).to_have_attribute("aria-expanded", "false")
+    row.hover()
+    calendar.click()
+    expect(panel.get_by_role("textbox", name="Workflow name")).to_be_visible()
+    panel.get_by_role("textbox", name="Workflow name").fill("Another old name")
+
+    next_messages = answer()
+    next_messages[-1]["metadata"]["orchestration"]["run_id"] = RUN_ID + "-next"
+    next_path = PREVIEW_PATH.replace(RUN_ID, RUN_ID + "-next")
+    api.preview_paths.add(next_path)
+    page.evaluate("(messages) => window.OrchHarness.stores.chat.useChatStore.setState({ messages })", next_messages)
+    expect(panel).to_have_count(0)
+    expect(calendar).to_have_attribute("aria-expanded", "false")
+    row.hover()
+    calendar.click()
+    expect(panel.get_by_role("textbox", name="Workflow name")).not_to_have_value("Another old name")
+    expect(panel.get_by_text(HOSTILE_REQUEST)).to_be_visible()
+    assert any(request["path"] == next_path for request in api.requests)
+
+
+def test_calendar_preview_failure_stays_visible_and_can_be_collapsed(plan_replay_ui):
+    page, api = plan_replay_ui
+    api.preview_error = {"error": "Provider details must not reach the UI", "code": "unavailable"}
+    api.expected_errors.add((PREVIEW_PATH, 503))
+    mount_messages(page)
+    page.locator("#message-answer-1").hover()
+    calendar = page.get_by_role("button", name="Repeat on a schedule")
+    calendar.click()
+    panel = page.get_by_role("region", name="Save chat plan as workflow")
+    expect(panel.get_by_role("alert")).to_be_visible()
+    expect(page.get_by_text("Provider details must not reach the UI")).to_have_count(0)
+    expect(panel.get_by_role("button", name="Save workflow")).to_have_count(0)
+    panel.get_by_role("button", name="Collapse", exact=True).click()
+    expect(panel).to_have_count(0)
+    expect(calendar).to_be_focused()
+
+
 def test_ineligible_preview_shows_refusals_without_save_form(plan_replay_ui):
     page, api = plan_replay_ui
     api.preview = preview(eligible=False)
     mount_messages(page)
+    page.locator("#message-answer-1").hover()
     page.get_by_role("button", name="Repeat on a schedule").click()
     notes = page.get_by_role("status").filter(has_text="This plan has replay notes:")
     expect(notes.get_by_role("listitem")).to_have_text([STEP_REFUSAL, f"Whole plan: {PLAN_REFUSAL}"])
@@ -387,6 +583,7 @@ def test_existing_state_and_hostile_strings_stay_inert(plan_replay_ui):
     page, api = plan_replay_ui
     api.save_created = False
     mount_messages(page)
+    page.locator("#message-answer-1").hover()
     page.get_by_role("button", name="Repeat on a schedule").click()
     page.get_by_role("textbox", name="Workflow name").fill(HOSTILE_WORKFLOW)
     page.get_by_role("button", name="Save workflow").click()

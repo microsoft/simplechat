@@ -11,6 +11,7 @@ import {
     BookmarkPlus,
     BookOpen,
     Brain,
+    CalendarClock,
     ChevronLeft,
     ChevronRight,
     Clipboard,
@@ -70,20 +71,29 @@ export function IconButton({
     children,
     active = false,
     disabled = false,
+    expanded,
+    controls,
+    buttonRef,
 }: {
     label: string;
     onClick: () => void;
     children: React.ReactNode;
     active?: boolean;
     disabled?: boolean;
+    expanded?: boolean;
+    controls?: string;
+    buttonRef?: React.Ref<HTMLButtonElement>;
 }) {
     return (
         <button
+            ref={buttonRef}
             type="button"
             onClick={onClick}
             disabled={disabled}
             title={label}
             aria-label={label}
+            aria-expanded={expanded}
+            aria-controls={controls}
             className={clsx(
                 'rounded-md p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40',
                 active
@@ -407,12 +417,19 @@ export function MessageActions({
     inspector,
     onInspect,
     alignRight,
+    planReplay,
 }: {
     message: ChatMessage;
     onEdit?: () => void;
     /** Section currently open below the message, or null when the panel is closed. */
     inspector?: InspectorSection | null;
     onInspect?: (section: InspectorSection | null) => void;
+    planReplay?: {
+        expanded: boolean;
+        panelId: string;
+        buttonRef: React.Ref<HTMLButtonElement>;
+        onToggle: () => void;
+    };
     /**
      * Which side the message bubble sits on.
      *
@@ -524,10 +541,12 @@ export function MessageActions({
 
     return (
         <div
+            role="group"
+            aria-label="Message actions"
             className={clsx(
                 // Groups are separated by a wider gap than the buttons within them, so the
                 // row reads as related sets rather than one long undifferentiated strip.
-                'mt-1 flex items-center gap-3',
+                'mt-1 flex flex-wrap items-center gap-x-3 gap-y-1',
                 (alignRight ?? isUser) ? 'justify-end' : 'justify-start',
             )}
         >
@@ -600,6 +619,18 @@ export function MessageActions({
                 )}
 
                 {!isUser && ttsEnabled && <SpeakButton message={message} />}
+                {!isUser && planReplay && (
+                    <IconButton
+                        label="Repeat on a schedule"
+                        active={planReplay.expanded}
+                        expanded={planReplay.expanded}
+                        controls={planReplay.panelId}
+                        buttonRef={planReplay.buttonRef}
+                        onClick={planReplay.onToggle}
+                    >
+                        <CalendarClock size={15} aria-hidden="true" />
+                    </IconButton>
+                )}
             </div>
 
             {!isUser && feedbackEnabled && (

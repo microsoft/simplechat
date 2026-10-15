@@ -1,7 +1,7 @@
 // PlanReplaySaveCard.tsx
 // Lets the requester save one completed chat orchestration plan as a read-only personal workflow.
 
-import { useCallback, useId, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarClock, ChevronDown, RefreshCw } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
@@ -65,12 +65,16 @@ function defaultName(request: string): string {
 export function PlanReplaySaveCard({
     runId,
     conversationId,
+    panelId,
+    expanded,
+    onCollapse,
 }: {
     runId: string;
     conversationId: string;
+    panelId: string;
+    expanded: boolean;
+    onCollapse: () => void;
 }) {
-    const panelId = useId();
-    const [expanded, setExpanded] = useState(false);
     const [loading, setLoading] = useState(false);
     const [preview, setPreview] = useState<PlanReplayPreview | null>(null);
     const [options, setOptions] = useState<WorkflowEditorOptions | null>(null);
@@ -85,7 +89,6 @@ export function PlanReplaySaveCard({
     const [saved, setSaved] = useState<{ id: string; name: string; created: boolean; enabled: boolean } | null>(null);
 
     const load = useCallback(async () => {
-        setExpanded(true);
         setLoading(true);
         setError('');
         setErrorCode('');
@@ -107,6 +110,10 @@ export function PlanReplaySaveCard({
             setLoading(false);
         }
     }, [conversationId, runId]);
+
+    useEffect(() => {
+        if (expanded) void load();
+    }, [expanded, load]);
 
     const save = async () => {
         if (!preview || saving) return;
@@ -139,16 +146,7 @@ export function PlanReplaySaveCard({
         }
     };
 
-    if (!expanded) {
-        return (
-            <div className="mt-3">
-                <GlassButton type="button" size="sm" variant="subtle" aria-expanded="false"
-                    aria-controls={panelId} onClick={() => void load()}>
-                    <CalendarClock size={14} aria-hidden="true" /> Repeat on a schedule
-                </GlassButton>
-            </div>
-        );
-    }
+    if (!expanded) return null;
 
     return (
         <section id={panelId} aria-label="Save chat plan as workflow"
@@ -163,7 +161,7 @@ export function PlanReplaySaveCard({
                     </p>
                 </div>
                 <GlassButton type="button" size="sm" variant="ghost" aria-expanded="true"
-                    aria-controls={panelId} onClick={() => setExpanded(false)}>
+                    aria-controls={panelId} onClick={onCollapse}>
                     <ChevronDown size={14} aria-hidden="true" /> Collapse
                 </GlassButton>
             </div>

@@ -2,7 +2,7 @@
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     BookOpen,
@@ -821,6 +821,9 @@ function MessageBubbleInner({
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(message.content);
     const [inspector, setInspector] = useState<InspectorSection | null>(null);
+    const replayPanelId = useId();
+    const replayButtonRef = useRef<HTMLButtonElement>(null);
+    const [expandedReplayRun, setExpandedReplayRun] = useState<string | null>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
     const editMessage = useChatStore((state) => state.editMessage);
     const applyMask = useChatStore((state) => state.applyMask);
@@ -905,6 +908,18 @@ function MessageBubbleInner({
     const markAnalysisUnavailable = useCallback(() => setUnavailableAnalysisKey(analysisKey), [analysisKey]);
     const analysisUnavailable = hasSavedAnalysis && (!savedAnalysis || savedAnalysis.available === false ||
         savedAnalysis.conversation_id !== activeConversationId || unavailableAnalysisKey === analysisKey);
+    const canRepeatPlan = message.role === 'assistant' && !analysisUnavailable
+        && planReplayAvailable && Boolean(orchestration.run_id) && orchestration.outcome === 'completed'
+        && !masks.fullyMasked && masks.ranges.length === 0 && personalConversation
+        && message.conversation_id === activeConversationId
+        && !orchestrationProposedWorkflow(message.metadata?.orchestration)
+        && !orchestrationStartedWorkflow(message.metadata?.orchestration)
+        && !orchestrationHandedOffWorkflow(message.metadata?.orchestration);
+    const replayRunKey = `${message.conversation_id}:${orchestration.run_id}`;
+    const replayExpanded = canRepeatPlan && expandedReplayRun === replayRunKey;
+    useEffect(() => {
+        setExpandedReplayRun(null);
+    }, [canRepeatPlan, replayRunKey]);
     const artifactsReplaceText = !hasSavedAnalysis && suppressesAssistantText(artifacts);
     useEffect(() => {
         const store = useChatStore.getState();
@@ -1206,14 +1221,6 @@ function MessageBubbleInner({
                             <WorkflowHandoffCards conversationId={message.conversation_id} runId={orchestration.run_id}
                                 liveRunStatus={liveRunStatus} />
                         ) : null}
-                        {planReplayAvailable && orchestration.run_id && orchestration.outcome === 'completed'
-                            && masks.ranges.length === 0 && personalConversation
-                            && message.conversation_id === activeConversationId
-                            && !orchestrationProposedWorkflow(message.metadata?.orchestration)
-                            && !orchestrationStartedWorkflow(message.metadata?.orchestration)
-                            && !orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
-                            <PlanReplaySaveCard conversationId={message.conversation_id} runId={orchestration.run_id} />
-                        ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
                         {hasSavedAnalysis && (masks.ranges.length > 0 ? (
@@ -1265,7 +1272,7 @@ function MessageBubbleInner({
             <div
                 className={clsx(
                     'transition-opacity group-hover/message:opacity-100 focus-within:opacity-100',
-                    inspector ? 'opacity-100' : 'opacity-0',
+                    inspector || replayExpanded ? 'opacity-100' : 'opacity-0',
                 )}
             >
                 {!analysisUnavailable && <MessageActions
@@ -1274,8 +1281,28 @@ function MessageBubbleInner({
                     inspector={inspector}
                     onInspect={setInspector}
                     alignRight={alignRight}
+                    planReplay={canRepeatPlan ? {
+                        expanded: replayExpanded,
+                        panelId: replayPanelId,
+                        buttonRef: replayButtonRef,
+                        onToggle: () => setExpandedReplayRun(replayExpanded ? null : replayRunKey),
+                    } : undefined}
                 />}
             </div>
+
+            {canRepeatPlan && orchestration.run_id && (
+                <PlanReplaySaveCard
+                    key={replayRunKey}
+                    conversationId={message.conversation_id}
+                    runId={orchestration.run_id}
+                    panelId={replayPanelId}
+                    expanded={replayExpanded}
+                    onCollapse={() => {
+                        setExpandedReplayRun(null);
+                        replayButtonRef.current?.focus();
+                    }}
+                />
+            )}
 
             {inspector && (
                 <MessageInspector
