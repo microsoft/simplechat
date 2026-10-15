@@ -34,6 +34,7 @@ import type { ChatMessage } from '../../lib/types';
 import { useChatStore } from '../../stores/chatStore';
 import { usePendingActions, usePendingActionsStoreApi } from '../../stores/m365PendingActionsStore';
 import { useUiStore } from '../../stores/uiStore';
+import { SESSION_REQUIRED_MESSAGE } from '../../stores/appSessionStore';
 import { Notice } from '../approvals/ApprovalParts';
 import { PendingActionCard } from '../approvals/PendingActionCard';
 import { GlassButton, GlassPanel } from '../ui/primitives';
@@ -282,6 +283,10 @@ export function PendingActionsConversationSection({
     const continuationToken = usePendingActions((state) => state.continuationToken);
     const loadingMore = usePendingActions((state) => state.loadingMore);
     const listLoading = usePendingActions((state) => state.listStatus === 'loading');
+    const hasActionContext = usePendingActions((state) =>
+        Object.keys(state.entries).length > 0 || state.referenceLoading || Boolean(state.referenceError) ||
+        state.focusRequest?.conversationId === state.conversationId);
+    const contextualListError = hasActionContext && listError !== SESSION_REQUIRED_MESSAGE ? listError : '';
 
     usePendingActionsLifecycle(activeConversationId);
     const { unavailable, dismissUnavailable } = usePendingActionFocus(scrollRef, pauseFollowing);
@@ -290,7 +295,7 @@ export function PendingActionsConversationSection({
     // under its message.
     const showSection =
         !messagesLoading &&
-        (orphanIds.length > 0 || Boolean(listError) || Boolean(referenceError) || Boolean(continuationToken));
+        (orphanIds.length > 0 || Boolean(contextualListError) || Boolean(referenceError) || Boolean(continuationToken));
     if (!unavailable && !showSection) {
         return null;
     }
@@ -328,7 +333,9 @@ export function PendingActionsConversationSection({
                         </p>
                     </div>
 
-                    {listError && <Notice tone="danger" testId="v2-pending-actions-error">{listError}</Notice>}
+                    {contextualListError && (
+                        <Notice tone="danger" testId="v2-pending-actions-error">{contextualListError}</Notice>
+                    )}
                     {referenceError && (
                         <Notice tone="danger" testId="v2-pending-actions-reference-error">{referenceError}</Notice>
                     )}

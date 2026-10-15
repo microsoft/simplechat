@@ -22,6 +22,7 @@ import * as generatedExportRunStore from '../../../application/v2_ui/src/stores/
 import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
 import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
 import * as m365PendingActionsStore from '../../../application/v2_ui/src/stores/m365PendingActionsStore';
+import * as appSessionStore from '../../../application/v2_ui/src/stores/appSessionStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
@@ -141,6 +142,14 @@ function PromptExperience() {
     );
 }
 
+function SessionChatExperience() {
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell><MessageList /><Composer /></AppShell>
+        </div>
+    );
+}
+
 function ContextWorkflow({ nativeChat = false }: { nativeChat?: boolean }) {
     const location = useLocation();
     return (
@@ -215,6 +224,7 @@ type ComponentName =
     | 'ConversationDrawer'
     | 'Composer'
     | 'PromptExperience'
+    | 'SessionChatExperience'
     | 'ChatExperience'
     | 'HomeExperience'
     | 'HeaderExperience'
@@ -245,6 +255,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     ConversationDrawer,
     Composer,
     PromptExperience,
+    SessionChatExperience,
     ChatExperience,
     HomeExperience,
     HeaderExperience,
@@ -366,6 +377,7 @@ function reset(): void {
     // Saved Microsoft 365 actions belong to the conversation they were read for, so a test
     // reusing a conversation id would otherwise start from the previous test's cards.
     m365PendingActionsStore.chatPendingActionsStore.getState().reset();
+    appSessionStore.useAppSessionStore.setState({ status: 'ready', viewerId: '', revision: 0 });
     try {
         window.localStorage.clear();
     } catch {
@@ -391,6 +403,7 @@ const harness = {
         userSettings: userSettingsStore,
         assistThread: assistThreadStore,
         pendingActions: m365PendingActionsStore,
+        appSession: appSessionStore,
     },
     controller,
     plan,

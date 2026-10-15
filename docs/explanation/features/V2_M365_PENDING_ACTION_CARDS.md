@@ -8,6 +8,8 @@ Email review flow updated in version: **0.261.324** (`application/single_app/con
 
 Review editor implemented in version: **0.261.325** (`application/single_app/config.py`).
 
+Contextual warnings and app-session recovery fixed in version: **0.261.338** (`application/single_app/config.py`).
+
 Tracking issue: [#1722](https://github.com/microsoft/simplechat/issues/1722), gap 2 (Chat, "M365 pending-action card").
 
 An agent that prepares a Microsoft 365 email or calendar invitation for review saves it as a pending action. The action waits until its owner sends or cancels it, and a notification tells the owner it is waiting. Only the classic chat page drew that card, so every such notification opened classic chat.
@@ -34,7 +36,9 @@ A card sits under the reply that saved it, as it does in classic chat. Placement
 4. The last message of the same request, when the action carries a request id.
 5. Otherwise the conversation-level section, **Microsoft 365 outgoing actions for this conversation**, so a pending send is never hidden.
 
-That section also carries the things that belong to the conversation rather than to one reply: a failed or partial read of the list ("Outgoing actions could not be loaded. Refresh to recover saved actions; this is not an empty inbox."), **Load more outgoing actions** when the list has another page, and **Refresh outgoing actions**. Image, file, and content-safety messages never carry a card.
+When a conversation has a saved action, an action reference, or an explicitly opened action link, that section also carries a failed or partial read of the list ("Outgoing actions could not be loaded. Refresh to recover saved actions; this is not an empty inbox."), **Load more outgoing actions** when the list has another page, and **Refresh outgoing actions**. An optional background lookup failure alone does not show an M365 section in an unrelated chat. Background discovery continues, including discovery of actions missing from visible history; failures remain recorded rather than being treated as empty results. Image, file, and content-safety messages never carry a card.
+
+Confirmed SimpleChat session expiry uses the shared app-level sign-in notice, not this section's permission warning. Microsoft 365 provider reconnect and conversation authorization failures remain separate. See [unrelated-chat warnings and session recovery](../fixes/M365_UNRELATED_CHAT_SESSION_WARNING_FIX.md).
 
 ### Where the cards come from
 
@@ -112,12 +116,14 @@ Functional tests:
 * `functional_tests/test_v2_m365_pending_actions_logic.mjs`: snapshot trust, placement, stream and history references, and countdown rules.
 * `functional_tests/test_v2_m365_pending_actions_store.mjs`: the store's state machine, including late responses, version safety, polling, and focus.
 * `functional_tests/test_v2_m365_pending_actions_stream.mjs`: real chat and orchestration SSE readers/controllers, multiple live cards, saved-reply promotion, failed reports, dropped streams, scoped stale-frame rejection and history recovery.
+* `functional_tests/test_v2_app_session_recovery.mjs`: app-session/provider classification, bounded read-only verification, concurrent failures, stale bootstrap responses, identity changes and no mutation replay.
 * `functional_tests/test_v2_pending_review_logic.mjs`: owner/manual edit gates, typed proposals, safe undo, working-copy state, history deduplication and CSRF-protected review contracts.
 * `functional_tests/test_v2_workflow_run_link_routing.mjs`, `functional_tests/test_v2_notifications_bell.py`, `functional_tests/test_v2_user_settings_memory_m365.py`: updated for the new routing and files.
 
 UI tests:
 
 * `ui_tests/test_v2_m365_pending_action_cards.py`: the real message list with inline, streaming, and conversation-level cards, Send and Cancel, and focus; desktop/mobile Orchestrate preparation, report failure, reference-only reload, keyboard body review and explicit mocked Send/Cancel.
+* `ui_tests/test_v2_workflow_plan_replay_card.py`: desktop/mobile session notices, retained composer and schedule-form drafts, explicit same-user recovery and schedule-preview retry without automatic workflow writes.
 * `ui_tests/test_v2_pending_review_editor.py`: real desktop/mobile email editing, direct/AI saves, reopening history, focus return, calendar fields, conflict preservation, owner/timed edit denial and sanitized HTML overflow. All send/Graph operations are mocked.
 * `ui_tests/test_v2_notifications_bell.py`: a notice for a saved action opens its card in V2 chat from another page, from the chat page, for an action the list does not show, and for one that is gone.
 * `ui_tests/test_v2_approvals_and_terms_pages.py` and `ui_tests/test_v2_approvals_dashboard.py`: the Approvals page, which keeps its test ids on the shared card.

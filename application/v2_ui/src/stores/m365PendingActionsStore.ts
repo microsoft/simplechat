@@ -10,7 +10,8 @@
 
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { createStore, useStore, type StoreApi } from 'zustand';
-import { ApiError } from '../lib/apiClient';
+import { ApiError, isAppSessionError } from '../lib/apiClient';
+import { SESSION_REQUIRED_MESSAGE } from './appSessionStore';
 import {
     errorMessage,
     fetchConversationPendingActions,
@@ -378,9 +379,11 @@ export function createPendingActionsStore(
                     const changes: Partial<PendingActionEntry> = {
                         needsRefresh: true,
                         denied: status === 403 || status === 404,
-                        notice: warn(status === 403 ? PERMISSION_MESSAGE : STATUS_UNKNOWN_MESSAGE),
+                        notice: warn(isAppSessionError(error) ? SESSION_REQUIRED_MESSAGE :
+                            status === 403 ? PERMISSION_MESSAGE : STATUS_UNKNOWN_MESSAGE),
                     };
-                    if (status === 401 || payload.auth_required === true) {
+                    if (isAppSessionError(error)) changes.auth = null;
+                    if (!isAppSessionError(error) && (status === 401 || payload.auth_required === true)) {
                         changes.authAcknowledgedVersion = '';
                         changes.auth = payload;
                     }
@@ -424,7 +427,8 @@ export function createPendingActionsStore(
                 set((state) => ({
                     detail: {
                         ...state.detail,
-                        [id]: { status: 'error', message: statusOf(error) === 403 ? PERMISSION_MESSAGE : NOT_LOADED_MESSAGE },
+                        [id]: { status: 'error', message: isAppSessionError(error) ? SESSION_REQUIRED_MESSAGE :
+                            statusOf(error) === 403 ? PERMISSION_MESSAGE : NOT_LOADED_MESSAGE },
                     },
                 }));
                 return null;
@@ -499,7 +503,13 @@ export function createPendingActionsStore(
                 const status = statusOf(error);
                 const returned = isPendingAction(payload.pending_action) && payload.pending_action.id === id;
                 if (returned) remember(payload.pending_action as PendingAction, { authoritative: true });
-                if (payload.approval_required === true) {
+                if (isAppSessionError(error)) {
+                    patchEntry(id, key, {
+                        needsRefresh: true,
+                        auth: null,
+                        notice: warn(SESSION_REQUIRED_MESSAGE),
+                    });
+                } else if (payload.approval_required === true) {
                     patchEntry(id, key, {
                         approvalRequired: payload,
                         notice: warn(
@@ -651,12 +661,15 @@ export function createPendingActionsStore(
                 } catch (error) {
                     if (controller.signal.aborted || get().epoch !== epoch) return;
                     const denied = statusOf(error) === 403;
+                    const payload = m365ErrorPayload(error);
+                    const conversationDenied = denied && payload.error === 'forbidden';
                     set((state) => ({
                         entries: Object.fromEntries(
                             Object.entries(state.entries).map(([id, entry]) => [id, { ...entry, needsRefresh: true, denied }]),
                         ),
                         listStatus: 'error',
-                        listError: denied ? LIST_PERMISSION_MESSAGE : LIST_FAILED_MESSAGE,
+                        listError: isAppSessionError(error) ? SESSION_REQUIRED_MESSAGE :
+                            conversationDenied ? LIST_PERMISSION_MESSAGE : LIST_FAILED_MESSAGE,
                         loadingMore: false,
                     }));
                 } finally {

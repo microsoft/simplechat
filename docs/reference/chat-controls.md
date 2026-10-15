@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.325"
+version: "0.261.339"
 ---
 
 ## How to use this reference
@@ -24,6 +24,27 @@ Use this page when you can see a control in Chat but are not sure what it does o
 | `new-conversation-btn` | Creates a fresh chat thread and resets the active conversation context. | Use it when a new task should not inherit previous context, documents, or agent state. | Always available |
 
 ## Conversation header and status
+
+### React V2 sign-in recovery
+
+Fixed/Implemented in version: **0.261.338** (`application/single_app/config.py`).
+When a request confirms that your SimpleChat app session needs sign-in, one
+notice appears above the current page. The chat and unsaved composer or
+schedule-form draft stay open; nothing is sent or saved again automatically.
+An ordinary connection failure or Microsoft 365 consent request does not by
+itself trigger this notice.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Sign in again (opens a new tab) | Opens the existing SimpleChat sign-in flow without navigating away from unsaved work. | Confirmed app-session expiry |
+| Check sign-in | Checks the signed-in account without repeating the failed operation. After successful same-account recovery, choose the original action again. | Session-recovery notice |
+| Reload SimpleChat | Reopens the app after an account change instead of applying another account's settings to the existing chat. Copy unsaved text before reloading. | Recovery detects a different account |
+
+Returning to the tab or coming back online also permits a bounded sign-in
+check. If the check cannot confirm sign-in, the notice stays visible.
+**Reconnect Microsoft 365** remains specific to a real Microsoft 365 action;
+a failed background outgoing-action lookup does not add an M365 banner to
+an unrelated conversation.
 
 ### Personal action credential cards
 

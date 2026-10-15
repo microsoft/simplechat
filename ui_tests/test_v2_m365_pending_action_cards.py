@@ -1,7 +1,7 @@
 # test_v2_m365_pending_action_cards.py
 """
 UI test for Microsoft 365 pending-action cards in the V2 chat.
-Version: 0.261.325
+Version: 0.261.338
 Implemented in: 0.261.307
 
 This test ensures that a saved outgoing Microsoft 365 email or calendar action is drawn in the V2
@@ -66,6 +66,7 @@ STUB_BACKEND = r"""(config) => {
     });
     window.requests = [];
     window.listFails = Boolean(config.listFails);
+    window.listStatus = config.listStatus || 500;
     window.changeStatus = 200;
     window.listedActions = config.list;
     window.actionsById = Object.fromEntries(config.byId.map((action) => [action.id, action]));
@@ -90,7 +91,7 @@ STUB_BACKEND = r"""(config) => {
         }
         if (path === '/api/msgraph/pending-actions' && method === 'GET') {
             if (window.listFails) {
-                return json({ success: false, message: 'The list is unavailable.' }, 500);
+                return json({ success: false, error: 'forbidden', message: 'The list is unavailable.' }, window.listStatus);
             }
             return json({ success: true, pending_actions: window.listedActions, continuation_token: '' });
         }
@@ -219,11 +220,13 @@ def _collect_page_errors(page):
     return errors
 
 
-def _open_chat(page, origin, *, messages, listed=(), by_id=(), send=None, listing_fails=False):
+def _open_chat(page, origin, *, messages, listed=(), by_id=(), send=None, listing_fails=False, list_status=500):
     response = page.goto(f"{origin}/{harness_build.HARNESS_HTML_REL}")
     assert response is not None and response.ok
     page.wait_for_function("() => Boolean(window.OrchHarness)")
-    page.evaluate(STUB_BACKEND, {"list": list(listed), "byId": list(by_id), "listFails": listing_fails})
+    page.evaluate(STUB_BACKEND, {
+        "list": list(listed), "byId": list(by_id), "listFails": listing_fails, "listStatus": list_status,
+    })
     page.evaluate(SEED_THREAD, {"messages": messages, "send": send})
     return page.locator("#mount-a")
 
@@ -630,12 +633,12 @@ def test_failed_list_is_shown_and_can_be_read_again(page):
     unclaimed = pending_action("act-orphan", subject="Unrelated draft", request_id="req-other")
     with harness_build.start_static_server() as origin:
         root = _open_chat(
-            page, origin, messages=thread(), listed=[unclaimed], by_id=[unclaimed], listing_fails=True,
+            page, origin, messages=thread(unclaimed), listed=[unclaimed], by_id=[unclaimed], listing_fails=True,
         )
         error = root.get_by_test_id("v2-pending-actions-error")
         expect(error).to_be_visible()
         expect(root.get_by_role("region", name=SECTION_NAME)).to_be_visible()
-        expect(root.get_by_test_id("v2-pending-action-card")).to_have_count(0)
+        expect(root.get_by_test_id("v2-pending-action-card")).to_have_count(1)
 
         page.evaluate("() => { window.listFails = false; }")
         root.get_by_test_id("v2-pending-actions-refresh").click()
@@ -644,6 +647,40 @@ def test_failed_list_is_shown_and_can_be_read_again(page):
         expect(error).to_have_count(0)
         assert not _posts_to_actions(page)
     assert errors == []
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_unrelated_chat_does_not_show_an_m365_banner_for_background_failures(page, status):
+    _require_bundle()
+    errors = _collect_page_errors(page)
+    with harness_build.start_static_server() as origin:
+        root = _open_chat(page, origin, messages=thread(), listing_fails=True, list_status=status)
+        page.wait_for_function(
+            "() => window.OrchHarness.stores.pendingActions.chatPendingActionsStore.getState().listStatus === 'error'"
+        )
+        expect(root.get_by_role("region", name=SECTION_NAME)).to_have_count(0)
+        expect(root.get_by_test_id("v2-pending-actions-refresh")).to_have_count(0)
+        page.evaluate("() => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); }")
+        page.wait_for_function("() => window.requests.filter((r) => r.path === '/api/msgraph/pending-actions').length >= 2")
+        expect(root.get_by_role("region", name=SECTION_NAME)).to_have_count(0)
+        assert not _posts_to_actions(page)
+    assert errors == []
+
+
+def test_a_real_action_arriving_after_a_background_failure_exposes_recovery(page):
+    _require_bundle()
+    with harness_build.start_static_server() as origin:
+        root = _open_chat(page, origin, messages=thread(), listing_fails=True, list_status=403)
+        page.wait_for_function(
+            "() => window.OrchHarness.stores.pendingActions.chatPendingActionsStore.getState().listStatus === 'error'"
+        )
+        expect(root.get_by_role("region", name=SECTION_NAME)).to_have_count(0)
+        page.evaluate(
+            "(action) => window.OrchHarness.stores.pendingActions.chatPendingActionsStore.getState().remember(action)",
+            pending_action("real-draft"),
+        )
+        expect(root.get_by_test_id("v2-pending-actions-error")).to_be_visible()
+        expect(root.get_by_role("region", name=SECTION_NAME)).to_be_visible()
+        assert not _posts_to_actions(page)
 
 
 if __name__ == "__main__":
