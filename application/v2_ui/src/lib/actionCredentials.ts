@@ -18,19 +18,27 @@ function captureCsrf(result: { csrf_token?: unknown }, epoch: number): void {
 
 async function credentialHeaders(credentialRequest: CredentialRequest, signal?: AbortSignal): Promise<Record<string, string>> {
     if (!csrfToken) {
-        const epoch = sessionEpoch;
-        const result = await request<{ credential_request: unknown; csrf_token?: unknown }>(
-            `/api/action-credentials/${encodeURIComponent(credentialRequest.id)}`,
-            { cache: 'no-store', signal },
-        );
-        const current = readCredentialRequest(result.credential_request);
-        if (current.id !== credentialRequest.id || current.conversation_id !== credentialRequest.conversation_id) {
-            throw new Error('The credential request no longer belongs to this conversation.');
-        }
-        captureCsrf(result, epoch);
+        await fetchActionCredentialRequest(credentialRequest, signal);
     }
     if (!csrfToken) throw new Error('The credential request could not be authorized. Reload this conversation.');
     return { 'X-CSRFToken': csrfToken };
+}
+
+export async function fetchActionCredentialRequest(
+    credentialRequest: CredentialRequest, signal?: AbortSignal,
+): Promise<CredentialRequest> {
+    const epoch = sessionEpoch;
+    const result = await request<{ credential_request: unknown; csrf_token?: unknown }>(
+        `/api/action-credentials/${encodeURIComponent(credentialRequest.id)}`,
+        { cache: 'no-store', signal },
+    );
+    const current = readCredentialRequest(result.credential_request);
+    if (current.id !== credentialRequest.id || current.conversation_id !== credentialRequest.conversation_id ||
+        current.run_id !== credentialRequest.run_id || current.turn_id !== credentialRequest.turn_id) {
+        throw new Error('The credential request no longer belongs to this work.');
+    }
+    captureCsrf(result, epoch);
+    return current;
 }
 
 export async function fetchCredentialRequests(conversationId: string, signal?: AbortSignal): Promise<CredentialRequest[]> {

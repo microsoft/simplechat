@@ -1853,6 +1853,36 @@ class HarnessExecution:
                 )
         return list(self._frames)
 
+    def credential_continuation_status(self, item):
+        """Project the selected step from our acknowledged durable finalization."""
+        record = self._final_record
+        continuation = item.get("continuation") or {}
+        if record is None or (
+            record.get("id") != continuation.get("run_id")
+            or record.get("id") != self.record["id"]
+            or record.get("user_id") != item.get("user_id")
+            or record.get("conversation_id") != item.get("conversation_id")
+        ):
+            raise HarnessExecutionError("result_not_ready")
+        step = next(
+            (row for row in record.get("execution_steps") or []
+             if row["step_id"] == continuation.get("step_id")),
+            None,
+        )
+        if step is not None:
+            if step["status"] in {"completed", "partial"}:
+                return "completed"
+            if step["status"] in {"failed", "cancelled"}:
+                return "failed"
+            wait = step.get("wait") or {}
+            if step["status"] == "waiting" and wait.get("kind") == "action_credentials" and (
+                wait.get("request_id") and wait["request_id"] != item["id"]
+            ):
+                return "superseded"
+        if record.get("status") in {"failed", "cancelled"}:
+            return "failed"
+        raise HarnessExecutionError("result_not_ready")
+
     def _preparation_error(self, error):
         _log_failure(
             "Headless execution preparation failed.", self.record, error,

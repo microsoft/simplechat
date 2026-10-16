@@ -1237,7 +1237,7 @@ def resume_waiting_dependency_step(
     if type(wait) is not dict:
         raise ResultContractError('result_wait_required')
     if wait.get("kind") == "action_credentials":
-        from functions_action_credentials import authorize_request, credential_continuation
+        from functions_action_credentials import authorize_request
         from functions_orchestration_adapters import _credential_step_continuation
 
         if (
@@ -1245,7 +1245,29 @@ def resume_waiting_dependency_step(
             or step.get("capability_id") not in {"action_invoke", "agent_invoke"}
         ):
             raise ResultContractError("result_wait_invalid")
-        request, _manifest = authorize_request(user_id, wait["request_id"])
+        try:
+            identity = context.agent_execution_identity
+            if (
+                identity is None or identity.user_id != user_id
+                or identity.conversation_id != context.conversation_id or not callable(identity.bridge)
+            ):
+                raise PermissionError("The credential execution identity is unavailable.")
+            # Catalog authorization uses legacy request helpers, just like action invocation.
+            with identity.bridge({}):
+                request, _manifest = authorize_request(user_id, wait["request_id"])
+        except Exception as error:
+            log_event(
+                f"{_LOG_PREFIX} Credential resume authorization failed.",
+                level=logging.WARNING,
+                extra={
+                    **workflow_log_context(
+                        run_id=context.run_id, conversation_id=context.conversation_id,
+                        step_id=step["step_id"],
+                    ),
+                    "stage": "credential_resume_authorization", "error_type": type(error).__name__,
+                },
+            )
+            raise
         descriptor = _credential_step_continuation(step, context)
         if any(
             request["continuation"].get(key) != descriptor.get(key) for key in ("run_id", "step_id", "checkpoint_id")

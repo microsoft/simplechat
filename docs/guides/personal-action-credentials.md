@@ -4,7 +4,7 @@ title: "Use your own credentials with a shared action"
 description: "Provide a private personal identity when a shared Yamcs action needs your sign-in."
 section: "Guides"
 audience: user
-version: "0.261.337"
+version: "0.261.343"
 ---
 
 ## What this does
@@ -17,6 +17,7 @@ Yamcs.
 
 Fixed/Implemented in version: **0.261.333**, recorded in
 `application/single_app/config.py`.
+Continuation failure feedback and status recovery were fixed in **0.261.343**.
 
 ## When a credential card appears
 
@@ -58,6 +59,25 @@ again only in the recovered card.
 empty identity. If continuation cannot be confirmed, reload requests and review
 the saved work before trying again. Do not resend the original question merely
 to complete the blocked action.
+
+## If saving or continuing cannot be confirmed
+
+A successful save and a successful action are different outcomes. If the card
+says **Your credentials are saved**, do not enter them again because continuation
+failed. Select **Refresh saved request** to read its current status from the
+server. SimpleChat also checks the saved run for orchestration work.
+
+Continue becomes available only if the request is still ready and its run is
+still waiting. It uses the refreshed request revision, not a second credential
+submission. If the work is running, finished, failed, or superseded, the card
+does not offer another continuation. Review run details for saved progress and
+the recovery actions the server permits. For ordinary agent chat, review the
+conversation instead.
+
+If saving itself cannot be confirmed, refresh before entering credentials again:
+the server may already have saved them even if the response was lost. If refresh
+fails too, reload the conversation. Neither refresh nor reload automatically
+replays the action or sends the original question again.
 
 ## When credentials stop working
 

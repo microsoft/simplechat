@@ -12389,7 +12389,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "13e3d0820f1601ae9a10a16aaa111abdf4571ad8705c8b70502859449a77465d"
+        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
       },
       "classification": "sdk-compatible",
       "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads.",
@@ -12412,14 +12412,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "13e3d0820f1601ae9a10a16aaa111abdf4571ad8705c8b70502859449a77465d"
+        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
       },
       "classification": "sdk-compatible",
       "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_harness_execution.py::test_delivery_refresh_reuses_real_saved_results_without_any_execution"
       ]
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._regeneration_thread": {
@@ -12434,14 +12435,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "13e3d0820f1601ae9a10a16aaa111abdf4571ad8705c8b70502859449a77465d"
+        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
       },
       "classification": "sdk-compatible",
       "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
-        "functional_tests/test_orchestration_cosmos_response_contract.py"
+        "functional_tests/test_orchestration_cosmos_response_contract.py",
+        "functional_tests/test_orchestration_message_regeneration.py::test_regeneration_forces_review_despite_auto_and_disabled_approval_override"
       ]
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._touch_conversation": {
@@ -12456,7 +12458,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "13e3d0820f1601ae9a10a16aaa111abdf4571ad8705c8b70502859449a77465d"
+        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
       },
       "classification": "sdk-compatible",
       "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership.",
@@ -12479,7 +12481,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "13e3d0820f1601ae9a10a16aaa111abdf4571ad8705c8b70502859449a77465d"
+        "module_sha256": "0f62fc46056d332bd82c4a687f51096c9bc55cb537931091242f99b44077c625"
       },
       "classification": "sdk-compatible",
       "contract": "The published message point mapping is projected with items() into a metadata-free fingerprint and consumed by Mapping-compatible mirroring. Durable outcome telemetry reads only finalized scalar fields; strict task/result descriptors and saved-message confirmation remain unchanged.",
@@ -32657,6 +32659,51 @@
       "contract": "Interrupts the first conversation summary upsert after a message has persisted, otherwise delegates to the existing SDK-default AtomicMemoryContainer. The real owner retries and repairs its summary without duplicate messages.",
       "tests": [
         "functional_tests/test_workflow_results_delivery.py::test_retry_repairs_conversation_summary_after_message_only_write"
+      ]
+    },
+    "functional_tests/test_action_credentials_orchestration_continuation.py::test_owned_continue_consumes_only_selected_wait_and_never_replays_completed_steps.continue_wait::point-seam-1": {
+      "boundary": {
+        "sha256": "00949cc48e418c46407d3ceaa70f63b01d4e155796e299e750a4f73d9b87daeb",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "082a12e0daa2974ba679862ce9899e4826c9bccd396b63e902310a8abe18acf0"
+      },
+      "classification": "fault-injection",
+      "contract": "The authorization_failure case injects a private read error only on the detached worker; browser reads still delegate to the SDK-default AtomicMemoryContainer. Real continuation must fail the selected interaction durably, retain completed siblings and avoid both action invocation and private-error disclosure.",
+      "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py::test_owned_continue_consumes_only_selected_wait_and_never_replays_completed_steps"
+      ]
+    },
+    "functional_tests/test_action_credentials_orchestration_continuation.py::test_saved_wait_authorization_uses_real_isolated_identity::point-seam-1": {
+      "boundary": {
+        "sha256": "e76497bd85e13ddd72c040c71cfe2425c56c3bc03b0a91c014800ca76bc17e40",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "082a12e0daa2974ba679862ce9899e4826c9bccd396b63e902310a8abe18acf0"
+      },
+      "classification": "fault-injection",
+      "contract": "The storage_failure case raises a private read error instead of returning an easy document. Real action/agent saved-wait authorization propagates storage uncertainty, restores the Flask context and logs only the safe failure stage/type and hashed run identity; other cases retain SDK-default point responses.",
+      "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py::test_saved_wait_authorization_uses_real_isolated_identity"
+      ]
+    },
+    "functional_tests/test_action_credentials_orchestration_continuation.py::test_saved_wait_authorization_uses_real_isolated_identity::point-seam-2": {
+      "boundary": {
+        "sha256": "e9be874d64606980d74fbcc54ec3ba5e11ba1245251d44210c5c6c0dc5dddb51",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "082a12e0daa2974ba679862ce9899e4826c9bccd396b63e902310a8abe18acf0"
+      },
+      "classification": "fault-injection",
+      "contract": "The allowed case injects a two-worker barrier and records each bridged user/conversation, then returns the original AtomicMemoryContainer.read_item CosmosDict unchanged. Real action/agent authorization must keep overlapping Flask identities isolated and restore both worker contexts; partition routing and ETags remain those of the SDK-default backing container.",
+      "tests": [
+        "functional_tests/test_action_credentials_orchestration_continuation.py::test_saved_wait_authorization_uses_real_isolated_identity"
       ]
     }
   }
