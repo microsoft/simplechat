@@ -32,6 +32,16 @@ These diagnostics do not emit prompts, replies, document text/names, tags, regex
 literals, or raw actor identifiers. Their categorical/count fields survive the
 Application Insights sanitization boundary with debug logging on or off.
 
+## Chat execution outcomes
+
+Since **0.261.341**, `[CHAT_EXECUTION]` records the semantic result of direct
+chat and orchestration separately from the HTTP/SSE transport status. Fields
+include `execution_path`, `status`, `outcome`, the application version when
+known, hashed conversation/turn/run/step identifiers, and safe root failure
+and capability codes. A cancelled stream is informational, not an error.
+Orchestration records an outcome only after its saved state is confirmed;
+replaying a cached response does not record another execution.
+
 ## Current tag inventory
 
 - `[EDITOR_ASSIST]`
@@ -88,6 +98,7 @@ Application Insights sanitization boundary with debug logging on or off.
 - `[CHAT_API_ERROR]`
 - `[CHAT_BOOTSTRAP_CACHE]`
 - `[CHAT_CONTENT_CHECKS]`
+- `[CHAT_EXECUTION]`
 - `[CHAT_DOCUMENT_ACTION]`
 - `[CHAT_DOCUMENT_ANALYSIS]`
 - `[CHAT_TABULAR_SK]`

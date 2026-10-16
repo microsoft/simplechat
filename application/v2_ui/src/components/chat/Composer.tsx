@@ -2,7 +2,7 @@
 // The message input surface: textarea, send/stop control, model / agent / prompt pickers
 // and the capability toggles that map onto the /api/chat/stream request fields.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -98,6 +98,11 @@ import {
 } from '../../lib/mentions';
 import { useUiStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
+import {
+    adoptConversationModeDraft,
+    conversationModes,
+    rememberConversationMode,
+} from '../../lib/conversationMode';
 import { chatWidthClass } from '../../lib/chatWidth';
 import {
     getModelSupportedLevels,
@@ -366,23 +371,26 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const orchestrationAvailable = Boolean(
         features.enable_chat_orchestration && orchestrationConfig?.enabled,
     );
-    const [orchestrationOn, setOrchestrationOn] = useState(orchestrationAvailable && !initialAgentSelection);
-    // Whether the user has expressed an opinion. The bootstrap resolves after the first
-    // render, so the deployment's answer has to be adopted when it lands -- but adopting it
-    // unconditionally would switch orchestration back on every time the payload refreshed,
-    // overriding somebody who had just turned it off.
-    const orchestrationChosen = useRef(Boolean(initialAgentSelection));
+    const modeAccountId = bootstrap?.user?.id ?? '';
+    const modeRevision = useSyncExternalStore(conversationModes.subscribe, conversationModes.getRevision);
+    // Resolve against this render's identity/thread, never an effect's previous conversation.
+    const savedMode = useMemo(
+        () => conversationModes.read(modeAccountId, activeConversationId),
+        [modeAccountId, activeConversationId, modeRevision],
+    );
     useEffect(() => {
-        if (!orchestrationChosen.current) {
-            setOrchestrationOn(orchestrationAvailable);
+        if (savedMode.storageFailed) {
+            toast.error('Your saved mode choice could not be read in this browser. Choose your chat mode again.');
         }
-    }, [orchestrationAvailable]);
+    }, [savedMode]);
+    const orchestrating = (savedMode.choice ?? true) && orchestrationAvailable
+        && !options.agentSelection && !answeringFromStoredResult;
     const toggleOrchestration = () => {
         clearAnalysisResultContext();
-        orchestrationChosen.current = true;
-        setOrchestrationOn((on) => answeringFromStoredResult ? true : !on);
+        const next = !orchestrating;
+        if (next) setOptions((current) => ({ ...current, agentSelection: undefined }));
+        rememberConversationMode(modeAccountId, activeConversationId, next);
     };
-    const orchestrating = orchestrationOn && orchestrationAvailable && !answeringFromStoredResult;
 
     // The disclosure that hides the manual controls while orchestrating. Only reachable when the
     // administrator leaves them reachable; otherwise the planner owns every decision and there is
@@ -1130,6 +1138,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         if (!activeConversationId && uploadConversationRef.current) {
             adoptedUploadConversationRef.current = uploadConversationRef.current;
+            adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), uploadConversationRef.current);
             useChatStore.setState({
                 activeConversationId: uploadConversationRef.current,
                 activeConversationKind: 'personal',
@@ -1274,6 +1283,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         const conversationId = activeConversationId ?? uploadConversationRef.current;
         if (!activeConversationId && conversationId) {
             adoptedUploadConversationRef.current = conversationId;
+            adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), conversationId);
             useChatStore.setState({ activeConversationId: conversationId, activeConversationKind: 'personal' });
         }
         void startOrchestrationPlan({
@@ -1341,8 +1351,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         setDraft((current) => ({ ...current, text: draftHandoff.text }));
         if (draftHandoff.orchestrate && orchestrationAvailable) {
-            orchestrationChosen.current = true;
-            setOrchestrationOn(true);
+            // The new chat uses the deployment default; a page handoff is not a saved toggle choice.
+            setOptions((current) => ({ ...current, agentSelection: undefined }));
         }
         setSearchParams((current) => current, { replace: true, state: null });
         window.requestAnimationFrame(() => {

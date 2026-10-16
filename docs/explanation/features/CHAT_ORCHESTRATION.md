@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.256** (tracked in `application/single_app/config.py`)
+**Version: 0.261.341** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -25,6 +25,7 @@
 **Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
 **Photorealistic planned images and reference images implemented in version: 0.261.192**
 **One progress indicator per phase (Planning label, run progress on the plan card only) fixed in version: 0.261.256**
+**Conversation-first source retention, conversation-mode persistence, and semantic diagnostics fixed in version: 0.261.341**
 
 ## Overview
 
@@ -624,11 +625,31 @@ The normal setting default is 10; a missing setting falls back to six. Zero disa
 history. Older content is trimmed first, and truncation is identified explicitly rather
 than silently clipping every message to 300 characters.
 
+Since **0.261.341**, the bounded snapshot is a planning preview, not the
+authoritative source text for a requested transformation. Turn-aware references
+preserve the identity of eligible user material even when a long answer or
+pasted message cannot fit that preview. Execution reopens selected saved
+messages, verifies their current access and content revision, and checks the
+full input against the selected model's budget. It does not silently substitute
+the clipped preview or reopen masked/hidden content. Count and reference-metadata
+limits can still exclude older whole turns; this is not an unlimited transcript.
+If the intended conversation source is absent or ambiguous,
+the resolver asks for clarification instead of assuming a search across all
+workspaces. Existing explicit source selections retain their precedence.
+
 Masked text, inactive attempts, hidden generated artifacts, system/tool records, and
 binary payloads are excluded. Current block revisions are respected. The snapshot and
 its source fingerprints are saved with the plan, so a reload or a delayed approval uses
 the same context. Changes to the referenced messages or their visibility require a new
 plan; newly appended turns do not enter an older run.
+
+The V2 Orchestrate on/off choice is also remembered per account and conversation
+in the browser, separately from account-level approval/model settings.
+`[CHAT_EXECUTION]` records safe semantic outcomes for direct and orchestrated
+requests, not just transport success. See the
+[chat reliability fix](../fixes/ORCHESTRATION_CHAT_RELIABILITY_FIX.md) for
+source-completeness boundaries, scheduler containment, diagnostic queries, and
+production verification limits.
 
 These rules apply to Auto, countdown, and manual approval. They do not introduce rolling
 summaries or cross-conversation transcript lookup. Existing scoped saved memories are

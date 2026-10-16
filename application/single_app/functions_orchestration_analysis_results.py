@@ -109,7 +109,9 @@ def _finding_units(reader):
     reader.recheck()
 
 
-def persist_saved_analysis_result(*, service, producer, reader, guard_token, input_fingerprint=None):
+def persist_saved_analysis_result(
+    *, service, producer, reader, guard_token, input_fingerprint=None, upstream=(), selection_limitations=(),
+):
     """Retain native units, optional exact public rows, and actual report text.
 
     ``findings`` always has the ordered record/evidence schema, so heterogeneous
@@ -134,6 +136,7 @@ def persist_saved_analysis_result(*, service, producer, reader, guard_token, inp
         raise ResultContractError("result_native_analysis_invalid")
     sources = analysis_source_snapshot((manifest.get("analysis_access") or {}).get("sources"))
     status, coverage, checks, limitations = _native_completeness(reader)
+    limitations = tuple(dict.fromkeys((*limitations, *selection_limitations)))
     count = _count(manifest.get("record_count"))
     columns = _public_columns(reader)
     projection = SavedAnalysisRecordSource(reader, columns=columns) if status == "complete" and columns else None
@@ -163,12 +166,14 @@ def persist_saved_analysis_result(*, service, producer, reader, guard_token, inp
             "sources": sources,
             "report_available": report_available,
             "public_records_available": projection is not None,
+            **({"source_selection_limitations": list(selection_limitations)} if selection_limitations else {}),
         },
         _completeness(status, 1, coverage, checks, limitations),
     ))
     return service.persist_task_result(
         producer=producer, role="reason", status=status, outputs=outputs,
         sources=sources, origin="grounded", guard_token=guard_token, input_fingerprint=input_fingerprint,
+        upstream=upstream,
     )
 
 

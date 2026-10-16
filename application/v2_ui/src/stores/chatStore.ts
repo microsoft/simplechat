@@ -152,6 +152,7 @@ import { getAppNavigator, subscribeRouteChanges, type AppRoute } from '../lib/ap
 import { readConversationParam } from '../lib/conversationUrl';
 import { refreshNotificationCount } from './notificationStore';
 import { useBootstrapStore } from './bootstrapStore';
+import { adoptConversationModeDraft, conversationModes, forgetConversationMode } from '../lib/conversationMode';
 import { useCollaborationStore, participantName } from './collaborationStore';
 import { chatPendingActionsStore } from './m365PendingActionsStore';
 import { latestUserMessageId } from '../lib/m365PendingActions';
@@ -2401,6 +2402,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stopCollaborationEvents();
         useCollaborationStore.getState().reset();
         conversationEpoch += 1;
+        conversationModes.resetDraft();
 
         // Known from the rail row when there is one, which is the common case and costs no
         // request. A conversation opened from a link is not in the list yet, so its kind is
@@ -2621,6 +2623,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stopCollaborationEvents();
         useCollaborationStore.getState().reset();
         conversationEpoch += 1;
+        conversationModes.resetDraft();
 
         // The conversation row is created by the server on first send, so a new chat is
         // purely a local reset until then. This avoids leaving empty conversations behind
@@ -2697,6 +2700,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
      * member is refused, and posting `leave` as the sole owner would strand the thread.
      */
     removeConversation: async (conversationId, decidedAction) => {
+        const modeAccountId = useBootstrapStore.getState().data?.user?.id ?? '';
         const previous = get().conversations;
         const listed = previous.find((conversation) => conversation.id === conversationId);
         const collaborative = isCollaborativeConversation(get(), conversationId);
@@ -2733,6 +2737,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 await deleteConversationApi(conversationId);
             }
             forgetOrchestrationConversation(conversationId);
+            forgetConversationMode(modeAccountId, conversationId);
         } catch (error) {
             set({ conversations: previous });
             toast.error(
@@ -2839,6 +2844,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
      * posted as a delete would destroy a thread other people are still using.
      */
     bulkRemoveConversations: async () => {
+        const modeAccountId = useBootstrapStore.getState().data?.user?.id ?? '';
         const previous = get().conversations;
         const targets = selectedConversations(previous, get().selectedConversationIds);
         if (targets.length === 0) {
@@ -2867,7 +2873,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
             if (personalIds.length > 0) {
                 const result = await deleteConversationsApi(personalIds);
-                failed += (result?.failed_ids ?? []).length;
+                const failedIds = new Set(result?.failed_ids ?? []);
+                failed += failedIds.size;
+                for (const id of personalIds) {
+                    if (!failedIds.has(id)) forgetConversationMode(modeAccountId, id);
+                }
             }
 
             if (removals.length > 0) {
@@ -2879,6 +2889,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ),
                 );
                 failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+                outcomes.forEach((outcome, index) => {
+                    if (outcome.status === 'fulfilled') {
+                        forgetConversationMode(modeAccountId, removals[index].id);
+                    }
+                });
             }
 
             const message = partialFailureMessage(targets.length, failed, 'delete', 'deleted');
@@ -3075,9 +3090,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Taken before the round trip: New chat leaves `activeConversationId` null too, so
             // null alone cannot say the reader is still in the chat this was sent from.
             const epoch = conversationEpoch;
+            const draftMode = conversationModes.captureDraft(useBootstrapStore.getState().data?.user?.id ?? '');
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
+                adoptConversationModeDraft(draftMode, conversationId);
                 // The reader can open a conversation during that round trip, and if they do
                 // their click wins. The message is still sent and its answer still generated
                 // and saved — it appears in the rail and is there when they come back — but
@@ -3422,9 +3439,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // As in sendMessage: only the epoch tells "still in this new chat" apart from
             // "started another one" while the conversation is being created.
             const epoch = conversationEpoch;
+            const draftMode = conversationModes.captureDraft(useBootstrapStore.getState().data?.user?.id ?? '');
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
+                adoptConversationModeDraft(draftMode, conversationId);
                 if (get().activeConversationId === null && conversationEpoch === epoch) {
                     set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
                     useCollaborationStore.getState().setActiveConversation(conversationId);

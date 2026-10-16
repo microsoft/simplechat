@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.339"
+version: "0.261.341"
 ---
 
 ## How to use this reference
@@ -582,6 +582,19 @@ in **0.261.096**. See [Use prompts in chat]({{ '/guides/use-prompts-in-chat/' | 
 for the complete workflow.
 
 ## Orchestration approval (V2 interface)
+
+Fixed/Implemented in version: **0.261.341**
+(`application/single_app/config.py`).
+The **Orchestrate** on/off choice is remembered separately for each conversation
+and signed-in account in this browser. Navigating away, reopening the thread,
+or reloading does not intentionally replace that choice with another
+conversation's mode. This browser preference is not a cross-device account
+setting. A remembered mode cannot enable orchestration when the administrator
+has made it unavailable.
+
+This execution-mode choice is separate from the account-level approval and
+model preferences below. A newly created conversation does not inherit a
+different conversation's saved on/off choice.
 
 Since **0.261.126**, Orchestrate has an **Orchestration model** picker.
 **Auto - choose per step** asks the server to choose an authorized connected model

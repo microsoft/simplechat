@@ -61,9 +61,9 @@ from functions_m365_workflow_binding import (
     workflow_result_is_waiting,
     workflow_result_runtime_status,
 )
-from functions_m365_approvals import get_m365_approval_service
+from functions_m365_approvals import M365PolicyError, get_m365_approval_service
 from functions_m365_connections import configure_m365_connection_authorization, get_m365_connection_service
-from functions_m365_continuations import resume_pending_workflows
+from functions_m365_continuations import M365ContinuationNotStarted, resume_pending_workflows
 from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
 from functions_m365_file_runtime import configure_m365_file_runtime
 from functions_m365_runtime import (
@@ -572,7 +572,13 @@ def check_m365_workflow_continuations_once():
         return all(scope.rsplit("/", 1)[-1].lower() in granted for scope in job.get("required_scopes") or [])
 
     def execute(job):
-        workflow = load_current_workflow(job["workflow_ref"])
+        try:
+            workflow = load_current_workflow(job["workflow_ref"])
+        except M365PolicyError as error:
+            if error.code != "m365_workflow_missing":
+                raise
+            # Only this initial read proves no workflow/Graph effects were entered.
+            raise M365ContinuationNotStarted() from error
         settings = get_settings()
         group_id = workflow.get("group_id")
         if group_id:

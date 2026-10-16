@@ -38,6 +38,7 @@ import {
     Users,
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
+import { clearConversationModes } from '../../lib/conversationMode';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
@@ -263,6 +264,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     </a>
                     <a
                         href="/logout"
+                        onClick={() => clearConversationModes(user?.id ?? '')}
                         className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-danger hover:bg-danger-soft"
                     >
                         <LogOut size={15} /> Sign out

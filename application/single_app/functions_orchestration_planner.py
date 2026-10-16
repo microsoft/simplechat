@@ -109,7 +109,8 @@ HANDOFF_REPAIRABLE_PLAN_CODES = frozenset({*WORKFLOW_HANDOFF_REPAIR_CODES, PLAN_
 # correction can fix it.
 WORKFLOW_CONTEXT_UNAVAILABLE_RULE = 'workflow_context_unavailable'
 REPAIRABLE_PLAN_CODES = frozenset({
-    'deliverables_invalid', 'source_kind_invalid', 'source_binding_required', *WORKFLOW_REPAIR_CODES,
+    'deliverables_invalid', 'source_kind_invalid', 'source_binding_required',
+    'conversation_retrieval_conflict', *WORKFLOW_REPAIR_CODES,
     *WORKFLOW_RUN_REPAIR_CODES, *WORKFLOW_RESULTS_REPAIR_CODES,
 })
 DELIVERABLES_FAILURE_MESSAGE = (
@@ -150,6 +151,65 @@ ACKNOWLEDGMENT_PATTERN = re.compile(
     r'(?:hi|hello|hey|thanks|thank you|ok|okay|got it|understood|great|sounds good)[.! ]*',
     re.IGNORECASE,
 )
+CONVERSATION_RETRIEVAL_CAPABILITIES = frozenset({
+    'document_search', 'document_analyze', 'tabular_analyze', 'web_search', 'url_fetch', 'deep_research',
+})
+TRANSFORMATION_PATTERN = re.compile(
+    r'\b(?:summari[sz]e|rewrite|reformat|format|shorten|expand|revise|edit|transform|'
+    r'improve|audit|review|convert|put|turn|make)\b',
+    re.IGNORECASE,
+)
+CONVERSATION_TARGET_PATTERN = re.compile(
+    r'\b(?:this|that|those|these|it|above|previous|prior|pasted|provided|earlier|'
+    r'your (?:answer|reply|response)|the (?:text|content|answer|reply|response))\b',
+    re.IGNORECASE,
+)
+EXPLICIT_RETRIEVAL_PATTERN = re.compile(
+    r'(?:^|[.!?]\s+|\b(?:and|then|also)\s+)'
+    r'(?:(?:please|can you|could you|would you)\s+)?'
+    r'(?:search|retrieve|look up|research|find)\b|'
+    r'\b(?:fact.check|up.to.date)\b|https?://|'
+    r'\b(?:verify|current|latest)\b.{0,50}\b(?:facts?|sources?|hours|prices?|news|data|policies)\b|'
+    r'\b(?:using|against)\s+(?:the\s+)?(?:web|workspace|documents?)\b',
+    re.IGNORECASE,
+)
+
+
+def _explicit_retrieval(user_message, seeds=None):
+    seeds = seeds or {}
+    instruction = str(user_message or '').split('```', 1)[0].split('\n\n', 1)[0]
+    if ':' in instruction and TRANSFORMATION_PATTERN.search(instruction.split(':', 1)[0]):
+        instruction = instruction.split(':', 1)[0]
+    return bool(
+        EXPLICIT_RETRIEVAL_PATTERN.search(instruction)
+        or any(seeds.get(key) for key in (
+            'document_ids', 'elicitation_references', 'public_workspace_selection', 'tags',
+        ))
+        or seeds.get('web_search') is True
+    )
+
+
+def conversation_retrieval_allowed(resolution, user_message='', seeds=None):
+    """A no-retrieval resolution is a routing contract, not a suggestion to the planner."""
+    return (resolution or {}).get('requires_retrieval') is not False or _explicit_retrieval(user_message, seeds)
+
+
+def _conversation_transformation(message):
+    return bool(
+        TRANSFORMATION_PATTERN.search(message) and CONVERSATION_TARGET_PATTERN.search(message)
+        # A source supplied in this very request needs no historical target.
+        and not re.search(r'\b(?:rewrite|summari[sz]e|format|edit|convert)\b[^\n:]{0,100}:\s*\S', message, re.I)
+        and '\n\n' not in message
+    )
+
+
+def _missing_conversation_target(message):
+    return {
+        'relationship': 'clarification', 'resolved_message': message, 'message_ids': [],
+        'requires_retrieval': False,
+        'clarification': 'Which message or text should I use? Select or paste the content you want transformed.',
+        'token_usage': {},
+    }
 
 class PlannerError(RuntimeError):
     """Raised when the planner could not be reached or configured."""
@@ -635,6 +695,11 @@ by itself require research. Read the earlier runs, but the ledger records activi
 evidence: reuse a previous answer for transformations or conversational references when its
 text is actually supplied, and gather again when a requested fact is missing or needs current
 evidence. Earlier assistant claims do not establish current facts or opening hours.
+When source_policy is conversation_only, use the selected historical messages for the
+transformation; do not search workspaces or the web, or invent a document audit.
+content_complete=false marks a discovery preview, not a complete source: the server
+reloads the exact selected stored messages for execution. If the requested target is
+missing or ambiguous, ask which content to use instead of substituting external sources.
 
 Make every query, analysis instruction, compose instruction, agent task, and action task
 self-contained: include the subject, place, time, and other relevant constraints rather than
@@ -966,6 +1031,13 @@ Read the supplied clarification answers before asking a question. Ask only if th
 conversation and answers genuinely do not resolve the request. Do not ask what kind of
 business the user means when the preceding conversation already establishes that subject.
 If the user declined a clarification, do not ask it again or invent the missing information.
+History entries labeled content_complete=false are discovery previews, not source text.
+Their IDs reference full stored messages that the server can reauthorize and load for
+execution. Select the relevant user source/request as well as its associated assistant
+answer, preserving their roles. Do not require retrieval merely because a preview is
+shortened. A transformation of pasted or prior content uses conversation content first;
+if its target is missing or ambiguous, ask which text/message rather than searching
+workspaces. Earlier assistant assertions are not evidence of external facts.
 If history is truncated, do not pretend to know what was omitted."""
 
 
@@ -1012,6 +1084,7 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
 
 def resolve_conversation_request(
     user_message, snapshot, settings=None, answered_questions=None, planner_model=None,
+    *, seeds=None,
 ):
     """Resolve context before retrieval, using the captured model binding when supplied."""
     message = str(user_message or '').strip()
@@ -1025,6 +1098,8 @@ def resolve_conversation_request(
         'token_usage': {},
     }
     if not history and not answered_questions:
+        if _conversation_transformation(message) and not _explicit_retrieval(message, seeds):
+            return _missing_conversation_target(message)
         return default
     if ACKNOWLEDGMENT_PATTERN.fullmatch(message) and not answered_questions:
         return default
@@ -1110,6 +1185,26 @@ def resolve_conversation_request(
 
     if resolution['relationship'] == 'new_topic' and not answered_questions:
         resolution['resolved_message'] = message
+    if (
+        _conversation_transformation(message)
+        and not _explicit_retrieval(message, seeds)
+        and resolution['relationship'] != 'clarification'
+    ):
+        if not resolution['message_ids'] and not answered_questions:
+            resolution = _missing_conversation_target(message)
+        else:
+            resolution['requires_retrieval'] = False
+    if resolution['relationship'] == 'follow_up' and resolution['requires_retrieval'] is False:
+        selected = set(resolution['message_ids'])
+        # The user supplied the source and constraints; an assistant answer alone
+        # must not replace that source merely because it is the shorter message.
+        user_source = None
+        for entry in history:
+            if entry['role'] == 'user':
+                user_source = entry['id']
+            elif entry['id'] in selected and user_source:
+                selected.add(user_source)
+        resolution['message_ids'] = [entry['id'] for entry in history if entry['id'] in selected]
     resolution['token_usage'] = token_usage
     log_event(
         '[ORCHESTRATION_PLANNER] Resolved the conversational request.',
@@ -1163,6 +1258,14 @@ def plan_repair_message(error, *, handoff_present=False):
     ``handoff_present`` says the rejected plan holds an enabled workflow_handoff step, so an answer
     the plan was told to write is steered away from the handed-off part.
     """
+    if getattr(error, 'code', None) == 'conversation_retrieval_conflict':
+        return (
+            'This request must use the selected conversation messages, not workspace or web retrieval. '
+            'Discovery previews are not complete sources; execution reloads the selected full stored messages. '
+            'Remove search, Analyze and research steps and prepare the requested transformation with compose. '
+            'If the target is genuinely unclear, return a focused elicitation instead. '
+            'Return the complete corrected plan as one JSON object.'
+        )
     if getattr(error, 'code', None) in WORKFLOW_REPAIR_CODES:
         return (
             f'The server rejected the workflow proposal in that plan: {error}\n'
@@ -1372,6 +1475,10 @@ def plan_request(
     settings = settings if isinstance(settings, dict) else {}
     plan_contract_version({'planner_contract_version': contract_version})
 
+    conversation_only = not conversation_retrieval_allowed(
+        (planner_context or {}).get('request_resolution'),
+        (planner_context or {}).get('original_message') or user_message, seeds,
+    )
     unavailable = {}
     capabilities = resolve_available_capabilities(
         settings,
@@ -1381,9 +1488,19 @@ def plan_request(
         contract_version=contract_version,
         export_catalog=export_catalog,
     )
+    if conversation_only:
+        capabilities = [
+            capability for capability in capabilities
+            if capability['id'] not in CONVERSATION_RETRIEVAL_CAPABILITIES
+        ]
+        unavailable.update({
+            capability_id: 'This request uses selected conversation content, not external retrieval.'
+            for capability_id in CONVERSATION_RETRIEVAL_CAPABILITIES
+        })
     available_ids = [capability['id'] for capability in capabilities]
 
     context = dict(planner_context or {})
+    context['source_policy'] = 'conversation_only' if conversation_only else 'retrieval_allowed'
     model_candidates = []
     if (seeds or {}).get('model_routing') == 'auto':
         model_candidates = authorized_routing_candidates(settings, user_id)
@@ -1463,6 +1580,14 @@ def plan_request(
     }
 
     def _normalize(raw, capability_ids, availability, selected_image, **options):
+        if conversation_only and any(
+            step.get('enabled', True) and step.get('capability_id') in CONVERSATION_RETRIEVAL_CAPABILITIES
+            for step in raw.get('steps') or [] if isinstance(step, dict)
+        ):
+            raise PlanValidationError(
+                'The plan searches outside the selected conversation despite its no-retrieval resolution.',
+                code='conversation_retrieval_conflict',
+            )
         normalized = normalize_plan(
             raw,
             conversation_id,
@@ -1687,6 +1812,10 @@ def plan_request(
                         'deliverables_invalid': DELIVERABLES_FAILURE_MESSAGE,
                         'source_kind_invalid': SOURCE_KIND_FAILURE_MESSAGE,
                         'source_binding_required': SOURCE_BINDING_FAILURE_MESSAGE,
+                        'conversation_retrieval_conflict': (
+                            'This request needs the conversation content, not a workspace search. '
+                            'Select or paste the target text and create a new plan.'
+                        ),
                         **{code: WORKFLOW_FAILURE_MESSAGE for code in WORKFLOW_REPAIR_CODES},
                         **{code: WORKFLOW_RUN_FAILURE_MESSAGE for code in WORKFLOW_RUN_REPAIR_CODES},
                         **{code: WORKFLOW_RESULTS_FAILURE_MESSAGE for code in WORKFLOW_RESULTS_REPAIR_CODES},

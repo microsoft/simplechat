@@ -102,7 +102,7 @@ from content_screening.access import (
     assert_current_request_sources_available, guard_model_callable, strict_source_authority,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import log_chat_execution_outcome, log_event, workflow_log_context
 from functions_orchestration_adapters import resolve_context_source_manifest
 from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
 from functions_orchestration_context import (
@@ -110,12 +110,15 @@ from functions_orchestration_context import (
     CatalogResolutionError,
     ConversationContextError,
     ElicitationContextError,
+    authorize_conversation_source_access,
     build_capability_request_context,
     build_elicitation_user_request,
     conversation_user_urls,
+    history_message_limit,
     normalize_history_message,
     resolve_action_catalog,
     resolve_agent_catalog,
+    resolve_conversation_source_messages,
     resolve_elicitation_references,
     validate_clarification_answers,
     validate_conversation_snapshot,
@@ -403,9 +406,11 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
     return invoke_prompt
 
 
-def _conversation_context(record, message_container, read_conversation):
+def _conversation_context(record, message_container, read_conversation, *, full_message_ids=None):
     """Rebuild the exact saved snapshot and turn, never the latest browser history."""
-    read_conversation()
+    conversation = read_conversation()
+    # The owned backing alone does not prove continued membership in a shared chat.
+    authorize_conversation_source_access(conversation, record["user_id"])
     user_id, conversation_id = record["user_id"], record["conversation_id"]
     snapshot = record.get("conversation_context")
     entries = snapshot.get("messages") if type(snapshot) is dict else None
@@ -443,12 +448,14 @@ def _conversation_context(record, message_container, read_conversation):
         if context not in contexts:
             contexts.append(deepcopy(context))
     if messages or contexts:
-        # Saved-analysis readers need initialized storage; early imports must not
-        # pull their artifact/provider dependency chain into the runtime.
+        # Checked-history and saved-analysis readers need initialized storage;
+        # early imports must not pull their provider dependency chain into the runtime.
+        from functions_chat_content_review import checked_history_messages
         from functions_saved_analysis import (
             analysis_result_contexts, load_saved_analysis, sanitize_saved_analysis_messages,
         )
 
+        messages = checked_history_messages(messages, for_model=True)
         messages = sanitize_saved_analysis_messages(messages, user_id)
         for message in messages:
             for context in analysis_result_contexts(message):
@@ -462,6 +469,10 @@ def _conversation_context(record, message_container, read_conversation):
     )
     if contexts:
         validated["analysis_result_contexts"] = contexts
+    if full_message_ids is not None:
+        # Full text is resolved only after the same ownership, visibility and revision
+        # checks used for execution/retry. It is never persisted in the discovery snapshot.
+        return resolve_conversation_source_messages(validated, messages, full_message_ids)
     return validated
 
 
@@ -575,6 +586,11 @@ class HarnessExecution:
         return conversation
 
     def _revalidate_context(self):
+        if (
+            history_message_limit(self._bootstrap.get_settings()) == 0
+            and (self.record.get("conversation_context") or {}).get("messages")
+        ):
+            raise ConversationContextError("Conversation history is disabled. Create a new request.")
         if not self._delivery_only:
             assert_current_request_sources_available(self.record["user_id"])
         snapshot = _conversation_context(
@@ -815,6 +831,10 @@ class HarnessExecution:
             ),
         )
         self._bind_public_chat_scope(self.context, conversation_id)
+        self.context.read_conversation_messages = lambda: _conversation_context(
+            self.record, self.lease.message_container, self._read_conversation,
+            full_message_ids=self.context.context_message_ids or [],
+        )
         self.context.prompt_token_usage = self.prompt_token_usage
         if auto_routing:
             def guarded_planner_client(model):
@@ -1746,6 +1766,17 @@ class HarnessExecution:
         finalized = self.lease.close(release=True)
         self._released = True
         self._final_record = finalized
+        root_failure = next(
+            (failure for failure in failures if failure.get("code") != "dependency_unavailable"),
+            failures[0] if failures else None,
+        )
+        log_chat_execution_outcome(
+            execution_path="orchestration", status=status, outcome=outcome,
+            conversation_id=self.record["conversation_id"], run_id=self.record["id"],
+            turn_id=self.record.get("turn_id"), failure=root_failure,
+            application_version=getattr(getattr(self._bootstrap, "config", None), "VERSION", None),
+            attempt_index=finalized.get("attempt_index"), message_saved=True,
+        )
         public = public_execution_fields(finalized)
         frame = build_run_done_event(
             self.record["conversation_id"], message_id=message_id, run_id=self.record["id"],
@@ -1785,6 +1816,14 @@ class HarnessExecution:
                 })
             except Exception as persistence_error:
                 _log_failure("Publication failure could not be recorded.", self.record, persistence_error)
+            if self._final_record is not None:
+                log_chat_execution_outcome(
+                    execution_path="orchestration", status="failed", outcome="failed",
+                    conversation_id=self.record["conversation_id"], run_id=self.record["id"],
+                    turn_id=self.record.get("turn_id"), failure=failure,
+                    application_version=getattr(getattr(self._bootstrap, "config", None), "VERSION", None),
+                    attempt_index=self.record.get("attempt_index"), message_saved=False,
+                )
             self._frames = [
                 build_error_event(failure["message"], self.record["conversation_id"]),
                 build_run_done_event(

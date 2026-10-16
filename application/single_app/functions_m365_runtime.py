@@ -19,6 +19,7 @@ from config import (
     cosmos_m365_execution_runs_container,
 )
 from collaboration_models import is_shared_conversation_backing
+from cosmos_document_utils import normalize_cosmos_document
 from functions_appinsights import log_event
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -53,6 +54,8 @@ from functions_m365_workflow_binding import (
     m365_revision_component,
     workflow_execution_fingerprint,
 )
+from functions_workflow_alert_safety import sanitize_workflow_alert_record
+from functions_workflow_definitions import workflow_definition_for_editor
 from m365_interaction import M365_AUTH_INTERACTION_CODES
 
 
@@ -347,16 +350,31 @@ def resolve_m365_workflow_binding(context, manifests, policies):
 
 
 def load_current_workflow(workflow):
-    # Workflow stores depend on action modules, so resolve after runtime bootstrap.
-    from functions_group_workflows import get_group_workflow
-    from functions_personal_workflows import get_personal_workflow
-    if workflow.get("group_id"):
-        current = get_group_workflow(workflow["group_id"], workflow["id"])
-    else:
-        current = get_personal_workflow(workflow["user_id"], workflow["id"])
-    if not current:
+    """Read authoritatively: only a scoped 404 or deletion tombstone means missing."""
+    # Storage handles resolve at execution time, after workflow/runtime bootstrap.
+    # The UI getters deliberately hide storage errors and cannot establish deletion.
+    from config import cosmos_group_workflows_container, cosmos_personal_workflows_container
+
+    group_id = workflow.get("group_id")
+    container = cosmos_group_workflows_container if group_id else cosmos_personal_workflows_container
+    partition = group_id or workflow["user_id"]
+    try:
+        current = normalize_cosmos_document(container.read_item(
+            item=workflow["id"], partition_key=partition,
+        ))
+    except CosmosResourceNotFoundError as error:
+        raise M365PolicyError("m365_workflow_missing", "The workflow no longer exists.") from error
+    if (
+        current.get("id") != workflow["id"]
+        or current.get("group_id" if group_id else "user_id") != partition
+    ):
+        raise PermissionError("The workflow does not match its stored scope.")
+    if current.get("deleting") is True or current.get("status") == "deleting":
         raise M365PolicyError("m365_workflow_missing", "The workflow no longer exists.")
-    return current
+    cleaned = sanitize_workflow_alert_record({
+        key: value for key, value in current.items() if not str(key).startswith("_")
+    })
+    return workflow_definition_for_editor(cleaned)
 
 
 def workflow_m365_manifests(workflow):

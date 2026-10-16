@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.321"
+version: "0.261.341"
 ---
 
 ## Decide what should run
@@ -50,6 +50,23 @@ Pinned documents specify the inputs, not the operation. Since **0.261.115**, the
 planner may Analyze or Compare those inputs without adding a Search step merely
 because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
+
+### Work from content already in the conversation
+
+Fixed/Implemented in version: **0.261.341**
+(`application/single_app/config.py`).
+When you ask to rewrite, audit, summarize, or otherwise transform material
+already pasted into the conversation, that material is the source to resolve
+first. A short planning preview is not the complete input. The execution step
+reopens the referenced saved message with current access and content checks.
+An earlier AI answer can be rewritten as text, but it is not independently
+verified evidence for new factual claims.
+
+If the intended material is missing or unclear, identify it when the planner
+asks for clarification. Review a proposed workspace search before running if
+you wanted work on the conversation instead. A source that exceeds the
+selected model's verified input budget needs a smaller selection or an
+appropriate configured model; repeating the unchanged plan does not add space.
 
 ## Review versus Edit
 
@@ -100,6 +117,12 @@ identifies the prepared content selected for the answer.
 Named results are not download links. A retained result or a planned output
 does not prove that a file has been created. The interface does not count those
 results as completed file artifacts.
+
+Since **0.261.341**, shortening a search preview does not by itself make the
+retained source selection incomplete. The full retained result and its
+coverage still govern downstream work. A complete top-N selection is not proof
+that every relevant document or every passage in a document was examined.
+Genuinely incomplete evidence still blocks a task that requires complete input.
 
 When the server supplies an explicit `render_file` task, **Planned file** shows
 its intended name, format, profile, bound source, and options before approval.

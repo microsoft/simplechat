@@ -79,6 +79,7 @@ from functions_orchestration_result_runtime import (
     retain_gather_result, validate_task_diagnostics, validate_task_outputs,
 )
 from functions_orchestration_results import ResultUnavailableError
+from functions_workflow_collections import CollectionSizeError
 from functions_workflow_result_store import WorkflowResultIntegrityError, WorkflowResultStorageUnavailableError
 from functions_orchestration_schema import (
     PLAN_STATUS_CANCELLED,
@@ -918,6 +919,8 @@ def _run_dependency_step(
             'document_analyze', CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE, CAPABILITY_DOCUMENT_MERGE,
         ):
             named_sources = read_complete_input(readers['sources'])
+            if not named_sources:
+                raise ResultUnavailableError('result_source_selection_empty')
             runtime_step['arguments']['document_ids'] = [
                 source['document_id'] for source in named_sources
             ]
@@ -943,6 +946,7 @@ def _run_dependency_step(
                 ):
                     raise ResultUnavailableError('result_source_snapshot_changed')
         scoped = _dependency_adapter_context(context, manifest, step, input_fingerprint)
+        scoped.source_selection_reader = readers.get('sources') if named_sources else None
         binding_scope = getattr(context, 'step_model_scope', None)
         model_scope = (
             binding_scope(step, scoped)
@@ -1039,6 +1043,8 @@ def _run_dependency_step(
             failure = access_failure(exc, capability_id=step['capability_id'])
         elif isinstance(exc, PartialInputNotAcceptedError):
             failure = build_failure('input_partial_not_accepted')
+        elif step['capability_id'] == 'document_search' and isinstance(exc, CollectionSizeError):
+            failure = build_failure('search_result_too_large')
         elif isinstance(exc, ResultContractError):
             failure = build_failure('result_invalid')
         else:

@@ -131,6 +131,7 @@ LOGGER_WORKFLOW_HASH_KEYS = frozenset({
 LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
     "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
+    "executionpath", "outcome",
 })
 
 
@@ -144,6 +145,38 @@ def workflow_log_context(*, conversation_id=None, turn_id=None, run_id=None, ste
         )
         if isinstance(value, str) and value
     }
+
+
+def log_chat_execution_outcome(
+    *, execution_path, status, outcome, conversation_id, turn_id=None, run_id=None,
+    failure=None, application_version=None, attempt_index=None, message_saved=None,
+):
+    """Record business outcomes independently of a successful SSE/HTTP transport."""
+    if execution_path not in {"direct", "orchestration"}:
+        raise ValueError("Invalid chat execution path.")
+    outcomes = {"completed", "partial", "failed", "waiting", "cancelled"}
+    if outcome not in outcomes or status not in outcomes:
+        raise ValueError("Invalid chat execution outcome.")
+    failure = failure if isinstance(failure, dict) else {}
+    fields = {
+        **workflow_log_context(
+            conversation_id=conversation_id, turn_id=turn_id, run_id=run_id,
+            step_id=failure.get("step_id"),
+        ),
+        "execution_path": execution_path, "status": status, "outcome": outcome,
+        "failure_code": failure.get("code"), "capability_id": failure.get("capability_id"),
+    }
+    if isinstance(application_version, str) and re.fullmatch(r"\d+\.\d+\.\d+", application_version):
+        fields["application_version"] = application_version
+    if type(attempt_index) is int and attempt_index > 0:
+        fields["attempt_index"] = attempt_index
+    if type(message_saved) is bool:
+        fields["message_saved"] = message_saved
+    log_event(
+        "[CHAT_EXECUTION] Execution outcome recorded.",
+        extra=fields,
+        level=logging.WARNING if outcome in {"failed", "partial"} else logging.INFO,
+    )
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -280,6 +313,9 @@ def _build_logger_extra(
                         logger_extra[normalized_key] = value
                 elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
                     if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key == "applicationversion":
+                    if re.fullmatch(r"\d+\.\d+\.\d+", value):
                         logger_extra[normalized_key] = value
                 elif _is_safe_log_text_key(key):
                     logger_extra[normalized_key] = (
