@@ -703,6 +703,7 @@ def build_collaboration_message_doc_from_legacy(
         'm365_citations',
         'agent_display_name',
         'agent_name',
+        'generated_artifacts',
         'extracted_text',
         'vision_analysis',
         'filename',

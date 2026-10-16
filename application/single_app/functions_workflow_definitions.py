@@ -10,6 +10,9 @@ from datetime import datetime
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
+from functions_workflow_configuration import (
+    WorkflowConfigurationError, normalize_chat_execution, workflow_configuration_for_save,
+)
 
 WORKFLOW_DEFINITION_VERSION = 2
 WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json", "documents"})
@@ -20,6 +23,7 @@ WORKFLOW_PUBLICATION_SOURCE_KINDS = ("native_analysis", "saved_output")
 WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval", "input_processing"})
 WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
+    "chat_execution", "results_delivery",
     "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
     "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
@@ -123,7 +127,7 @@ WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH = 64
 WORKFLOW_ORIGIN_MATERIAL_FIELDS = (
     "name", "description", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation", "error_handling",
     "task_prompt", "tasks", "runner_type", "selected_agent", "schedule", "trigger_type", "document_action",
-    "file_sync", "chat_capabilities_enabled", "url_access_enabled", "model_endpoint_id", "model_id",
+    "file_sync", "chat_capabilities_enabled", "chat_execution", "results_delivery", "url_access_enabled", "model_endpoint_id", "model_id",
     "definition_version", "reference_inputs", "durable_execution", "flow", "limits", "m365_run_as_user_id",
 )
 
@@ -452,7 +456,7 @@ def _normalize_bindings(values, earlier_tasks):
     return bindings
 
 
-def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id=""):
+def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id="", settings=None, new_defaults=False):
     """Normalize new flow fields after existing task/runner authorization."""
     existing = existing or {}
     version = payload.get("definition_version", 1)
@@ -465,6 +469,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         managed_fields = {
             "id", "definition_revision", "conversation_id", "user_id", "group_id",
             "url_access_authorized", "url_access_authorized_by", "url_access_authorized_at",
+            "deep_research_authorized", "deep_research_authorized_by", "deep_research_authorized_at",
             "model_binding_summary", "created_at", "created_by", "modified_at", "modified_by",
             "updated_at", "status", "last_run_started_at", "last_run_at", "last_run_status",
             "last_run_error", "last_run_response_preview", "last_run_trigger_source", "run_count",
@@ -477,6 +482,11 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             raise WorkflowDefinitionError("The structured workflow contains unsupported fields.")
     if stored_version >= 2 and version < stored_version:
         raise WorkflowDefinitionConflict("This workflow uses advanced data flow. Open it in V2 to edit without losing its configuration.")
+    if version == 1 and existing and (
+        "chat_execution" in existing or "results_delivery" in existing
+        or any("chat_execution" in task for task in existing.get("tasks", []))
+    ):
+        raise WorkflowDefinitionConflict("This workflow uses chat execution or results settings. Open it in V2 to edit without losing its configuration.")
     if version >= 2 and existing:
         if payload.get("definition_revision") != workflow_definition_revision(existing):
             raise WorkflowDefinitionConflict("This workflow changed since it was opened. Reload it before saving.")
@@ -489,6 +499,22 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     })
     if len(raw_tasks) != len(tasks):
         raise WorkflowDefinitionError("Task data does not match the normalized task list.")
+    tasks = [dict(task) for task in tasks]
+    for task, raw in zip(tasks, raw_tasks):
+        if "chat_execution" in raw:
+            try:
+                task["chat_execution"] = normalize_chat_execution(raw["chat_execution"])
+            except WorkflowConfigurationError as exc:
+                raise WorkflowDefinitionError(exc.public_message) from exc
+        else:
+            task.pop("chat_execution", None)
+    try:
+        configuration = workflow_configuration_for_save(
+            payload, existing or None, settings=settings, workflow_scope="group" if group_id else "personal",
+            new_defaults=new_defaults,
+        )
+    except WorkflowConfigurationError as exc:
+        raise WorkflowDefinitionError(exc.public_message) from exc
     if version != 3 and any("input_processing" in task for task in raw_tasks):
         raise WorkflowDefinitionError("Task input_processing requires workflow definition version 3.")
     actions = [payload.get("document_action"), *(task.get("document_action") for task in raw_tasks)]
@@ -500,7 +526,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     if version == 1:
         if has_flow:
             raise WorkflowDefinitionError("Advanced inputs and output contracts require workflow definition version 2.")
-        return {"definition_version": 1, "tasks": tasks}
+        return {"definition_version": 1, "tasks": tasks, **configuration}
 
     references = normalize_workflow_references(
         payload.get("reference_inputs", existing.get("reference_inputs", [])), user_id=user_id, group_id=group_id,
@@ -539,6 +565,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         normalized_tasks.append(prepared)
         earlier[prepared["id"]] = prepared
     result = {
+        **configuration,
         "definition_version": version,
         "reference_inputs": references,
         "durable_execution": durable,

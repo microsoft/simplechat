@@ -981,10 +981,24 @@ def fork_personal_conversation_for_user(
 def create_personal_conversation_for_current_user(
     title: str = "New Conversation",
     notify_creation: bool = False,
+    *,
+    conversation_id: Optional[str] = None,
+    group_id: str = "",
+    workflow_provenance: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     current_user = _require_current_user_info()
     normalized_title = str(title or "").strip() or "New Conversation"
-    conversation_id = str(uuid.uuid4())
+    retry_id = conversation_id
+    conversation_id = conversation_id or str(uuid.uuid4())
+    group_doc = None
+    if group_id:
+        group_doc = _resolve_group_doc_for_current_user(
+            current_user["userId"], group_id=group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        allowed, reason = check_group_status_allows_operation(group_doc, "chat")
+        if not allowed:
+            raise PermissionError(reason)
     conversation_item = {
         "id": conversation_id,
         "user_id": current_user["userId"],
@@ -1000,13 +1014,41 @@ def create_personal_conversation_for_current_user(
         "last_unread_assistant_message_id": None,
         "last_unread_assistant_at": None,
     }
-    cosmos_conversations_container.upsert_item(conversation_item)
+    if workflow_provenance:
+        conversation_item.update(
+            workflow_id=workflow_provenance["workflow_id"],
+            workflow_provenance=dict(workflow_provenance),
+            tags=["workflow"],
+            chat_type="personal_single_user",
+        )
+    if group_id:
+        conversation_item.update(
+            group_id=group_id,
+            workspace_type="group",
+            chat_type="group-single-user",
+            context=[{"type": "primary", "scope": "group", "id": group_id, "name": group_doc.get("name", "")}],
+        )
+    if retry_id:
+        try:
+            cosmos_conversations_container.create_item(conversation_item)
+        except CosmosResourceExistsError:
+            existing = cosmos_conversations_container.read_item(item=retry_id, partition_key=retry_id)
+            if (
+                existing.get("user_id") != current_user["userId"]
+                or str(existing.get("group_id") or "") != group_id
+                or existing.get("workflow_provenance") != workflow_provenance
+            ):
+                raise PermissionError("The result conversation does not belong to this workflow run.")
+            return existing
+    else:
+        cosmos_conversations_container.upsert_item(conversation_item)
 
     log_conversation_creation(
         user_id=current_user["userId"],
         conversation_id=conversation_id,
         title=normalized_title,
-        workspace_type="personal",
+        workspace_type="group" if group_id else "personal",
+        group_id=group_id or None,
     )
 
     conversation_item["added_to_activity_log"] = True

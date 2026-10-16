@@ -2,7 +2,7 @@
 # test_v2_workflow_ask_ai_parity.py
 """
 Functional test for the round trip between the V2 editor's Ask AI tab and the AI workflow assistant.
-Version: 0.261.213
+Version: 0.261.343
 Implemented in: 0.261.213
 
 This test ensures that the requests the Ask AI tab builds are the requests the assistant accepts,
@@ -83,7 +83,7 @@ route_policy = _load_route_policy()
 class RouteHarness(route_policy.Harness):
     """3b's route harness, with the services given the editor options the tab was given."""
 
-    def build_services(self, settings, *, client_factory):
+    def build_services(self, settings, *, client_factory, instruction=""):
         self.built.append((settings, client_factory))
         self.bundle = wa.services(self.model, stored=self.stored, limiter=self.limiter, options=ASK_AI_OPTIONS)
         return self.bundle

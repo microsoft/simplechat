@@ -210,8 +210,8 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
         if execution_row and execution_row["payload"].get("state") == "paused" and unit.get("state") != "completed":
             self.record_execution(state="queued", reason_code="")
         previous_attempt = int(unit.get("attempt") or 0)
-        resuming_m365 = unit.get("state") == "waiting_m365"
-        attempt = previous_attempt if resuming_m365 else previous_attempt + 1
+        resuming_wait = unit.get("state") in {"waiting_m365", "waiting_output"}
+        attempt = previous_attempt if resuming_wait else previous_attempt + 1
         task_operation = self.node is not None and key == f"task:{self.node.get('task_id')}"
         if task_operation:
             self.record_execution(
@@ -236,7 +236,7 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
             admitted_by_condition = attempt == 1 and self.store.journal_read(
                 "decision", ["control", self.execution_id()],
             ) is not None
-            if not resuming_m365:
+            if not resuming_wait:
                 self.store.journal_commit(
                     self.lease.token, "admission", [self.execution_id(), attempt],
                     {"execution_id": self.execution_id(), "attempt": attempt, "input_digest": digest},
@@ -356,6 +356,9 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
 
     def wait_for_output(self, key, references):
         unit = self.unit(key)
+        if unit.get("state") == "running":
+            unit["state"] = "waiting_output"
+            self.store.journal_commit(self.lease.token, "unit", self._key(key), unit)
         self.record_execution(state="waiting_output", attempt=int(unit.get("attempt") or 1))
         self.store.wait(self.lease.token, state="waiting_output", gate={
             "id": execution_fingerprint([self.execution_id(), key, unit.get("attempt"), "output"]),

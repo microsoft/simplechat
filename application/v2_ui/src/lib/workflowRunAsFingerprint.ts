@@ -33,6 +33,8 @@ export const WORKFLOW_RUN_AS_FINGERPRINT_OPTIONAL_FIELDS = [
     'durable_execution',
     'flow',
     'limits',
+    'chat_execution',
+    'results_delivery',
 ] as const;
 
 /** The Run as account itself is always hashed; action bindings are fingerprinted separately at run time. */

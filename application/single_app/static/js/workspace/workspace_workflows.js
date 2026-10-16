@@ -4275,6 +4275,10 @@ function workflowNativeEditorReason(workflow) {
         return "a calendar schedule";
     }
     const tasks = Array.isArray(workflow.tasks) ? workflow.tasks : [];
+    if (workflow.chat_execution !== undefined || workflow.results_delivery !== undefined ||
+        tasks.some((task) => task?.chat_execution !== undefined)) {
+        return "chat capability or results delivery settings";
+    }
     if (tasks.some((task) => task?.type === "plan_replay")) {
         return "a saved chat plan";
     }

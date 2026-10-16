@@ -4,6 +4,7 @@
 
 from copy import deepcopy
 import uuid
+from azure.cosmos.exceptions import CosmosResourceExistsError
 
 from config import *
 from collaboration_models import (
@@ -882,6 +883,8 @@ def serialize_collaboration_conversation(conversation_doc, current_user_id, user
         'title': conversation_doc.get('title', ''),
         'conversation_kind': conversation_doc.get('conversation_kind'),
         'chat_type': conversation_doc.get('chat_type'),
+        'workflow_id': conversation_doc.get('workflow_id'),
+        'workflow_provenance': deepcopy(conversation_doc.get('workflow_provenance')),
         'status': conversation_doc.get('status', 'active'),
         'created_at': conversation_doc.get('created_at'),
         'updated_at': conversation_doc.get('updated_at'),
@@ -1377,13 +1380,46 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     return collaboration_conversation_doc, invited_state_docs, True, source_conversation_doc
 
 
-def create_personal_collaboration_conversation_record(title, creator_user, invited_participants=None):
+def _persist_created_collaboration_conversation(conversation_doc, *, retry_id=None):
+    """Retry a server-bound creation without replacing participants or manual edits."""
+    if not retry_id:
+        cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+        return conversation_doc
+    try:
+        cosmos_collaboration_conversations_container.create_item(conversation_doc)
+        return conversation_doc
+    except CosmosResourceExistsError:
+        existing = cosmos_collaboration_conversations_container.read_item(
+            item=retry_id, partition_key=retry_id,
+        )
+        if (
+            existing.get('created_by_user_id') != conversation_doc.get('created_by_user_id')
+            or existing.get('chat_type') != conversation_doc.get('chat_type')
+            or (existing.get('scope') or {}).get('group_id') != (conversation_doc.get('scope') or {}).get('group_id')
+            or existing.get('workflow_provenance') != conversation_doc.get('workflow_provenance')
+        ):
+            raise PermissionError('The result conversation does not belong to this workflow run.')
+        return existing
+
+
+def create_personal_collaboration_conversation_record(
+    title, creator_user, invited_participants=None, *, conversation_id=None, workflow_provenance=None,
+):
     conversation_doc = build_personal_collaboration_conversation(
         title=title,
         creator_user=creator_user,
         invited_participants=invited_participants,
+        conversation_id=conversation_id,
     )
-    cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    if workflow_provenance:
+        conversation_doc.update(
+            workflow_id=workflow_provenance['workflow_id'],
+            workflow_provenance=dict(workflow_provenance),
+            tags=['workflow'],
+        )
+    conversation_doc = _persist_created_collaboration_conversation(
+        conversation_doc, retry_id=conversation_id,
+    )
 
     user_states = []
     for participant in conversation_doc.get('participants', []):
@@ -1392,15 +1428,17 @@ def create_personal_collaboration_conversation_record(title, creator_user, invit
         invited_by_user_id = ''
         if participant.get('user_id') != conversation_doc.get('created_by_user_id'):
             invited_by_user_id = conversation_doc.get('created_by_user_id')
-        state_doc = build_collaboration_user_state(
+        state_builder = ensure_collaboration_user_state_for_participant if conversation_id else build_collaboration_user_state
+        state_doc = state_builder(
             conversation_doc=conversation_doc,
-            user_summary=participant,
+            **({'participant_summary': participant} if conversation_id else {'user_summary': participant}),
             role=role,
             membership_status=membership_status,
             invited_by_user_id=invited_by_user_id,
             created_at=participant.get('invited_at') or conversation_doc.get('created_at'),
         )
-        cosmos_collaboration_user_state_container.upsert_item(state_doc)
+        if not conversation_id:
+            cosmos_collaboration_user_state_container.upsert_item(state_doc)
         user_states.append(state_doc)
 
     invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
@@ -1417,7 +1455,9 @@ def create_personal_collaboration_conversation_record(title, creator_user, invit
     return conversation_doc, user_states
 
 
-def create_group_collaboration_conversation_record(title, creator_user, group_doc, invited_participants=None):
+def create_group_collaboration_conversation_record(
+    title, creator_user, group_doc, invited_participants=None, *, conversation_id=None, workflow_provenance=None,
+):
     conversation_doc = build_group_collaboration_conversation(
         title=title,
         creator_user=creator_user,
@@ -1427,8 +1467,17 @@ def create_group_collaboration_conversation_record(title, creator_user, group_do
             group_doc,
             invited_participants,
         ) if invited_participants else None,
+        conversation_id=conversation_id,
     )
-    cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    if workflow_provenance:
+        conversation_doc.update(
+            workflow_id=workflow_provenance['workflow_id'],
+            workflow_provenance=dict(workflow_provenance),
+            tags=['workflow'],
+        )
+    conversation_doc = _persist_created_collaboration_conversation(
+        conversation_doc, retry_id=conversation_id,
+    )
 
     user_states = []
     for participant in conversation_doc.get('participants', []):
@@ -2118,12 +2167,15 @@ def sync_collaboration_conversation_metadata_from_source(conversation_doc, sourc
     return conversation_doc, updated
 
 
-def ensure_collaboration_source_conversation(conversation_doc, current_user):
+def ensure_collaboration_source_conversation(conversation_doc, current_user, *, source_conversation_id=None):
     normalized_current_user = normalize_collaboration_user(current_user)
     if not normalized_current_user:
         raise PermissionError('User not authenticated')
 
-    source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
+    retry_source_id = source_conversation_id
+    if retry_source_id and conversation_doc.get('created_by_user_id') != normalized_current_user['user_id']:
+        raise PermissionError('Only the conversation owner can create its result backing.')
+    source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or retry_source_id or '').strip()
     source_chat_type = 'group' if is_group_collaboration_conversation(conversation_doc) else 'personal_single_user'
     source_conversation_doc = None
     source_updated = False
@@ -2134,13 +2186,18 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
                 item=source_conversation_id,
                 partition_key=source_conversation_id,
             )
+            if retry_source_id and (
+                source_conversation_doc.get('collaboration_conversation_id') != conversation_doc.get('id')
+                or source_conversation_doc.get('user_id') != normalized_current_user['user_id']
+            ):
+                raise PermissionError('The result backing does not belong to this conversation.')
         except CosmosResourceNotFoundError:
             source_conversation_doc = None
             source_conversation_id = ''
 
     timestamp = utc_now_iso()
     if source_conversation_doc is None:
-        source_conversation_id = str(uuid.uuid4())
+        source_conversation_id = retry_source_id or str(uuid.uuid4())
         source_conversation_doc = {
             'id': source_conversation_id,
             'user_id': str((conversation_doc or {}).get('created_by_user_id') or normalized_current_user.get('user_id') or '').strip(),
@@ -2190,7 +2247,21 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
 
     if source_updated:
         source_conversation_doc['last_updated'] = timestamp
-        cosmos_conversations_container.upsert_item(source_conversation_doc)
+        if retry_source_id and not source_conversation_doc.get('_etag'):
+            try:
+                cosmos_conversations_container.create_item(source_conversation_doc)
+            except CosmosResourceExistsError:
+                existing = cosmos_conversations_container.read_item(
+                    item=source_conversation_id, partition_key=source_conversation_id,
+                )
+                if (
+                    existing.get('collaboration_conversation_id') != conversation_doc.get('id')
+                    or existing.get('user_id') != normalized_current_user['user_id']
+                ):
+                    raise PermissionError('The result backing does not belong to this conversation.')
+                source_conversation_doc = existing
+        else:
+            cosmos_conversations_container.upsert_item(source_conversation_doc)
         invalidate_conversation_cache_for_item(source_conversation_doc, reason="collaboration_source_synced")
 
     if str((conversation_doc or {}).get('source_conversation_id') or '').strip() != source_conversation_id:
@@ -2206,17 +2277,33 @@ def mirror_source_message_to_collaboration(
     default_sender_user,
     reply_to_message_id=None,
     extra_metadata=None,
+    *,
+    message_id=None,
 ):
     source_message_id = str((source_message_doc or {}).get('id') or '').strip()
     if not source_message_id:
         raise ValueError('source_message_doc.id is required')
 
-    existing_message = get_collaboration_message_by_source_message(
-        (conversation_doc or {}).get('id'),
-        source_message_id,
-    )
-    if existing_message:
-        return existing_message, conversation_doc, False
+    if message_id:
+        try:
+            existing_message = cosmos_collaboration_messages_container.read_item(
+                item=message_id, partition_key=conversation_doc['id'],
+            )
+        except CosmosResourceNotFoundError:
+            existing_message = None
+        if existing_message is not None:
+            if (existing_message.get('metadata') or {}).get('source_message_id') != source_message_id:
+                raise PermissionError('The result message does not belong to this delivery.')
+            conversation_doc = _refresh_collaboration_conversation_message_summary(conversation_doc)
+            return existing_message, conversation_doc, False
+
+    if not message_id:
+        existing_message = get_collaboration_message_by_source_message(
+            (conversation_doc or {}).get('id'),
+            source_message_id,
+        )
+        if existing_message:
+            return existing_message, conversation_doc, False
 
     if message_uses_workflow_result(source_message_doc):
         source_message_doc = withhold_workflow_result_message(source_message_doc)
@@ -2227,6 +2314,8 @@ def mirror_source_message_to_collaboration(
     )
     if not collaboration_message:
         return None, conversation_doc, False
+    if message_id:
+        collaboration_message['id'] = message_id
 
     source_role = str((source_message_doc or {}).get('role') or '').strip().lower()
     source_metadata = (source_message_doc or {}).get('metadata', {}) if isinstance((source_message_doc or {}).get('metadata'), dict) else {}

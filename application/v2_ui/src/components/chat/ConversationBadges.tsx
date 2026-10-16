@@ -9,6 +9,7 @@ import {
     classificationColor,
     classificationLabels,
     isLightColor,
+    isWorkflowConversation,
     scopeLockState,
     workspaceBadge,
     type ClassificationCategory,
@@ -47,15 +48,16 @@ export function ConversationBadges({
     );
 
     const badge = workspaceBadge(metadata);
+    const workflow = isWorkflowConversation(metadata);
     const labels = classificationEnabled ? classificationLabels(metadata) : [];
     const lock = scopeLockState(metadata);
 
-    if (!badge && labels.length === 0 && lock === 'hidden') {
+    if (!badge && !workflow && labels.length === 0 && lock === 'hidden') {
         return null;
     }
 
     return (
-        <div className={clsx('flex shrink-0 items-center gap-1.5', className)}>
+        <div className={clsx('flex shrink-0 flex-wrap items-center gap-1.5', className)}>
             {lock !== 'hidden' && (
                 <span
                     title={
@@ -105,6 +107,11 @@ export function ConversationBadges({
                     {badge.label}
                 </span>
             )}
+            {workflow ? (
+                <span title="Created by a workflow" className="rounded-full border border-edge px-2 py-0.5 text-[11px] font-medium text-text-2">
+                    Workflow
+                </span>
+            ) : null}
         </div>
     );
 }

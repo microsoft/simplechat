@@ -42,6 +42,8 @@ import { WorkflowFileSyncFields, useWorkflowFileSyncSources } from './WorkflowFi
 import { WorkflowScheduleFields } from './WorkflowScheduleFields';
 import { WorkflowAlertEditor } from './WorkflowAlertEditor';
 import { WorkflowAlertSummary } from './WorkflowAlertSummary';
+import { WorkflowChatExecutionFields } from './WorkflowChatExecutionFields';
+import { WorkflowResultsFields } from './WorkflowResultsFields';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
 import { useWorkflowAssist } from './useWorkflowAssist';
 import { WorkflowAskAiTab, WorkflowAskAiToggle, WorkflowAssistLockBanner } from './WorkflowAskAiTab';
@@ -120,6 +122,8 @@ const WORKFLOW_FIELD_CARDS: Readonly<Partial<Record<string, WorkflowEditorSectio
     error_handling: 'execution',
     durable_execution: 'execution',
     chat_capabilities_enabled: 'execution',
+    chat_execution: 'execution',
+    results_delivery: 'results',
     limits: 'limits',
     alerts: 'alerts',
 };
@@ -192,7 +196,7 @@ export function WorkflowEditorDialog({
         workflow ? structuredClone(workflow) : null,
     );
     const [baseline, setBaseline] = useState<WorkflowDefinition>(() =>
-        workflow ? structuredClone(workflow) : initialDraft ? structuredClone(initialDraft) : newWorkflowDefinition(scope),
+        workflow ? structuredClone(workflow) : initialDraft ? structuredClone(initialDraft) : newWorkflowDefinition(scope, options),
     );
     const history = useWorkflowAuthoringHistory(baseline);
     const draft = history.draft;
@@ -305,9 +309,9 @@ export function WorkflowEditorDialog({
         onRollback: (before, after, targetId) => recoverAuthoring(before, after, targetId, false),
     });
     const panelOpen = changesOpen && !readOnly;
-    // The bootstrap sends this per user: on only where the setting, personal workflows and the role allow it.
+    // The editor response is authoritative per scope; older personal responses use bootstrap.
     const askAiEnabled = useBootstrapStore((state) => state.data?.features?.enable_workflow_ai_assistant === true);
-    const askAiAvailable = askAiEnabled && scope.type === 'personal' && !readOnly;
+    const askAiAvailable = (options.workflow_assist_available ?? (scope.type === 'personal' && askAiEnabled)) && !readOnly;
     const panelTab = askAiAvailable ? sideTab : 'changes';
     const onAccessLost = useCallback((status: number) => {
         setAccessLost(true);
@@ -1068,17 +1072,27 @@ export function WorkflowEditorDialog({
                                     : 'Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab.'}
                             />
                         </WorkflowChangedField>
-                        <WorkflowChangedField changeKey="chat_capabilities_enabled">
-                            <WorkflowSwitch
-                                label="Chat capabilities enabled"
-                                checked={draft.chat_capabilities_enabled}
-                                onChange={(checked) => setWorkflow((current) => ({ ...current, chat_capabilities_enabled: checked }))}
-                                description="Allow tasks to use configured chat capabilities when the runner supports them."
-                            />
-                        </WorkflowChangedField>
                     </WorkflowSwitchGrid>
                 </div>
+                <WorkflowChangedField changeKey="chat_execution">
+                    <WorkflowChatExecutionFields value={draft.chat_execution} workflow={draft} options={options}
+                        onChange={(chatExecution) => setWorkflow((current) => {
+                            const next = { ...current };
+                            if (chatExecution) next.chat_execution = chatExecution;
+                            else delete next.chat_execution;
+                            return next;
+                        })} />
+                </WorkflowChangedField>
             </SectionCard> : null}
+
+            <SectionCard id={cardId('results')} headingLevel={3}
+                title={WORKFLOW_EDITOR_SECTION_LABELS.results} icon={sectionIcon('results')}
+                status={sectionFor('results')?.status} meta={sectionFor('results')?.meta}>
+                <WorkflowChangedField changeKey="results_delivery">
+                    <WorkflowResultsFields workflow={draft} options={options} scope={scope}
+                        onChange={(resultsDelivery) => setWorkflow((current) => ({ ...current, results_delivery: resultsDelivery }))} />
+                </WorkflowChangedField>
+            </SectionCard>
 
             {!replayTask ? <SectionCard id={cardId('references')} ariaLabel="Workflow shared references" headingLevel={3}
                 title={WORKFLOW_EDITOR_SECTION_LABELS.references} icon={sectionIcon('references')}

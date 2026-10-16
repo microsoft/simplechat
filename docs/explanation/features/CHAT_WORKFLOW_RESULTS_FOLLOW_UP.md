@@ -1,8 +1,24 @@
-# Workflow results in chat
+# Workflow results in chat (v0.261.343)
 
 Implemented in version: **0.261.214**.
 
 Application version tracking: `application\single_app\config.py`.
+
+## Ordinary results conversations versus saved-result follow-up
+
+Implemented in version: **0.261.343**.
+
+The workflow's **Results** section can now publish a run's outcome into a normal
+personal, group-scoped or shared conversation. People can continue that
+conversation with the usual chat capabilities. Each run's audit remains separate
+and is not shared automatically. This delivery setting does not require an agent
+to create the conversation.
+
+That behavior is different from **Ask in chat** and the selected-run chip
+described below. The chip intentionally restricts an answer to the selected
+stored result; it does not re-run the workflow or perform new research. Automatic
+results delivery does not install that restricted chip on every later turn.
+See [Workflow chat capability parity](WORKFLOW_CHAT_CAPABILITY_PARITY.md).
 
 Related issue: #1546 (part 6a), part of #1543. Builds on
 [V2 workflow alert notices](V2_WORKFLOW_ALERT_NOTICES.md) (#1567) and the V2

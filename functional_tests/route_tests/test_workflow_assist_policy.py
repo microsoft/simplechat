@@ -2,7 +2,7 @@
 # test_workflow_assist_policy.py
 """
 Functional policy tests for the AI workflow assistant route.
-Version: 0.261.332
+Version: 0.261.343
 Implemented in: 0.261.208
 
 This test ensures that ``POST /api/user/workflows/assist`` keeps its Blueprint, Swagger and gate
@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 
 # Shared test helpers follow the isolated worktree import setup.
 import functions_workflow_assist as core  # noqa: E402
+from functions_group_assignment_ids import normalize_group_workflow_allowed_group_ids  # noqa: E402
 from test_support import workflow_assist as wa  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
@@ -48,7 +49,8 @@ BACKEND_V2 = APP / "route_backend_v2.py"
 ROUTE_PATH = "/api/user/workflows/assist"
 ROLE_FUNCTIONS = (
     "normalize_app_role_claims", "has_workflow_user_app_role", "is_user_workflows_enabled_for_user",
-    "is_workflow_assistant_enabled_for_user",
+    "is_workflow_assistant_enabled_for_user", "is_group_workflows_enabled_for_group",
+    "get_group_workflow_management_roles",
 )
 GATE_FUNCTIONS = (
     *ROLE_FUNCTIONS, "_is_api_request", "workflow_user_required", "workflow_assistant_required", "enabled_required",
@@ -83,7 +85,7 @@ def top_level_constant(path, name):
     raise AssertionError(f"{path.name} no longer defines {name}")
 
 
-def route_function():
+def route_function(path=ROUTE_PATH):
     registrar = next(
         node for node in parsed_module(ROUTES).body
         if isinstance(node, ast.FunctionDef) and node.name == "register_route_backend_workflows"
@@ -94,7 +96,7 @@ def route_function():
         and node.decorator_list
         and isinstance(node.decorator_list[0], ast.Call)
         and node.decorator_list[0].args
-        and getattr(node.decorator_list[0].args[0], "value", None) == ROUTE_PATH
+        and getattr(node.decorator_list[0].args[0], "value", None) == path
     ]
     assert len(matches) == 1, f"expected one route for {ROUTE_PATH}, found {len(matches)}"
     return matches[0]
@@ -128,6 +130,7 @@ class Harness:
     def __init__(self):
         self.settings = {
             "allow_user_workflows": True,
+            "allow_group_workflows": True,
             "enable_workflow_ai_assistant": True,
             "require_member_of_workflow_user": False,
             "azure_openai_gpt_key": SECRET,
@@ -144,14 +147,24 @@ class Harness:
         self.model = wa.ScriptedModel(RENAMED)
         self.limiter = wa.FakeLimiter()
         self.bundle = None
+        self.group_role = "Admin"
+        self.group_checks = []
 
         gates = run_source(top_level_functions(SETTINGS_MODULE, GATE_FUNCTIONS), SETTINGS_MODULE, {
             "wraps": wraps, "request": request, "session": self.session, "jsonify": jsonify,
             "get_settings": lambda: self.settings,
             "WORKFLOW_USER_APP_ROLE": top_level_constant(SETTINGS_MODULE, "WORKFLOW_USER_APP_ROLE"),
+            "normalize_group_workflow_allowed_group_ids": normalize_group_workflow_allowed_group_ids,
         })
+        assist_scope = top_level_functions(APP / "functions_workflow_editor.py", ("workflow_assist_available",))[0]
+        # Use real scope logic with the already-loaded real setting helpers, not production bootstrap.
+        assist_scope.body = [statement for statement in assist_scope.body if not isinstance(statement, ast.ImportFrom)]
+        run_source([assist_scope], ROUTES, gates)
         app = Flask("workflow-assist-policy")
-        run_source([*top_level_functions(ROUTES, ROUTE_HELPERS), route_function()], ROUTES, {
+        run_source([
+            *top_level_functions(ROUTES, (*ROUTE_HELPERS, "_assert_group_workflow_feature_enabled")),
+            route_function(), route_function("/api/groups/<group_id>/workflows/assist"),
+        ], ROUTES, {
             "bp": Blueprint(app),
             "swagger_route": lambda **_security: unchanged,
             "get_auth_security": lambda: [{"bearerAuth": []}],
@@ -177,6 +190,13 @@ class Harness:
             "BadRequest": BadRequest,
             "_resolve_agent_instruction_model": self.resolve_model,
             "_create_agent_instruction_client": self.create_client,
+            "session": self.session,
+            "assert_group_role": self.assert_group_role,
+            "get_group_workflow_management_roles": gates["get_group_workflow_management_roles"],
+            "is_group_workflows_enabled_for_group": gates["is_group_workflows_enabled_for_group"],
+            "is_workflow_assistant_enabled_for_user": gates["is_workflow_assistant_enabled_for_user"],
+            "workflow_assist_available": gates["workflow_assist_available"],
+            "_get_current_user_info_with_roles": lambda: {"user_id": wa.USER_ID},
         })
         self.client = app.test_client()
 
@@ -187,12 +207,25 @@ class Harness:
         self.parsed.append(len(raw))
         return core.parse_assist_body(raw)
 
-    def build_services(self, settings, *, client_factory):
+    def build_services(self, settings, *, client_factory, instruction="", group_id="", user_info=None):
         self.built.append((settings, client_factory))
         if self.build_error is not None:
             raise self.build_error
         self.bundle = wa.services(self.model, stored=self.stored, limiter=self.limiter)
+        self.bundle.group_id = group_id
         return self.bundle
+
+    def assert_group_role(self, actor, group_id, *, allowed_roles):
+        self.group_checks.append((actor, group_id, allowed_roles))
+        if group_id != "authorized-team" or self.group_role not in allowed_roles:
+            raise PermissionError("private group details")
+        return self.group_role
+
+    def post_group(self, group_id="authorized-team", body=None):
+        if body is None:
+            self.stored = wa.stored_workflow(group_id=group_id)
+            body = wa.request_body(stored=self.stored)
+        return self.client.post(f"/api/groups/{group_id}/workflows/assist", json=body)
 
     def run_workflow_assist(self, body, *, user_id, services):
         self.runs.append(user_id)
@@ -281,6 +314,54 @@ def test_an_available_assistant_answers_with_an_uncached_candidate(harness):
     assert settings is harness.settings
     assert harness.bundle.recorder.named("read_base") == [(wa.USER_ID, wa.WORKFLOW_ID)]
     assert len(harness.model.calls) == 1
+
+
+def test_group_assistant_uses_its_scope_even_when_personal_workflows_are_disabled(harness):
+    harness.settings["allow_user_workflows"] = False
+    response = harness.post_group()
+    assert response.status_code == 200
+    assert response.json["candidate"]["group_id"] == "authorized-team"
+    assert harness.bundle.group_id == "authorized-team"
+    assert harness.group_checks == [(wa.USER_ID, "authorized-team", ("Owner", "Admin"))]
+    assert response.headers["Cache-Control"] == "no-store, private"
+
+
+@pytest.mark.parametrize("role,owner_only,status", [
+    ("Owner", False, 200), ("Admin", False, 200), ("DocumentManager", False, 403),
+    ("User", False, 403), ("Admin", True, 403), ("Owner", True, 200),
+])
+def test_group_management_policy_precedes_body_services_and_model(harness, role, owner_only, status):
+    harness.group_role = role
+    harness.settings["require_owner_for_group_agent_management"] = owner_only
+    response = harness.post_group()
+    assert response.status_code == status
+    if status != 200:
+        assert harness.reached_nothing()
+        assert harness.parsed == []
+
+
+def test_group_route_rejects_wrong_group_body_and_disabled_assistant(harness):
+    body = wa.request_body(wa.new_draft(group_id="other-team"))
+    response = harness.post_group(body=body)
+    assert_closed_error(response, 400, "draft_invalid")
+    assert not harness.model.calls
+    harness.settings["enable_workflow_ai_assistant"] = False
+    response = harness.post_group()
+    assert response.status_code == 403
+    assert response.json["code"] == "workflow_assistant_disabled"
+    assert len(harness.built) == 1
+
+
+def test_group_assignment_and_foreign_group_are_refused_before_model(harness):
+    harness.settings.update(require_group_assignment_for_group_workflows=True,
+                            group_workflow_allowed_group_ids=["different-group"])
+    response = harness.post_group()
+    assert response.status_code == 403
+    assert harness.reached_nothing()
+    response = harness.post_group("foreign-team")
+    assert response.status_code == 403
+    assert "private group details" not in response_text(response)
+    assert harness.reached_nothing()
 
 
 def test_the_model_client_is_the_draft_instructions_deployment(harness):
@@ -470,6 +551,9 @@ def test_the_v2_bootstrap_reports_the_assistant_flag_from_the_gate():
     bootstrap = bootstrap_function()
     override = bootstrap_override(bootstrap, "enable_workflow_ai_assistant")
     calls = [ast.unparse(node) for node in ast.walk(bootstrap) if isinstance(node, ast.Call)]
+    if isinstance(override, ast.Call) and ast.unparse(override.func) == "measure":
+        assert len(override.args) == 3 and ast.literal_eval(override.args[0]) == "workflow_assistant"
+        override = ast.Call(func=override.args[1], args=override.args[2:], keywords=override.keywords)
 
     # 3c gates the Ask AI tab on this flag, so it is the route's own gate, applied over the forwarded setting.
     assert ast.unparse(override) == "is_workflow_assistant_enabled_for_user(settings, user_roles=current_user_roles)"

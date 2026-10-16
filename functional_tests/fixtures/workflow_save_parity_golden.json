@@ -102,6 +102,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -110,8 +111,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "c6b44d74adeacc61e4d58808d7358e14a2d21b2db4a16201f19d18530464d924",
-   "stored_sha256": "93c95750f674ec42367efe529651e71094b4c183e15a06e24539c542b3797fc1",
+   "result_sha256": "7adc3ed3e01efbcac6f78bd0e3a35748f4644daaac79bbd2655428465ce79fe7",
+   "stored_sha256": "952613aef25577e4a83ac9fe51ab625d7bed2e3d8c4d2460cff34379ce592f82",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -237,6 +238,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -245,8 +247,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "45d203f40fc8667c9dae09a9ab5ccd5c1f748e4936e1b298e0ebeeb7ef8c969f",
-   "stored_sha256": "6537e2e0b72b307cfde78427ef50104416077a30a4e5d6c89aa6f1c4dc11a4d4",
+   "result_sha256": "a09330708961a8e5a704e0af81d866517f6a4d3745af1945459dcfa0c83beaa9",
+   "stored_sha256": "d71c476a4904fd0c43fae824febebec2df3a984742e1ebc108f75ecf04eb13ed",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -338,6 +340,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -346,8 +349,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "2b00ffca85dc721307000d28330f495a0f5e462c70cec152a62c46d77ec558f7",
-   "stored_sha256": "1f92c87adf4a0ae93ded4ea811db618b5c998c93ed376e89a2f5247f4e027666",
+   "result_sha256": "fe5445aaa42f36cde85d5353a52163beff86afedad7544417ded46373b0fcce0",
+   "stored_sha256": "c63005cb75aca662e004f073a8b263d440eb475924866af86c1b8b9fc82ec066",
    "summary": {
     "alert_mode": "rules",
     "conversation_id": "",
@@ -444,6 +447,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -452,8 +456,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "03fa97f9aed9421a42b87cb49a477258e5d85d4c3d4738fab09717c87c666fd6",
-   "stored_sha256": "d7409547ed3b0e4c8c20625f83411858fa8272bb2cb4868153abfc24194f13de",
+   "result_sha256": "01f3646801e5bc1d1ac2e9bb8ddd1a8be8098c1e19461a4f156708ebfa257bd7",
+   "stored_sha256": "0edcddf6e0d432c5ab76fc9bb4b86bfb8d31fe1e594642b8c5ecf7fbe8bdf557",
    "summary": {
     "alert_mode": "rules",
     "conversation_id": "",
@@ -593,6 +597,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -601,8 +606,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "ebb1ab27210ddeb437e991cbf095ae4d6f35d5eeeebef3b80db8a5d9f2f8e9a5",
-   "stored_sha256": "457dc18e8e49b826c788c151db5bf31e7687d6bf3b17aa4a4aff12c38cda1d71",
+   "result_sha256": "a0db4fe73db9931c151ca9135d1d9f24793a2882c17301cf290f3f24753c0083",
+   "stored_sha256": "5895a93bd668820f4a49139c5a91e852d8a3e3ddd8f0720c1c81ed5ed1ecc7a7",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -839,6 +844,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -847,8 +853,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "492878fd0ca96b8424adf4c16fea9cd292170c8ca7506b414d06c9089638f905",
-   "stored_sha256": "26c09cd2bf3dee19e99e12e4bba0bb88a5232a24536a814a0580728557a9e756",
+   "result_sha256": "2c36a30324077e487fffbf892a73307416854af101b31589e86e59c22f1a7ad7",
+   "stored_sha256": "4c76141f52d5828b4a2268789657a8bb6aa4856dc3c7902397b252f48c985b03",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -971,6 +977,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -979,8 +986,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "936b4f631d593e756f7e6f07372850af5e0744fdae68df511ac126e7cf20f93e",
-   "stored_sha256": "dcaed1222c5ca98bfa1cb5cb1a56f2bf047b3527128fc0415b1d07f4020c1cc9",
+   "result_sha256": "338ed332b43e6b0dc28f4c00d8678284e8adaa1f71a81135b4978c4053e6705e",
+   "stored_sha256": "70f292bb22e976c60fe805b8fbf85552a5acfe4cb086826ab883860066b03fcc",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1079,6 +1086,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1087,8 +1095,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "f4821a427fec711baa8c421ae73b86c13224bb568af6c6ea5978fb034c69f268",
-   "stored_sha256": "01f7e3e340b216fe64b939fab05f8f83d4751239e704d90c561d5136fb48d86e",
+   "result_sha256": "6e24643724efe2378c6220de05e2d508a22546170ba6c0734839733aa3bc51c6",
+   "stored_sha256": "b998ccd0d7feebe7b554a4b36c64b8d0be5111e7ef08ea5e456c3eaceb62303e",
    "summary": {
     "alert_mode": "every_run",
     "conversation_id": "",
@@ -1181,6 +1189,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1189,8 +1198,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "e14226caf21f8e18923795de44b12bd626d4cb7baef41a2ed4c905e298d8a8ac",
-   "stored_sha256": "038a5b29f2acc6a5705509efcb56584e26c22ab522c95548bbfcf5a69b52b034",
+   "result_sha256": "d8796c1751a0649b08c817b3fb0ee7ccb0e7ba14d8053caab0e9c719de02d78d",
+   "stored_sha256": "04e8ada0564858ec5310849d0968b329e37b8cefb9e27a382806498dd470db49",
    "summary": {
     "alert_mode": "every_run",
     "conversation_id": "",
@@ -1285,6 +1294,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1293,8 +1303,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "170a99e2d8865d398e6805d164fd8077bd9bbe14008cb0af097310247ad8aac3",
-   "stored_sha256": "8996b1cfa76eb5371687743254a268138c13611b3078f4da5b61f079b66d7b6f",
+   "result_sha256": "b495422f6eec7037a948e1463fd2873943a6331e4d15a75cd9795dd10018a3d8",
+   "stored_sha256": "4f95a7c7c191df5f91b450ecce9f4341510de5b302a2732e4ab542c1dc19691d",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1384,6 +1394,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1392,8 +1403,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "8ef0429681069a1879e536e979b370c75d42b8e27b1db70fd6923ec5c71630bd",
-   "stored_sha256": "a0bd435fd14543c0aa9a78a8451813c5d01509d3084bc33852596cf2b639c721",
+   "result_sha256": "95720b62cd9e457ea9d1b118e83e826eceabb587aa4f68e4e247fc562ef99edc",
+   "stored_sha256": "68a45594d07ff27b3efca35587dd9e8980d28188e664a4fd53e223643400bcd6",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1483,6 +1494,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1491,8 +1503,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "7360f3ec7bfad833bf5b0fcc4de5336041a692de7cda403143f6dce2a8ac4762",
-   "stored_sha256": "10c196963f37e2ddabb6241286cb950c25b9c0f28c256653f3519b1389e026fb",
+   "result_sha256": "c04c46adb37535f56cfd4d83313dbf0d3c194e44eb005afa41401dc568516882",
+   "stored_sha256": "1fcabb29f0442dba5142122f4054634febab71c8177d77bec2b44fd29b14410c",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1584,6 +1596,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1592,8 +1605,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "438a77b60934f1d78ad06d2b63cd867bc82d5787ba472ae3d4da6a07196b2a1f",
-   "stored_sha256": "087cb6dca4cd0aef7d5c0644015c50d80a8b27c8b93ff6107bea2d9f91800efb",
+   "result_sha256": "10b0cd54fba4926fc390d9cc2af87f2a50708c844c351667e95564e18ee87e1f",
+   "stored_sha256": "2b6896568caa04c4c327fbc234a43ac9b2bdf29d48ca23d499088e46056010fa",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1683,6 +1696,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1691,8 +1705,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "c3826e6d0865c864c81f26ca9a122c87e511d79a7991931c71cd161b0c49fc2d",
-   "stored_sha256": "3a029003a8bb3d1ea96da97a6be42e377651f57e8844dcc2e813f4d08db85c87",
+   "result_sha256": "d8edbda38d2ef51498e6cacb0bb7af1f9c41b85b921284e5246871eb8462abb6",
+   "stored_sha256": "8a065d73f83bb0d9017020a41f56167a6bf07d489197880fc9e20f68eabac713",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1782,6 +1796,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1790,8 +1805,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "9fe5d5789db9228a66d498c8f715e94a8d7fe68d6936123b3a4110e40036e237",
-   "stored_sha256": "607621046265053d33468dc845c7f8130748bcb671bbd497dbbbd0cf37b9d0e7",
+   "result_sha256": "770e37ace481293f92c582b5178841144eb4e0fda476b49de3bed0363dfc0fac",
+   "stored_sha256": "e2b9f548620e19a036dbcc97ec6d03628f76d702eb40354746cb1ec4ed20dfea",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -1901,6 +1916,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -1909,8 +1925,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "b80389195af9eb4fefc4d2752b40a7f11cc546d5318163fc0c2affee55621625",
-   "stored_sha256": "c2d3373ea7dacf9b34c7431ea8a4eb981858d998405057b1a9234f395a91dd47",
+   "result_sha256": "b71b4bdabc2b33d707df40e941b132b7ed40d2017a5d48603d23d50196f09988",
+   "stored_sha256": "ef8cec582930d0eb4251e6380aacddf5c2780248a81adece6d598610b2e9cb12",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2018,6 +2034,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2026,8 +2043,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "c7a81e6899f87424603c307a27ea675f72e3c6fdf224510bc6550f04c52d2390",
-   "stored_sha256": "243e84eac3ecb0db3fb50bf98e75b3a596369b0d528b9370b1c4c264d5e01343",
+   "result_sha256": "70d0a1149f2ba9209c2f4a23f22de487cc81d665dbf1ec955bd8fff9cef07139",
+   "stored_sha256": "16d17f1443886678b85b4c9648e1d714b79b762b1790438e5fa1265f7682fc75",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2120,13 +2137,14 @@
     "cancellation_requested_by",
     "next_run_at",
     "definition_version",
+    "results_delivery",
     "m365_run_as_user_id",
     "m365_revision",
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "21a026d2d0ca7d0d17fee6afbf965bd058e5fe285e286ba0ccd3e1f817568075",
-   "stored_sha256": "d1137051a86cd83e76e771fd380e9f9d32b93989190a822333387e3dc035f2dc",
+   "result_sha256": "4c21f8f62901795331ec8c4f9350d5553e7fe27a23c2a1fbd3dad9f0f68bac28",
+   "stored_sha256": "31e8b56533f703cddc2027bbbedda8a884bd673991cd6c4ec2ea17336f065ed7",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "conv-group",
@@ -2180,92 +2198,15 @@
     ],
     [
      "get_settings"
-    ],
-    [
-     "get_group_model_endpoints",
-     "group-alpha"
     ]
    ],
-   "error": null,
-   "label": "classic_update",
-   "result_keys": [
-    "id",
-    "group_id",
-    "user_id",
-    "name",
-    "description",
-    "task_prompt",
-    "tasks",
-    "error_handling",
-    "runner_type",
-    "chat_capabilities_enabled",
-    "trigger_type",
-    "is_enabled",
-    "url_access_enabled",
-    "url_access_authorized",
-    "url_access_authorized_by",
-    "url_access_authorized_at",
-    "alert_priority",
-    "alert_mode",
-    "alert_rules",
-    "alert_evaluation",
-    "schedule",
-    "document_action",
-    "analyze",
-    "file_sync",
-    "selected_agent",
-    "model_endpoint_id",
-    "model_id",
-    "model_provider",
-    "model_binding_summary",
-    "conversation_id",
-    "created_at",
-    "created_by",
-    "modified_at",
-    "modified_by",
-    "updated_at",
-    "status",
-    "last_run_started_at",
-    "last_run_at",
-    "last_run_status",
-    "last_run_error",
-    "last_run_response_preview",
-    "last_run_trigger_source",
-    "run_count",
-    "active_run_id",
-    "cancellation_requested_at",
-    "cancellation_requested_by",
-    "next_run_at",
-    "definition_version",
-    "m365_run_as_user_id",
-    "m365_revision",
-    "m365_binding_approval_id",
-    "definition_revision"
-   ],
-   "result_sha256": "aba16e198e0e61407a537013364c6dcbf758133d57f79045db7fe35b346b3028",
-   "stored_sha256": "c7a3a5f40d5d40c7c3c501dede47f8a97b3aade491ccefb3024d935919e17c2d",
-   "summary": {
-    "alert_mode": "off",
-    "conversation_id": "conv-group",
-    "definition_version": 1,
-    "id": "00000000-0000-0000-0000-000000000001",
-    "is_enabled": true,
-    "m365_binding_approval_id": null,
-    "m365_run_as_user_id": "",
-    "modified_by": "owner-1",
-    "name": "Team classic renamed",
-    "next_run_at": null,
-    "schedule": {},
-    "trigger_type": "manual"
+   "error": {
+    "code": "workflow_definition_conflict",
+    "message": "This workflow uses chat execution or results settings. Open it in V2 to edit without losing its configuration.",
+    "type": "WorkflowDefinitionConflict"
    },
-   "writes": {
-    "group_workflows": [
-     [
-      "replace_item",
-      "00000000-0000-0000-0000-000000000001"
-     ]
-    ]
-   }
+   "label": "classic_update",
+   "writes": {}
   }
  ],
  "group_v3_structured": [
@@ -2335,6 +2276,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2345,8 +2287,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "dda81232c4ff44d49fac3d1b367f0a7ebfb36fdec707112170a4ea8ec34f569c",
-   "stored_sha256": "a6270ed7c4f15b101383bd2d9f4ebd0513173d6c34a7dffbcff9c7e137061e5a",
+   "result_sha256": "9269149bdb28e1f3819ff396498f88182a5d30234537771a7a4e33d6265f2d1d",
+   "stored_sha256": "3623192cb608629f0858a43d81cd2dfa82ccafe978f20fd0cebde1826702723c",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2436,6 +2378,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2446,8 +2389,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "ecfa327c1243ce08de5b4a5c35645117ea33f915f521565c4ef5f64b6e49d9f7",
-   "stored_sha256": "90134825e32bb2be53cb2848c14d0ac1199bfdf251ed7f00b1e6904e621b789d",
+   "result_sha256": "4ea00805a27cf9208358355faa5613b85f96f9897ae3666f6249d2dc3ce7e249",
+   "stored_sha256": "6a1e451434fe10133ffb552b557523696a5320de90e8177c4073dae5aff9b82c",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2551,6 +2494,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2559,8 +2503,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "a5e8d15180b65fa5537ea3cfecc23eb20e911f616dbb813c4848529a43f275b3",
-   "stored_sha256": "b5e2bc45e4779b09a1106d3847500d7938a5782682f9e74e8c07e451b56fea10",
+   "result_sha256": "59d59c2bad5d03e062a5905bb2b48d97b3c1c4f1f4dce29f387a6ecc78b7bd6e",
+   "stored_sha256": "9fdfcf550f074a477f381fddf291f7a031d489242c80b0b789d4784a050678e5",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2662,6 +2606,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2670,8 +2615,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "69d04ceb5f2b5722f9c754e99caa7c86291974d06e55c66e4a2e151000a78fb5",
-   "stored_sha256": "159d1e291acac5ea97379ea46354a0a25fc2bb3d7d68b50ce4dce12c7c3f8139",
+   "result_sha256": "edf6f0b837fc2a06850503fd1a65d5dddec142d97475bcbdac1d531f49f4f46b",
+   "stored_sha256": "c8f7a797d3e12e33c8bfe2b05639699d55627db4537b5cee5c0b5277ecc81b51",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2760,6 +2705,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2768,8 +2714,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "84de4389c6b99fb730b0180acf5d10eefec3b14ea993daa7480c6aa1dbe95f45",
-   "stored_sha256": "e9b10784a7ae74aa4d448b955a26dae355bda338448fb82cdab6e11761c35162",
+   "result_sha256": "25e37989312e585164e6c80d3278b14c5f7f53bc5953f26dabb8ab3b0b943b60",
+   "stored_sha256": "ed51445264eb00f0150989e82289782966365958a8677724338c53e2d31fe4b9",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -2859,6 +2805,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2867,8 +2814,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "4aaaa1d628a30e6a0d303f9ceb3c36efca3a6dd17f88b13712b1f5a8e4d3bf65",
-   "stored_sha256": "33071c1c018d0a4673490076dfc764ee005120cafddd669ef1d69ae773d237e3",
+   "result_sha256": "830d09e996fdc19fce87c6d1489492bfca32369a0f8d283d338e459ec05e2a96",
+   "stored_sha256": "6fc0bcba96a34da9b6b7786a0c68d3cbc83d6a2ea7ef93660391f851e66c8cab",
    "summary": {
     "alert_mode": "rules",
     "conversation_id": "",
@@ -2965,6 +2912,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -2973,8 +2921,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "830caea578b70707303a3efda8adfb5d0391cd93ecdaa0e7a051bf9ddfedb0cf",
-   "stored_sha256": "d549ebdd179d553534e70b0efd34352ff201cd681c2510e833f0f941051393fa",
+   "result_sha256": "7659f7c25acd7c7898cf5dd9a04fe6c1d36edcb3e6a7f625230cd5e96ab1c74d",
+   "stored_sha256": "d932ae6c2e4f13a355063e2b86f3e2bd29203e94ddc518bd522117cca8d9783e",
    "summary": {
     "alert_mode": "rules",
     "conversation_id": "",
@@ -3072,6 +3020,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3080,8 +3029,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "fc91907883d7dc73543d20ee2eaaa4f68163fe740115f0c495b19c7b9ca0323e",
-   "stored_sha256": "612db08cc7fe2ce55c1178c2b33a6fb21d63269d265e61c104e8ae3132c6538a",
+   "result_sha256": "f1d01e330093636862a4cf4d4bd977904ab5724cbcb2f9329c01c4130840a9cf",
+   "stored_sha256": "4e3155ac693d0bff6c782a1a3073fd8753743a4f1b066d0a4cdefb9b68544888",
    "summary": {
     "alert_mode": "rules",
     "conversation_id": "",
@@ -3187,6 +3136,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3195,8 +3145,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "e6932cb2b2851c64486763a50e6555fbb56b49711370f6ded6ec3eb6ccd912a1",
-   "stored_sha256": "d1adda9d7bc6b13759610b04e6fa5147aeff3c4884f0b0f63d854b42151d5da4",
+   "result_sha256": "843c14ebddcc226c3168987455f8568b5cf57ec04f60c26d81bb52f1a18d471e",
+   "stored_sha256": "4ad70967c6f590c657df70ed408168cfe0c1f2209e5a0e16ada8954d232dd6a1",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -3480,6 +3430,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3488,8 +3439,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "cef8f98dba2213af32efffc1878726977116b71e49f5aedc232757041a562cb0",
-   "stored_sha256": "c9ae41746e5ebe0ed1d53da2cbd7c0a0268e2a076193290daa8191e90e409983",
+   "result_sha256": "7eab7a5edf13fc9d3647dc21a9825be0691c94fed1e9b2520fcd0f8caa536f3b",
+   "stored_sha256": "997f7f81716882eba358d8ddd22e2b079f8eac265195b10a01d89e69a9706f14",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -3635,6 +3586,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3643,8 +3595,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "54b144bb57cdab66b3d338187bb03e912dd334adff30704ea4a43cf48a4dd2bf",
-   "stored_sha256": "14e314b7008ab703dea4e40517c84e4c883997cfcd88e9764894d966cf138e90",
+   "result_sha256": "e926e4f4f13da20597eade2a927a8e82cad4b56404d13c53fe9a93de123b9423",
+   "stored_sha256": "4580bc3fc4d8e5b14ba641270b484b5128fb9f3972d53b2294e16f5630bf927f",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -3758,6 +3710,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3766,8 +3719,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "53aea2aa1512c288f774a6257df01900bd66e054292722b6e234af5ad4d12cd5",
-   "stored_sha256": "287eb00d9f27a46c9622c3e857faa6734d7e334e7ac4132a71e5591a79e422c8",
+   "result_sha256": "ae054527770e04a781afa54893c8b6af930952ca32eb96b260f376823a52e57c",
+   "stored_sha256": "c2403badab07584959da3b0518910059298a7e9891c0938f02f23d0cc2288581",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -3875,6 +3828,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3883,8 +3837,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "e01842ac991a7441a1b178253741b8c5a43a1ed8accec1e30872114ec3c19a65",
-   "stored_sha256": "180ca3404f73c5c454b6ba795257ef6c4f880f8c73cc2f1878af735fc9392721",
+   "result_sha256": "95a07b652a1672039274937d7e0f3227907e21d0e13a99dbd95f910a96340a54",
+   "stored_sha256": "498459f7956c942fa792828095ea5617c7348f1028b610aa359f53257be64a6b",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -3977,6 +3931,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -3985,8 +3940,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "07e2acd994c37028336125a550da414ac791ae5aba6ed51d6159da48edcc7ee6",
-   "stored_sha256": "f07baadbdd3b80f1fcf40ddf0736886ef4bcaa2908ebc95920c1320ef48cd494",
+   "result_sha256": "0ab47009d13de8700cb4dd9f56800707f6ad665096ae85333087633159ad4ebf",
+   "stored_sha256": "0929a46128994baad498b2ad50ad6ae1ed73972f16f0dd0a2e9295bd90652ce8",
    "summary": {
     "alert_mode": "every_run",
     "conversation_id": "",
@@ -4077,6 +4032,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4085,8 +4041,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "bad40f1f10a301eee179f7cf85106d443e3490600a941f59a1fbc51c1803ef63",
-   "stored_sha256": "a0f7cebc0eb3b277935f20eaa57fa55c60f6a8ef87e8d9e4165f6b581f9d1802",
+   "result_sha256": "dcf436d1c7a45f4e563bc7b65828c42fda8927596afdcd132faeb3c62415ea20",
+   "stored_sha256": "84ab23da8fb8f712cf7c04ae65b92acd2e99f231e269f53957127ee05f0de89d",
    "summary": {
     "alert_mode": "every_run",
     "conversation_id": "",
@@ -4177,6 +4133,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4185,8 +4142,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "5a7c886521bed3fe8b19e504e32ea9ce06e7f294c15810a9376dccdd14446697",
-   "stored_sha256": "e67d0a3c12ef342b1af3bd7f576ddf2c53a7ab5e0ba441a51a13b62fbbc04f33",
+   "result_sha256": "622b8e216636c9c9dfda48c34ba154867986ee639ea9101dfd64e7ef4c30b94d",
+   "stored_sha256": "71fd9e33238c5d78b9f37403fb280784d85950e1543c440afd93218e00ff3a81",
    "summary": {
     "alert_mode": "every_run",
     "conversation_id": "",
@@ -4277,6 +4234,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4285,8 +4243,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "8c02356004a87cc8bf9565d26fac893895d671d6bd3be55270337ba6cb37f6f8",
-   "stored_sha256": "1ef3a0bc3330258cb36709d49633a868894b0375052ddb2c5ec61692115242b5",
+   "result_sha256": "17febeef858b2f7e80f588175d5dd58b09c7ba1c8cf87d619faedf38f31ee97b",
+   "stored_sha256": "d494d938d9f931c1b21cc7a9d8f2276352fb1d8501e2679191daa960c83b7065",
    "summary": {
     "alert_mode": "every_run",
     "conversation_id": "",
@@ -4377,6 +4335,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4385,8 +4344,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "620ccc00ef22a174401132e4732d65eaa58e480d2f0eb27e7668c17e48b0d1de",
-   "stored_sha256": "5159d1389c9056580af9c15cf1383c0853428999db8e5b315b164e5861686d24",
+   "result_sha256": "8c996c90ad0fd270f246943b55b73b86d604aaf8858a9034666e522f4a71d006",
+   "stored_sha256": "12e9ede60d85038290eb8813a8d380735a536c7be41881be7a20ec3c58313524",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -4479,6 +4438,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4487,8 +4447,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "2d39afcf805cd4f8b5aa74bb6e0253ea18ed464e444eeb8ca70e526ff963f16a",
-   "stored_sha256": "65a2dc4113efb8400b2f437bc90a8a5e8ef6dfecb605b76c720658d19292b138",
+   "result_sha256": "e431598c5f7198ff9023c1682d3c1bbc68a483a7fef08652fd746bea9db48391",
+   "stored_sha256": "70eace6d4f57dac04944cb9c24f36ae4f6d56f19a9889ddee2cee3a01e4961b1",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -4576,6 +4536,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4584,8 +4545,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "a7c47391ae3249ae5f79f7877b121e787a0adc641fefbd9f32435eba3b41921d",
-   "stored_sha256": "5ffd9f202c76f305282880e7e03e655a26ab8effd8de4a01f330ae28e12eb3ff",
+   "result_sha256": "e97e5b2b71f61524cfbbcae963e07dc54a1154b9fd66f63ac9cc9906053a65fc",
+   "stored_sha256": "b0d21cb38be5136ac8803955bb98e38bbbdf3a187889e5ce1f5e255b1d96e7fd",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -4673,6 +4634,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4681,8 +4643,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "0559ffb7b20881dcabba3d3f179b69b13f8a3888d80c582841dcc21d09c04a85",
-   "stored_sha256": "653630b01052d544995b3300b0637aff560e96b9d65139225449a13bcb678faa",
+   "result_sha256": "6c6aea1c038518fcc48ab0ca595d7fa39de87189bbfb2e68be842477829e5a92",
+   "stored_sha256": "759cc691ca7da1161691a1b542c69f639a3ce2863e435720b29e0d05ed460e08",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -4780,6 +4742,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4788,8 +4751,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "c24c14b171aa8b63971f83cc9b22f6fb3121a10f4498d342d0613219062a8c98",
-   "stored_sha256": "3efc74a5a98eb705a2ec522b3588d4f7cc1b910258d4f79b826cd11e185045e2",
+   "result_sha256": "2d96393639788e5169a0134c30abf01eaf3881f6173ca33da64476537161511a",
+   "stored_sha256": "69134b262175f10d0a85c70b1476c299720c70a53b2da9dc70b5595c0b59931b",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -4885,6 +4848,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -4893,8 +4857,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "8dec9cf65703cd554977ba0ba0772f617cb453200f2e904eb1871e34dbbcf153",
-   "stored_sha256": "271db7f44055cc08433b0a110648db7a4c38e8c9d4532639a4867757e5fd0baa",
+   "result_sha256": "529dd669ae7cdc115a0b55cd61cc71c1206778fd437ca8149131eb8c5c052343",
+   "stored_sha256": "38042395a15c61d262944835583a8213ec0668a0017607b5405613989ec335bc",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5006,6 +4970,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5014,8 +4979,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "c2bcab4013c748f344af67ec3431ca6cb167db510368683035b18b539cf62cf0",
-   "stored_sha256": "6469c48681a61a8ddff654cbdfa18944b40f1eee6396bd7fa5f5569bb9e9202d",
+   "result_sha256": "6d4785a01e02d7f5183ff8de1aac33f1256039ee5f91c6e74992f5ee9c8b8833",
+   "stored_sha256": "95757e2049469b25467fd602ac71965d4757df785cb595c03212d92b99a2d9fa",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5103,6 +5068,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5111,8 +5077,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "9cd3981268b7a7dc7541c1240a06dcaffe4b378360326f0bd89a056ed43bb2e7",
-   "stored_sha256": "f620d6103321ccc3c6870ac1fd9cf387cb2284fd5d46ce0be1cad4b2bc0f4347",
+   "result_sha256": "309d104c3f0f0628cb500fa70e0dd2340868bd958f52031e5df0b7c6450b6ca4",
+   "stored_sha256": "5504641e955a23c8adf3d6fd194fcc81c2e4664cab917f8aac168f11ba61a9d1",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5200,6 +5166,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5208,8 +5175,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "05b16f563a0003565226669790ee3e146b9c0e6031b53873a18cdc5006d905b4",
-   "stored_sha256": "c1d8737884374595af155a530c1feeaef56645d1b918fc743fad61fcd069e1a2",
+   "result_sha256": "91c12068beccf77202ae8bdcaac8422394ac42c0918ab7c47f68e0510da67b80",
+   "stored_sha256": "d5ff26098cbace25d36acb65a08b8db68ce40e38a62cac1ef3f83e9f04488789",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5333,6 +5300,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5341,8 +5309,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "c85cf3c01cdb655ee7dbbfbe666803c93710e7ed9c36409d47531cbe28d8fcbf",
-   "stored_sha256": "b0507923b7f6d34cd6373441e4450b35d899963c56bf60eeee96c37914c3e497",
+   "result_sha256": "e6d2fca2064340271d2ae99b5c584c4bc364040c1b191e12ae755f3c79387d73",
+   "stored_sha256": "9deb9ece8560e265414d8f7bc2147bbc269399b53e3ca63943514d983a69c64d",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5464,6 +5432,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5472,8 +5441,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "8402f38aa33421de1828a2de10b5db8ac903ca1e8d2c9c615bb156f374743385",
-   "stored_sha256": "aba44b461c7c273965740adc0a6775a8b0877e2bace15331f40e07c24d5affe0",
+   "result_sha256": "366803a49cf54bdeba89e77867e379deb28c6fa210cd9aac0c50e0218c501256",
+   "stored_sha256": "a5109803013eb91eba4612d9c48e63b6a664a9b89fe90026a6a310e4b207a45f",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5598,13 +5567,14 @@
     "cancellation_requested_by",
     "next_run_at",
     "definition_version",
+    "results_delivery",
     "m365_run_as_user_id",
     "m365_revision",
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "568cfc426f1b44ddd5cf99f00dab97451a040508a77cd65a197cdc0c965b0348",
-   "stored_sha256": "f257c5fe1c959c1c9bfadf104885da09b74a97d964e006a98bc2cefbfb08833a",
+   "result_sha256": "d30666e79eb7fb9514e904893cbb45233d82c15457774f06ffadd0ba8a992a91",
+   "stored_sha256": "60fdcdb45b07b48e19c1f85b06da798bc5cd30c5fcce4c9a7e99bba3b5969754",
    "summary": {
     "alert_mode": "rules",
     "conversation_id": "conv-personal",
@@ -5652,93 +5622,15 @@
     ],
     [
      "get_settings"
-    ],
-    [
-     "get_user_settings",
-     "owner-1",
-     [],
-     []
     ]
    ],
-   "error": null,
-   "label": "classic_update",
-   "result_keys": [
-    "id",
-    "user_id",
-    "name",
-    "description",
-    "task_prompt",
-    "tasks",
-    "error_handling",
-    "runner_type",
-    "chat_capabilities_enabled",
-    "trigger_type",
-    "is_enabled",
-    "url_access_enabled",
-    "url_access_authorized",
-    "url_access_authorized_by",
-    "url_access_authorized_at",
-    "alert_priority",
-    "alert_mode",
-    "alert_rules",
-    "alert_evaluation",
-    "schedule",
-    "document_action",
-    "analyze",
-    "file_sync",
-    "selected_agent",
-    "model_endpoint_id",
-    "model_id",
-    "model_provider",
-    "model_binding_summary",
-    "conversation_id",
-    "created_at",
-    "created_by",
-    "modified_at",
-    "modified_by",
-    "updated_at",
-    "status",
-    "last_run_started_at",
-    "last_run_at",
-    "last_run_status",
-    "last_run_error",
-    "last_run_response_preview",
-    "last_run_trigger_source",
-    "run_count",
-    "active_run_id",
-    "cancellation_requested_at",
-    "cancellation_requested_by",
-    "next_run_at",
-    "definition_version",
-    "m365_run_as_user_id",
-    "m365_revision",
-    "m365_binding_approval_id",
-    "definition_revision"
-   ],
-   "result_sha256": "4ff782cb7a8f1f40f933aa0890219690c4e042c564ab45980a1132ca305fcf0d",
-   "stored_sha256": "5b67d1005b1c0f2094d54524cf3350d7f7046ffb9e933498f32c4cabe25b012b",
-   "summary": {
-    "alert_mode": "rules",
-    "conversation_id": "conv-personal",
-    "definition_version": 1,
-    "id": "00000000-0000-0000-0000-000000000001",
-    "is_enabled": true,
-    "m365_binding_approval_id": null,
-    "m365_run_as_user_id": "",
-    "modified_by": "owner-1",
-    "name": "Classic renamed",
-    "next_run_at": null,
-    "schedule": {},
-    "trigger_type": "manual"
+   "error": {
+    "code": "workflow_definition_conflict",
+    "message": "This workflow uses chat execution or results settings. Open it in V2 to edit without losing its configuration.",
+    "type": "WorkflowDefinitionConflict"
    },
-   "writes": {
-    "personal_workflows": [
-     [
-      "replace_item",
-      "00000000-0000-0000-0000-000000000001"
-     ]
-    ]
-   }
+   "label": "classic_update",
+   "writes": {}
   },
   {
    "calls": [
@@ -5829,6 +5721,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5839,8 +5732,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "f379c9af0f33fb662d0fdc8b931e57903a63daac5ebf90b67b7960f0938d6a90",
-   "stored_sha256": "94735602cf0f3a6ea8799a45988dfe989cfdf13793b3f1a5b17bd8d005afb680",
+   "result_sha256": "d9a6884416f59c1ba21f476871b116a6a6cf654d5111a113d4c59a86e8a23311",
+   "stored_sha256": "3de8d7dcde7e1cd8e7eabe9313db115e9311048b34f9ca9b1251e087785d8178",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",
@@ -5928,6 +5821,7 @@
     "cancellation_requested_at",
     "cancellation_requested_by",
     "next_run_at",
+    "results_delivery",
     "definition_version",
     "reference_inputs",
     "durable_execution",
@@ -5938,8 +5832,8 @@
     "m365_binding_approval_id",
     "definition_revision"
    ],
-   "result_sha256": "36ac7bab0d297a9ce7ef5f77f445430e7721d0480a8957396b901753c0d3a078",
-   "stored_sha256": "72b547dd8b70d49c2c09996b8b893ec0b9e0d8d5b55fc8da9c3efd823e1bb65c",
+   "result_sha256": "b5be98499a39497db30ee38aacac70abbbf94d552717cd09764cff44cfe2ff07",
+   "stored_sha256": "c980ed7481d15f85455059e3eea6206997b9feddbac748ba0e856c2795647e39",
    "summary": {
     "alert_mode": "off",
     "conversation_id": "",

@@ -249,7 +249,7 @@ def _normalize_workflow_tasks(
             raise ValueError(f'Workflow task {index + 1} is invalid.')
         if structured and raw_task.keys() - {
             'id', 'type', 'name', 'instructions', 'order', 'runner', 'document_action', 'inputs',
-            'reference_ids', 'output_contract', 'approval', 'publication', 'input_processing',
+            'reference_ids', 'output_contract', 'approval', 'publication', 'input_processing', 'chat_execution',
         }:
             raise ValueError('A structured task contains unsupported executable fields.')
 
@@ -1002,7 +1002,8 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
     elif existing_plan_replay_task:
         tasks = [attach_plan_replay(tasks[0], existing_plan_replay_task['plan_replay'])]
     definition_fields = normalize_workflow_definition(
-        workflow_data, existing_workflow, tasks, user_id=user_id,
+        workflow_data, existing_workflow, tasks, user_id=user_id, settings=settings,
+        new_defaults=origin is None and not has_replay_payload,
     )
     tasks = definition_fields['tasks']
     reference_options = {'resolve_document': resolve_document} if resolve_document is not None else {}
@@ -1173,6 +1174,14 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
         workflow['next_run_at'] = None
 
     workflow.update(definition_fields)
+    if 'deep_research_authorized' in workflow_data or 'deep_research_authorized' in (existing_workflow or {}):
+        workflow['deep_research_authorized'] = _normalize_bool(
+            workflow_data.get('deep_research_authorized', (existing_workflow or {}).get('deep_research_authorized', False)),
+        )
+        for field in ('deep_research_authorized_by', 'deep_research_authorized_at'):
+            workflow[field] = _normalize_text(
+                workflow_data.get(field, (existing_workflow or {}).get(field)), 'Deep research authorization',
+            ) if workflow['deep_research_authorized'] else ''
     normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
     if workflow.get('definition_version') == 3:
         from functions_workflow_loop_runners import validate_workflow_loop_runners

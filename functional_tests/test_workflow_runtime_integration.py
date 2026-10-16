@@ -1,7 +1,7 @@
 # test_workflow_runtime_integration.py
 """
 Functional tests for durable submission and the actual workflow runner.
-Version: 0.261.122
+Version: 0.261.343
 Implemented in: 0.261.111
 
 Queue, recreated worker, task checkpoint, approval, and projections run through
@@ -125,7 +125,7 @@ def integration(monkeypatch):
             assert_workflow_execution_owned(), task_items.update({item["id"]: copy.deepcopy(item)})
         )[1],
         "_execute_workflow_file_sync": lambda *args: None,
-        "_ensure_workflow_conversation": lambda wf: {"id": "conversation-inventory", "user_id": "owner"},
+        "_ensure_workflow_conversation": lambda wf, run_record=None, run_id=None: {"id": "conversation-inventory", "user_id": "owner"},
         "_create_user_message": lambda conversation_id, *args: messages.upsert_item({
             "id": "user-message", "conversation_id": conversation_id,
         }),
@@ -135,6 +135,7 @@ def integration(monkeypatch):
         "_attach_workflow_url_access_result": lambda result, context: result,
         "_create_assistant_message": lambda *args, **kwargs: {"id": "assistant-message"},
         "_mirror_workflow_visualizations_to_created_conversations": lambda *args: None,
+        "_publish_configured_workflow_results": lambda *args: None,
         "_add_workflow_activity_thought": lambda *args, **kwargs: None,
         "_create_workflow_priority_alert": lambda *args, **kwargs: None,
         "log_workflow_run": lambda **kwargs: None,

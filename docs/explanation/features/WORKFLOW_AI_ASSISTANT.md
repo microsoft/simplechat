@@ -1,14 +1,16 @@
-# Workflow AI Assistant (v0.261.335)
+# Workflow AI Assistant (v0.261.343)
 
 ## Overview
 
-The AI workflow assistant lets a person change a personal workflow by describing the change in
+The AI workflow assistant lets a person change a personal or authorized group workflow by describing the change in
 plain language: "run this at 7 AM on weekdays and only alert me when something is urgent", or
 "compare every new document against #checklist". The assistant proposes the edit, and the V2
 workflow editor shows it as highlighted, attributed, revertible changes that the person reviews
 before saving. The assistant never saves anything.
 
-The server half is `POST /api/user/workflows/assist`, added in 0.261.208. It takes one
+The personal endpoint is `POST /api/user/workflows/assist`, added in 0.261.208.
+Version 0.261.343 adds `POST /api/groups/<group_id>/workflows/assist` under the
+group's existing workflow-management policy. Each endpoint takes one
 instruction and the editor's current draft, asks the model for a bounded set of allowlisted
 operations, applies them to a copy of the draft, checks the result the way a save would, and
 returns a candidate draft. It writes nothing.
@@ -25,6 +27,30 @@ Phases 3b and 3c of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATIO
 
 Debug-gated operation diagnostics implemented in version: **0.261.329**, tracked in
 `application/single_app/config.py`.
+
+Group, chat-capability and results-authoring parity implemented in version:
+**0.261.343**, tracked in `application/single_app/config.py`.
+
+## Chat capabilities and results
+
+Ask AI can author `chat_execution` at workflow or task level: automatic
+orchestration, explicit required capabilities and visual outputs, or Off.
+It can restore task inheritance. A request for current web research should
+select the real web-search capability, not merely add search wording to a
+plain-model prompt. Options come from the existing enabled capability registry;
+workflow-control tools are not offered recursively inside ordinary workflows.
+
+The assistant also authors `results_delivery`: run history only, a new results
+conversation, or delivery by an existing task/agent. Personal and group
+destinations follow the workflow scope. Shared results use authorized recipient
+handles, and group results may use all current group members when explicitly
+requested. Ambiguous people require clarification; names are not saved as user
+IDs. This does not add dynamic audience discovery, invitations during authoring,
+or a new permission or approval system.
+
+These changes use the same candidate validation, highlights, change history and
+undo path as other edits. Review them before saving. See
+[Workflow chat capability parity](WORKFLOW_CHAT_CAPABILITY_PARITY.md).
 
 The assistant ships in three layers:
 
@@ -101,7 +127,8 @@ the endpoint refuses with 409, and the editor keeps its draft.
 The candidate it returns is the draft with the operations applied and nothing else. It is not
 normalized, so the editor highlights only what the assistant actually changed.
 
-Version 1 is limited to personal workflows. Group workflows are refused. The conversation isn't
+Since 0.261.343, the group endpoint supports drafts in its own authorized group;
+the personal endpoint still refuses group drafts. The assist conversation isn't
 stored: the editor sends its recent turns with each request, and nothing is kept on the server.
 
 ## Technical specifications
@@ -113,7 +140,7 @@ stored: the editor sends its recent turns with each request, and nothing is kept
 | `route_backend_workflows.py` | The route: reads the body with a size bound, builds the services and maps errors to responses. |
 | `functions_workflow_assist.py` | The core: request validation, model messages, the evaluate-and-correct loop, warnings and telemetry. |
 | `functions_workflow_assist_operations.py` | Handles, the model's view of the draft, the operation schemas and the structural apply. |
-| `functions_workflow_assist_editor.py` | A Python port of the V2 editor logic the candidate must satisfy: the authored and forbidden field lists, `workflowAssistViolation`, `workflowForSave` for the personal scope, and the change keys and labels from `diffWorkflowChanges`. |
+| `functions_workflow_assist_editor.py` | A Python port of the V2 editor logic the candidate must satisfy: the authored and forbidden field lists, `workflowAssistViolation`, scope-aware `workflowForSave`, and the change keys and labels from `diffWorkflowChanges`. |
 | `functions_workflow_assist_limits.py` | The per-user limiter in Cosmos. |
 | `functions_workflow_assist_runtime.py` | The Azure-backed services: the stored workflow, the reference authorizer, editor options, excerpts, the dry run, the Microsoft 365 checks, the model call and the limiter. |
 
@@ -141,11 +168,12 @@ setting on top:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `enable_workflow_ai_assistant` | On | Users who can edit personal workflows can use the AI assistant in the V2 workflow editor. It has no effect while **Enable Personal Workflows** is off. |
+| `enable_workflow_ai_assistant` | On | Users who can edit an enabled personal or group workflow scope can use the V2 assistant. Group availability does not require personal workflows to be enabled. |
 
-The V2 bootstrap route (`/api/v2/bootstrap`) reports the per-user result as
-`features.enable_workflow_ai_assistant`, and the editor hides the **Ask AI** tab and **Draft with
-AI** when it's false. See [When the tab is offered](#when-the-tab-is-offered). From 0.261.215 the
+The V2 bootstrap route (`/api/v2/bootstrap`) reports the personal per-user result as
+`features.enable_workflow_ai_assistant`; scope-specific editor options also report
+`workflow_assist_available`, including group access. The editor hides **Ask AI**
+and **Draft with AI** when unavailable. See [When the tab is offered](#when-the-tab-is-offered). From 0.261.215 the
 same result gates personal requests to `POST /api/workflows/draft-instructions`, which answers 403
 `workflow_assistant_disabled` when it's false, and the classic personal workspace hides its
 **Task Brief** and **Draft Workflow Instructions** controls. Group drafting doesn't follow this
@@ -177,8 +205,9 @@ The roadmap's contract names the base's token `modified_at`. The endpoint uses
 conflict. A new draft must have no `id`. A saved draft's `id` must equal `base.workflow_id`, and
 its `definition_revision`, when present, must equal the base's.
 
-The draft must be personal: a draft carrying `group_id` is refused with
-`group_workflow_unsupported`. A draft the editor opened read-only (`editor_readonly_reason`) is
+The personal endpoint requires a personal draft. The group endpoint requires the
+matching `group_id` and checks its saved base in that group's partition.
+Cross-scope drafts are refused. A draft the editor opened read-only (`editor_readonly_reason`) is
 refused with `workflow_read_only`.
 
 ### Response
@@ -299,6 +328,8 @@ properties) before anything is applied. At most 64 operations are accepted per r
 | Trigger and schedule | `set_trigger_manual`, `set_schedule_interval` (seconds, minutes or hours), `set_schedule_calendar` (daily, weekdays, weekly or monthly, at a local `HH:MM`) |
 | Alerts | `set_alert_mode` (`off`, `every_run` with a priority, or `rules`), `add_alert_rule`, `update_alert_rule`, `remove_alert_rule`; rules support acknowledgment, sound and size |
 | Runner | `set_workflow_runner`, `set_task_runner` (inherit, an agent handle or a model handle) |
+| Chat capabilities | `set_workflow_chat_execution`, `set_task_chat_execution`, `inherit_task_chat_execution` |
+| Results delivery | `set_results_delivery`, `set_results_recipients`, `set_results_all_group_members` |
 | Tasks | `add_task`, `remove_task`, `move_task`, `set_task_name`, `set_task_instructions`, `set_task_inputs` |
 | Documents | `bind_reference`, `set_task_references`, `unbind_reference`, `set_task_document_target`, `clear_task_document_target`, `set_task_document_selection`, `update_task_document_window`, `replace_task_document_filter`, `set_task_document_scope`, `set_task_merge_options` |
 
@@ -496,8 +527,9 @@ ID and timestamps, never request content. **This document is the endpoint's only
 
 ### Security model
 
-- **Personal only** (roadmap decision 3, gotcha 29). Group drafts and drafts carrying `group_id`
-  are refused. The base must be the caller's own personal workflow.
+- **Scope-bound authoring.** Personal bases belong to the caller; group bases
+  belong to the endpoint's group and require its existing management permission.
+  Neither endpoint may load a base from another user's or group's partition.
 - **The caller's own access.** `#` documents go through `resolve_scope_references` with the caller's
   identity, and excerpts through `load_workflow_reference`, which re-authorizes each one. Agents and
   models come only from the caller's editor options. The dry run authorizes everything again.
@@ -566,9 +598,11 @@ off by default. See [V2 shared assist thread](V2_SHARED_ASSIST_THREAD.md#options
 
 The editor offers Ask AI only when all three of these hold:
 
-1. The bootstrap reports `features.enable_workflow_ai_assistant` as true for this user. That
-   follows the admin setting, personal workflows and the `WorkflowUser` role.
-2. The workflow is personal. Group workflows never offer it (roadmap decision 3).
+1. The assistant is enabled for the editor's scope. Personal availability follows
+   the existing personal-workflow and `WorkflowUser` policy; group availability
+   follows the existing group-workflow policy independently of personal workflows.
+2. The server's editor options report `workflow_assist_available`, including
+   the caller's management rights for group workflows.
 3. The editor can change the workflow. It can't when you don't have edit rights, when the workflow
    has an active run, when access was lost while the editor was open, or when the workflow uses
    something this editor can't change, such as an unsupported flow feature or a stored schedule it
@@ -583,8 +617,10 @@ personal workflow, so the tab sends it without a base, and there is no saved wor
 
 ### The thread
 
-A saved workflow has one thread, keyed `workflow:personal:<workflow id>`. A new workflow or a
-proposal draft gets a new key, `workflow:new:<id>`, each time the editor opens, so it starts empty.
+A saved personal workflow has a thread keyed `workflow:personal:<workflow id>`.
+A group thread includes its group ID, so identical workflow IDs cannot share a
+thread across scopes. A new or proposal draft gets a fresh, scope-prefixed key
+each time the editor opens, so it starts empty.
 Every thread uses the conversation ID `workflow-editor` and the thread's local mode, which keeps
 the last 20 finished exchanges.
 
@@ -798,13 +834,14 @@ as one undoable AI change labeled "Draft with AI: <task>", and focus moves to th
 
 ### Enable or disable the assistant
 
-The assistant is on by default wherever personal workflows are on. An administrator can turn it
+The assistant is on by default where workflows and the scope's existing access
+policy permit it. An administrator can turn it
 off under **Admin Settings > Workflow > Enable AI Workflow Assistant**. See the
 [workflow admin settings](../../admin/workflow.md).
 
 ### Use the Ask AI tab
 
-1. Open a personal workflow in the V2 editor, or choose **Edit** on a workflow proposal in chat.
+1. Open a personal or authorized group workflow in the V2 editor, or choose **Edit** on a workflow proposal in chat.
 2. Choose **Ask AI** in the footer. To ask about one task, choose **Ask AI** on that task instead.
    The tab shows **About:** with the task's name, and each turn is about that task until you clear
    it.

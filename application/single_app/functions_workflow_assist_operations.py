@@ -47,6 +47,9 @@ from functions_workflow_assist_editor import (
     workflow_schedule_for_editor,
 )
 from functions_workflow_definitions import WorkflowAlertValidationError, WorkflowPublicValidationError
+from functions_workflow_configuration import (
+    WORKFLOW_CAPABILITY_IDS, WORKFLOW_VISUAL_REQUIREMENTS, normalize_chat_execution, normalize_results_delivery,
+)
 from functions_workflow_document_selection import (
     FILE_TYPES, MAX_RECENT_WINDOW_MINUTES, filter_schema, normalize_document_selection,
 )
@@ -115,7 +118,7 @@ _HANDLE_PATTERNS = frozenset({
 })
 
 # A user's reference alias that looks like a server handle is shown under a server handle instead.
-_RESERVED_HANDLE = re.compile(r'(?:task|new|node|ref|doc|agent|model|alert|shared)_[0-9]+|default_model', re.IGNORECASE)
+_RESERVED_HANDLE = re.compile(r'(?:task|new|node|ref|doc|agent|model|alert|shared|recipient)_[0-9]+|default_model', re.IGNORECASE)
 # C0 controls other than tab, line feed and carriage return, plus DEL.
 _CONTROL_CHARACTERS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 _LINE_BREAKS = re.compile(r'[\r\n\u0085\u2028\u2029]')
@@ -386,6 +389,14 @@ class AssistHandles:
         request_documents = [item for item in request_documents if isinstance(item, dict)]
         self.matcher = IdMatcher(collect_known_ids(draft, self.options, request_documents) | {user_id})
         self._by_handle = {}
+        self.recipients = []
+        delivery_options = self.options.get('results_delivery') or {}
+        for position, recipient in enumerate(_rows(delivery_options.get('recipient_choices')), start=1):
+            if not _string(recipient.get('id')):
+                continue
+            handle = f'recipient_{position}'
+            self.recipients.append((handle, recipient))
+            self._register(handle, ('recipient', recipient))
         self.workspaces = []
         self.workspace_handles = {}
         for position, workspace in enumerate(self.options.get('document_workspaces', [
@@ -673,6 +684,8 @@ def _task_view(task, handles, draft, changed_files):
         'task': handles.task_handles[task['id']],
         'name': _string(task.get('name')),
         'instructions': _string(task.get('instructions')),
+        'chat_execution': copy.deepcopy(task.get('chat_execution')),
+        'effective_chat_execution': copy.deepcopy(task.get('chat_execution', draft.get('chat_execution'))),
     }
     publication = js_truthy(task.get('publication'))
     if publication:
@@ -742,6 +755,9 @@ def build_draft_view(draft, handles):
         'format': 'flow' if handles.structured else 'tasks',
         'name': _string(draft.get('name')),
         'description': _string(draft.get('description')),
+        'scope': 'group' if draft.get('group_id') else 'personal',
+        'chat_execution': copy.deepcopy(draft.get('chat_execution')),
+        'legacy_chat_capabilities_enabled': draft.get('chat_capabilities_enabled') is True,
         'runner': _workflow_runner_view(draft, handles),
         'trigger': _trigger_view(draft),
         'alerts': {
@@ -760,6 +776,17 @@ def build_draft_view(draft, handles):
         ],
         'tasks': [_task_view(task, handles, draft, changed_files) for task in _rows(draft.get('tasks'))],
     }
+    delivery = draft.get('results_delivery')
+    if isinstance(delivery, dict):
+        recipient_handles = {recipient['id']: handle for handle, recipient in handles.recipients}
+        view['results_delivery'] = {
+            key: copy.deepcopy(delivery[key])
+            for key in ('version', 'mode', 'conversation_type', 'all_group_members') if key in delivery
+        }
+        view['results_delivery']['recipients'] = [
+            recipient_handles.get(identity, 'unavailable_recipient')
+            for identity in delivery.get('recipient_ids') or []
+        ]
     if handles.flow_index:
         flow = []
         for node_id in handles.flow_index['order']:
@@ -819,6 +846,21 @@ def build_options_view(handles):
         'max_tasks': assist_max_tasks(options),
         'minimum_interval_seconds': schedule.get('min_interval_seconds') if _is_int(schedule.get('min_interval_seconds')) else 0,
     }
+    execution = options.get('chat_execution') or {}
+    view['chat_execution'] = {
+        key: copy.deepcopy(execution.get(key) or [])
+        for key in ('modes', 'capabilities', 'visual_requirements')
+    }
+    delivery = options.get('results_delivery') or {}
+    view['results_delivery'] = {
+        'modes': copy.deepcopy(delivery.get('modes') or []),
+        'conversation_types': copy.deepcopy(delivery.get('conversation_types') or []),
+        'allow_all_group_members': delivery.get('allow_all_group_members') is True,
+        'recipients': [
+            {'recipient': handle, 'label': sanitize_label(recipient.get('label'))}
+            for handle, recipient in handles.recipients
+        ],
+    }
     return view
 
 
@@ -867,7 +909,38 @@ def _operation(name, properties=None, required=(), all_of=()):
 
 
 _TASK = _handle(TASK_HANDLE_PATTERN)
+_CHAT_EXECUTION_PROPERTIES = {
+    'mode': {'enum': ['orchestration', 'selected', 'off']},
+    'required_capabilities': {
+        'type': 'array', 'maxItems': 32, 'uniqueItems': True,
+        'items': {'enum': list(WORKFLOW_CAPABILITY_IDS)},
+    },
+    'visual_requirements': {
+        'type': 'array', 'maxItems': 3, 'uniqueItems': True,
+        'items': {'enum': list(WORKFLOW_VISUAL_REQUIREMENTS)},
+    },
+}
 OPERATION_SCHEMAS = {
+    'set_workflow_chat_execution': _operation(
+        'set_workflow_chat_execution', _CHAT_EXECUTION_PROPERTIES,
+        ['mode', 'required_capabilities', 'visual_requirements'],
+    ),
+    'set_task_chat_execution': _operation(
+        'set_task_chat_execution', {'task': _TASK, **_CHAT_EXECUTION_PROPERTIES},
+        ['task', 'mode', 'required_capabilities', 'visual_requirements'],
+    ),
+    'inherit_task_chat_execution': _operation('inherit_task_chat_execution', {'task': _TASK}, ['task']),
+    'set_results_delivery': _operation('set_results_delivery', {
+        'mode': {'enum': ['history', 'conversation', 'task']},
+        'conversation_type': {'enum': ['personal', 'shared', 'group', 'group_shared']},
+    }, ['mode', 'conversation_type']),
+    'set_results_recipients': _operation('set_results_recipients', {
+        'recipients': {'type': 'array', 'maxItems': 100, 'uniqueItems': True,
+                       'items': _handle('^recipient_[1-9][0-9]*$')},
+    }, ['recipients']),
+    'set_results_all_group_members': _operation('set_results_all_group_members', {
+        'enabled': {'type': 'boolean'},
+    }, ['enabled']),
     'set_name': _operation('set_name', {'name': _str(ASSIST_WORKFLOW_NAME_MAX_LENGTH)}, ['name']),
     'set_description': _operation(
         'set_description', {'description': _str(ASSIST_WORKFLOW_DESCRIPTION_MAX_LENGTH, min_length=0)}, ['description'],
@@ -1038,7 +1111,8 @@ ENVELOPE_SCHEMA = {
             'properties': {
                 'question': {'type': 'string', 'minLength': 1, 'maxLength': 400, 'pattern': TEXT_PATTERN},
                 'fields': {'type': 'array', 'minItems': 1, 'maxItems': 6, 'uniqueItems': True,
-                           'items': {'enum': ['schedule_time', 'lookback', 'workspace', 'task', 'filter', 'runner']}},
+                           'items': {'enum': ['schedule_time', 'lookback', 'workspace', 'task', 'filter', 'runner',
+                                              'recipient']}},
             },
         },
     },
@@ -1126,9 +1200,10 @@ class AssistApplyContext:
     different document.
     """
 
-    def __init__(self, *, time_zone=None, stored_workflow=None):
+    def __init__(self, *, time_zone=None, stored_workflow=None, audience_instruction=""):
         self.time_zone = time_zone if isinstance(time_zone, str) and time_zone else None
         self.stored_workflow = stored_workflow if isinstance(stored_workflow, dict) else None
+        self.audience_instruction = audience_instruction
 
 
 def _new_uuid():
@@ -1498,6 +1573,96 @@ class _Applier:
         raise _OperationError('It names an alert rule that an earlier operation removed.', 'handle_invalid')
 
     # -- runners -----------------------------------------------------------
+
+    def _chat_execution(self, op):
+        try:
+            execution = normalize_chat_execution({
+                'version': 1, **{key: op[key] for key in _CHAT_EXECUTION_PROPERTIES},
+            })
+        except ValueError:
+            raise _OperationError('Choose valid chat execution selections for this mode.') from None
+        choices = self.handles.options.get('chat_execution') or {}
+        for key, selected in (
+            ('modes', [execution['mode']]),
+            ('capabilities', execution['required_capabilities']),
+            ('visual_requirements', execution['visual_requirements']),
+        ):
+            available = {item.get('id') for item in _rows(choices.get(key)) if item.get('available') is True}
+            if any(identity not in available for identity in selected):
+                raise _OperationError('The requested chat capability or output is unavailable. Choose an available option.')
+        return execution
+
+    def op_set_workflow_chat_execution(self, op):
+        self.candidate['chat_execution'] = self._chat_execution(op)
+
+    def op_set_task_chat_execution(self, op):
+        _index, task = self._task(op['task'])
+        if js_truthy(task.get('publication')):
+            raise _OperationError('A publication task has no chat execution to change.', 'protected_workflow')
+        task['chat_execution'] = self._chat_execution(op)
+        self.touched_tasks.add(task['id'])
+
+    def op_inherit_task_chat_execution(self, op):
+        _index, task = self._task(op['task'])
+        if js_truthy(task.get('publication')):
+            raise _OperationError('A publication task has no chat execution to change.', 'protected_workflow')
+        task.pop('chat_execution', None)
+        self.touched_tasks.add(task['id'])
+
+    def _results_delivery(self):
+        return self.candidate.setdefault('results_delivery', {
+            'version': 1, 'mode': 'history',
+            'conversation_type': 'group' if self.candidate.get('group_id') else 'personal',
+            'recipient_ids': [], 'all_group_members': False,
+        })
+
+    def op_set_results_delivery(self, op):
+        choices = self.handles.options.get('results_delivery') or {}
+        for key, value in (('modes', op['mode']), ('conversation_types', op['conversation_type'])):
+            if value not in {item.get('id') for item in _rows(choices.get(key))}:
+                raise _OperationError('The results destination is unavailable in this workflow scope.')
+        delivery = self._results_delivery()
+        delivery.update(mode=op['mode'], conversation_type=op['conversation_type'])
+        if op['mode'] != 'conversation' or op['conversation_type'] in ('personal', 'group'):
+            delivery.update(recipient_ids=[], all_group_members=False)
+
+    def op_set_results_recipients(self, op):
+        recipients = []
+        instruction = self.context.audience_instruction.casefold()
+        if op['recipients'] and not instruction:
+            raise _OperationError('Ask which people should receive the results before changing the audience.')
+        for handle in op['recipients']:
+            target = self.handles.resolve(handle)
+            if target is None or target[0] != 'recipient':
+                raise _OperationError('Choose a recipient from the authorized people choices.', 'handle_invalid')
+            label = str(target[1].get('label') or '').casefold()
+            emails = re.findall(r'[\w.+-]+@[\w.-]+\.[a-z]{2,}', label)
+            names = label.split('(')[0].strip()
+            matched_name = next((
+                name for name in [names, *names.split()]
+                if len(name) > 1 and re.search(rf'(?<!\w){re.escape(name)}(?!\w)', instruction)
+            ), None)
+            exact_email = any(email in instruction for email in emails)
+            if not exact_email:
+                matching = [
+                    recipient for _handle, recipient in self.handles.recipients
+                    if matched_name and matched_name in str(recipient.get('label') or '').casefold().split('(')[0]
+                ]
+                if len(matching) != 1 or matching[0]['id'] != target[1]['id']:
+                    raise _OperationError('The recipient name is missing or ambiguous. Ask for a specific person or email.')
+            recipients.append(target[1]['id'])
+        self._results_delivery().update(recipient_ids=recipients, all_group_members=False)
+
+    def op_set_results_all_group_members(self, op):
+        choices = self.handles.options.get('results_delivery') or {}
+        if not self.candidate.get('group_id') or choices.get('allow_all_group_members') is not True:
+            raise _OperationError('All group members is available only in this workflow group.')
+        if op['enabled'] and not re.search(
+            r'\b(?:all|every|whole|entire)\b.{0,35}\b(?:members?|group|team|everyone)\b|\beveryone\b',
+            self.context.audience_instruction, re.IGNORECASE,
+        ):
+            raise _OperationError('Ask whether all current group members should receive the results.')
+        self._results_delivery().update(all_group_members=op['enabled'], recipient_ids=[])
 
     def op_set_workflow_runner(self, op):
         if op['runner'] == 'agent':
@@ -1949,7 +2114,8 @@ class _Applier:
                 continue
             try:
                 normalize_alert_rule(
-                    rule, task_ids={task['id'] for task in self._tasks()}, index=index, workflow_scope='personal',
+                    rule, task_ids={task['id'] for task in self._tasks()}, index=index,
+                    workflow_scope='group' if self.candidate.get('group_id') else 'personal',
                 )
             except WorkflowAlertValidationError:
                 messages.append(
@@ -2000,6 +2166,15 @@ def apply_assist_operations(draft, output, handles, context):
     if not messages:
         messages = applier.finish(output)
         if messages:
+            diagnostics.append({'assist_rule': 'candidate_invalid'})
+    if not messages and any(operation['op'].startswith('set_results_') for operation in output.get('operations') or []):
+        try:
+            normalize_results_delivery(
+                applier.candidate.get('results_delivery'),
+                workflow_scope='group' if draft.get('group_id') else 'personal',
+            )
+        except ValueError:
+            messages.append('Choose a valid results destination and an explicit authorized shared audience.')
             diagnostics.append({'assist_rule': 'candidate_invalid'})
     if messages:
         raise AssistApplyError(messages, diagnostics=diagnostics)

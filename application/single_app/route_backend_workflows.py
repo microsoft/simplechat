@@ -86,8 +86,10 @@ from functions_source_review import (
     URL_ACCESS_CONTEXT_WORKFLOW,
     get_url_access_max_urls,
     has_url_access_app_role,
+    has_deep_research_app_role,
     is_url_access_enabled,
     is_url_access_enabled_for_user,
+    is_source_review_enabled_for_user,
     validate_url_access_request,
 )
 from functions_workflow_runner import _workflow_task_run_item_id, create_workflow_run_id, run_group_workflow, run_personal_workflow
@@ -102,7 +104,7 @@ from functions_workflow_definitions import (
     WorkflowDefinitionError,
     WorkflowPublicValidationError,
 )
-from functions_workflow_editor import get_workflow_editor_options
+from functions_workflow_editor import get_workflow_editor_options, workflow_assist_available
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import authorize_workflow_task_result_read
 from functions_workflow_result_reader import WorkflowResultUnavailable, read_workflow_result, workflow_result_error_payload
@@ -1007,11 +1009,39 @@ def _prepare_workflow_url_access_payload(payload, user_id):
     payload = payload if isinstance(payload, dict) else {}
     settings = get_settings()
     current_user_roles = (session.get('user') or {}).get('roles', [])
+    tasks = payload.get('tasks') if isinstance(payload.get('tasks'), list) else []
+    configurations = [payload.get('chat_execution'), *[
+        task.get('chat_execution') for task in tasks if isinstance(task, dict)
+    ]]
+    automatic = any(isinstance(item, dict) and item.get('mode') == 'orchestration' for item in configurations) or (
+        not payload.get('id') and 'chat_execution' not in payload
+        and settings.get('enable_chat_orchestration') is True
+    )
+    selected = {
+        identity for item in configurations if isinstance(item, dict) and item.get('mode') == 'selected'
+        for identity in (item.get('required_capabilities') if isinstance(item.get('required_capabilities'), list) else [])
+        if isinstance(identity, str)
+    }
+    # Grants are captured from the signed-in user's claims, never browser or assistant fields.
+    for prefix, capable, has_role in (
+        ('url_access', is_url_access_enabled_for_user(settings, user_roles=current_user_roles),
+         has_url_access_app_role(current_user_roles)),
+        ('deep_research', is_source_review_enabled_for_user(
+            settings, user_id, user_roles=current_user_roles,
+         ), has_deep_research_app_role(current_user_roles)),
+    ):
+        capability = 'url_fetch' if prefix == 'url_access' else 'deep_research'
+        requested = automatic or capability in selected or (
+            prefix == 'url_access' and _normalize_bool(payload.get('url_access_enabled'))
+        )
+        authorized = bool(requested and capable and has_role)
+        payload[f'{prefix}_authorized'] = authorized
+        payload[f'{prefix}_authorized_by'] = user_id if authorized else ''
+        payload[f'{prefix}_authorized_at'] = datetime.now(timezone.utc).isoformat() if authorized else ''
+        if capability in selected and not capable:
+            raise PermissionError('A selected chat capability is not available to this user.')
     url_access_requested = _normalize_bool(payload.get('url_access_enabled'))
     if not url_access_requested:
-        payload['url_access_authorized'] = False
-        payload['url_access_authorized_by'] = ''
-        payload['url_access_authorized_at'] = ''
         return payload
 
     if not is_url_access_enabled_for_user(settings, user_roles=current_user_roles):
@@ -1866,6 +1896,7 @@ def register_route_backend_workflows(bp):
         try:
             services = build_workflow_assist_services(
                 settings, client_factory=lambda: _workflow_assist_client(settings),
+                instruction=body.get('instruction') if isinstance(body, dict) else '',
             )
         except Exception as exc:
             log_event(
@@ -1878,6 +1909,46 @@ def register_route_backend_workflows(bp):
             result = run_workflow_assist(body, user_id=user_id, services=services)
         except WorkflowAssistError as exc:
             return _workflow_assist_response(exc.payload(settings), exc.status, retry_after=exc.retry_after)
+        return _workflow_assist_response(result, 200, user_id=user_id)
+
+    @bp.route('/api/groups/<group_id>/workflows/assist', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def assist_group_workflow(group_id):
+        """Author a draft within the route's current authorized group, without publishing."""
+        user_id = get_current_user_id()
+        settings = get_settings()
+        try:
+            assert_group_role(user_id, group_id, allowed_roles=get_group_workflow_management_roles(settings))
+            _assert_group_workflow_feature_enabled(group_id, settings)
+        except PermissionError:
+            return _workflow_assist_response({'error': 'Not authorized to manage this group workflow.'}, 403)
+        except ValueError:
+            return _workflow_assist_response({'error': 'Group workflows are disabled.'}, 400)
+        roles = (session.get('user') or {}).get('roles', [])
+        if not workflow_assist_available(settings, user_roles=roles, group_id=group_id):
+            return _workflow_assist_response({
+                'error': 'The AI workflow assistant is not available.', 'code': 'workflow_assistant_disabled',
+            }, 403)
+        try:
+            body = _read_workflow_assist_body()
+            services = build_workflow_assist_services(
+                settings, client_factory=lambda: _workflow_assist_client(settings), group_id=group_id,
+                user_info=_get_current_user_info_with_roles(),
+                instruction=body.get('instruction') if isinstance(body, dict) else '',
+            )
+            result = run_workflow_assist(body, user_id=user_id, services=services)
+        except WorkflowAssistError as exc:
+            return _workflow_assist_response(exc.payload(settings), exc.status, retry_after=exc.retry_after)
+        except PermissionError:
+            return _workflow_assist_response({'error': 'Not authorized to manage this group workflow.'}, 403)
+        except Exception as exc:
+            log_event('[WORKFLOW_ASSIST] Assist services could not start',
+                      extra={'error_type': type(exc).__name__, 'failure_code': 'assistant_failed'},
+                      level=logging.ERROR)
+            failure = WorkflowAssistError('assistant_failed')
+            return _workflow_assist_response(failure.payload(settings), failure.status)
         return _workflow_assist_response(result, 200, user_id=user_id)
 
 

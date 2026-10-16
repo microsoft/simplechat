@@ -21,6 +21,7 @@ import {
 import { DEFAULT_FLOW_LIMITS, isLegacyWorkflowBinding } from './workflowFlow';
 import { isRecord } from './workspaceAuthoring';
 import { workflowScheduleForSave } from './workflowSettings';
+import { workflowChatExecutionSummary, workflowResultsSummary } from './workflowChatExecution';
 import {
     workflowAgentKey,
     workflowFileSyncConfig,
@@ -37,6 +38,7 @@ export type WorkflowEditorSectionId =
     | 'trigger'
     | 'file-sync'
     | 'execution'
+    | 'results'
     | 'references'
     | 'limits'
     | 'tasks'
@@ -47,6 +49,7 @@ export const WORKFLOW_EDITOR_SECTION_LABELS: Readonly<Record<WorkflowEditorSecti
     trigger: 'Trigger and schedule',
     'file-sync': 'File Sync',
     execution: 'Execution',
+    results: 'Results',
     references: 'Shared references',
     limits: 'Limits',
     tasks: 'Tasks',
@@ -190,7 +193,7 @@ export function workflowTriggerSummary(workflow: WorkflowDefinition, timezones: 
 export function workflowExecutionSummary(workflow: WorkflowDefinition): string {
     const strategy = workflow.error_handling.strategy === 'continue' ? 'Continue after failure' : 'Halt on failure';
     const retries = plural(workflow.error_handling.retry_count, 'retry', 'retries');
-    return `${strategy} · ${retries}${workflow.durable_execution === true ? ' · Durable execution' : ''}`;
+    return `${strategy} · ${retries}${workflow.durable_execution === true ? ' · Durable execution' : ''} · ${workflowChatExecutionSummary(workflow.chat_execution, workflow.chat_capabilities_enabled)}`;
 }
 
 /** When a workflow alerts, in the alert editor's own words, with its rule count. */
@@ -247,6 +250,14 @@ export function workflowEditorSections(
             label: WORKFLOW_EDITOR_SECTION_LABELS.execution,
             status: 'none',
             meta: workflowExecutionSummary(workflow),
+        },
+        {
+            id: 'results',
+            label: WORKFLOW_EDITOR_SECTION_LABELS.results,
+            status: workflow.results_delivery?.mode === 'conversation'
+                && ['shared', 'group_shared'].includes(workflow.results_delivery.conversation_type)
+                && !workflow.results_delivery.all_group_members && !workflow.results_delivery.recipient_ids.length ? 'incomplete' : 'ready',
+            meta: workflowResultsSummary(workflow),
         },
         {
             id: 'references',

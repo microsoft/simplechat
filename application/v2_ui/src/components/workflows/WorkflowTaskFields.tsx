@@ -13,6 +13,8 @@ import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } f
 import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
 import { WorkflowChangedField, WorkflowItemChangeBadge } from './WorkflowChangeTracking';
 import { WorkflowField, WorkflowFieldList, WorkflowSwitch, workflowFieldInputClass } from './WorkflowField';
+import { WorkflowChatExecutionFields } from './WorkflowChatExecutionFields';
+import { effectiveTaskChatExecution, workflowChatExecutionSummary } from '../../lib/workflowChatExecution';
 import { workflowTaskKey } from '../../lib/workflowChangeTracking';
 import { workflowTaskValidationErrors } from '../../lib/workflowEditorSections';
 import {
@@ -1754,6 +1756,10 @@ export function WorkflowTaskFields({
                     <p className="mt-0.5 text-xs text-text-3">
                         {runnerLabel(task.runner)} · {taskInputMode(task) === 'auto' ? 'automatic input' : `${task.inputs?.length ?? 0} bound inputs`}
                     </p>
+                    {!task.publication ? <p className="mt-0.5 break-words text-xs text-text-2">
+                        {task.chat_execution ? 'Chat: ' : 'Inherited chat: '}
+                        {workflowChatExecutionSummary(effectiveTaskChatExecution(workflow, task), workflow.chat_capabilities_enabled, options)}
+                    </p> : null}
                     <WorkflowItemChangeBadge itemKey={workflowTaskKey(task.id)} unframed={['placement']} className="mt-2" />
                 </div>
                 {onAskAi || classicControls ? <div className="flex flex-wrap gap-2">
@@ -1813,6 +1819,15 @@ export function WorkflowTaskFields({
                     </WorkflowField>
                 </WorkflowChangedField>
             </WorkflowFieldList>
+            {!task.publication ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'chat_execution')}>
+                <WorkflowChatExecutionFields task value={task.chat_execution} workflow={workflow} options={options}
+                    onChange={(chatExecution) => {
+                        const next = { ...task };
+                        if (chatExecution) next.chat_execution = chatExecution;
+                        else delete next.chat_execution;
+                        onChange(next);
+                    }} />
+            </WorkflowChangedField> : null}
             {draftWithAi && (!task.instructions.trim() || draftWithAi.message) ? (
                 <div className="flex flex-wrap items-center gap-2">
                     {!task.instructions.trim() ? (
