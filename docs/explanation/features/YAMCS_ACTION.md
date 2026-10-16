@@ -179,6 +179,13 @@ back to an administrator credential.
 See [Personal action credentials](PERSONAL_ACTION_CREDENTIALS.md) for the
 framework, storage behavior, continuation, and limitations.
 
+Fixed in version **0.261.341**: runtime credential references are translated to
+the action catalog's canonical format before reauthorization. This prevents a
+correctly configured personal credential source from failing with a generic
+validation error before its chat card appears. Existing actions, identities, and
+private bindings do not need migration. See the
+[personal credential prompt fix](../fixes/YAMCS_PERSONAL_CREDENTIAL_PROMPT_FIX.md).
+
 ## Usage Instructions
 
 Create a new action from a personal, group, or admin action surface and choose **Yamcs**. Enter the Yamcs server URL and the instance name, and optionally change the processor from the `realtime` default.

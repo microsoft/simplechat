@@ -1,8 +1,9 @@
 # test_action_credentials_bootstrap.py
 """Fresh-process application bootstrap and actual chat SDK mapping ownership.
 
-Version: 0.261.337
+Version: 0.261.341
 Implemented in: 0.261.333
+Runtime catalog reference regression added in: 0.261.341
 
 Normal/optimized Python imports real modules in both orders with network blocked.
 The initialized web app owns private state; backup/transfer inventories exclude it.
@@ -92,6 +93,57 @@ with offline_app_imports() as environment:
             pass
         else:
             raise AssertionError("Private credentials bypassed actual conversation ownership.")
+        from flask import g
+        from unittest.mock import patch
+        from functions_action_manifest import bind_action_origin
+        from action_credential_contracts import ActionCredentialsRequired
+        import functions_settings
+        catalog_settings = {
+            **functions_settings.get_settings(), "enable_semantic_kernel": True,
+            "allow_user_plugins": True, "enable_user_workspace": True,
+            "allow_group_plugins": True, "enable_group_workspaces": True,
+            "per_user_semantic_kernel": False,
+        }
+        g.conversation_id = "credential-chat"
+        with patch.object(functions_settings, "get_settings", return_value=catalog_settings):
+            for scope_type, scope_id in (("global", "global"), ("personal", "owner")):
+                action_id = f"credential-{scope_type}:mission"
+                action = {
+                    "id": action_id, "name": "mission", "type": "yamcs", "is_enabled": True,
+                    "endpoint": "https://mission.example.invalid", "metadata": {},
+                    "auth": {"type": "NoAuth"},
+                    "additionalFields": {
+                        "instance": "sim", "auth_method": "none", "enable_basic_auth": True,
+                    },
+                    "credential_requirements": {"version": 1, "slots": {
+                        "proxy": {"source": "personal", "auth_type": "username_password"},
+                    }},
+                }
+                if scope_type == "personal":
+                    action["user_id"] = scope_id
+                action_container = getattr(config, f"cosmos_{scope_type}_actions_container")
+                action_container.upsert_item(action)
+                bound = bind_action_origin(action, scope_type, scope_id)
+                reference = credentials.manifest_reference(bound)
+                resolved = credentials.credential_services().resolve_manifest("owner", reference)
+                check(resolved["id"] == action_id, "Credential runtime resolved the wrong catalog action.")
+                with credentials.credential_continuation({"mode": "chat", "checkpoint_id": action_id}):
+                    try:
+                        credentials.resolve_personal_credentials(bound)
+                    except ActionCredentialsRequired as error:
+                        check(error.credential_request["status"] == "pending", "Credential challenge was not pending.")
+                        requirements = error.credential_request["requirements"]
+                        check(len(requirements) == 1 and requirements[0]["slot"] == "proxy",
+                              "Proxy-only YAMCS requested the wrong credentials.")
+                    else:
+                        raise AssertionError("Missing personal proxy credentials did not create a challenge.")
+            for forbidden_reference in ("personal:other:mission", "group:unjoined:mission"):
+                try:
+                    credentials.credential_services().resolve_manifest("owner", forbidden_reference)
+                except PermissionError:
+                    pass
+                else:
+                    raise AssertionError("Credential reference translation bypassed catalog authorization.")
         saved = chats._persist_screened_assistant({
             "id": "credential-answer", "conversation_id": "credential-chat",
             "user_id": "owner", "role": "assistant", "content": "The retained answer.",
