@@ -1,8 +1,9 @@
 # test_orchestration_compose_output_retry.py
 """Records guidance, JSON mode and the single corrective call for content preparation.
 
-Version: 0.261.141
+Version: 0.261.341
 Implemented in: 0.261.141
+Explicit chart/diagram omission correction implemented in: 0.261.341
 
 A request for a CSV of the U.S. states and capitals planned correctly, then failed while
 preparing content. The compose step was told to write "the finished file", so the model
@@ -28,19 +29,44 @@ import httpx
 import pytest
 from openai import BadRequestError
 
-from test_orchestration_deliverables import _csv_plan, _file_bytes, _files, _plan_request, _saved_steps, _store
+from test_orchestration_deliverables import (
+    _csv_plan, _file_bytes, _files, _normalize, _plan_request, _saved_steps, _store,
+)
 from test_orchestration_harness_execution import harness, initialized_application  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step
+from test_support.orchestration_harness_execution import compose_step, input_binding
 from test_support.versioning import assert_app_version_at_least
 
 
 ROWS = [{"State": "Alabama", "Capital": "Montgomery"}, {"State": "Alaska", "Capital": "Juneau"}]
 CSV_LINES = ["State,Capital", "Alabama,Montgomery", "Alaska,Juneau"]
 SECRET_REPLY_TEXT = "PRIVATE_MODEL_REPLY_TEXT"
+TIMELINE = """## Eating and drinking schedule
+
+```mermaid
+flowchart TB
+    subgraph eating["Eating / fueling"]
+        direction LR
+        breakfast["Breakfast: 2 hours before"] --> snacks["Snacks: every 30 minutes"] --> meal["Meal: 1 hour after"]
+    end
+    subgraph drinking["Drinking / hydration"]
+        direction LR
+        before_fluids["Fluids: before the ride"] --> ride_fluids["Fluids: during the ride"] --> after_fluids["Fluids: after the ride"]
+    end
+```
+"""
+PRIOR_PLAN = {
+    "id": "prior-nutrition-plan", "conversation_id": "conversation-1", "role": "assistant",
+    "content": (
+        "For your 40-mile gravel ride, eat breakfast 2 hours before departure, snacks every "
+        "30 minutes during the ride, and a meal 1 hour after. Drink before, during, and after the ride."
+    ),
+    "timestamp": "2026-09-21T17:55:00+00:00",
+}
 
 
 def test_version_includes_the_compose_output_retry():
     assert_app_version_at_least("0.261.141")
+    assert_app_version_at_least("0.261.341")
 
 
 def _provider_error(*, param, code, message):
@@ -333,3 +359,213 @@ def test_an_empty_reply_is_a_model_failure_and_is_never_retried(harness):
     assert saved["failure"]["code"] == "model_failed"
     assert len(_compose_calls(harness)) == 1 and len(harness.replies) == 1
     assert _files(harness, ".csv") == []
+
+
+def _store_visual(harness, replies, *, kind="diagram", requested="explicit", multiple_outputs=False):
+    step = compose_step("schedule")
+    step["arguments"].update(
+        instruction="Transform the supplied prior nutrition plan into eating and drinking lanes with relative times.",
+        knowledge_basis="general_knowledge",
+    )
+    step["delivers"] = ["answer", "visual"]
+    if multiple_outputs:
+        step["outputs"].append({"name": "notes", "kind": "text-v1"})
+    plan = _normalize(harness, {
+        "deliverables": [
+            {"id": "answer", "kind": "answer", "requested": "explicit",
+             "description": "The updated nutrition plan.", "status": "planned"},
+            {"id": "visual", "kind": kind, "requested": requested,
+             "description": "A two-lane eating and drinking timeline.", "status": "planned"},
+        ],
+        "steps": [step], "final_response": input_binding("schedule"),
+    })
+    _store(harness, plan, replies=replies, history=[PRIOR_PLAN])
+    return plan
+
+
+def _visual_answers(harness):
+    return [message for message in harness.assistant_messages() if message["id"] != PRIOR_PLAN["id"]]
+
+
+def test_a_missing_timeline_gets_one_correction_and_reaches_the_answer(harness, monkeypatch):
+    events = _capture(monkeypatch, "functions_orchestration_composition")
+    _store_visual(harness, [f"Here is the plan. {SECRET_REPLY_TEXT}", TIMELINE])
+
+    harness.prepare().execute()
+
+    saved = harness.read()
+    (answer,) = _visual_answers(harness)
+    calls = _compose_calls(harness)
+    assert saved["status"] == saved["outcome"] == "completed"
+    assert saved["deliverable_states"] == [{"id": "visual", "state": "delivered"}]
+    assert TIMELINE.strip() in answer["content"] and "Not delivered" not in answer["content"]
+    assert len(calls) == 2
+    assert calls[1]["messages"][:-2] == calls[0]["messages"]
+    assert calls[1]["messages"][-2]["content"].endswith(SECRET_REPLY_TEXT)
+    correction = calls[1]["messages"][-1]["content"]
+    assert "explicitly requested visual" in correction and "```mermaid```" in correction
+    assert "Return only the complete prepared text." in correction
+    assert all("response_format" not in call for call in calls)
+    first_prompt = "\n".join(message["content"] for message in calls[0]["messages"])
+    assert PRIOR_PLAN["content"] in first_prompt
+    assert "[MERMAID_DIAGRAM_GUIDANCE]" in first_prompt
+    assert "[PROACTIVE_ANALYTICAL_CHART_GUIDANCE]" not in first_prompt
+    retries = [kwargs["extra"] for _message, kwargs in events
+               if kwargs.get("extra", {}).get("reason") == "compose_visual_retry"]
+    assert len(retries) == 1 and retries[0]["step_id_hash"] == _hash("schedule")
+    assert SECRET_REPLY_TEXT not in repr(events) and "Breakfast" not in repr(events)
+
+
+def test_a_second_visual_omission_keeps_the_answer_and_partial_delivery(harness):
+    _store_visual(harness, ["First prose answer.", "The revised prose answer."])
+
+    harness.prepare().execute()
+
+    saved = harness.read()
+    (answer,) = _visual_answers(harness)
+    assert saved["outcome"] == "partial"
+    assert saved["failure"]["code"] == "visual_not_delivered"
+    assert saved["deliverable_states"] == [{
+        "id": "visual", "state": "not_delivered", "message": "The answer did not include it.",
+    }]
+    assert "The revised prose answer." in answer["content"] and "Not delivered" in answer["content"]
+    assert saved["redraw_step_ids"] == ["schedule"]
+    assert len(_compose_calls(harness)) == 2
+
+
+def test_a_missing_native_chart_is_corrected_without_accepting_a_diagram(harness):
+    charts = importlib.import_module("functions_chart_operations")
+    chart = charts.build_inline_chart_markdown({
+        "version": 1, "kind": "line", "chartType": "line", "chartId": "fuel",
+        "title": "Supplied snack timing",
+        "data": {"labels": ["Ride"], "datasets": [{"label": "Minutes between snacks", "data": [30]}]},
+    })
+    _store_visual(harness, [TIMELINE, chart], kind="chart")
+
+    harness.prepare().execute()
+
+    calls = _compose_calls(harness)
+    assert harness.read()["deliverable_states"] == [{"id": "visual", "state": "delivered"}]
+    assert len(calls) == 2 and "```simplechart```" in calls[1]["messages"][-1]["content"]
+
+
+@pytest.mark.parametrize(("requested", "reply"), [("suggested", "Only prose."), ("explicit", TIMELINE)])
+def test_suggested_or_already_included_visuals_do_not_trigger_correction(harness, requested, reply):
+    _store_visual(harness, [reply], requested=requested)
+
+    harness.prepare().execute()
+
+    assert harness.read()["status"] == "completed"
+    assert len(_compose_calls(harness)) == 1
+
+
+@pytest.mark.parametrize("first_reply", [
+    "Not a JSON object.",
+    json.dumps({"answer": "Only prose.", "notes": "Keep existing quantities."}),
+])
+def test_shape_and_visual_corrections_share_one_retry(harness, first_reply):
+    final_reply = json.dumps({"answer": TIMELINE, "notes": "Keep existing quantities."})
+    _store_visual(harness, [first_reply, final_reply], multiple_outputs=True)
+
+    harness.prepare().execute()
+
+    calls = _compose_calls(harness)
+    assert harness.read()["deliverable_states"] == [{"id": "visual", "state": "delivered"}]
+    assert len(calls) == 2
+    assert all(call["response_format"] == {"type": "json_object"} for call in calls)
+    assert "```mermaid```" in calls[1]["messages"][-1]["content"]
+    correction = calls[1]["messages"][-1]["content"]
+    assert "JSON object" in correction and '"answer"' in correction and '"notes"' in correction
+
+
+def test_a_shape_correction_that_still_omits_the_visual_does_not_get_a_third_call(harness):
+    _store_visual(harness, ["Not JSON.", json.dumps({"answer": "Still prose.", "notes": "Notes."})],
+                  multiple_outputs=True)
+
+    harness.prepare().execute()
+
+    (answer,) = _visual_answers(harness)
+    assert harness.read()["outcome"] == "partial" and "Still prose." in answer["content"]
+    assert len(_compose_calls(harness)) == 2
+
+
+def test_a_visual_correction_must_still_match_the_declared_json_outputs(harness):
+    _store_visual(harness, [json.dumps({"answer": "Only prose.", "notes": "Notes."}), "Not JSON."],
+                  multiple_outputs=True)
+
+    harness.prepare().execute()
+
+    assert _saved_steps(harness)["schedule"]["failure"]["code"] == "result_invalid"
+    assert len(_compose_calls(harness)) == 2
+
+
+def test_a_visual_correction_that_would_not_fit_keeps_the_valid_partial_answer(harness, monkeypatch):
+    _store_visual(harness, ["The usable prose answer."])
+    budget = importlib.import_module("functions_workflow_context")
+    original = budget.calculate_workflow_context_budget
+    audits = []
+
+    def audit(messages, *args, **kwargs):
+        result = original(messages, *args, **kwargs)
+        audits.append(len(messages))
+        return {**result, "decision": "full_input" if len(audits) == 1 else "reduced_input"}
+
+    monkeypatch.setattr(budget, "calculate_workflow_context_budget", audit)
+
+    harness.prepare().execute()
+
+    (answer,) = _visual_answers(harness)
+    assert harness.read()["outcome"] == "partial" and "The usable prose answer." in answer["content"]
+    assert len(_compose_calls(harness)) == 1
+    assert len(audits) == 2 and audits[1] == audits[0] + 2
+
+
+@pytest.mark.parametrize("stop", ["access", "cancellation"])
+def test_visual_correction_rechecks_access_and_cancellation_before_another_call(harness, monkeypatch, stop):
+    _store_visual(harness, ["Only prose.", TIMELINE])
+    execution = harness.prepare()
+    budget = importlib.import_module("functions_workflow_context")
+    original = budget.calculate_workflow_context_budget
+    audits = []
+    cancelled = []
+
+    def audit(messages, *args, **kwargs):
+        result = original(messages, *args, **kwargs)
+        audits.append(len(messages))
+        if len(audits) == 2:
+            if stop == "access":
+                harness.conversations.items[("conversation-1", "conversation-1")]["user_id"] = "another-owner"
+            else:
+                cancelled.append(True)
+        return result
+
+    monkeypatch.setattr(budget, "calculate_workflow_context_budget", audit)
+    monkeypatch.setattr(execution.lease, "cancel_requested", lambda: bool(cancelled))
+
+    execution.execute()
+
+    assert len(audits) == 2
+    assert len(_compose_calls(harness)) == 1 and harness.replies == [TIMELINE]
+    answers = _visual_answers(harness)
+    assert not any("```mermaid" in message["content"] for message in answers)
+
+
+def test_visual_omission_checks_use_only_explicit_enabled_markdown_deliverables(initialized_application):
+    deliverables = importlib.import_module("functions_orchestration_deliverables")
+    step = {
+        "outputs": [{"name": "answer", "kind": "markdown-v1"}, {"name": "notes", "kind": "text-v1"}],
+        "deliverable_context": [
+            {"relation": "delivers", "requested": "explicit", "kind": "diagram"},
+            {"relation": "delivers", "requested": "suggested", "kind": "chart"},
+            {"relation": "unavailable", "requested": "explicit", "kind": "chart"},
+            {"relation": "delivers", "requested": "explicit", "kind": "image"},
+            {"relation": "delivers", "requested": "explicit", "kind": "chart", "enabled": False},
+        ],
+    }
+    missing = deliverables.missing_compose_visuals(step, {"answer": "Prose.", "notes": TIMELINE})
+    assert missing == ["diagram"]
+    missing = deliverables.missing_compose_visuals(step, {"answer": TIMELINE})
+    assert missing == []
+    step["enabled"] = False
+    missing = deliverables.missing_compose_visuals(step, {"answer": "Prose."})
+    assert missing == []

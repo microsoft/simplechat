@@ -2,10 +2,11 @@
 # test_orchestration_visual_outputs.py
 """
 Functional test for charts, Mermaid diagrams, and image proposals in orchestrated answers.
-Version: 0.261.270
+Version: 0.261.341
 Implemented in: 0.261.132
 Single orchestration contract updated in: 0.261.139
 Action steps run without an invocation capture in: 0.261.270
+Schedule diagrams distinguished from numerical charts in: 0.261.341
 
 This test ensures orchestration carries chart payloads safely, builds visual guidance
 only from planner-declared visual flags, preserves saved instruction memory precedence,
@@ -195,6 +196,14 @@ def test_gathering_and_agent_notes_keep_what_each_visual_needs():
     assert visuals.agent_visual_note({}) == ''
 
 
+def test_schedule_diagram_guidance_preserves_relative_times_without_chart_instructions():
+    guidance = '\n'.join(visuals.build_answer_visual_guidance({'diagram': True}))
+    assert 'two-lane' in guidance and 'relative times' in guidance
+    assert 'flowchart TB' in guidance and 'direction LR' in guidance
+    assert 'invent calendar dates' in guidance
+    assert charts.PROACTIVE_CHART_GUIDANCE_MARKER not in guidance
+
+
 def test_only_instruction_memories_reach_visual_preferences():
     instruction = {'role': 'system', 'content': '<Instruction Memory>\n- Never make charts.\n</Instruction Memory>'}
     fact = {'role': 'system', 'content': '<Fact Memory>\n- Private fact.\n</Fact Memory>'}
@@ -341,6 +350,9 @@ def test_planner_prompt_describes_visual_outputs_for_the_single_contract(modules
     assert 'set that action_invoke step\'s visuals to ["chart"]' in prompt
     assert 'Web search returns text and links only' in prompt
     assert 'Saved instructions in memory about visuals' in prompt
+    assert 'schedule or event timeline' in prompt
+    assert 'even if the user calls it a chart' in prompt
+    assert 'diagram deliverable' in prompt
     compose_capability = modules.registry.get_capability('compose')
     assert 'visuals' in json.dumps(compose_capability)
 

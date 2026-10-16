@@ -1,11 +1,12 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.293
+Version: 0.261.341
 Implemented in: 0.261.138
 Document merge recipes added in: 0.261.245
 One-sheet or sheet-per-file question for spreadsheet merges added in: 0.261.246
 Gathered results and charts must reach the answer or a file, with chart delivery notes, in: 0.261.293
+Explicit compose visual omission checks shared with final delivery in: 0.261.341
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
 diagrams the user asked for (``requested: explicit``) and anything it adds on its own
@@ -1589,6 +1590,30 @@ def _draws_charts(step):
     )
 
 
+def has_visual_block(text, kind):
+    """The same format-presence check for compose correction and final answer delivery."""
+    return _VISUAL_FENCES[kind] in text
+
+
+def missing_compose_visuals(step, values):
+    """Explicit visuals this enabled compose step owes but its Markdown does not include.
+
+    The compiled brief contains planned deliverables only. Unavailable, suggested and
+    separately produced images are not requirements for a corrective content call.
+    """
+    if not step.get('enabled', True):
+        return []
+    text = '\n'.join(
+        values[name] for name in _markdown_outputs(step) if type(values.get(name)) is str
+    )
+    required = {
+        entry['kind'] for entry in step.get('deliverable_context') or ()
+        if entry.get('relation') == 'delivers' and entry.get('requested') == REQUESTED_EXPLICIT
+        and entry.get('enabled', True) and entry.get('kind') in _VISUAL_FENCES
+    }
+    return [kind for kind in _VISUAL_FENCES if kind in required and not has_visual_block(text, kind)]
+
+
 def gathered_charts(plan, task_results, read_value):
     """The charts each charting gather step drew from its exact rows, by step id in plan order.
 
@@ -1671,7 +1696,7 @@ def visual_delivery(plan, statuses, answer, charts):
             elif step['step_id'] in answer_steps:
                 if not finished:
                     reasons.append('step_not_completed')
-                elif _VISUAL_FENCES[kind] in answer:
+                elif has_visual_block(answer, kind):
                     shown = True
                 else:
                     reasons.append('not_in_answer')

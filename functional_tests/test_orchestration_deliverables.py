@@ -1,11 +1,12 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.192
+Version: 0.261.341
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
 Planner kind-specific fields and absent answer bindings updated in: 0.261.140
 Row-shaped compose guidance and JSON mode for CSV scenarios updated in: 0.261.141
+Prior-answer visual correction fixture support added in: 0.261.341
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -176,20 +177,22 @@ def _president_plan(*, with_file=True, with_search=False, output_format="docx"):
     return {"deliverables": deliverables, "steps": steps, "final_response": input_binding("report", "report")}
 
 
-def _store(harness, plan, *, replies=()):
+def _store(harness, plan, *, replies=(), history=()):
     """Save a validated plan as run-1, exactly as the harness saves its own fixtures."""
     run_store = importlib.import_module("functions_orchestration_runs")
     context = importlib.import_module("functions_orchestration_context")
     memory = importlib.import_module("functions_orchestration_memory")
     plan = deepcopy(plan)
     plan.update(run_id="run-1", plan_id="plan-1", turn_id="turn-1")
+    for message in history:
+        harness.messages.create_item(message)
     normalized = context.normalize_history_message(harness.turn)
     turn_context = {
         "turn_id": "turn-1", "user_message": harness.turn["content"],
         "user_message_id": harness.turn["id"], "user_message_fingerprint": normalized["fingerprint"],
         "resolved_message": harness.turn["content"], "seeds": {}, "original_seeds": {},
         "answered_questions": [], "planning_token_usage": {},
-        "conversation_context": context.build_conversation_snapshot([], harness.settings),
+        "conversation_context": context.build_conversation_snapshot(history, harness.settings),
         "memory_audience": memory.validate_memory_audience(harness.conversation, "owner"),
         "memory_scope": None,
     }
