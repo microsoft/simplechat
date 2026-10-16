@@ -1,7 +1,7 @@
 # test_workflow_assist_cosmos_response_contract.py
 """
 Functional regressions for the Ask AI workflow base reader's Cosmos response contract.
-Version: 0.261.343
+Version: 0.261.344
 Implemented in: 0.261.330
 
 The real installed SDK reads through the shared offline HTTP transport fixture.
@@ -154,7 +154,7 @@ def test_group_assist_services_bind_all_adapters_and_recheck_management(cosmos_f
                    "cosmos_group_workflows_container": container, "cosmos_settings_container": None},
         "functions_group": {"assert_group_role": role},
         "functions_settings": {"get_group_workflow_management_roles": lambda _settings: ("Owner", "Admin")},
-        "functions_m365_connections": {"get_m365_connection_service": lambda: SimpleNamespace()},
+        "functions_m365_connections": {"get_m365_connection_service": SimpleNamespace},
         "functions_m365_runtime": {"_manifest_sources": lambda _action: [], "workflow_m365_manifests": manifest},
         "functions_orchestration_context": {
             "ScopeReferenceError": ValueError, "resolve_scope_references": lambda references, *_args, **_kwargs: references,
