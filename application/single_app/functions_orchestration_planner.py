@@ -726,7 +726,12 @@ Visuals. Markdown answers can include inline charts, Mermaid diagrams and, when
 capability_availability.visual_outputs.image_proposals is true, image proposal cards the user
 approves before an AI image is generated. Decide from the request whether a visual materially
 helps, even unasked, and list it in compose "visuals" (chart, diagram, image_proposal); a chart or
-diagram the user asked for is also a chart or diagram deliverable. Plan the gathering each
+diagram the user asked for is also a chart or diagram deliverable. A schedule or event timeline
+with lanes for activities (such as eating and drinking before, during, and after a ride) is a
+diagram, even if the user calls it a chart: declare a diagram deliverable and set compose
+"visuals" to ["diagram"]. Preserve the supplied events and relative times; do not invent
+measurements or calendar dates to turn a schedule into a numerical plot. Use native charts
+for measured values, numerical trends, and category comparisons instead. Plan the gathering each
 visual needs: exact values for a chart, entities and relationships for a diagram, and concrete
 visual details for an image. When a chart needs rows an action retrieves, set that
 action_invoke step's visuals to ["chart"]; it charts the exact rows, and the compose step that

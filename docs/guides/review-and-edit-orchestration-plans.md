@@ -164,6 +164,12 @@ a temporary service error.
 **Visuals** lists the charts, Mermaid diagrams, or image proposal cards the planner
 asked the answer to include.
 
+Since **0.261.341**, a schedule with activity lanes, such as eating and drinking
+before, during, and after a ride, is planned as a **Diagram**, even when you call
+it a chart. The diagram preserves the supplied events and relative-time labels;
+it shows their order rather than a quantitatively scaled time axis. Numerical
+trends and comparisons still use inline data charts.
+
 ### Check what you asked for
 
 Since **0.261.138**, **You asked for** appears at the top of the plan panel and on the
@@ -179,6 +185,18 @@ format, images with their count, and any chart or diagram. Each item shows its s
 The plan panel also names the step that produces each item. **Also included** lists what
 the planner added without being asked, such as a suggested chart. Ask the planner for a
 revision if something you need is missing from the list.
+
+When an answer-writing step omits an explicitly requested chart or diagram,
+SimpleChat asks that step to correct its answer once, if the correction fits the
+model's context budget. This shares the existing correction allowance for
+malformed prepared outputs; it does not rerun source gathering or integration
+actions. Suggested visuals do not trigger a correction.
+
+If a usable answer still omits the requested visual, the answer remains available,
+the visual is **Not delivered**, and the run reports partial completion. A
+completed answer-writing task alone does not mean its chart or diagram arrived.
+For a schedule saved under the wrong visual kind, use a new request or, before
+running, **Ask planner** to make it a timeline diagram.
 
 A **Generate image** step shows the image prompt and caption it will use. Each image
 follows the requested visual style, including photorealistic, and is captioned as an

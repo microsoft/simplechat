@@ -1,7 +1,7 @@
 # functions_orchestration_composition.py
-"""Explicit one-call content preparation from named authorized result readers.
+"""Explicit content preparation from named authorized result readers.
 
-Version: 0.261.305
+Version: 0.261.341
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -12,9 +12,10 @@ gathered, and guidance for the visuals the planner named (charts, Mermaid diagra
 proposal cards). In a turn that may propose a workflow they also receive the user's local
 time, worded as the workflow's scheduled runs will receive theirs.
 
-JSON preparation states each declared output's exact shape, asks the endpoint for a JSON
-object, and makes one corrective call when a reply breaks a declared rule. Neither reply is
-logged; the log records only application codes and hashed identifiers.
+JSON preparation states each declared output's exact shape and asks for a JSON object.
+Preparation makes at most one corrective call for a broken output rule or an omitted
+explicit chart/diagram. Continued visual omission keeps usable content for finalization's
+partial-delivery report. Neither reply is logged; logs contain codes and hashed identifiers.
 
 When an input carries citation values, such as the Microsoft 365 sources an action step lists,
 the step is told to copy them verbatim after the claims they support (0.261.303).
@@ -29,12 +30,13 @@ from jsonschema import Draft202012Validator
 
 from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event, workflow_log_context
-from functions_chart_operations import normalize_inline_chart_markdown
+from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE, normalize_inline_chart_markdown
+from functions_diagram_operations import MERMAID_BLOCK_LANGUAGE
 from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_context import ConversationContextError, execution_conversation_messages
 from functions_orchestration_deliverables import (
-    compose_deliverable_guidance, place_deck_images, place_image_tokens,
+    compose_deliverable_guidance, missing_compose_visuals, place_deck_images, place_image_tokens,
 )
 from functions_orchestration_memory import OrchestrationMemoryError
 from functions_orchestration_registry import (
@@ -199,6 +201,14 @@ def _compose_correction(error, outputs):
     ))
 
 
+def _compose_visual_rules(step, values):
+    languages = {VISUAL_CHART: INLINE_CHART_BLOCK_LANGUAGE, VISUAL_DIAGRAM: MERMAID_BLOCK_LANGUAGE}
+    return ' '.join(
+        f'Include the explicitly requested {kind} in a ```{languages[kind]}``` block.'
+        for kind in missing_compose_visuals(step, values)
+    )
+
+
 def validate_prepared_output(specification, value, *, profile_validator=None):
     """Validate public prepared data; profile validators are injected server code."""
     kind = specification['kind']
@@ -328,10 +338,10 @@ def _carries_citation_values(inputs):
 
 
 def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_requested=None):
-    """Prepare all declared outputs in one content-generation call.
+    """Prepare all declared outputs, with at most one corrective content-generation call.
 
-    A JSON reply that breaks a rule stated by the declared outputs gets exactly one
-    corrective call naming that rule. Any other failure, or a second bad reply, fails the step.
+    Output-contract errors and omitted explicit visuals share that allowance. An unusable
+    correction fails; usable content still missing its visual reaches final delivery checks.
     """
     service = require_result_service(context)
     producer = context.result_producer(step)
@@ -545,12 +555,25 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         recheck()
         response = invoke(messages, stage='orchestration_compose', metadata=metadata)
         recheck()
+        reply_error = None
         try:
             values = prepared_values(response)
         except ValueError as error:
             correction = None if plain_text else _compose_correction(error, outputs)
             if correction is None:
                 raise
+            reply_error = error
+            correction = ' '.join(part for part in (correction, _compose_visual_rules(step, {})) if part)
+        else:
+            visual_rules = _compose_visual_rules(step, values)
+            correction = ' '.join((
+                'Your previous reply omitted an explicitly requested visual.', visual_rules,
+                'Use only the supplied context; do not invent values or events to fill a visual.',
+                'Return only the complete prepared text.' if plain_text else ' '.join((
+                    JSON_OUTPUT_POLICY, *(_output_shape(output) for output in outputs),
+                )),
+            )) if visual_rules else None
+        if correction:
             # One corrective call, told which declared rule the reply broke. The reply itself
             # stays in the model conversation only; it is never logged.
             retry_messages = [
@@ -562,24 +585,38 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 output_tokens=getattr(invoke, 'output_tokens', None),
             )
             if retry_audit['decision'] != 'full_input':
-                raise
-            log_event(
-                '[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.',
-                level=logging.INFO,
-                extra={
-                    **workflow_log_context(
-                        run_id=context.run_id, conversation_id=getattr(context, 'conversation_id', None),
-                        step_id=step['step_id'],
-                    ),
-                    'capability_id': step['capability_id'], 'reason': 'compose_output_retry',
-                    'error_type': type(error).__name__,
-                    **({'execution_code': error.code} if isinstance(error, ResultContractError) else {}),
-                },
-            )
-            recheck()
-            response = invoke(retry_messages, stage='orchestration_compose', metadata=metadata)
-            recheck()
-            values = prepared_values(response)
+                if reply_error is not None:
+                    raise reply_error
+                log_event(
+                    '[ORCHESTRATION_EXECUTOR] Visual correction exceeds the context budget; retaining prepared content.',
+                    level=logging.INFO,
+                    extra={
+                        **workflow_log_context(
+                            run_id=context.run_id, conversation_id=getattr(context, 'conversation_id', None),
+                            step_id=step['step_id'],
+                        ),
+                        'capability_id': step['capability_id'], 'reason': 'compose_visual_retry_budget',
+                    },
+                )
+            else:
+                log_event(
+                    '[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared requirements; asking once more.',
+                    level=logging.INFO,
+                    extra={
+                        **workflow_log_context(
+                            run_id=context.run_id, conversation_id=getattr(context, 'conversation_id', None),
+                            step_id=step['step_id'],
+                        ),
+                        'capability_id': step['capability_id'],
+                        'reason': 'compose_output_retry' if reply_error is not None else 'compose_visual_retry',
+                        **({'error_type': type(reply_error).__name__} if reply_error is not None else {}),
+                        **({'execution_code': reply_error.code} if isinstance(reply_error, ResultContractError) else {}),
+                    },
+                )
+                recheck()
+                response = invoke(retry_messages, stage='orchestration_compose', metadata=metadata)
+                recheck()
+                values = prepared_values(response)
         partial = any(reader.completeness.status == 'partial' for reader in readers.values())
         limitations = tuple(dict.fromkeys(
             limitation for reader in readers.values() for limitation in reader.completeness.limitations

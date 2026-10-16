@@ -86,6 +86,12 @@ Choose the diagram type from the intent:
 - `classDiagram` for types, fields, and inheritance.
 - `gantt` for scheduled work, `mindmap` for hierarchies of ideas, `journey` for user journeys.
 
+For a schedule or two-lane event timeline, use `flowchart TB` with a labelled subgraph for each
+activity lane and `direction LR` inside each lane. Keep the supplied relative times in the
+event labels (for example before, during, and after an activity); do not invent calendar dates,
+measurements, or events to fill a lane. This shows event order, not a quantitatively scaled
+time axis. Use a native data chart instead when the user needs plotted numerical values.
+
 Keep the source valid so it renders on the first attempt:
 - Give every node a quoted label, for example `app["Simple Chat App Service"]`. Unquoted parentheses, braces, angle brackets, colons, `#`, and quotes inside a label break the parser.
 - Never use `end`, `graph`, `class`, `style`, `subgraph`, or `click` as a node id: they are reserved words and the diagram will not parse. Write `end_state` or `graph_node` instead.

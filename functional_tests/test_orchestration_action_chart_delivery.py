@@ -2,8 +2,9 @@
 # test_orchestration_action_chart_delivery.py
 """
 Functional test for orchestration charts that an action draws reaching the user.
-Version: 0.261.293
+Version: 0.261.341
 Implemented in: 0.261.293
+Carried charts satisfy compose visual correction checks in: 0.261.341
 
 This test ensures that a request such as "Plot BatteryVoltage1 over the last 15 minutes"
 never ends with a chart that was drawn and then thrown away:
@@ -421,6 +422,26 @@ def test_the_answer_step_places_the_chart_from_its_token_without_rereading_its_d
     assert "[[chart:battery]] BatteryVoltage1" in payload["existing_charts"]
     assert "```simplechart" not in json.dumps(payload)
     assert saved["deliverable_states"] == [{"id": "battery_chart", "state": "delivered"}]
+
+
+def test_a_carried_chart_satisfies_an_explicit_compose_visual_without_another_call(harness, monkeypatch):
+    _enable_action(harness, monkeypatch)
+    plan = _answered_plan()
+    plan["steps"][0]["delivers"] = []
+    plan["steps"][1]["delivers"] = ["battery_chart"]
+    _store(
+        harness, _normalize(harness, plan, strict=True),
+        replies=["BatteryVoltage1 stayed between 27.1 V and 27.4 V."],
+    )
+
+    harness.prepare().execute()
+
+    saved = harness.read()
+    message, _ = _orchestration_metadata(harness)
+    calls = [call for call in harness.model_calls if call["messages"][0]["content"].startswith("Prepare only")]
+    assert saved["status"] == "completed"
+    assert saved["deliverable_states"] == [{"id": "battery_chart", "state": "delivered"}]
+    assert len(calls) == 1 and message["content"].count("```simplechart") == 1
 
 
 def test_a_chart_that_could_not_be_drawn_is_not_delivered_and_a_retry_draws_it_again(harness, monkeypatch):

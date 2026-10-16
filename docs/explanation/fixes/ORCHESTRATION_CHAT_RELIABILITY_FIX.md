@@ -181,6 +181,11 @@ processes. The recovery fixture now answers the existing pending-credentials
 lookup with an empty request list, rather than treating that unrelated
 background lookup as an unexpected API call.
 
+Integration with the timeline-delivery fix preserves its single visual
+correction allowance. Its prior-answer fixture now records the selected
+message in `request_resolution`, matching the production context contract;
+merely storing a conversation snapshot does not select every message for use.
+
 An extra broad logging run found two pre-existing failures: nonstandard tags
 in unchanged modules, and a legacy test expecting a pre-sanitization debug
 message. Both were reproduced against `HEAD` without changing the worktree.

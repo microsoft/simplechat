@@ -18,9 +18,11 @@ def configure_action_credential_runtime():
     from content_screening import access
 
     def resolve_manifest(user_id, action_ref):
+        scope_type, scope_id, action_id = action_ref.split(":", 2)
+        catalog_ref = functions_action_catalog._action_ref(scope_type, scope_id, action_id)
         user = functions_authentication.get_current_user_info() or {}
         return functions_action_catalog.resolve_action_manifest(
-            user_id, action_ref, settings=functions_settings.get_settings(), user_roles=user.get("roles") or [],
+            user_id, catalog_ref, settings=functions_settings.get_settings(), user_roles=user.get("roles") or [],
         )
 
     def resolve_agent(reference, *, user_id):
