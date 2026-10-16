@@ -3,6 +3,7 @@
 
 from functools import wraps
 import hmac
+import logging
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from flask import Response, jsonify, request, session, stream_with_context
 
 from action_credential_contracts import ActionCredentialError, ActionCredentialsRequired
 from functions_authentication import get_current_user_id, login_required, user_required
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_action_credentials import (
     authorize_conversation, authorize_request, credential_continuation, safe_request, submit_credentials,
 )
@@ -77,11 +78,19 @@ class _CredentialExecution:
     def execute(self, **kwargs):
         try:
             yield from self.execution.execute(**kwargs)
-        except Exception:
-            _finish_request(self.user_id, self.item["id"], self.item["continuation_claim"], "failed")
-            raise
-        else:
-            _finish_request(self.user_id, self.item["id"], self.item["continuation_claim"], "completed")
+        finally:
+            try:
+                status = self.execution.credential_continuation_status(self.item)
+                _finish_request(self.user_id, self.item["id"], self.item["continuation_claim"], status)
+            except Exception as error:
+                log_event("[PLUGINS] Credential continuation outcome could not be confirmed.", level=logging.WARNING, extra={
+                    **workflow_log_context(
+                        run_id=self.item["continuation"]["run_id"], conversation_id=self.item["conversation_id"],
+                        step_id=self.item["continuation"]["step_id"],
+                    ),
+                    "stage": "credential_continuation_finalization", "error_type": type(error).__name__,
+                })
+                raise
 
     def close(self):
         return self.execution.close()

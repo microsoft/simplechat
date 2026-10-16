@@ -7,7 +7,8 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { continueCredentialChat } from '../../stores/chatStore';
 import { continueCredentialOrchestration } from '../../lib/orchestrationController';
 import { ACTION_CREDENTIAL_EVENT, readCredentialRequest } from '../../lib/actionCredentialEvents';
-import { cancelActionCredentials, clearCredentialSession, fetchCredentialRequests, saveActionCredentials } from '../../lib/actionCredentials';
+import { cancelActionCredentials, clearCredentialSession, fetchActionCredentialRequest, fetchCredentialRequests, saveActionCredentials } from '../../lib/actionCredentials';
+import { fetchOrchestrationRun, isOrchestrationRunWaiting } from '../../lib/orchestration';
 import type { CredentialRequest, CredentialSlot, CredentialSubmission } from '../../lib/actionCredentialTypes';
 import { ApiError } from '../../lib/apiClient';
 
@@ -98,6 +99,9 @@ export function CredentialRequestCard({ credentialRequest, onUpdate, onRemove }:
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [saved, setSaved] = useState<CredentialRequest | null>(null);
+    const [needsRefresh, setNeedsRefresh] = useState(false);
+    const [closed, setClosed] = useState(false);
+    const working = useRef(false);
     useEffect(() => () => {
         controller.current?.abort();
         formRef.current?.reset();
@@ -107,13 +111,15 @@ export function CredentialRequestCard({ credentialRequest, onUpdate, onRemove }:
     const continueWork = async (request: CredentialRequest) => {
         if (request.run_id) await continueCredentialOrchestration(request);
         else await continueCredentialChat(request);
-        onRemove();
+        if (!controller.current?.signal.aborted) onRemove();
     };
     const submit = async () => {
-        if (busy) return;
+        if (working.current || needsRefresh || closed) return;
+        working.current = true;
         setBusy(true);
         setError('');
         controller.current = new AbortController();
+        let confirmedSave = ready;
         try {
             if (ready) {
                 await continueWork(ready);
@@ -144,20 +150,70 @@ export function CredentialRequestCard({ credentialRequest, onUpdate, onRemove }:
             } finally {
                 slots.length = 0;
             }
+            if (controller.current.signal.aborted) return;
             setSaved(updated);
+            confirmedSave = updated;
             await continueWork(updated);
         } catch {
             if (!controller.current?.signal.aborted) {
-                setError(ready || saved
-                    ? 'Credentials are saved, but the action could not continue. Reload requests to check its status.'
-                    : 'Saving or continuing failed. Reload requests to check whether credentials were saved before entering them again.');
+                setNeedsRefresh(true);
+                setError(confirmedSave
+                    ? 'Your credentials are saved, but continuation could not be confirmed. Refresh the saved request before trying again.'
+                    : 'Saving could not be confirmed. Refresh the saved request before entering credentials again.');
             }
         } finally {
+            working.current = false;
             if (!controller.current?.signal.aborted) setBusy(false);
         }
     };
+    const refreshSavedRequest = async () => {
+        if (working.current) return;
+        working.current = true;
+        setBusy(true);
+        controller.current = new AbortController();
+        try {
+            const current = await fetchActionCredentialRequest(saved || credentialRequest, controller.current.signal);
+            let waiting = true;
+            if (['pending', 'ready'].includes(current.status) && current.run_id) {
+                const run = await fetchOrchestrationRun(current.run_id, {
+                    conversationId: current.conversation_id, signal: controller.current.signal,
+                });
+                if (!run || run.run_id !== current.run_id || run.conversation_id !== current.conversation_id ||
+                    (current.turn_id && current.turn_id !== run.turn_id)) {
+                    throw new Error('The saved work could not be confirmed.');
+                }
+                waiting = isOrchestrationRunWaiting(run);
+            }
+            if (controller.current.signal.aborted) return;
+            if (current.status === 'pending' && waiting) {
+                setSaved(null);
+                setClosed(false);
+                setNeedsRefresh(false);
+                setError('');
+                onUpdate(current);
+            } else {
+                setSaved(current.status === 'ready' || ready ? current : null);
+                const canContinue = current.status === 'ready' && waiting;
+                setClosed(!canContinue);
+                setNeedsRefresh(!canContinue);
+                setError(canContinue ? ''
+                    : current.run_id
+                        ? 'This work is no longer waiting for these credentials. Review run details for saved progress and recovery options.'
+                        : 'This work is no longer waiting for these credentials. Review the conversation before starting new work.');
+            }
+        } catch {
+            if (!controller.current.signal.aborted) {
+                setNeedsRefresh(true);
+                setError('The saved request could not be refreshed. Reload this conversation before trying again.');
+            }
+        } finally {
+            working.current = false;
+            if (!controller.current.signal.aborted) setBusy(false);
+        }
+    };
     const cancel = async () => {
-        if (busy) return;
+        if (working.current || needsRefresh || closed) return;
+        working.current = true;
         setBusy(true);
         setError('');
         formRef.current?.reset();
@@ -168,6 +224,7 @@ export function CredentialRequestCard({ credentialRequest, onUpdate, onRemove }:
         } catch {
             if (!controller.current.signal.aborted) setError('The credential request could not be cancelled. Reload requests before trying again.');
         } finally {
+            working.current = false;
             if (!controller.current.signal.aborted) setBusy(false);
         }
     };
@@ -186,7 +243,7 @@ export function CredentialRequestCard({ credentialRequest, onUpdate, onRemove }:
         <form ref={formRef} className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}
             aria-busy={busy} autoComplete="off">
             <fieldset disabled={busy} className="space-y-4">
-                {!ready ? credentialRequest.requirements.map((requirement) => {
+                {!ready && !needsRefresh ? credentialRequest.requirements.map((requirement) => {
                     const prefix = `${id}-${requirement.slot}`;
                     const candidates = credentialRequest.identities.filter((item) => item.auth_type === requirement.auth_type);
                     const selectedIdentity = candidates.find((item) => item.id === identities[requirement.slot]);
@@ -230,15 +287,21 @@ export function CredentialRequestCard({ credentialRequest, onUpdate, onRemove }:
                                 required autoComplete="new-password" spellCheck={false} />
                         </> : null}
                     </fieldset>;
-                }) : <p role="status" className="text-sm text-ok">Your personal identities are saved. Continue the blocked action when ready.</p>}
+                }) : ready ? <p role="status" className="text-sm text-ok">
+                    {needsRefresh || closed ? 'Your personal identities are saved.'
+                        : 'Your personal identities are saved. Continue the blocked action when ready.'}
+                </p> : null}
                 {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
                 <div className="flex flex-wrap items-center gap-2">
-                    <GlassButton type="submit" variant="primary">{busy ? 'Working...' : ready ? 'Continue' : 'Save and continue'}</GlassButton>
-                    <GlassButton type="button" onClick={() => void cancel()}>Cancel blocked work</GlassButton>
+                    {!closed ? <>
+                        <GlassButton type="submit" variant="primary" disabled={needsRefresh}>{busy ? 'Working...' : ready ? 'Continue' : 'Save and continue'}</GlassButton>
+                        <GlassButton type="button" disabled={needsRefresh} onClick={() => void cancel()}>Cancel blocked work</GlassButton>
+                    </> : null}
+                    {needsRefresh || saved ? <GlassButton type="button" onClick={() => void refreshSavedRequest()}>
+                        Refresh saved request
+                    </GlassButton> : null}
                 </div>
             </fieldset>
         </form>
-        {saved && saved.etag !== credentialRequest.etag && !busy
-            ? <GlassButton size="sm" onClick={() => onUpdate(saved)}>Refresh saved request</GlassButton> : null}
     </section>;
 }
