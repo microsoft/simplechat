@@ -103,6 +103,51 @@ Validation used session-local Python dependency overrides and restored frontend
 dependencies; global packages were not changed. These offline results are not
 proof of live YAMCS credential acceptance or a full pinned-environment CI run.
 
+## PR #1774 Cosmos contract review
+
+The initial `cosmos-contracts` check failed during inventory validation, before
+running its runtime contracts. The credential-continuation change left five
+storage-owner reviews stale and introduced three unreviewed test-local
+`read_item` overrides. This was a PR-caused review-inventory omission, not an SDK
+response failure or transient CI infrastructure problem.
+
+All five storage function fingerprints still match the parent commit and its
+reviewed inventory. Adding `credential_continuation_status` changed their shared
+module fingerprint, which correctly requires renewed consumer review.
+`functional_tests/cosmos_response_boundaries.json` was regenerated with
+`scripts/check_cosmos_response_boundaries.py --refresh`, then reviewed against
+the actual mapping consumers and SDK-backed runtime regressions. Saved delivery
+metadata and regeneration-thread reviews also name their specific existing
+runtime tests.
+
+The three new overrides are explicitly classified as `fault-injection`, with
+their real runtime evidence attached. Two inject authorization read failures;
+the third forces overlapping worker reads but returns the original SDK
+`CosmosDict` unchanged. The shared containers still default to SDK responses,
+and partition routing, ETags, conditional writes, authorization, and private-error
+checks remain intact. No legacy exemption, CI change, weakened assertion, or
+production storage change is involved.
+
+Review validation used the session-local Python environment and blocked external
+network access before test collection:
+
+- `python scripts\check_cosmos_response_boundaries.py --run-contracts`:
+  **1,003 passed, 244 subtests passed**, with **1,059 owners, 407 doubles, and
+  zero review gaps**.
+- The credential-continuation and orchestration Cosmos-response suites:
+  **60 passed**.
+- The existing delivery-refresh, regeneration-thread, and conversation-source
+  runtime evidence: **27 passed**.
+- `python functional_tests\test_docs_site_quality.py`: **6/6 checks passed**.
+
+The first complete local run passed 1,002 tests but failed the SDK-pin assertion
+because that environment inherited Cosmos SDK 4.16.3. Restoring the application's
+`azure-cosmos==4.9.0` pin in the session-local environment resolved that validation
+setup failure; global dependencies and the assertion were not changed.
+
+This follow-up changes only the reviewed inventory and this documentation;
+the application version remains **0.261.343**.
+
 ## Impact and recovery limitations
 
 The fix applies to the shared credential-continuation boundary, not only YAMCS.
