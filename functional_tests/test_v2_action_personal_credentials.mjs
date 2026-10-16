@@ -1,6 +1,7 @@
 // test_v2_action_personal_credentials.mjs
-// Version: 0.261.337
+// Version: 0.261.343
 // Implemented in: 0.261.333
+// Continuation recovery regressions added in: 0.261.343
 // Exercises real authoring, safe DTO projection, credential transport, and stream waiting.
 
 import assert from 'node:assert/strict';
@@ -15,7 +16,7 @@ const { buildEditorWrite, EDITOR_SECRET_MASK } = await import('../application/v2
 const { buildActionConnectionPayload } = await import('../application/v2_ui/src/lib/workspaceActionServices.ts');
 const { readCredentialRequest, ACTION_CREDENTIAL_EVENT } = await import('../application/v2_ui/src/lib/actionCredentialEvents.ts');
 const { consumeCredentialChatResponse } = await import('../application/v2_ui/src/lib/sse.ts');
-const { saveActionCredentials, openCredentialContinuation } = await import('../application/v2_ui/src/lib/actionCredentials.ts');
+const { saveActionCredentials, openCredentialContinuation, fetchActionCredentialRequest } = await import('../application/v2_ui/src/lib/actionCredentials.ts');
 const { runOrchestration } = await import('../application/v2_ui/src/lib/orchestration.ts');
 const read = (name) => JSON.parse(fs.readFileSync(new URL(
     `../application/single_app/static/json/schemas/${name}`, import.meta.url,
@@ -123,6 +124,16 @@ try {
     assert.deepEqual(JSON.parse(continued.options.body), { expected_etag: 'etag-2' });
     assert.equal(continued.options.headers['X-CSRFToken'], 'fixture-csrf-token');
     assert.equal(continued.options.body.includes('private'), false, 'continuation sends only its fence, never secrets or a new question');
+    const refreshed = await fetchActionCredentialRequest(safe);
+    assert.equal(refreshed.etag, 'etag-2');
+    assert.equal(calls.at(-1).options.cache, 'no-store');
+    assert.equal(calls.at(-1).options.method, 'GET', 'refresh must read the server, not submit credentials');
+    for (const change of [{ id: 'foreign' }, { conversation_id: 'foreign' }, { run_id: 'foreign' }, { turn_id: 'foreign' }]) {
+        globalThis.fetch = async () => new Response(JSON.stringify({
+            credential_request: { ...safe, ...change }, csrf_token: 'wrong-work',
+        }), { headers: { 'Content-Type': 'application/json' } });
+        await assert.rejects(fetchActionCredentialRequest(safe), /no longer belongs/);
+    }
     let waiting = 0;
     let runDone = 0;
     const runRequest = { ...safe, run_id: 'run-1', turn_id: 'turn-1', status: 'ready' };

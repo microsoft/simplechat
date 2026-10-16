@@ -1,8 +1,9 @@
 # test_v2_action_credentials.py
 """
 Functional UI test for private credential cards in React V2.
-Version: 0.261.337
+Version: 0.261.343
 Implemented in: 0.261.333
+Continuation recovery regressions added in: 0.261.343
 
 Exercises the real card and shared chat continuation, with closed local API fixtures.
 Secrets must be submitted only to the credential endpoint, disappear on submission and
@@ -52,6 +53,10 @@ SETUP = r"""
         if (path.endsWith('/submit')) {
             return new Response(JSON.stringify({credential_request: {...request, status: 'ready', etag: 'etag-2'}}),
                 {headers: {'Content-Type': 'application/json'}});
+        }
+        if (path.endsWith('/api/action-credentials/' + request.id)) {
+            return new Response(JSON.stringify({credential_request: {...request, status: 'ready', etag: 'etag-3'},
+                csrf_token: 'fixture-csrf-token'}), {headers: {'Content-Type': 'application/json'}});
         }
         if (path.endsWith('/cancel')) {
             return new Response(JSON.stringify({credential_request: {...request, status: 'cancelled'}}),
@@ -252,29 +257,51 @@ def test_ready_request_resumes_same_orchestration_without_new_run():
         pytest.skip(str(exc))
 
 
-def test_failed_continuation_clears_secrets_and_cancels_with_saved_revision():
+@pytest.mark.parametrize("failure_kind", ["conflict", "error_sse", "transport"])
+def test_failed_continuation_clears_secrets_and_refreshes_saved_revision(failure_kind):
     errors = []
     try:
         with hb.harness_page(collect_errors=errors) as page:
             page.evaluate(SETUP, REQUEST)
-            page.evaluate(r"""() => {
+            page.evaluate(r"""(failureKind) => {
                 const originalFetch = window.fetch;
                 window.fetch = async (url, options = {}) => {
                     if (String(url).endsWith('/continue')) {
                         window.__credentialCalls.push({path: String(url), body: JSON.parse(options.body)});
+                        if (failureKind === 'transport') throw new TypeError('Private provider failure sentinel');
+                        if (failureKind === 'error_sse') return new Response(
+                            'data: ' + JSON.stringify({error: 'The request could not be completed.'}) + '\n\n',
+                            {headers: {'Content-Type': 'text/event-stream'}});
                         return new Response(JSON.stringify({error: 'request_changed'}), {
                             status: 409, headers: {'Content-Type': 'application/json'}
                         });
                     }
                     return originalFetch(url, options);
                 };
-            }""")
+            }""", failure_kind)
             card = page.get_by_role("region", name="Personal action credentials")
             card.wait_for()
             card.get_by_label("Username", exact=True).fill("rejected-user-sentinel")
             card.get_by_label("Password", exact=True).fill("rejected-secret-sentinel")
             card.get_by_role("button", name="Save and continue", exact=True).click()
             card.get_by_role("alert").wait_for()
+            assert card.get_by_role("alert").inner_text() == (
+                "Your credentials are saved, but continuation could not be confirmed. "
+                "Refresh the saved request before trying again."
+            )
+            assert card.get_by_role("button", name="Continue", exact=True).is_disabled()
+            assert card.get_by_role("button", name="Cancel blocked work", exact=True).is_disabled()
+            screenshots = os.environ.get("SIMPLECHAT_CREDENTIAL_SCREENSHOT_DIR")
+            if screenshots and failure_kind == "conflict":
+                root = Path(__file__).resolve().parents[1]
+                css = next((root / "application" / "single_app" / "static" / "v2" / "assets").glob("*.css"))
+                page.add_style_tag(path=str(css))
+                for width, theme in ((1440, "light"), (390, "dark")):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", theme == "dark")
+                    overflow = card.evaluate("(node) => node.scrollWidth > node.clientWidth")
+                    assert not overflow
+                    card.screenshot(path=str(Path(screenshots) / f"credential-recovery-{theme}-{width}.png"))
             assert card.locator("input").count() == 0
             assert "rejected-secret-sentinel" not in card.inner_text()
             state = page.evaluate("""() => JSON.stringify({
@@ -284,11 +311,178 @@ def test_failed_continuation_clears_secrets_and_cancels_with_saved_revision():
             })""")
             assert "rejected-user-sentinel" not in state
             assert "rejected-secret-sentinel" not in state
+            assert "Private provider failure sentinel" not in card.inner_text()
+            card.get_by_role("button", name="Refresh saved request", exact=True).click()
+            page.wait_for_function('() => !document.querySelector(\'section[aria-label="Personal action credentials"] [role="alert"]\')')
             card.get_by_role("button", name="Cancel blocked work", exact=True).click()
             page.wait_for_function("() => window.__credentialCalls.some(call => call.path.endsWith('/cancel'))")
             cancellation = page.evaluate("window.__credentialCalls.find(call => call.path.endsWith('/cancel')).body")
-            assert cancellation == {"expected_etag": "etag-2"}
+            assert cancellation == {"expected_etag": "etag-3"}
             page.wait_for_function('() => !document.querySelector(\'section[aria-label="Personal action credentials"]\')')
+            assert not errors, errors
+    except hb.HarnessUnavailable as exc:
+        pytest.skip(str(exc))
+
+
+@pytest.mark.parametrize("request_status,run_status", [
+    ("failed", "failed"), ("completed", "completed"), ("superseded", "waiting"),
+    ("continuing", "running"), ("pending", "failed"), ("ready", "failed"), ("ready", "waiting"),
+    ("ready", "unconfirmed"),
+])
+def test_refresh_uses_authoritative_credential_and_run_state(request_status, run_status):
+    errors = []
+    plan = make_plan("conversation-1", "turn-1")
+    plan["status"] = "waiting"
+    plan["approval"]["state"] = "approved"
+    ready = {**REQUEST, "status": "ready", "run_id": plan["run_id"], "turn_id": plan["turn_id"]}
+    try:
+        with hb.harness_page(collect_errors=errors) as page:
+            page.evaluate(SETUP, ready)
+            page.evaluate(r"""({plan, request, requestStatus, runStatus}) => {
+                const originalFetch = window.fetch;
+                window.__refreshed = false;
+                window.fetch = async (url, options = {}) => {
+                    const path = String(url).split('?')[0];
+                    if (path.endsWith('/api/action-credentials/' + request.id)) {
+                        window.__refreshed = true;
+                        window.__credentialCalls.push({path, body: null});
+                        return new Response(JSON.stringify({credential_request: {...request,
+                            status: requestStatus, etag: 'etag-4'}}),
+                            {headers: {'Content-Type': 'application/json'}});
+                    }
+                    if (path.endsWith('/runs/' + plan.run_id)) {
+                        window.__credentialCalls.push({path: String(url), body: null});
+                        if (window.__refreshed && runStatus === 'unconfirmed') return new Response('{}',
+                            {headers: {'Content-Type': 'application/json'}});
+                        return new Response(JSON.stringify({run: {
+                            run_id: plan.run_id, turn_id: plan.turn_id, conversation_id: plan.conversation_id,
+                            status: window.__refreshed ? runStatus : 'waiting',
+                            outcome: window.__refreshed ? runStatus : 'waiting', plan
+                        }}), {headers: {'Content-Type': 'application/json'}});
+                    }
+                    if (path.endsWith('/continue')) {
+                        window.__credentialCalls.push({path, body: JSON.parse(options.body)});
+                        return new Response('{}', {status: 409, headers: {'Content-Type': 'application/json'}});
+                    }
+                    return originalFetch(url, options);
+                };
+            }""", {"plan": plan, "request": ready, "requestStatus": request_status, "runStatus": run_status})
+            card = page.get_by_role("region", name="Personal action credentials")
+            card.wait_for()
+            card.get_by_role("button", name="Continue", exact=True).click()
+            card.get_by_role("alert").wait_for()
+            card.get_by_role("button", name="Refresh saved request", exact=True).click()
+            page.wait_for_function("() => window.__refreshed && document.querySelector('form')?.getAttribute('aria-busy') === 'false'")
+            if request_status == "ready" and run_status == "waiting":
+                assert card.get_by_role("button", name="Continue", exact=True).is_enabled()
+                assert card.get_by_role("alert").count() == 0
+                card.get_by_role("button", name="Continue", exact=True).click()
+                card.get_by_role("alert").wait_for()
+                continued = page.evaluate("window.__credentialCalls.filter(call => call.path.endsWith('/continue'))")
+                assert [call["body"]["expected_etag"] for call in continued] == ["etag-1", "etag-4"]
+            elif run_status == "unconfirmed":
+                assert card.get_by_role("button", name="Continue", exact=True).is_disabled()
+                assert "could not be refreshed" in card.get_by_role("alert").inner_text()
+            else:
+                assert card.get_by_role("button", name="Continue", exact=True).count() == 0
+                assert card.get_by_role("button", name="Cancel blocked work", exact=True).count() == 0
+                assert "Review run details" in card.get_by_role("alert").inner_text()
+            assert card.locator('input[type="password"]').count() == 0
+            calls = page.evaluate("window.__credentialCalls")
+            assert not any(call["path"].endswith("/submit") for call in calls)
+            if request_status == "ready":
+                assert any("conversation_id=conversation-1" in call["path"] for call in calls)
+            assert not errors, errors
+    except hb.HarnessUnavailable as exc:
+        pytest.skip(str(exc))
+
+
+@pytest.mark.parametrize("refresh_result", ["ready", "unavailable", "cancelled"])
+def test_unconfirmed_save_requires_real_refresh_without_resubmission(refresh_result):
+    errors = []
+    try:
+        with hb.harness_page(collect_errors=errors) as page:
+            page.evaluate(SETUP, REQUEST)
+            page.evaluate(r"""({request, refreshResult}) => {
+                const originalFetch = window.fetch;
+                window.fetch = async (url, options = {}) => {
+                    const path = String(url);
+                    if (path.endsWith('/submit')) {
+                        window.__credentialCalls.push({path, body: JSON.parse(options.body)});
+                        throw new TypeError('Connection lost after saving');
+                    }
+                    if (refreshResult !== 'ready' && path.endsWith('/api/action-credentials/credential-1')) {
+                        window.__credentialCalls.push({path, body: null});
+                        if (refreshResult === 'unavailable') throw new TypeError('PRIVATE_SENTINEL');
+                        return new Response(JSON.stringify({credential_request: {...request,
+                            status: refreshResult, etag: 'etag-3'}}), {headers: {'Content-Type': 'application/json'}});
+                    }
+                    return originalFetch(url, options);
+                };
+            }""", {"request": REQUEST, "refreshResult": refresh_result})
+            card = page.get_by_role("region", name="Personal action credentials")
+            card.wait_for()
+            card.get_by_label("Personal identity", exact=True).select_option("identity-1")
+            card.get_by_role("button", name="Save and continue", exact=True).click()
+            card.get_by_role("alert").wait_for()
+            assert card.get_by_role("alert").inner_text() == (
+                "Saving could not be confirmed. Refresh the saved request before entering credentials again."
+            )
+            assert card.get_by_role("button", name="Save and continue", exact=True).is_disabled()
+            assert card.locator("input").count() == 0
+            card.get_by_role("button", name="Refresh saved request", exact=True).click()
+            if refresh_result == "unavailable":
+                card.get_by_text("The saved request could not be refreshed. Reload this conversation before trying again.").wait_for()
+                assert card.get_by_role("button", name="Save and continue", exact=True).is_disabled()
+                assert "PRIVATE_SENTINEL" not in card.inner_text()
+            elif refresh_result == "cancelled":
+                card.get_by_text("This work is no longer waiting for these credentials. Review the conversation before starting new work.").wait_for()
+                assert card.get_by_role("button", name="Save and continue", exact=True).count() == 0
+                assert card.get_by_role("status").count() == 0
+            else:
+                card.get_by_role("button", name="Continue", exact=True).click()
+                page.wait_for_function("() => window.__credentialCalls.some(call => call.path.endsWith('/continue'))")
+                continued = page.evaluate("window.__credentialCalls.find(call => call.path.endsWith('/continue')).body")
+                assert continued == {"expected_etag": "etag-3"}
+            calls = page.evaluate("window.__credentialCalls")
+            assert len([call for call in calls if call["path"].endswith("/submit")]) == 1
+            assert not errors, errors
+    except hb.HarnessUnavailable as exc:
+        pytest.skip(str(exc))
+
+
+def test_duplicate_submit_and_unmount_do_not_start_another_continuation():
+    errors = []
+    try:
+        with hb.harness_page(collect_errors=errors) as page:
+            page.evaluate(SETUP, REQUEST)
+            page.evaluate(r"""(request) => {
+                const originalFetch = window.fetch;
+                window.fetch = async (url, options = {}) => {
+                    if (String(url).endsWith('/submit')) {
+                        window.__credentialCalls.push({path: String(url), body: JSON.parse(options.body)});
+                        return new Promise(resolve => {window.__finishSave = () => resolve(new Response(
+                            JSON.stringify({credential_request: {...request, status: 'ready', etag: 'etag-2'}}),
+                            {headers: {'Content-Type': 'application/json'}}));});
+                    }
+                    return originalFetch(url, options);
+                };
+            }""", REQUEST)
+            card = page.get_by_role("region", name="Personal action credentials")
+            card.wait_for()
+            card.get_by_label("Personal identity", exact=True).select_option("identity-1")
+            card.locator("form").evaluate("""form => {
+                form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+                form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+            }""")
+            page.wait_for_function("() => typeof window.__finishSave === 'function'")
+            page.evaluate("""() => window.OrchHarness.mount('mount-a', 'CredentialRequestCards',
+                {conversationId: 'conversation-2'})""")
+            page.wait_for_function('() => !document.querySelector(\'section[aria-label="Personal action credentials"]\')')
+            page.evaluate("async () => {window.__finishSave(); await new Promise(resolve => setTimeout(resolve, 0));}")
+            calls = page.evaluate("window.__credentialCalls")
+            assert len([call for call in calls if call["path"].endswith("/submit")]) == 1
+            assert not any(call["path"].endswith("/continue") for call in calls)
             assert not errors, errors
     except hb.HarnessUnavailable as exc:
         pytest.skip(str(exc))
