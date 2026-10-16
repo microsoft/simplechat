@@ -1,7 +1,7 @@
 # test_v2_conversation_mode_persistence.py
 """
 Real-Composer browser regressions for explicit per-conversation mode choices.
-Version: 0.261.341
+Version: 0.261.342
 Implemented in: 0.261.341
 
 Use the existing local/Azure Playwright connection, production CSS, real stores,
@@ -21,7 +21,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures"))
 sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures" / "orchestration"))
 
-import harness_build as hb  # noqa: E402
 from composer_helpers import open_composer_tools  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402, F401
 from test_v2_orchestration_approval_persistence import (  # noqa: E402

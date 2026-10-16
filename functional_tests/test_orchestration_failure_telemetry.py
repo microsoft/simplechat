@@ -1,11 +1,12 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.341
+Version: 0.261.342
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
 Semantic chat outcomes and persisted-state correlation implemented in: 0.261.341
+Bounded, non-regex application-version validation implemented in: 0.261.342
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -248,6 +249,81 @@ def test_chat_outcome_dimensions_survive_sanitization_without_private_text(
     assert record.levelno < logging.ERROR
     invalid = telemetry._build_logger_extra("Outcome.", {"application_version": "PRIVATE_VERSION"})
     assert "sc_application_version" not in invalid
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.261.342", "1.2.3", "00.001.0002", "١.٢.٣", f"{'0' * 60}.1.2"],
+    ids=["current", "short", "leading-zeroes", "decimal-unicode", "length-limit"],
+)
+def test_application_version_is_preserved_in_both_telemetry_boundaries(harness, monkeypatch, version):
+    telemetry = importlib.import_module("functions_appinsights")
+    events = []
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(kwargs))
+    telemetry.log_chat_execution_outcome(
+        execution_path="direct", status="completed", outcome="completed",
+        conversation_id="PRIVATE_CONVERSATION", application_version=version,
+    )
+    assert events[0]["extra"]["application_version"] == version
+    properties = telemetry._build_logger_extra("Outcome.", {"application_version": version})
+    assert properties["sc_application_version"] == version
+    assert properties["sc_application_version_length"] == len(version)
+    assert "PRIVATE_" not in json.dumps(events)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "", "1.2", "1.2.3.4", ".1.2", "1..2", "1.2.", "1.2.3\n", " 1.2.3",
+        "1.2.3-private", "¹.2.3", "PRIVATE_VERSION",
+        f"{'0' * 61}.1.2", "0" * 100_000, f"1.2.{'0' * 100_000}",
+        f"1.2.3{'0' * 100_000}PRIVATE_VERSION",
+    ],
+    ids=[
+        "empty", "two-parts", "four-parts", "empty-major", "empty-minor", "empty-patch",
+        "newline", "whitespace", "suffix", "non-decimal-digit", "private",
+        "over-limit", "long-numeric", "long-last-part", "long-valid-prefix-private-suffix",
+    ],
+)
+def test_invalid_application_version_is_omitted_without_truncation(harness, monkeypatch, version):
+    telemetry = importlib.import_module("functions_appinsights")
+    events = []
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(kwargs))
+    telemetry.log_chat_execution_outcome(
+        execution_path="direct", status="completed", outcome="completed",
+        conversation_id="PRIVATE_CONVERSATION", application_version=version,
+    )
+    assert "application_version" not in events[0]["extra"]
+    properties = telemetry._build_logger_extra("Outcome.", {"application_version": version})
+    assert "sc_application_version" not in properties
+    assert properties["sc_application_version_length"] == len(version)
+    assert "PRIVATE_" not in json.dumps(events) + json.dumps(properties)
+
+
+def test_application_version_length_is_checked_before_parsing(harness):
+    telemetry = importlib.import_module("functions_appinsights")
+
+    class OversizedVersion(str):
+        def split(self, *args, **kwargs):
+            raise AssertionError("Oversized application version must not be parsed.")
+
+    version = OversizedVersion("0" * 100_000)
+    accepted = telemetry._is_application_version(version)
+    assert accepted is False
+    properties = telemetry._build_logger_extra("Outcome.", {"application_version": version})
+    assert "sc_application_version" not in properties
+
+
+@pytest.mark.parametrize("version", [None, 123, True, {}, []])
+def test_outcome_omits_non_string_application_versions(harness, monkeypatch, version):
+    telemetry = importlib.import_module("functions_appinsights")
+    events = []
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(kwargs))
+    telemetry.log_chat_execution_outcome(
+        execution_path="direct", status="completed", outcome="completed",
+        conversation_id="PRIVATE_CONVERSATION", application_version=version,
+    )
+    assert "application_version" not in events[0]["extra"]
 
 
 @pytest.mark.parametrize("failed", [False, True])

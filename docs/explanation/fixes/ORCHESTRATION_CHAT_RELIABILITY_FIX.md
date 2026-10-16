@@ -1,9 +1,12 @@
 # Orchestration Chat Reliability Fix
 
-**Version: 0.261.341**
+**Version: 0.261.342**
 
 Fixed/Implemented in version: **0.261.341**, recorded in
 `application/single_app/config.py`.
+
+Telemetry version validation hardened in version: **0.261.342**, with the
+corresponding patch update in `application/single_app/config.py` (PR #1773).
 
 ## Issue and root causes
 
@@ -79,6 +82,14 @@ Orchestration records confirmed saved outcomes rather than declaring success
 merely because an HTTP request returned 200. Cancellation is informational.
 Prompts, replies, source text, raw identities, and credentials are not included.
 
+CodeQL found unbounded regular-expression validation of application versions.
+Both the outcome producer and logger now share a non-regex parser that rejects
+the entire value above 64 characters before parsing. Within that limit it
+preserves the original three nonempty decimal-component format, including
+leading zeroes and Unicode decimal digits. Malformed and oversized versions
+are omitted, not truncated into an apparently valid version; the logger may
+retain only their length.
+
 ## Implementation boundaries
 
 | Area | Main files |
@@ -89,7 +100,7 @@ Prompts, replies, source text, raw identities, and credentials are not included.
 | Conversation mode | V2 `conversationMode.ts`, `Composer.tsx`, chat/bootstrap stores and conversation lifecycle callers |
 | Continuation containment | `functions_m365_continuations.py`, `functions_m365_runtime.py`, `background_tasks.py` |
 | Semantic diagnostics | `functions_appinsights.py`, `functions_orchestration_execution.py`, `route_backend_chats.py` |
-| Application version | `application/single_app/config.py`: `0.261.340` to `0.261.341` |
+| Application version | `application/single_app/config.py`: reliability fix `0.261.341`, telemetry validation hardening `0.261.342` |
 
 No new route, capability setting, deployment setting, source permission, model
 context limit, or automatic retry policy is added.
@@ -102,6 +113,21 @@ mode isolation, deleted/transient/conflicting continuation cases, and semantic
 outcome privacy and cancellation. The execution harness also verifies durable
 publication, authorization revocation, and cached SSE replay without another
 execution outcome.
+
+Version-validation regressions exercise both telemetry boundaries with valid,
+malformed, non-string and 100,000-character inputs, length-limit cases, and
+private suffixes. They also verify that oversized input is rejected before
+parsing and that no private content reaches event properties.
+
+The PR #1773 CodeQL follow-up passed 78 telemetry, logging-recursion and search
+integrity tests, including native analysis with its required `internal` pytest
+fixture. The 26 application-version cases also passed under optimized Python.
+All 11 conversation-mode browser tests and 13 documentation checks passed.
+The mandatory network-blocked Cosmos gate passed 971 tests and 244 subtests,
+with 1,059 owners, 404 doubles and no review gaps; its inventory was unchanged.
+The genuinely unused browser harness import was removed; the imported
+`connect_options`, `approval_assets` and `approval_browser` fixtures remain
+necessary for pytest's name-based dependency injection.
 
 Related tests:
 
