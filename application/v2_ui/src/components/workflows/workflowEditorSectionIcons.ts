@@ -5,7 +5,7 @@
 // components and can be executed in a plain Node test.
 
 import type { LucideIcon } from 'lucide-react';
-import { BellRing, CalendarClock, FolderSync, Gauge, Library, ListChecks, Settings2, Workflow } from 'lucide-react';
+import { BellRing, CalendarClock, FolderSync, Gauge, Library, ListChecks, MessagesSquare, Settings2, Workflow } from 'lucide-react';
 import type { WorkflowEditorSectionId } from '../../lib/workflowEditorSections';
 
 export const WORKFLOW_EDITOR_SECTION_ICONS: Readonly<Record<WorkflowEditorSectionId, LucideIcon>> = {
@@ -14,6 +14,7 @@ export const WORKFLOW_EDITOR_SECTION_ICONS: Readonly<Record<WorkflowEditorSectio
     // The workspace navigation's File sources icon, so the two read as the same feature.
     'file-sync': FolderSync,
     execution: Settings2,
+    results: MessagesSquare,
     references: Library,
     limits: Gauge,
     tasks: ListChecks,

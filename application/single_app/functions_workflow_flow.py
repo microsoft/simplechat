@@ -6,6 +6,7 @@ import math
 import re
 from copy import deepcopy
 
+from functions_workflow_configuration import normalize_chat_execution
 from functions_workflow_definitions import (
     WORKFLOW_BINDABLE_OUTPUTS, WORKFLOW_OUTPUT_KINDS, WorkflowDefinitionError,
     _boolean, _name, _object, normalize_workflow_input_processing, normalize_workflow_output_contract,
@@ -211,7 +212,7 @@ def compile_workflow_flow(workflow):
             raise WorkflowDefinitionError("A task catalogue entry must be an object.")
         if task.keys() - {
             "id", "type", "name", "instructions", "order", "runner", "document_action", "inputs",
-            "reference_ids", "output_contract", "approval", "publication", "input_processing",
+            "reference_ids", "output_contract", "approval", "publication", "input_processing", "chat_execution",
         }:
             raise WorkflowDefinitionError("A catalogue task contains unsupported executable fields.")
         if task.get("type", "instructions") != "instructions":
@@ -229,6 +230,8 @@ def compile_workflow_flow(workflow):
         if identifier in catalogue:
             raise WorkflowDefinitionError("Task catalogue ids must be unique.")
         catalogue[identifier] = {**deepcopy(task), "inputs": normalize_flow_bindings(task.get("inputs", []))}
+        if "chat_execution" in task:
+            catalogue[identifier]["chat_execution"] = normalize_chat_execution(task["chat_execution"])
         if "input_processing" in task:
             catalogue[identifier]["input_processing"] = normalize_workflow_input_processing(task["input_processing"])
         if task.get("output_contract") is not None:

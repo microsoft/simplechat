@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the calendar workflow run time prompt context.
-Version: 0.261.202
+Version: 0.261.343
 Implemented in: 0.261.202
 
 This test ensures that a workflow whose stored schedule is a calendar schedule tells the model
@@ -138,7 +138,7 @@ class PromptHarness:
             "_execute_cancelable_workflow_step": lambda workflow, run_id, operation: operation(),
             "workflow_unit": lambda name, operation, inputs=None, replay_safe=False: operation(),
             "_execute_workflow_file_sync": lambda workflow, run_id, trigger_source: copy.deepcopy(self.file_sync_result),
-            "_ensure_workflow_conversation": lambda workflow: {"id": "conversation-1"},
+            "_ensure_workflow_conversation": lambda workflow, run_record=None, run_id=None: {"id": "conversation-1"},
             "cosmos_messages_container": None,
             "_create_user_message": self._create_user_message,
             "_initialize_workflow_assistant_tracking": lambda *args, **kwargs: ("assistant-1", None),
@@ -434,7 +434,7 @@ def test_runner_wires_the_context_after_file_sync_and_before_the_conversation():
     body = source.split("def _run_authorized_workflow_impl(", 1)[1].split("\ndef ", 1)[0]
     file_sync_index = body.index("execution_workflow = _apply_file_sync_context_to_workflow(workflow, file_sync_result)")
     context_index = body.index("execution_workflow = _apply_workflow_run_time_context(execution_workflow, started_at)")
-    conversation_index = body.index("_ensure_workflow_conversation(execution_workflow)")
+    conversation_index = body.index("_ensure_workflow_conversation(execution_workflow, run_record, run_id)")
     assert file_sync_index < context_index < conversation_index
     assert "run_time_prompt_context" not in (APP_ROOT / "functions_workflow_definitions.py").read_text(encoding="utf-8")
 

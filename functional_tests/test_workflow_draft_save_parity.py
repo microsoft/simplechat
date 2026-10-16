@@ -2,17 +2,19 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow save parity across the workflow draft service refactor.
-Version: 0.261.234
+Version: 0.261.343
 Implemented in: 0.261.202
 Chat delivery contract loaded by the harness in: 0.261.234
+New workflow configuration defaults baseline updated in: 0.261.343
 
-This test ensures that ``save_personal_workflow`` and ``save_group_workflow`` behave byte for byte
-as they did before each save was split into a write-free build step and a persist step.
+This test pins ``save_personal_workflow`` and ``save_group_workflow`` results and
+their dependency calls across the write-free build and persist boundaries.
 
-The golden file ``fixtures/workflow_save_parity_golden.json`` was captured from the unrefactored
-code, the Phase 1 head (c5a375f06), by running this file with ``--capture``. Each scenario replays
-saves through the real personal and group workflow modules over doubled I/O. For each save it
-records:
+The golden file ``fixtures/workflow_save_parity_golden.json`` began at the unrefactored
+Phase 1 head (c5a375f06). Version 0.261.343 deliberately refreshes ordinary new-workflow
+results defaults, their authored fingerprints and the classic unsupported-definition guard.
+Existing legacy records are separately covered by ``test_workflow_configuration.py``.
+Each scenario replays real personal and group modules over doubled I/O and records:
 
 * the returned document's SHA-256 over ``json.dumps`` without sorting, and its key order, so a
   changed value or a reordered key both show up;

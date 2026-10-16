@@ -89,17 +89,28 @@ export function workspaceBadge(
         return { tone: 'shared', label: 'shared' };
     }
 
-    if (chatType.startsWith('group')) {
+    if (chatType.startsWith('group') || chatType === 'workflow' && primaryContext(metadata, 'group')) {
         const name = (primaryContext(metadata, 'group')?.name ?? '').trim();
         return { tone: 'group', label: name || 'group' };
     }
 
-    if (chatType.startsWith('public')) {
+    if (chatType.startsWith('public') || chatType === 'workflow' && primaryContext(metadata, 'public')) {
         const name = (primaryContext(metadata, 'public')?.name ?? '').trim();
         return { tone: 'public', label: name ? `public - ${name}` : 'public' };
     }
 
     return null;
+}
+
+/** Workflow origin is additive: a delivered shared/group result keeps its audience badge. */
+export function isWorkflowConversation(metadata: BadgeSource | null | undefined): boolean {
+    if (!metadata) return false;
+    const provenance = metadata.workflow_provenance;
+    return resolveChatType(metadata) === 'workflow'
+        || typeof metadata.workflow_id === 'string' && Boolean(metadata.workflow_id.trim())
+        || Boolean(provenance && typeof provenance === 'object' && !Array.isArray(provenance)
+            && typeof (provenance as Record<string, unknown>).workflow_id === 'string'
+            && String((provenance as Record<string, unknown>).workflow_id).trim());
 }
 
 /** Classification labels, which the route may return as an array or a single string. */

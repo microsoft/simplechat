@@ -137,7 +137,7 @@ interface Transaction {
 /** Top-level fields the editor authors. Everything else is identity, scope, or runtime state it keeps. */
 export const WORKFLOW_AUTHORED_FIELDS: readonly string[] = Object.freeze([
     'name', 'description', 'runner_type', 'selected_agent', 'model_endpoint_id', 'model_id',
-    'chat_capabilities_enabled', 'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
+    'chat_capabilities_enabled', 'chat_execution', 'results_delivery', 'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
     'tasks', 'reference_inputs', 'durable_execution', 'flow', 'limits', 'file_sync', ...WORKFLOW_ALERT_FIELDS,
 ]);
 

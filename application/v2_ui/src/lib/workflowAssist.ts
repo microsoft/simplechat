@@ -16,6 +16,18 @@ import { isFlowRegion } from './workflowFlow';
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
 
 export const WORKFLOW_ASSIST_PATH = '/api/user/workflows/assist';
+
+export function workflowAssistPath(workflow: WorkflowDefinition): string {
+    return workflow.group_id
+        ? `/api/groups/${encodeURIComponent(String(workflow.group_id ?? ''))}/workflows/assist`
+        : WORKFLOW_ASSIST_PATH;
+}
+
+export function workflowAssistThreadKey(workflow: WorkflowDefinition, id: string): string {
+    return workflow.group_id
+        ? `workflow:group:${encodeURIComponent(String(workflow.group_id ?? ''))}:${id}`
+        : `workflow:personal:${id}`;
+}
 export const WORKFLOW_DRAFT_INSTRUCTIONS_PATH = '/api/workflows/draft-instructions';
 /** The server counts the instruction in code points, after its raw-text check. */
 export const WORKFLOW_ASSIST_INSTRUCTION_LIMIT = 2000;
@@ -470,7 +482,7 @@ export async function postWorkflowAssist(
     try {
         // A raw fetch rather than apiClient: ApiError drops the headers, and a throttled 503 carries
         // its wait only in Retry-After.
-        const response = await fetch(apiUrl(WORKFLOW_ASSIST_PATH), {
+        const response = await fetch(apiUrl(workflowAssistPath(body.draft)), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             signal: controller.signal,
@@ -788,7 +800,8 @@ export async function requestDraftInstructions(
     let data: unknown;
     try {
         data = await api.post<unknown>(WORKFLOW_DRAFT_INSTRUCTIONS_PATH, {
-            workflow_scope: 'personal',
+            workflow_scope: workflow.group_id ? 'group' : 'personal',
+            ...(workflow.group_id ? { group_id: workflow.group_id } : {}),
             name: workflow.name,
             description: workflow.description,
             brief: taskName,

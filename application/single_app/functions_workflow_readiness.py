@@ -44,6 +44,16 @@ def workflow_outputs_ready(workflow, references, *, get_status=None):
         return False
     read = get_status or _child_status
     for reference in references:
+        if reference.get("kind") == "workflow_orchestration":
+            if (
+                set(reference) != {"kind", "run_id", "workflow_run_id", "task_id"}
+                or any(not isinstance(reference.get(key), str) or not reference[key]
+                       for key in ("run_id", "workflow_run_id", "task_id"))
+            ):
+                raise WorkflowOutputUnavailable("The saved chat continuation is unsupported.")
+            # The owning workflow lease drives the next bounded continuation tick.
+            # Requeueing is not evidence that the child has completed.
+            continue
         if reference.get("kind") == "artifact_publication":
             validate_publication_reference(reference)
             # The existing worker polls under its lease and current initiating actor.

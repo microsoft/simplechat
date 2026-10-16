@@ -122,6 +122,7 @@ def workflow_execution_fingerprint(
     execution.update({
         key: workflow[key] for key in (
             "definition_version", "reference_inputs", "durable_execution", "flow", "limits",
+            "chat_execution", "results_delivery",
         ) if key in workflow
     })
     execution["m365_run_as_user_id"] = str(

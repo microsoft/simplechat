@@ -875,6 +875,8 @@ function conversationFromMetadata(
         classification: metadata.classification ?? null,
         context: metadata.context,
         chat_type: metadata.chat_type ?? undefined,
+        workflow_id: metadata.workflow_id,
+        workflow_provenance: metadata.workflow_provenance,
     };
 }
 

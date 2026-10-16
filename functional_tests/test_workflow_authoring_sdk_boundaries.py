@@ -1,7 +1,7 @@
 # test_workflow_authoring_sdk_boundaries.py
 """
 SDK-shaped runtime coverage for storage owners in the workflow authoring modules.
-Version: 0.261.335
+Version: 0.261.343
 Implemented in: 0.261.332
 Personal workflow owner-runtime coverage added in: 0.261.335
 
@@ -154,7 +154,7 @@ def test_runner_conversation_and_replayed_user_message_accept_sdk_points(owners,
     seed_conversation(owners, title='Old workflow title')
     workflow = {**wa.stored_workflow(), 'conversation_id': 'conversation'}
     conversation = owners.runner._ensure_workflow_conversation(workflow)
-    assert conversation['title'] == f"Workflow: {workflow['name']}"
+    assert conversation['title'] == 'Old workflow title'
     stored = owners.conversations.read_item('conversation', 'conversation')
     assert isinstance(stored, CosmosDict) and stored['title'] == conversation['title']
     run_id = 'run-one'

@@ -145,6 +145,8 @@ const WORKFLOW_KEY_SPECS: readonly WorkflowKeySpec[] = [
     keySpec('error_handling', 'Error handling'),
     keySpec('is_enabled', 'Workflow enabled'),
     keySpec('chat_capabilities_enabled', 'Chat capabilities'),
+    keySpec('chat_execution', 'Chat execution'),
+    keySpec('results_delivery', 'Results'),
     keySpec('durable_execution', 'Durable execution'),
     keySpec('file_sync', 'File Sync'),
     keySpec('limits', 'Flow limits'),
@@ -658,6 +660,7 @@ const TASK_FIELD_LABELS = new Map<string, string>([
     ['document_action', 'Document action'], ['reference_ids', 'Task references'], ['inputs', 'Inputs'],
     ['input_processing', 'Input processing'], ['output_contract', 'Output contract'], ['approval', 'Approval'],
     ['publication', 'Publication'], ['run_when', 'Run when'], ['placement', 'Position in flow'],
+    ['chat_execution', 'Chat execution'],
 ]);
 const NODE_FIELD_LABELS = new Map<string, string>([
     ['placement', 'Position in flow'], ['kind', 'Block type'], ['condition', 'Condition'], ['inputs', 'Inputs'],
@@ -776,6 +779,13 @@ function summarizeWorkflowKey(field: string, value: unknown): string {
         return value === 3 ? 'Structured flow (version 3)' : `Classic tasks (version ${plainSummary(value)})`;
     }
     if (!isRecord(value)) return plainSummary(value);
+    if (field === 'chat_execution') return chatExecutionSummary(value);
+    if (field === 'results_delivery') {
+        const mode = value.mode === 'history' ? 'Run history only' : value.mode === 'task' ? 'Delivered by a task/agent' : 'Create a results conversation';
+        const recipients = value.all_group_members ? 'All current group members'
+            : Array.isArray(value.recipient_ids) && value.recipient_ids.length ? `Recipients: ${value.recipient_ids.join(', ')}` : 'Private';
+        return `${mode} · ${humanize(String(value.conversation_type ?? ''))} · ${recipients}`;
+    }
     if (field === 'schedule') {
         const label = workflowScheduleLabel(value.trigger_type, value.schedule);
         if (label) return label;
@@ -805,6 +815,7 @@ function summarizeWorkflowKey(field: string, value: unknown): string {
 }
 
 function summarizeTaskField(field: string, value: unknown, index: DefinitionIndex): string {
+    if (field === 'chat_execution') return isRecord(value) ? chatExecutionSummary(value) : 'Use workflow settings';
     if (field === 'approval') {
         if (!isRecord(value) || value.required !== true) return 'Not required';
         return textOf(value.message) ? `Required: ${value.message as string}` : 'Required';
@@ -825,6 +836,13 @@ function summarizeTaskField(field: string, value: unknown, index: DefinitionInde
     if (field === 'run_when') return predicateText(value);
     if (field === 'placement') return typeof value === 'string' ? regionLabel(index, value) : plainSummary(value);
     return plainSummary(value);
+}
+
+function chatExecutionSummary(value: Record<string, unknown>): string {
+    const mode = value.mode === 'orchestration' ? 'Orchestration (automatic)' : value.mode === 'off' ? 'Off' : 'Selected capabilities';
+    const required = [...(Array.isArray(value.required_capabilities) ? value.required_capabilities : []),
+        ...(Array.isArray(value.visual_requirements) ? value.visual_requirements : [])];
+    return required.length ? `${mode} · Required: ${required.join(', ')}` : mode;
 }
 
 function summarizeNodeField(field: string, value: unknown, index: DefinitionIndex): string {

@@ -1,7 +1,14 @@
 # functions_workflow_editor.py
 """Non-secret editor choices and trusted loop-runner eligibility."""
 
+import re
+import uuid
+
+from flask import has_request_context, session
+from requests.exceptions import RequestException
+
 from functions_ai_connections import supports_model_capability
+from functions_appinsights import log_event
 from functions_generated_file_exports import GENERATED_RECORD_EXPORT_FORMATS
 from functions_workflow_definitions import (
     WORKFLOW_DEFINITION_VERSION, WORKFLOW_INPUT_PROCESSING_MODES, WORKFLOW_PUBLICATION_COMPLETION_POLICIES,
@@ -20,6 +27,139 @@ from functions_workflow_limits import (
     validate_workflow_min_schedule_interval_seconds,
 )
 from functions_workflow_schedules import build_workflow_schedule_editor_options
+
+
+def workflow_assist_available(settings, *, user_roles=None, group_id=""):
+    """Combine the existing assistant flag with this editor's existing scope policy."""
+    # Settings owns bootstrap and is loaded only when authorized editor options are requested.
+    from functions_settings import is_group_workflows_enabled_for_group, is_workflow_assistant_enabled_for_user
+
+    if group_id:
+        return settings.get('enable_workflow_ai_assistant') is True and is_group_workflows_enabled_for_group(
+            settings, group_id,
+        )
+    return is_workflow_assistant_enabled_for_user(settings, user_roles=user_roles)
+
+
+def workflow_result_recipient_choices(user_id, *, group_id="", instruction=""):
+    """Project the existing collaborator/member lookup to canonical identities, without inviting."""
+    # These owners initialize config; load them only at the authorized editor request boundary.
+    from collaboration_models import normalize_collaboration_user
+    from functions_group import assert_group_role, find_group_by_id
+    from functions_settings import get_group_workflow_management_roles, get_settings, get_user_settings
+    from functions_simplechat_operations import _group_member_summaries, search_directory_users
+
+    if group_id:
+        assert_group_role(user_id, group_id, allowed_roles=get_group_workflow_management_roles(get_settings()))
+        candidates = _group_member_summaries(find_group_by_id(group_id))
+    else:
+        document = get_user_settings(user_id) or {}
+        candidates = list((document.get('settings') or {}).get('recentCollaborators') or [])
+        audience = re.search(
+            r'\b(?:share\b.{0,80}?\bwith|send\b.{0,80}?\bto|deliver\b.{0,80}?\bto|invite)\s+([^.!?\n]+)',
+            instruction, re.IGNORECASE,
+        )
+        queries = re.findall(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', instruction) if audience else []
+        if audience:
+            queries.extend(re.split(r'\s+and\s+|[,;]', audience.group(1), flags=re.IGNORECASE))
+        for query in list(dict.fromkeys(query.strip().strip('"\'') for query in queries if query.strip()))[:5]:
+            # The existing collaboration directory search returns all matches, not a guessed person.
+            try:
+                candidates.extend(search_directory_users(query[:100], limit=20))
+            except (PermissionError, RequestException) as exc:
+                log_event('[WORKFLOW_ASSIST] Recipient choices unavailable',
+                          extra={'error_type': type(exc).__name__}, debug_only=True)
+    choices = {}
+    for candidate in candidates:
+        normalized = normalize_collaboration_user(candidate)
+        if not normalized:
+            continue
+        try:
+            identity = str(uuid.UUID(normalized['user_id']))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if identity == user_id:
+            continue
+        name = normalized.get('display_name') or normalized.get('email') or 'Member'
+        email = normalized.get('email')
+        label = f'{name} ({email})' if email and email != name else name
+        choices.setdefault(identity, {'id': identity, 'label': str(label)[:250]})
+    return list(choices.values())[:100]
+
+
+def build_workflow_configuration_options(settings, *, user_id="", group_id="", user_roles=(),
+                                         agents=(), recipient_choices=()):
+    """Whitelist display-only registry metadata; never return a descriptor or raw settings."""
+    # Registry/source owners can initialize cloud services, so resolve at the editor boundary.
+    from functions_orchestration_registry import VISUAL_KINDS, get_capability, resolve_available_capabilities
+    from functions_source_review import is_source_review_enabled_for_user, is_url_access_enabled_for_user
+    from functions_workflow_configuration import WORKFLOW_CAPABILITY_IDS, new_workflow_configuration
+
+    unavailable = {}
+    descriptors = [get_capability(identity) for identity in WORKFLOW_CAPABILITY_IDS]
+    available = {
+        capability['id'] for capability in resolve_available_capabilities(
+            settings, candidate_ids=[item['id'] for item in descriptors],
+            unavailable=unavailable, include_runtime_bindings=False,
+        )
+    }
+    if not is_url_access_enabled_for_user(settings, user_roles=user_roles):
+        available.discard('url_fetch')
+        unavailable['url_fetch'] = 'caller_access_required'
+    if not is_source_review_enabled_for_user(settings, user_id, user_roles=user_roles):
+        available.discard('deep_research')
+        unavailable['deep_research'] = 'caller_access_required'
+    if not agents:
+        available.discard('agent_invoke')
+        unavailable['agent_invoke'] = 'no_accessible_agents'
+    enabled = settings.get('enable_chat_orchestration') is True
+    sharing = settings.get('enable_collaborative_conversations') is True
+    if not enabled:
+        available.clear()
+    defaults = new_workflow_configuration(
+        settings=settings, workflow_scope='group' if group_id else 'personal',
+    )
+    def choice(identity, label, permitted, reason='feature_disabled'):
+        return {'id': identity, 'label': label, 'available': permitted,
+                **({'reason': reason} if not permitted else {})}
+
+    visual_labels = {'chart': 'Chart', 'diagram': 'Diagram', 'image_proposal': 'Image proposal'}
+    compose_available = 'compose' in available
+    return {
+        'chat_execution': {
+            'modes': [
+                choice('orchestration', 'Orchestration (automatic)', enabled),
+                choice('selected', 'Selected capabilities', enabled),
+                choice('off', 'Off', True),
+            ],
+            'capabilities': [
+                choice(item['id'], item.get('label') or item['id'], item['id'] in available,
+                       unavailable.get(item['id'], 'feature_disabled'))
+                for item in descriptors
+            ],
+            'visual_requirements': [
+                choice(identity, visual_labels[identity], compose_available) for identity in VISUAL_KINDS
+            ],
+            'default': defaults.get('chat_execution'),
+        },
+        'results_delivery': {
+            'modes': [
+                {'id': 'history', 'label': 'Run history only'},
+                {'id': 'conversation', 'label': 'Create a results conversation'},
+                {'id': 'task', 'label': 'Delivered by a task/agent'},
+            ],
+            'conversation_types': [
+                item for item in (
+                [{'id': 'group', 'label': 'Private group-scoped'}, {'id': 'group_shared', 'label': 'Shared group'}]
+                if group_id else
+                [{'id': 'personal', 'label': 'Personal'}, {'id': 'shared', 'label': 'Shared personal'}]
+                ) if sharing or item['id'] not in ('shared', 'group_shared')
+            ],
+            'recipient_choices': list(recipient_choices) if sharing else [],
+            'allow_all_group_members': bool(group_id and sharing),
+            'default': defaults['results_delivery'],
+        },
+    }
 
 
 def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks,
@@ -176,4 +316,15 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
                 'scope_type': 'public', 'scope_id': str(workspace['id']), 'name': str(workspace.get('name') or 'Public workspace'),
             } for workspace in get_user_visible_public_workspace_docs(user_id))
     options['document_workspaces'] = workspaces
+    user_roles = (session.get('user') or {}).get('roles', []) if has_request_context() else []
+    options.update(build_workflow_configuration_options(
+        settings, user_id=user_id, group_id=group_id, user_roles=user_roles, agents=agents,
+        recipient_choices=(
+            workflow_result_recipient_choices(user_id, group_id=group_id)
+            if can_manage and settings.get('enable_collaborative_conversations') is True else []
+        ),
+    ))
+    options['workflow_assist_available'] = can_manage and workflow_assist_available(
+        settings, user_roles=user_roles, group_id=group_id,
+    )
     return options

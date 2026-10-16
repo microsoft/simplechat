@@ -178,7 +178,7 @@ def test_the_allowlist_has_no_operation_that_names_a_forbidden_field():
         assert schema["additionalProperties"] is False, name
         assert not forbidden & set(schema["properties"]), name
         for word in ("enabled", "run_as", "approval", "share", "owner", "group", "version", "file_sync", "url"):
-            assert word not in name, name
+            assert word not in name or name == "set_results_all_group_members", name
     assert core.parse_model_output('```json\n{"outcome": "explained", "reply": "Done."}\n```') == {
         "outcome": "explained", "reply": "Done.",
     }

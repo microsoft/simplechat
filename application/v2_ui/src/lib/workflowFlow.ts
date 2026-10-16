@@ -861,7 +861,7 @@ export function flowUnsupportedReason(workflow: WorkflowDefinition, options?: Wo
     workflow.tasks.forEach((task) => {
         onlyFields(task, [
             'id', 'type', 'name', 'instructions', 'order', 'runner', 'document_action', 'inputs',
-            'reference_ids', 'output_contract', 'approval', 'publication', 'input_processing',
+            'reference_ids', 'output_contract', 'approval', 'publication', 'input_processing', 'chat_execution',
         ], errors, 'Task configuration');
         if (task.input_processing !== undefined && !['full', 'saved_record_report'].includes(task.input_processing)) {
             errors.push('This task contains an unsupported large-input processing mode. Its original configuration is preserved.');

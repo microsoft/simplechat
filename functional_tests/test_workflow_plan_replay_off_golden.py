@@ -1,20 +1,27 @@
 # test_workflow_plan_replay_off_golden.py
 """
 Functional test for the plan replay setting-off golden.
-Version: 0.261.308
+Version: 0.261.343
 Implemented in: 0.261.308
+Configuration compatibility assertions added in: 0.261.343
 
 With enable_workflow_plan_replay off, which is the default, nothing a user can
-already do changes. The golden was captured by running this file with
+already do with a legacy definition changes. The golden was captured by running this file with
 --write-golden in a clean checkout of the V2 commit this change started from,
 fa3422deee5e6d8d65be370b387b28639425bf7f. It pins, for workflows without a
 saved chat plan:
 
 - a task sequence: what each task hands its runner, the run result and every
   saved run item, including a retry and a failure that continues;
-- a personal workflow saved, renamed and put on a schedule;
+- a personal legacy definition loaded, renamed and put on a schedule;
 - a group workflow build;
 - run history redaction for a withheld and a verified task.
+
+The historical creation result is now compared with a legacy stored seed.
+New ordinary definitions deliberately acquire private results delivery and cannot
+be edited lossily in the classic editor; separate assertions cover that change.
+Comparison projects only that asserted group default and the pre-existing empty
+task document-selection snapshot metadata, never a recaptured golden.
 
 On this branch only, a saved chat plan must refuse with its fixed reason while
 the setting is off: one failed task item, never a crash, a retry or a silent skip.
@@ -202,10 +209,20 @@ def _capture_sequence(app, name):
 
 
 def _settings(app):
-    return {**deepcopy(app.settings.get_settings() or {}), "allow_user_workflows": True, **OFF}
+    return {
+        **deepcopy(app.settings.get_settings() or {}), "allow_user_workflows": True,
+        "enable_chat_orchestration": False, **OFF,
+    }
 
 
-def _capture_personal(app, patch):
+def _private_results_delivery(scope):
+    return {
+        "version": 1, "mode": "conversation", "conversation_type": scope,
+        "recipient_ids": [], "all_group_members": False,
+    }
+
+
+def _capture_personal(app, patch, *, legacy=False):
     workflows = AtomicMemoryContainer("user_id")
     settings = _settings(app)
     patch.setattr(app.config, "cosmos_personal_workflows_container", workflows)
@@ -227,6 +244,13 @@ def _capture_personal(app, patch):
     created = save(payload)
     if not workflows.items:
         return {"created": created}
+    if legacy:
+        # Reconstruct the pre-configuration stored definition, without turning
+        # off production creation defaults or seeding values from the golden.
+        seed = next(iter(workflows.items.values()))
+        require(seed.pop("results_delivery", None) == _private_results_delivery("personal"), seed)
+        require("chat_execution" not in seed, seed)
+        created = _outcome(lambda: app.personal.get_personal_workflow(OWNER, seed["id"]))
     payload = {**payload, "id": latest()["id"], "name": "Renamed"}
     renamed = save(payload)
     rescheduled = save({**payload, "trigger_type": "interval", "schedule": {"unit": "hours", "value": 24}})
@@ -267,7 +291,7 @@ def _capture_history(app):
 def _capture(app):
     captured = {"task_sequence": {name: _capture_sequence(app, name) for name in SEQUENCE_CASES}}
     with pytest.MonkeyPatch.context() as patch:
-        captured["personal_save"] = _capture_personal(app, patch)
+        captured["personal_save"] = _capture_personal(app, patch, legacy=True)
     captured["group_build"] = _capture_group(app)
     captured["history_redaction"] = _capture_history(app)
     return captured
@@ -303,13 +327,73 @@ def test_the_golden_comes_from_the_base_commit(golden):
     require("ok" in golden["captured"]["group_build"], golden["captured"]["group_build"])
 
 
+def _historical_projection(section, value):
+    projected = deepcopy(value)
+    if section == "group_build":
+        document = projected["ok"][0]
+        require(document.pop("results_delivery", None) == _private_results_delivery("group"), document)
+    elif section == "task_sequence":
+        for case in projected.values():
+            for call in case["dispatch_calls"]:
+                document = call["execution_workflow"]
+                snapshots = document.pop("_task_document_selection_snapshots", {})
+                require(snapshots == {}, f"Only empty historical snapshot metadata may be projected: {snapshots}")
+    return projected
+
+
 @pytest.mark.parametrize("section", SECTIONS)
 def test_workflows_without_a_saved_plan_match_the_base(captured, golden, section):
     expected = _pretty(golden["captured"][section])
-    actual = _pretty(captured[section])
+    actual = _pretty(_historical_projection(section, captured[section]))
     require(actual == expected, "".join(unified_diff(
         expected.splitlines(True), actual.splitlines(True), "base", "branch", n=2,
     )))
+
+
+def test_historical_projection_does_not_hide_changed_group_delivery(captured):
+    changed = deepcopy(captured["group_build"])
+    changed["ok"][0]["results_delivery"]["conversation_type"] = "group_shared"
+    with pytest.raises(AssertionError):
+        _historical_projection("group_build", changed)
+
+
+def test_historical_projection_does_not_hide_nonempty_document_snapshots(captured):
+    changed = deepcopy(captured["task_sequence"])
+    changed["two_tasks_succeed"]["dispatch_calls"][0]["execution_workflow"][
+        "_task_document_selection_snapshots"
+    ] = {"gather": {"document_ids": ["unexpected-document"]}}
+    with pytest.raises(AssertionError, match="Only empty historical snapshot metadata"):
+        _historical_projection("task_sequence", changed)
+
+
+def test_legacy_personal_definitions_keep_classic_edits_and_implicit_configuration(captured):
+    legacy = captured["personal_save"]
+    for operation in ("created", "renamed", "rescheduled"):
+        outcome = legacy[operation]
+        require("ok" in outcome, outcome)
+        definition = outcome["ok"]
+        require("chat_execution" not in definition and "results_delivery" not in definition, definition)
+    stored = legacy["stored"]
+    require("chat_execution" not in stored and "results_delivery" not in stored, stored)
+    require(stored["name"] == "Renamed" and stored["trigger_type"] == "interval", stored)
+
+
+def test_new_ordinary_definitions_keep_private_results_and_refuse_lossy_classic_edits(app, captured):
+    with pytest.MonkeyPatch.context() as patch:
+        personal = _capture_personal(app, patch)
+    created = personal["created"]["ok"]
+    expected = _private_results_delivery("personal")
+    require(created.get("results_delivery") == expected, created)
+    require(created.get("chat_capabilities_enabled") is True and "chat_execution" not in created, created)
+    for operation in ("renamed", "rescheduled"):
+        refusal = personal[operation]
+        require(refusal.get("error") == "WorkflowDefinitionConflict", refusal)
+        require("Open it in V2" in refusal.get("message", ""), refusal)
+    require(personal["stored"]["results_delivery"] == expected, personal["stored"])
+    require(personal["stored"]["name"] == created["name"], personal["stored"])
+    group = captured["group_build"]["ok"][0]
+    require(group.get("results_delivery") == _private_results_delivery("group"), group)
+    require(group.get("chat_capabilities_enabled") is True and "chat_execution" not in group, group)
 
 
 @pytest.mark.parametrize("strategy", ("halt", "continue"))

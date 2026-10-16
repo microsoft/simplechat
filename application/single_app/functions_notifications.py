@@ -404,7 +404,7 @@ def _join_rule_names(names):
     return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def _member_workflow_alert_links(notification, metadata):
+def _member_workflow_alert_links(notification, metadata, reader_user_id=None):
     """Keep only links a member can follow: group conversations the run created in this group.
 
     The workflow's own conversation belongs to its owner, and a personal conversation the agent
@@ -416,6 +416,9 @@ def _member_workflow_alert_links(notification, metadata):
     for target in metadata.get('link_targets') or []:
         if not isinstance(target, dict):
             continue
+        authorized_user_ids = target.get('authorized_user_ids')
+        if authorized_user_ids is not None and reader_user_id not in authorized_user_ids:
+            continue
         link_context = target.get('link_context') if isinstance(target.get('link_context'), dict) else {}
         chat_type = str(link_context.get('chat_type') or '').strip().lower()
         conversation_id = str(target.get('conversation_id') or link_context.get('conversation_id') or '').strip()
@@ -425,11 +428,13 @@ def _member_workflow_alert_links(notification, metadata):
             and conversation_id
             and conversation_id != workflow_conversation_id
         ):
-            links.append(copy.deepcopy(target))
+            member_target = copy.deepcopy(target)
+            member_target.pop('authorized_user_ids', None)
+            links.append(member_target)
     return links
 
 
-def _project_workflow_alert_for_member(notification):
+def _project_workflow_alert_for_member(notification, reader_user_id=None):
     """Return the reduced team alert a group member other than the owner reads."""
     metadata = _get_workflow_alert_metadata(notification)
     member_metadata = {
@@ -442,7 +447,7 @@ def _project_workflow_alert_for_member(notification):
         for match in metadata.get('matched_rules') or []
         if isinstance(match, dict)
     ]
-    links = _member_workflow_alert_links(notification, metadata)
+    links = _member_workflow_alert_links(notification, metadata, reader_user_id)
     member_metadata['link_targets'] = links
 
     priority = _get_workflow_alert_priority(notification)
@@ -474,7 +479,7 @@ def _decorate_workflow_alert(notification, reader_user_id):
     alert reports only the reader's own read and dismissed state, never other members' ids.
     """
     if _reads_team_workflow_alert_as_member(notification, reader_user_id):
-        notification = _project_workflow_alert_for_member(notification)
+        notification = _project_workflow_alert_for_member(notification, reader_user_id)
         content_scope = 'member'
     else:
         notification = dict(notification)
@@ -1003,6 +1008,7 @@ def create_workflow_priority_notification(
     link_context=None,
     metadata=None,
     group_id=None,
+    idempotency_key=None,
 ):
     """Create a workflow alert notification with a priority-aware display.
 
@@ -1031,6 +1037,7 @@ def create_workflow_priority_notification(
             link_url=link_url,
             link_context=link_context or {},
             metadata=alert_metadata,
+            **({'idempotency_key': idempotency_key} if idempotency_key is not None else {}),
         )
 
     return create_notification(
@@ -1041,6 +1048,7 @@ def create_workflow_priority_notification(
         link_url=link_url,
         link_context=link_context or {},
         metadata=alert_metadata,
+        **({'idempotency_key': idempotency_key} if idempotency_key is not None else {}),
     )
 
 

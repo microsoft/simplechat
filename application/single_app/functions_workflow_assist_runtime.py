@@ -215,7 +215,7 @@ class WorkflowAssistModel:
 # Adapters
 # ---------------------------------------------------------------------------
 
-def read_workflow_base(container, user_id, workflow_id):
+def read_workflow_base(container, user_id, workflow_id, *, group_id=""):
     """The caller's saved workflow as the editor loads it (``get_personal_workflow``), or None.
 
     Unlike ``get_personal_workflow``, a store failure raises 503 instead of reading as "not found",
@@ -224,12 +224,14 @@ def read_workflow_base(container, user_id, workflow_id):
     if any(character in _COSMOS_ID_FORBIDDEN_CHARACTERS for character in workflow_id):
         return None
     try:
-        item = container.read_item(item=workflow_id, partition_key=user_id)
+        item = container.read_item(item=workflow_id, partition_key=group_id or user_id)
     except AzureError as exc:
         if getattr(exc, 'status_code', None) in (400, 404):
             return None
         raise WorkflowAssistError('assistant_unavailable') from exc
     if not isinstance(item, dict):
+        return None
+    if group_id and item.get('group_id') != group_id:
         return None
     cleaned = {key: value for key, value in item.items() if not str(key).startswith('_')}
     return workflow_definition_for_editor(sanitize_workflow_alert_record(cleaned))
@@ -257,7 +259,7 @@ def excerpt_reference(identity):
     }
 
 
-def build_workflow_assist_services(settings, *, client_factory):
+def build_workflow_assist_services(settings, *, client_factory, group_id="", user_info=None, instruction=""):
     """The real services for one assist request.
 
     ``settings`` are the raw app settings; they stay on the server. ``client_factory()`` returns
@@ -274,36 +276,75 @@ def build_workflow_assist_services(settings, *, client_factory):
     from functions_workflow_drafts import dry_run_personal_workflow
     from functions_workflow_editor import get_workflow_editor_options
 
+    if group_id:
+        # Group stores and membership services are needed only for authorized group requests.
+        from config import cosmos_group_workflows_container
+        from functions_group import assert_group_role
+        from functions_settings import get_group_workflow_management_roles
+        from functions_workflow_drafts import dry_run_group_workflow
+
+    def authorize(user_id):
+        if group_id:
+            assert_group_role(user_id, group_id, allowed_roles=get_group_workflow_management_roles(settings))
+
     def read_base(user_id, workflow_id):
-        return read_workflow_base(cosmos_personal_workflows_container, user_id, workflow_id)
+        authorize(user_id)
+        container = cosmos_group_workflows_container if group_id else cosmos_personal_workflows_container
+        return read_workflow_base(container, user_id, workflow_id, group_id=group_id)
 
     def resolve_references(user_id, references):
+        authorize(user_id)
+        if group_id and any(
+            reference.get('scope', {}).get('kind') != 'group'
+            or reference.get('scope', {}).get('id') != group_id for reference in references
+        ):
+            raise WorkflowAssistError('reference_unavailable')
         try:
             return resolve_scope_references(references, user_id, settings, limit=ASSIST_MAX_REQUEST_REFERENCES)
         except ScopeReferenceError as exc:
             raise reference_error(exc) from exc
 
     def load_options(user_id):
+        authorize(user_id)
         try:
-            return get_workflow_editor_options(user_id, settings)
+            options = (
+                get_workflow_editor_options(user_id, settings, group_id=group_id)
+                if group_id else get_workflow_editor_options(user_id, settings)
+            )
+            if instruction and not group_id and settings.get('enable_collaborative_conversations') is True:
+                from functions_workflow_editor import workflow_result_recipient_choices
+
+                options['results_delivery']['recipient_choices'] = workflow_result_recipient_choices(
+                    user_id, instruction=instruction,
+                )
+            return options
         except AzureError as exc:
             raise WorkflowAssistError('assistant_unavailable') from exc
 
     def load_excerpt(user_id, identity):
+        authorize(user_id)
+        if group_id and identity[:2] != ('group', group_id):
+            raise WorkflowAssistError('reference_unavailable')
         loaded = load_workflow_reference(
-            {'user_id': user_id, 'group_id': ''}, excerpt_reference(identity), actor_user_id=user_id,
+            {'user_id': user_id, 'group_id': group_id}, excerpt_reference(identity), actor_user_id=user_id,
         )
         return loaded.get('text') if isinstance(loaded, dict) else None
 
     def dry_run(user_id, payload):
+        authorize(user_id)
         try:
+            if group_id:
+                return dry_run_group_workflow(
+                    group_id, payload, user_id, user_info=user_info or {}, settings=settings,
+                )
             return dry_run_personal_workflow(user_id, payload, actor_user_id=user_id, settings=settings)
         except (WorkflowLoopLimitError, AzureError) as exc:
             raise WorkflowAssistError('assistant_unavailable') from exc
 
     def agent_email_capable(user_id, agent):
+        authorize(user_id)
         actions, _fingerprint_workflow = workflow_m365_manifests({
-            'user_id': user_id, 'group_id': '', 'selected_agent': agent, 'tasks': [],
+            'user_id': user_id, 'group_id': group_id, 'selected_agent': agent, 'tasks': [],
         })
         return any('email' in _manifest_sources(action) for action in actions)
 
@@ -332,4 +373,5 @@ def build_workflow_assist_services(settings, *, client_factory):
         m365_connected=m365_connected,
         log=log,
         diagnostics=diagnostics,
+        group_id=group_id,
     )

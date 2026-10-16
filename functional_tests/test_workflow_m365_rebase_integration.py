@@ -1,7 +1,7 @@
 # test_workflow_m365_rebase_integration.py
 """
 Functional regressions for Development M365 and native/durable workflow integration.
-Version: 0.261.122
+Version: 0.261.343
 Implemented in: 0.261.122
 
 Real definition CAS, durable controllers, dispatch, result storage, and repeated
@@ -366,8 +366,8 @@ def test_generated_m365_conversation_is_reused_after_sign_in(integration, monkey
     created, contexts = [], []
     authorized = False
 
-    def conversation(workflow):
-        conversation_id = workflow.get("conversation_id")
+    def conversation(workflow, run_record=None, run_id=None):
+        conversation_id = (run_record or {}).get("conversation_id") or workflow.get("_workflow_audit_conversation_id")
         if not conversation_id:
             created.append("conversation-inventory")
             conversation_id = created[-1]

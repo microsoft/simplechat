@@ -72,6 +72,7 @@ def enumerate_due_runs(container, *, now=None, limit=64):
         "AND (NOT IS_DEFINED(c.superseded_by_run_id) OR IS_NULL(c.superseded_by_run_id)) "
         # A saved-workflow plan replay is driven by its workflow run, never by this scheduler.
         "AND (NOT IS_DEFINED(c.workflow_replay) OR IS_NULL(c.workflow_replay)) "
+        "AND (NOT IS_DEFINED(c.workflow_execution) OR IS_NULL(c.workflow_execution)) "
         "AND (NOT IS_DEFINED(c.latest_attempt_run_id) OR IS_NULL(c.latest_attempt_run_id) "
         'OR c.latest_attempt_run_id = "") '
         "AND (NOT IS_DEFINED(c.execution_lease) OR IS_NULL(c.execution_lease) "
@@ -212,8 +213,9 @@ def _error_facts(error):
 
 
 class _Tick:
-    def __init__(self, resources):
+    def __init__(self, resources, *, workflow_owned=False):
         self.resources = resources
+        self.workflow_owned = workflow_owned
         self.now = _aware_time(resources.clock())
         self.result = {
             "ok": True, "runs": [], "outputs": [], "cleanup_enrollments": [], "errors": [],
@@ -391,6 +393,8 @@ class _Tick:
                 # Run selectors predate cleanup and may refer to a deleted scope.
                 return True
             current_run = self.read_run(selector)
+            if current_run.get("workflow_execution") and not self.workflow_owned:
+                return True
             services = self.services(selector)
             active = []
             for selected in remaining:
@@ -458,7 +462,9 @@ class _Tick:
         lease = None
         try:
             record = self.read_run(selector)
-            if record.get("workflow_replay"):
+            if record.get("workflow_replay") or (
+                record.get("workflow_execution") and not self.workflow_owned
+            ):
                 # The owning workflow run drives, cancels and fences its plan replay.
                 self.result["runs"].append({**selector, "action": "deferred", "state": "workflow_replay"})
                 return
@@ -514,6 +520,38 @@ class _Tick:
             self.failure("run", exc, selector)
         finally:
             self.close(lease, selector)
+
+
+def continue_workflow_orchestration_once(record, *, resources, authorize):
+    """Drive one workflow-owned child with the existing continuation/output runtime.
+
+    The workflow worker supplies its current lease/actor authorization. General
+    chat scheduler scans cannot execute these children without that boundary.
+    """
+    if (
+        not isinstance(resources, OrchestrationSchedulerResources) or not callable(authorize)
+        or type(record) is not dict or not isinstance(record.get("workflow_execution"), dict)
+    ):
+        raise ValueError("An authorized workflow orchestration is required.")
+    authorize()
+    selector = _selector(record)
+    tick = _Tick(resources, workflow_owned=True)
+    outputs = [
+        {**selector, "output_id": output["output_id"]}
+        for output in record.get("outputs") or []
+        if output.get("state") not in {"completed", "failed", "cancelled"}
+    ]
+    handled = tick.process_outputs(outputs) if outputs else False
+    authorize()
+    if not handled:
+        tick.process_run(selector)
+    if tick.result["errors"]:
+        # Preserve uncertainty; a failed tick is not a successful model-only result.
+        from functions_orchestration_execution import HarnessExecutionError
+
+        error = tick.result["errors"][0]
+        raise HarnessExecutionError(error["code"], retryable=error["retryable"])
+    return resources.read_run(record["id"], record["user_id"], record["conversation_id"])
 
 
 def check_due_orchestration_runs_once(*, max_runs=4, max_outputs=8, max_cleanup_runs=4, resources=None):

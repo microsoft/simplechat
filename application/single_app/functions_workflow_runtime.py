@@ -96,6 +96,7 @@ def _snapshot(workflow):
         **{field: deepcopy(workflow[field]) for field in (
             "id", "user_id", "group_id", "conversation_id", "model_binding_summary",
             "url_access_authorized", "url_access_authorized_by", "url_access_authorized_at",
+            "deep_research_authorized", "deep_research_authorized_by", "deep_research_authorized_at",
         ) if field in workflow},
         "definition_revision": workflow_definition_revision(workflow),
     }
@@ -462,6 +463,12 @@ def cancel_durable_workflow_run(workflow, run_id, *, actor_user_id):
     control = store.request_cancel(actor_user_id=actor_user_id, request_id=str(uuid.uuid4()))
     _cancel_m365_workflow_run(workflow, run_id)
     run = _project_runtime_run(services, workflow, run_id, control)
+    if run.get("conversation_id") and (
+        workflow.get("chat_execution") or any(task.get("chat_execution") for task in workflow.get("tasks") or [])
+    ):
+        from functions_workflow_chat_execution import cancel_workflow_chat_executions
+
+        cancel_workflow_chat_executions(workflow, run_id, run["conversation_id"])
     current = services["load_workflow"]()
     if current is None:
         raise LookupError("Workflow not found.")

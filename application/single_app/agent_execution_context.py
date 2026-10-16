@@ -125,6 +125,28 @@ class AgentExecutionFrame:
 
 
 _execution_frame = ContextVar("agent_execution_frame", default=None)
+_workflow_identity = ContextVar("workflow_execution_identity", default=None)
+
+
+def current_workflow_identity(user_id, conversation_id):
+    identity = _workflow_identity.get()
+    if identity is not None and (
+        identity.user_id == user_id and identity.conversation_id == conversation_id
+    ):
+        return identity
+    return None
+
+
+@contextmanager
+def workflow_identity_scope(identity):
+    """Bind a server-authorized workflow principal without persisting session claims."""
+    if type(identity) is not ExecutionIdentity or not identity.user_id or not identity.conversation_id:
+        raise PermissionError("The workflow execution identity is unavailable.")
+    token = _workflow_identity.set(identity)
+    try:
+        yield identity
+    finally:
+        _workflow_identity.reset(token)
 
 
 def current_agent_execution():
@@ -177,6 +199,10 @@ def capture_execution_identity(user_id, conversation_id=None):
     dependency. The closure creates a distinct app/request context for every
     invocation; concurrent children never share ``g`` or a mutable session.
     """
+    workflow_identity = current_workflow_identity(user_id, conversation_id)
+    if workflow_identity is not None:
+        return workflow_identity
+
     from flask import current_app, g, has_request_context, request, session
     from public_chat_scope_state import current_public_chat_scope, public_chat_scope_context
 

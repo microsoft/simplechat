@@ -4,6 +4,12 @@ Implemented in version: **0.261.308**.
 
 Application version tracking: `application\single_app\config.py`.
 
+Ordinary workflow orchestration and results delivery implemented in version:
+**0.261.343**. These editable workflows can plan existing available chat
+capabilities on each run. They are separate from frozen plan replay: this page's
+allowlist, identity model and read-only saved steps remain unchanged. See
+[Workflow chat capability parity](WORKFLOW_CHAT_CAPABILITY_PARITY.md).
+
 Shared schedule policy implemented in version: **0.261.317**.
 
 Calendar message action implemented in version: **0.261.338**.

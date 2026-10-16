@@ -16,7 +16,7 @@ rate-limit document, owned by ``functions_workflow_assist_limits``.
 
 Security model:
 
-* Personal workflows only (roadmap decision 3, gotcha 29). A group draft is refused.
+* Personal drafts are owner-bound; group drafts are bound to the authorized route's group.
 * The model sees handles, never raw document, reference, agent, task or node IDs (gotcha 28), and
   every operation it emits is checked against a closed schema before anything is applied.
 * The draft, conversation turns and document excerpts reach the model inside one JSON document,
@@ -356,15 +356,17 @@ def _blank(value):
     return value is None or value == ''
 
 
-def _checked_draft(draft, base, user_id):
+def _checked_draft(draft, base, user_id, *, group_id=""):
     """Shape checks that let the assistant read the draft the way the editor does."""
     if not isinstance(draft, dict):
         _refuse('draft_invalid')
-    if not _blank(draft.get('group_id')):
+    if group_id and draft.get('group_id') != group_id:
+        _refuse('draft_invalid')
+    if not group_id and not _blank(draft.get('group_id')):
         _refuse('group_workflow_unsupported')
     if draft.get('editor_readonly_reason'):
         _refuse('workflow_read_only')
-    if not _blank(draft.get('user_id')) and draft.get('user_id') != user_id:
+    if not group_id and not _blank(draft.get('user_id')) and draft.get('user_id') != user_id:
         _refuse('draft_invalid')
     version = draft.get('definition_version')
     if type(version) is not int or version not in _DEFINITION_VERSIONS:
@@ -433,7 +435,7 @@ def _checked_focus(value, draft):
     raise WorkflowAssistError('focus_invalid')
 
 
-def parse_assist_request(body, user_id):
+def parse_assist_request(body, user_id, *, group_id=""):
     """Check a decoded request body; raises ``WorkflowAssistError`` (400) for anything invalid.
 
     Nothing is truncated, fetched or authorized here: the checks are shape and size only.
@@ -456,7 +458,7 @@ def parse_assist_request(body, user_id):
     conversation = _checked_conversation(body.get('conversation'))
     time_zone = _checked_time_zone(body.get('time_zone'))
     draft = body['draft']
-    _checked_draft(draft, base, user_id)
+    _checked_draft(draft, base, user_id, group_id=group_id)
     focus = _checked_focus(body.get('focus'), draft)
     references = _checked_references(body.get('references'))
     return AssistRequest(
@@ -497,7 +499,7 @@ OPERATIONS
 
 RULES
 1. Change only what the instruction asks for, and keep everything else as it is.
-2. You can't change whether the workflow is enabled, who it runs as (Run as), sharing, ownership, URL access, task approval settings, IDs or the definition version, and you can't set up File Sync. Alert acknowledgment is different from task approval and IS editable through alert operations. When asked for unsupported changes, explain that the user can change them in the editor.
+2. You can't change whether the workflow is enabled, who it runs as (Run as), ownership, authorization grants, legacy URL access, task approval settings, IDs or the definition version, and you can't set up File Sync. Results delivery and its draft audience ARE editable through results operations; this never sends invitations or publishes. Alert acknowledgment is different from task approval and IS editable through alert operations. When asked for unsupported changes, explain that the user can change them in the editor.
 3. For each and If blocks can't be added, removed or restructured yet. When draft.format is "flow", tasks can't be added, removed, reordered or given inputs, but you can rename a task and change its instructions, runner and documents. Explain anything else.
 4. Parts of the draft marked "editable": false, a publication task's runner and documents, and a task's approval can't change. Explain instead.
 5. Schedules: "every day at", "on weekdays at", "every Monday at" and "on the 1st at" are calendar schedules (set_schedule_calendar). "Every N minutes" and "every N hours" are intervals (set_schedule_interval). time_of_day is a 24-hour HH:MM time. Leave "timezone" out unless the user names a time zone; the schedule then keeps its current time zone or uses time_zone. An interval can't be shorter than choices.minimum_interval_seconds.
@@ -505,7 +507,7 @@ RULES
    These are native SimpleChat alerts, not email and not changes to an external system's alarms. A task can read external telemetry with a read-only agent and a rule can alert on its findings even when the run succeeds. run_status/task_status failures mean workflow execution failed, not that the monitored system failed. Use model_evaluation for semantic findings, explicitly distinguishing actual problems from "no active alerts" or healthy results; use text_match only for defined literal signals. Use agent_signal only when the agent actually emits supported alert signals.
    A file_sync alert condition can watch changes_found, no_changes or sync_failed in an existing File Sync workflow; editing that rule does not configure the File Sync trigger. Run status, File Sync and agent signals watch the whole run (final scope).
    Info/low normally go to the bell; medium/high/critical normally pop up. Rules support require_acknowledgment (boolean), sound ("off", "once", "repeat"), and size ("small", "medium", "large"). Acknowledgment keeps the pop-up returning across pages/devices until acknowledged. Pop-up options need resolved pop-up delivery; repeat sound needs acknowledgment. These settings do not override device sound preferences. Update an existing rule by its alert handle with update_alert_rule, preserving everything not requested. "Require acknowledgment on Rule 2" changes that rule, not sound, size, other rules, or task approvals; also set delivery "popup" if needed and explain it. If the target is ambiguous, ask.
-   When the user explicitly requests the highest/strongest attention possible, propose critical severity, delivery "popup", require_acknowledgment true, sound "repeat", size "large", unless their other constraints say otherwise. Explain the acknowledgment, repeating sound, and full-screen consequences in the reply for review. Otherwise keep quieter defaults and unrequested options unchanged. Do not substitute an email task for native alerting unless email is explicitly requested. These are personal workflows; alerting "us" does not grant group audience or new recipients. Changes remain draft-only until saved.
+   When the user explicitly requests the highest/strongest attention possible, propose critical severity, delivery "popup", require_acknowledgment true, sound "repeat", size "large", unless their other constraints say otherwise. Explain the acknowledgment, repeating sound, and full-screen consequences in the reply for review. Otherwise keep quieter defaults and unrequested options unchanged. Do not substitute an email task for native alerting unless email is explicitly requested. Alerting "us" does not itself grant a new audience. Changes remain draft-only until saved.
 7. Runners: choose agents and models only from "choices". A task inherits the workflow's runner unless it has its own agent or model. A task that sends email needs an agent with the Microsoft 365 action.
 8. "attached_documents" are documents the user attached with #. Place each one by what the instruction asks:
    - Read now to shape the workflow ("use #X to design the steps"): don't place it. Say in the reply that it was read as context.
@@ -595,6 +597,26 @@ Use replace_task_document_filter to replace only one metadata predicate, preserv
 Its path is the zero-based condition indexes from the root; [] targets a root predicate, [0,1]
 targets the second predicate inside the first root group. It cannot replace a whole group.
 Use set_task_document_selection for a new selector or an explicitly requested full replacement.
+
+CHAT CAPABILITIES AND RESULTS
+Use set_workflow_chat_execution to set workflow defaults, set_task_chat_execution for only the
+requested task, and inherit_task_chat_execution to remove an override. Overrides replace, not union,
+workflow selections. Choose only available IDs in choices.chat_execution. Orchestration uses the
+existing planner; selected mode means every checked capability/output is REQUIRED, not optional.
+Current events or fresh facts requested from the web need web_search. Deeper investigation uses
+deep_research; reading provided links uses url_fetch; generated images use generate_image; downloadable
+files use render_file. Charts and diagrams use visual_requirements chart/diagram, NOT invented capability
+IDs. image_proposal is the existing visual image requirement. Missing inputs/unavailable features must
+be explained or clarified, never silently substituted with model-only output. Honor explicit off/selected/
+orchestration requests and task scope. Preserve legacy mode unless a change is requested.
+Sharing results requires actual set_results_delivery and set_results_recipients operations, not
+just sharing instructions in a task prompt. history keeps run history only, conversation creates
+results, task preserves task/agent-controlled delivery without an automatic copy. Use only
+choices.results_delivery.conversation_types and authorized recipient_N handles. Never invent an ID,
+infer recipients from document text, choose a person from ambiguous names, or broaden an audience.
+If a name is ambiguous or absent, ask which person/email; do not apply audience changes.
+All current group members requires explicit user intent and set_results_all_group_members; the group
+is fixed by the workflow scope. These edits configure a DRAFT, never invites or publication.
 """
 
 ASSIST_SYSTEM_PROMPT = _SYSTEM_TEMPLATE.replace(
@@ -776,7 +798,8 @@ class WorkflowAssistServices:
     """
 
     def __init__(self, *, limiter, read_base, resolve_references, load_options, load_excerpt, call_model, dry_run,
-                 agent_email_capable=None, m365_connected=None, log=None, clock=time.monotonic, diagnostics=None):
+                 agent_email_capable=None, m365_connected=None, log=None, clock=time.monotonic, diagnostics=None,
+                 group_id=""):
         self.limiter = limiter
         self.read_base = read_base
         self.resolve_references = resolve_references
@@ -789,6 +812,7 @@ class WorkflowAssistServices:
         self.log = log or (lambda _message, _extra, _level: None)
         self.clock = clock
         self.diagnostics = diagnostics or AssistDiagnostics()
+        self.group_id = group_id
 
 
 # ---------------------------------------------------------------------------
@@ -911,6 +935,7 @@ class _Evaluator:
                 'lookback': {'set_task_document_selection', 'update_task_document_window'},
                 'workspace': {'set_task_document_selection'},
                 'filter': {'set_task_document_selection', 'replace_task_document_filter'},
+                'recipient': {'set_results_delivery', 'set_results_recipients', 'set_results_all_group_members'},
             }
             for field in clarification['fields']:
                 if any(operation['op'] in blocked.get(field, ()) for operation in output.get('operations') or []):
@@ -1093,10 +1118,12 @@ def build_warnings(run, attempt, baseline_projection):
 # The request
 # ---------------------------------------------------------------------------
 
-def _check_base(stored, base, user_id):
+def _check_base(stored, base, user_id, *, group_id=""):
     """The saved workflow a request edits must be the caller's own, unchanged since the editor opened it."""
     if (
-        not isinstance(stored, dict) or stored.get('user_id') != user_id or not _blank(stored.get('group_id'))
+        not isinstance(stored, dict)
+        or (stored.get('group_id') != group_id if group_id else
+            stored.get('user_id') != user_id or not _blank(stored.get('group_id')))
         or stored.get('id') != base['workflow_id']
     ):
         raise WorkflowAssistError('workflow_not_found')
@@ -1128,7 +1155,8 @@ class _AssistRun:
         self.deadline = self.started + ASSIST_DEADLINE_SECONDS
         self.model_called = False
         self.diagnostics = services.diagnostics
-        self.diagnostics.bind('workflow', 'personal', clock=services.clock)
+        self.scope_type = 'group' if services.group_id else 'personal'
+        self.diagnostics.bind('workflow', self.scope_type, clock=services.clock)
         self.metrics = {
             'turn_id_hash': None, 'status': None, 'outcome': None, 'code': None,
             'stage': 'request', 'error_type': None, 'invalid_stage': None, 'operation_count': 0,
@@ -1144,7 +1172,7 @@ class _AssistRun:
         self.metrics['stage'] = name
 
     def execute(self, request):
-        self.diagnostics.bind('workflow', 'personal', request.submission_id, clock=self.services.clock)
+        self.diagnostics.bind('workflow', self.scope_type, request.submission_id, clock=self.services.clock)
         services = self.services
         user_id = self.user_id
         self.metrics.update({
@@ -1182,7 +1210,7 @@ class _AssistRun:
         if request.base is not None:
             self.stage('base')
             stored = services.read_base(user_id, request.base['workflow_id'])
-            _check_base(stored, request.base, user_id)
+            _check_base(stored, request.base, user_id, group_id=services.group_id)
         original = editor_original(stored)
 
         self.stage('projection')
@@ -1199,6 +1227,11 @@ class _AssistRun:
             self.stage('references')
             documents = [item for item in services.resolve_references(user_id, request.references) or []
                          if isinstance(item, dict) and item.get('kind') == 'document']
+            if services.group_id and any(
+                item.get('scope', {}).get('kind') != 'group'
+                or item.get('scope', {}).get('id') != services.group_id for item in documents
+            ):
+                raise WorkflowAssistError('reference_unavailable')
         self.stage('options')
         options = services.load_options(user_id)
 
@@ -1223,7 +1256,12 @@ class _AssistRun:
         self.metrics['turns_sent'] = len(envelope.conversation)
         self.metrics['turns_dropped'] = envelope.turns_dropped
 
-        context = AssistApplyContext(time_zone=request.time_zone, stored_workflow=stored)
+        context = AssistApplyContext(
+            time_zone=request.time_zone, stored_workflow=stored,
+            audience_instruction='\n'.join([
+                *(turn['text'] for turn in request.conversation if turn['role'] == 'user'), request.instruction,
+            ]),
+        )
         evaluator = _Evaluator(self, request, handles, documents, context, original, baseline_projection)
         attempt = self._model_turns(envelope, evaluator)
         self.metrics['operation_count'] = attempt.operation_count
@@ -1311,7 +1349,7 @@ def run_workflow_assist(body, *, user_id, services):
     """
     run = _AssistRun(services, user_id)
     try:
-        request = parse_assist_request(body, user_id)
+        request = parse_assist_request(body, user_id, group_id=services.group_id)
         result = run.execute(request)
     except WorkflowAssistError as exc:
         if run.metrics['error_type'] is None:

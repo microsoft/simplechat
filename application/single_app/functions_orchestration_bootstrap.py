@@ -21,7 +21,7 @@ from threading import Lock
 from flask import has_request_context
 
 import config
-from agent_execution_context import capture_execution_identity
+from agent_execution_context import capture_execution_identity, current_workflow_identity
 from functions_generated_export_contracts import GeneratedFileExportRequest
 from functions_generated_export_registry import resolve_generated_file_export_format
 from functions_orchestration_artifacts import (
@@ -102,17 +102,19 @@ def private_external_configuration_digest(value):
 
 
 def build_external_identity_reader(actor_user_id, actor_conversation_id, *, execution_check=None):
-    """Create a lazy current-access reader over the signed-in session's app roles.
+    """Create a lazy current-access reader for an authenticated execution principal.
 
     Like classic chat, roles come from the signed-in session. They are captured
     now, while the request context exists, because execution continues on a
-    worker thread. Without a matching session, as in a scheduler continuation,
-    every external-source read fails closed instead of restoring saved roles.
+    worker thread. A workflow owner may instead bind an explicit task-local
+    principal reconstructed from existing server-authorized capability grants.
+    Without either principal, ordinary scheduler continuations fail closed
+    instead of restoring arbitrary saved roles.
     Conversation ownership and Control Center restrictions are still point-read
     on each access. Nothing calls Microsoft Graph or persists roles.
     """
     session_roles, session_email = None, None
-    if has_request_context():
+    if has_request_context() or current_workflow_identity(actor_user_id, actor_conversation_id) is not None:
         try:
             identity = capture_execution_identity(actor_user_id, actor_conversation_id)
         except PermissionError:

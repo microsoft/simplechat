@@ -37,7 +37,7 @@ import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { selectInFlightCount, useImageProposalStore } from '../../stores/imageProposalStore';
-import { workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationBadges';
+import { isWorkflowConversation, workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationBadges';
 import { canShareConversation, panelTargetForConversation } from '../../lib/sharing';
 import { isCollaborative } from '../../lib/types';
 import { isEverythingSelected, selectionIntentFromEvent } from '../../lib/listSelection';
@@ -89,17 +89,21 @@ function WorkspaceTag({ conversation }: { conversation: Conversation }) {
         (state) => state.settings.showConversationWorkspaceTags !== false,
     );
     const badge = enabled ? workspaceBadge(conversation) : null;
+    const workflow = isWorkflowConversation(conversation);
 
-    if (!badge) {
+    if (!badge && !workflow) {
         return null;
     }
 
     return (
-        <span
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+        {badge ? <span
             title={TAG_TITLE[badge.tone]}
             className={clsx('block truncate text-[11px] leading-tight', TAG_TONE[badge.tone])}
         >
             {badge.label}
+        </span> : null}
+        {workflow ? <span title="Created by a workflow" className="text-[11px] leading-tight text-text-2">Workflow</span> : null}
         </span>
     );
 }

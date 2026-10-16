@@ -1,9 +1,11 @@
-# Generic Workflow Automation
+# Generic Workflow Automation (v0.261.343)
 
 Implemented in version: **0.250.063**
 Enhanced in version: **0.250.065**
 Task-level runner selection implemented in version: **0.250.065**
 Configurable task limits implemented in version: **0.250.129**
+Chat execution and results delivery implemented in version: **0.261.343**.
+The current version is tracked in `application/single_app/config.py`.
 
 Related issues: #1082, #1084
 
@@ -56,14 +58,32 @@ Dependencies:
 - Tasks without a `runner` field behave as `inherit`, and workflows without a
    `tasks` array retain the legacy single-dispatch path.
 
-New workflow definitions set `chat_capabilities_enabled` to `true`. Existing
+New ordinary definitions use `chat_execution.mode: orchestration` when chat
+orchestration is enabled, with automatic capability selection on each new run.
+Selected mode makes checked capabilities mandatory; Off retains plain-model
+execution where supported. Tasks may replace the workflow's selection or inherit it.
+When orchestration is unavailable, new definitions retain the supported legacy
+core-capability default. Existing
 saved Direct Model workflows remain on their prior raw-completion behavior when
-the field is absent, preserving established results until they are explicitly
-migrated or recreated.
+both the new configuration and the old core-capability flag are absent.
+An existing `chat_capabilities_enabled: true` continues to mean legacy core
+plugins, not full orchestration. Frozen replay and chat-origin delivery keep
+their existing specialized contracts.
+
+Each new run has its own audit conversation. The separate `results_delivery`
+setting chooses history only, a new personal/group-scoped results conversation,
+or delivery controlled by an existing task/agent. New ordinary workflows default
+to a private-in-scope results conversation. Shared results use authorized named
+recipients or, for a group, all current group members. Existing records do not
+gain an extra delivered conversation merely by being loaded.
+
+See [Workflow chat capability parity](WORKFLOW_CHAT_CAPABILITY_PARITY.md) for
+the contract, runtime boundary, delivery behavior and regression coverage.
 
 ### Direct Model execution
 
-When `chat_capabilities_enabled` is enabled, a Direct Model workflow:
+For a legacy workflow without `chat_execution`, when
+`chat_capabilities_enabled` is enabled, a Direct Model workflow:
 
 1. Resolves the workflow's saved model endpoint and model selection.
 2. Creates a Semantic Kernel chat service for that selected model, including a
@@ -124,12 +144,18 @@ changed-files safeguards.
 
 ### Headless capability boundary
 
-Workflows support server-side core capabilities that can run safely without an
+Legacy workflows support server-side core capabilities that can run safely without an
 interactive browser session. Streaming, browser-only upload interactions, and
 workflows that require a user approval gesture are not executed headlessly.
 Model endpoint protocols that do not support function calling still return a
 normal model response; capability use depends on the selected endpoint and
 enabled plugins.
+
+Ordinary workflows with `chat_execution` instead use the existing headless
+orchestration harness, including required web research and durable file-output
+continuations. An unfinished or failed required execution is not converted into
+a successful plain-model answer. This adds no new approval requirements and
+does not change existing Microsoft 365 consent or action behavior.
 
 ## Usage Instructions
 

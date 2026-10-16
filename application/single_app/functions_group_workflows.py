@@ -551,6 +551,7 @@ def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_i
     reference_owner_id = (existing_workflow or {}).get('user_id') or actor_user_id
     definition_fields = normalize_workflow_definition(
         workflow_data, existing_workflow, tasks, user_id=reference_owner_id, group_id=group_id,
+        settings=settings, new_defaults=origin is None,
     )
     tasks = definition_fields['tasks']
     reference_options = {'resolve_document': resolve_document} if resolve_document is not None else {}
@@ -725,6 +726,14 @@ def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_i
         workflow['next_run_at'] = None
 
     workflow.update(definition_fields)
+    if 'deep_research_authorized' in workflow_data or 'deep_research_authorized' in (existing_workflow or {}):
+        workflow['deep_research_authorized'] = _normalize_bool(
+            workflow_data.get('deep_research_authorized', (existing_workflow or {}).get('deep_research_authorized', False)),
+        )
+        for field in ('deep_research_authorized_by', 'deep_research_authorized_at'):
+            workflow[field] = _normalize_text(
+                workflow_data.get(field, (existing_workflow or {}).get(field)), 'Deep research authorization',
+            ) if workflow['deep_research_authorized'] else ''
     normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
     if workflow.get('definition_version') == 3:
         from functions_workflow_loop_runners import validate_workflow_loop_runners

@@ -52,6 +52,114 @@ export type WorkflowTaskRunnerType = 'inherit' | 'agent' | 'model';
 export type WorkflowInputProcessing = 'full' | 'saved_record_report';
 export type WorkflowInputOutput = WorkflowOutputKind | 'authoritative' | 'documents';
 export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
+export type WorkflowChatExecutionMode = 'orchestration' | 'selected' | 'off';
+export type WorkflowVisualRequirement = 'chart' | 'diagram' | 'image_proposal';
+export interface WorkflowChatExecution {
+    version: 1;
+    mode: WorkflowChatExecutionMode;
+    required_capabilities: string[];
+    visual_requirements: WorkflowVisualRequirement[];
+}
+export interface WorkflowResultsDelivery {
+    version: 1;
+    mode: 'history' | 'conversation' | 'task';
+    conversation_type: 'personal' | 'shared' | 'group' | 'group_shared';
+    recipient_ids: string[];
+    all_group_members: boolean;
+}
+export interface WorkflowConfigurationOption {
+    id: string;
+    label: string;
+    available?: boolean;
+    reason?: string;
+}
+export const WORKFLOW_CAPABILITY_IDS = [
+    'document_search', 'document_analyze', 'document_compare', 'tabular_analyze',
+    'tabular_inspect', 'tabular_merge', 'document_merge', 'document_inspect',
+    'document_create_from_reference', 'document_refresh', 'web_search', 'url_fetch',
+    'deep_research', 'agent_invoke', 'action_invoke', 'compose', 'generate_image',
+    'render_file',
+] as const;
+export const WORKFLOW_VISUAL_REQUIREMENTS = ['chart', 'diagram', 'image_proposal'] as const;
+
+export function normalizeWorkflowChatExecution(value: unknown): WorkflowChatExecution {
+    if (!isRecord(value) || Object.keys(value).some((key) =>
+        !['version', 'mode', 'required_capabilities', 'visual_requirements'].includes(key)) || value.version !== 1) {
+        throw new Error('Chat execution must be an object with supported fields and version 1.');
+    }
+    if (!['orchestration', 'selected', 'off'].includes(String(value.mode)) || typeof value.mode !== 'string') {
+        throw new Error('Chat execution mode must be orchestration, selected, or off.');
+    }
+    const capabilities = Object.hasOwn(value, 'required_capabilities') ? value.required_capabilities : [];
+    const visuals = Object.hasOwn(value, 'visual_requirements') ? value.visual_requirements : [];
+    if (!Array.isArray(capabilities) || capabilities.length > WORKFLOW_CAPABILITY_IDS.length ||
+        capabilities.some((id) => typeof id !== 'string' || !(WORKFLOW_CAPABILITY_IDS as readonly string[]).includes(id))) {
+        throw new Error('Required capabilities contains an unsupported selection.');
+    }
+    if (!Array.isArray(visuals) || visuals.length > WORKFLOW_VISUAL_REQUIREMENTS.length ||
+        visuals.some((id) => typeof id !== 'string' || !(WORKFLOW_VISUAL_REQUIREMENTS as readonly string[]).includes(id))) {
+        throw new Error('Visual requirements contains an unsupported selection.');
+    }
+    if (value.mode !== 'selected' && (capabilities.length || visuals.length)) {
+        throw new Error('Only selected mode accepts capability or visual requirements.');
+    }
+    if (value.mode === 'selected' && !capabilities.length && !visuals.length) {
+        throw new Error('Selected mode requires at least one capability or visual requirement.');
+    }
+    return {
+        version: 1, mode: value.mode as WorkflowChatExecutionMode,
+        required_capabilities: [...new Set(capabilities)],
+        visual_requirements: [...new Set(visuals)] as WorkflowVisualRequirement[],
+    };
+}
+
+export function resolveWorkflowChatExecution(
+    workflow: Pick<WorkflowDefinition, 'chat_execution'>,
+    task?: Pick<WorkflowTask, 'chat_execution'>,
+): WorkflowChatExecution | undefined {
+    return task && Object.hasOwn(task, 'chat_execution') && task.chat_execution !== undefined
+        ? normalizeWorkflowChatExecution(task.chat_execution)
+        : workflow.chat_execution === undefined ? undefined : normalizeWorkflowChatExecution(workflow.chat_execution);
+}
+
+export function normalizeWorkflowResultsDelivery(value: unknown, scope: WorkflowScope): WorkflowResultsDelivery {
+    if (!isRecord(value) || Object.keys(value).some((key) =>
+        !['version', 'mode', 'conversation_type', 'recipient_ids', 'all_group_members'].includes(key)) || value.version !== 1) {
+        throw new Error('Results delivery must be an object with supported fields and version 1.');
+    }
+    if (typeof value.mode !== 'string' || !['history', 'conversation', 'task'].includes(value.mode)) {
+        throw new Error('Results delivery mode must be history, conversation, or task.');
+    }
+    const allowedTypes = scope.type === 'group' ? ['group', 'group_shared'] : ['personal', 'shared'];
+    const conversationType = Object.hasOwn(value, 'conversation_type') ? value.conversation_type : allowedTypes[0];
+    if (typeof conversationType !== 'string' || !allowedTypes.includes(conversationType)) {
+        throw new Error("Results conversations must stay in the workflow's own scope.");
+    }
+    const rawRecipients = Object.hasOwn(value, 'recipient_ids') ? value.recipient_ids : [];
+    if (!Array.isArray(rawRecipients) || rawRecipients.length > 100 || rawRecipients.some((id) =>
+        typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+        throw new Error('Results recipients must be a list of at most 100 canonical user ids.');
+    }
+    const recipients = [...new Set<string>(rawRecipients.map((id: string) => id.toLowerCase()))];
+    const allMembers = Object.hasOwn(value, 'all_group_members') ? value.all_group_members : false;
+    if (typeof allMembers !== 'boolean') throw new Error('All group members must be a boolean.');
+    if (allMembers && (conversationType !== 'group_shared' || value.mode !== 'conversation')) {
+        throw new Error('All group members is supported only for shared group results.');
+    }
+    const shared = ['shared', 'group_shared'].includes(conversationType);
+    if ((recipients.length || allMembers) && (value.mode !== 'conversation' || !shared)) {
+        throw new Error('Only shared results conversations accept recipients.');
+    }
+    if (allMembers && recipients.length) throw new Error('Choose named recipients or all current group members, not both.');
+    if (value.mode === 'conversation' && shared && !recipients.length && !allMembers) {
+        throw new Error('Shared results require named recipients or all current group members.');
+    }
+    return {
+        version: 1, mode: value.mode as WorkflowResultsDelivery['mode'],
+        conversation_type: conversationType as WorkflowResultsDelivery['conversation_type'],
+        recipient_ids: recipients, all_group_members: allMembers,
+    };
+}
 export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison' | 'merge' | 'choose';
 export type WorkflowMergeKind = 'tabular' | 'workbook' | 'pdf' | 'docx' | 'pptx';
 export type WorkflowMergeTargetMode = 'selected' | 'all' | 'recent' | 'changed';
@@ -90,6 +198,20 @@ export interface WorkflowModelOption {
 }
 
 export interface WorkflowEditorOptions {
+    workflow_assist_available?: boolean;
+    chat_execution?: {
+        modes: WorkflowConfigurationOption[];
+        capabilities: WorkflowConfigurationOption[];
+        visual_requirements: WorkflowConfigurationOption[];
+        default?: WorkflowChatExecution | null;
+    };
+    results_delivery?: {
+        modes: WorkflowConfigurationOption[];
+        conversation_types: WorkflowConfigurationOption[];
+        recipient_choices: WorkflowConfigurationOption[];
+        allow_all_group_members: boolean;
+        default: WorkflowResultsDelivery;
+    };
     document_workspaces?: (import('./workflowDocumentSelection').DocumentScope & { name: string })[];
     definition_version: 2;
     supported_definition_versions?: number[];
@@ -437,6 +559,7 @@ export interface WorkflowTask {
     instructions: string;
     order: number;
     runner: WorkflowTaskRunner;
+    chat_execution?: WorkflowChatExecution;
     document_action?: WorkflowDocumentAction;
     inputs?: (WorkflowInputBinding | WorkflowFlowBinding)[];
     input_processing?: WorkflowInputProcessing;
@@ -490,6 +613,8 @@ export interface WorkflowDefinition {
     model_id?: string;
     m365_run_as_user_id?: string;
     chat_capabilities_enabled: boolean;
+    chat_execution?: WorkflowChatExecution;
+    results_delivery?: WorkflowResultsDelivery;
     trigger_type: WorkflowTriggerType;
     schedule: WorkflowSchedule;
     is_enabled: boolean;
@@ -983,7 +1108,7 @@ export function createWorkflowTask(index: number): WorkflowTask {
     };
 }
 
-export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition {
+export function newWorkflowDefinition(scope: WorkflowScope, options?: WorkflowEditorOptions | null): WorkflowDefinition {
     return {
         definition_version: 2,
         durable_execution: true,
@@ -993,7 +1118,15 @@ export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition 
         model_endpoint_id: '',
         model_id: '',
         m365_run_as_user_id: '',
-        chat_capabilities_enabled: false,
+        chat_capabilities_enabled: true,
+        ...(options?.chat_execution?.default ? { chat_execution: structuredClone(options.chat_execution.default) } : {}),
+        results_delivery: structuredClone(options?.results_delivery?.default ?? {
+            version: 1,
+            mode: 'conversation',
+            conversation_type: scope.type === 'group' ? 'group' : 'personal',
+            recipient_ids: [],
+            all_group_members: false,
+        }),
         trigger_type: 'manual',
         schedule: { unit: 'minutes', value: 15 },
         is_enabled: true,
@@ -1690,11 +1823,16 @@ export function workflowForSave(
         model_id: draft.runner_type === 'model' ? draft.model_id || '' : '',
         m365_run_as_user_id: text(draft.m365_run_as_user_id ?? original?.m365_run_as_user_id),
         chat_capabilities_enabled: draft.chat_capabilities_enabled,
+        chat_execution: draft.chat_execution === undefined ? undefined : normalizeWorkflowChatExecution(draft.chat_execution),
+        results_delivery: draft.results_delivery === undefined ? undefined : normalizeWorkflowResultsDelivery(draft.results_delivery, scope),
         trigger_type: draft.trigger_type,
         schedule: draft.schedule,
         is_enabled: draft.is_enabled,
         error_handling: draft.error_handling,
-        tasks: draft.tasks.map((task, index) => ({ ...task, order: index + 1 })),
+        tasks: draft.tasks.map((task, index) => ({
+            ...task, order: index + 1,
+            ...(task.chat_execution !== undefined ? { chat_execution: normalizeWorkflowChatExecution(task.chat_execution) } : {}),
+        })),
         task_prompt: draft.tasks[0]?.instructions.trim() || '',
         reference_inputs: draft.reference_inputs,
         ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
@@ -1712,6 +1850,7 @@ export function workflowForSave(
 // Mirrors the server's authored revision fields; the compiler contract test checks parity.
 export const WORKFLOW_DEFINITION_FIELDS = [
     'name', 'description', 'task_prompt', 'tasks', 'runner_type', 'chat_capabilities_enabled',
+    'chat_execution', 'results_delivery',
     'trigger_type', 'is_enabled', 'schedule', 'error_handling', 'document_action', 'analyze',
     'file_sync', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'm365_run_as_user_id',
     'url_access_enabled', 'alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation',
@@ -1746,6 +1885,8 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         'model_id',
         'm365_run_as_user_id',
         'chat_capabilities_enabled',
+        'chat_execution',
+        'results_delivery',
         'trigger_type',
         'schedule',
         'is_enabled',
@@ -2131,6 +2272,43 @@ export function workflowValidationErrors(
     }
     const unsupported = flowUnsupportedReason(draft, options);
     if (unsupported) errors.push(unsupported);
+    const checkChatExecution = (value: unknown, label: string) => {
+        try {
+            const configuration = normalizeWorkflowChatExecution(value);
+            const catalog = options.chat_execution;
+            const mode = catalog?.modes.find((entry) => entry.id === configuration.mode);
+            if (catalog && (!mode || mode.available === false)) {
+                errors.push(`${label}: ${mode?.reason || 'This execution mode is unavailable.'}`);
+            }
+            if (configuration.mode === 'selected' && catalog) {
+                for (const [ids, choices] of [
+                    [configuration.required_capabilities, catalog.capabilities],
+                    [configuration.visual_requirements, catalog.visual_requirements],
+                ] as const) {
+                    for (const id of ids) {
+                        const choice = choices.find((entry) => entry.id === id);
+                        if (!choice || choice.available === false) {
+                            errors.push(`${label}: ${choice?.label || id} is unavailable${choice?.reason ? `: ${choice.reason}` : '.'}`);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            errors.push(`${label}: ${error instanceof Error ? error.message : 'Invalid chat execution settings.'}`);
+        }
+    };
+    if (draft.chat_execution !== undefined) checkChatExecution(draft.chat_execution, 'Workflow chat capabilities');
+    draft.tasks.forEach((task, index) => {
+        if (task.chat_execution !== undefined) checkChatExecution(task.chat_execution, `Task ${index + 1} chat capabilities`);
+    });
+    if (draft.results_delivery !== undefined) {
+        try {
+            normalizeWorkflowResultsDelivery(draft.results_delivery, draft.group_id
+                ? { type: 'group', groupId: String(draft.group_id) } : { type: 'personal' });
+        } catch (error) {
+            errors.push(error instanceof Error ? error.message : 'Invalid results delivery settings.');
+        }
+    }
     errors.push(...workflowSettingsDraftErrors(draft, options, original ?? null, fileSyncListing));
     if (replayTask) {
         return errors;

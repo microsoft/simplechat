@@ -16,7 +16,7 @@ import {
 import {
     STALE_DRAFT_MESSAGE, WORKFLOW_ASSIST_INSTRUCTION_LIMIT, WorkflowAssistRequestError, assistDraftUnchanged,
     browserTimeZone, buildWorkflowAssistRequest, postWorkflowAssist, rebaseAssistCandidate, requestDraftInstructions,
-    verifyAssistChanges, withDraftedInstructions, workflowAssistReplay, workflowAssistTurnLabel, workflowFlowNodeIds,
+    verifyAssistChanges, withDraftedInstructions, workflowAssistReplay, workflowAssistThreadKey, workflowAssistTurnLabel, workflowFlowNodeIds,
     type WorkflowAssistApply, type WorkflowAssistHistoryView, type WorkflowAssistRequest, type WorkflowAssistTurnRecord,
 } from '../../lib/workflowAssist';
 import { workflowTaskKey, type WorkflowChange } from '../../lib/workflowChangeTracking';
@@ -62,7 +62,7 @@ export interface WorkflowAssistFocus {
 }
 
 export interface UseWorkflowAssistOptions {
-    /** Ask AI is offered: the setting is on for this user, the workflow is personal, and the editor can write. */
+    /** Ask AI is authorized in this workflow's scope and the editor can write. */
     readonly available: boolean;
     readonly history: AuthoringHistory;
     readonly options: WorkflowEditorOptions;
@@ -124,7 +124,7 @@ export function useWorkflowAssist({
 }: UseWorkflowAssistOptions): WorkflowAssist {
     const { session, draft } = history;
     const [newDraftKey] = useState(() => `workflow:new:${makeSubmissionId()}`);
-    const key = available ? (workflowId ? `workflow:personal:${workflowId}` : newDraftKey) : null;
+    const key = available ? workflowAssistThreadKey(draft, workflowId || newDraftKey) : null;
     const epoch = workflowAssistEpoch(history.baseline);
     const turns = useWorkflowAssistStore((state) => state.turns);
     const retryUntil = useWorkflowAssistStore((state) => state.retryUntil);

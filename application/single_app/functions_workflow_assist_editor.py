@@ -2,7 +2,7 @@
 """
 Python mirror of the V2 workflow editor logic the AI workflow assistant depends on.
 
-Version: 0.261.208
+Version: 0.261.343
 Implemented in: 0.261.208
 
 The assistant returns a candidate that the V2 editor applies with ``applyAssist``. To check that
@@ -31,7 +31,7 @@ non-string as unknown. The assistant refuses a draft carrying such a value befor
 the two never disagree. Numbers follow JSON's round trip (``strip_undefined``): whole numbers below
 1e21 become ints, as they reach the save route.
 
-It imports nothing from the application, so it loads cheaply in tests and in the assistant core.
+It imports only bootstrap-free contracts, so it loads cheaply in tests and in the assistant core.
 """
 
 import copy
@@ -40,6 +40,9 @@ import math
 import re
 import uuid
 
+from functions_workflow_configuration import (
+    new_workflow_configuration, normalize_chat_execution, normalize_results_delivery,
+)
 
 class _Undefined:
     """JavaScript's ``undefined``: a key that ``JSON.stringify`` drops."""
@@ -77,7 +80,8 @@ WORKFLOW_ALERT_FIELDS = ('alert_priority', 'alert_mode', 'alert_rules', 'alert_e
 
 WORKFLOW_AUTHORED_FIELDS = (
     'name', 'description', 'runner_type', 'selected_agent', 'model_endpoint_id', 'model_id',
-    'chat_capabilities_enabled', 'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
+    'chat_capabilities_enabled', 'chat_execution', 'results_delivery',
+    'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
     'tasks', 'reference_inputs', 'durable_execution', 'flow', 'limits', 'file_sync', *WORKFLOW_ALERT_FIELDS,
 )
 
@@ -577,8 +581,15 @@ def create_workflow_task(index):
     }
 
 
-def new_workflow_definition():
-    """``newWorkflowDefinition`` for the personal scope."""
+def new_workflow_definition(scope=None, options=None):
+    """``newWorkflowDefinition`` with the same optional authorized options as V2."""
+    scope = scope or {'type': 'personal'}
+    options = options or {}
+    defaults = new_workflow_configuration(workflow_scope=scope['type'])
+    if (options.get('chat_execution') or {}).get('default') is not None:
+        defaults['chat_execution'] = copy.deepcopy(options['chat_execution']['default'])
+    if (options.get('results_delivery') or {}).get('default') is not None:
+        defaults['results_delivery'] = copy.deepcopy(options['results_delivery']['default'])
     return {
         'definition_version': 2,
         'durable_execution': True,
@@ -588,13 +599,14 @@ def new_workflow_definition():
         'model_endpoint_id': '',
         'model_id': '',
         'm365_run_as_user_id': '',
-        'chat_capabilities_enabled': False,
+        **defaults,
         'trigger_type': 'manual',
         'schedule': {'unit': 'minutes', 'value': 15},
         'is_enabled': True,
         'error_handling': {'strategy': 'halt', 'retry_count': 0},
         'tasks': [create_workflow_task(0)],
         'reference_inputs': [],
+        **({'group_id': scope['groupId']} if scope['type'] == 'group' else {}),
     }
 
 
@@ -776,7 +788,7 @@ def workflow_file_sync_for_save(draft, original):
     }
 
 
-def workflow_for_save(draft, original):
+def workflow_for_save(draft, original, scope=None):
     """``workflowForSave`` for the personal scope, as the JSON the save route receives.
 
     ``draft`` is the editor draft after a JSON round trip, and ``original`` is the stored record
@@ -795,7 +807,10 @@ def workflow_for_save(draft, original):
         raise WorkflowEditorProjectionError(
             'workflow_read_only', 'This workflow cannot be downgraded without losing executable fields.',
         )
-    base = copy.deepcopy(original) if original is not None else new_workflow_definition()
+    scope = scope or (
+        {'type': 'group', 'groupId': draft['group_id']} if draft.get('group_id') else {'type': 'personal'}
+    )
+    base = copy.deepcopy(original) if original is not None else new_workflow_definition(scope)
     original_has_durable = 'durable_execution' in original if original is not None else False
     include_durable = original is None or original_has_durable or draft.get('durable_execution') is True
     runner_type = draft.get('runner_type', UNDEFINED)
@@ -824,7 +839,17 @@ def workflow_for_save(draft, original):
     next_record['m365_run_as_user_id'] = _text(run_as)
     for field in ('chat_capabilities_enabled', 'trigger_type', 'schedule', 'is_enabled', 'error_handling'):
         next_record[field] = draft.get(field, UNDEFINED)
-    next_record['tasks'] = [{**task, 'order': index + 1} for index, task in enumerate(tasks)]
+    next_record['chat_execution'] = (
+        normalize_chat_execution(draft['chat_execution']) if 'chat_execution' in draft else UNDEFINED
+    )
+    next_record['results_delivery'] = (
+        normalize_results_delivery(draft['results_delivery'], workflow_scope=scope['type'])
+        if 'results_delivery' in draft else UNDEFINED
+    )
+    next_record['tasks'] = [{
+        **task, 'order': index + 1,
+        **({'chat_execution': normalize_chat_execution(task['chat_execution'])} if 'chat_execution' in task else {}),
+    } for index, task in enumerate(tasks)]
     next_record['task_prompt'] = _js_trim(tasks[0]['instructions']) if tasks else ''
     next_record['reference_inputs'] = draft.get('reference_inputs', UNDEFINED)
     if structured:
@@ -832,6 +857,8 @@ def workflow_for_save(draft, original):
         next_record['limits'] = copy.deepcopy(draft.get('limits', UNDEFINED))
     if include_durable:
         next_record['durable_execution'] = draft.get('durable_execution') is True
+    if scope['type'] == 'group':
+        next_record['group_id'] = scope['groupId']
     next_record.update(workflow_file_sync_for_save(draft, original))
     next_record.update(workflow_alerts_for_save(draft, original))
     if not include_durable:
@@ -910,6 +937,8 @@ _WORKFLOW_KEY_SPECS = (
     ('error_handling', 'Error handling', ('error_handling',)),
     ('is_enabled', 'Workflow enabled', ('is_enabled',)),
     ('chat_capabilities_enabled', 'Chat capabilities', ('chat_capabilities_enabled',)),
+    ('chat_execution', 'Chat execution', ('chat_execution',)),
+    ('results_delivery', 'Results', ('results_delivery',)),
     ('durable_execution', 'Durable execution', ('durable_execution',)),
     ('file_sync', 'File Sync', ('file_sync',)),
     ('limits', 'Flow limits', ('limits',)),
@@ -923,6 +952,7 @@ _TASK_FIELD_LABELS = {
     'document_action': 'Document action', 'reference_ids': 'Task references', 'inputs': 'Inputs',
     'input_processing': 'Input processing', 'output_contract': 'Output contract', 'approval': 'Approval',
     'publication': 'Publication', 'run_when': 'Run when', 'placement': 'Position in flow',
+    'chat_execution': 'Chat execution',
 }
 _NODE_FIELD_LABELS = {
     'placement': 'Position in flow', 'kind': 'Block type', 'condition': 'Condition', 'inputs': 'Inputs',

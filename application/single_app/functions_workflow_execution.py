@@ -192,7 +192,7 @@ class DurableWorkflowExecution:
         self._approval(record, key, digest, approval)
         previous = units.get(key) or {}
         attempt = int(previous.get("attempt") or 0)
-        if previous.get("state") != "waiting_m365":
+        if previous.get("state") not in {"waiting_m365", "waiting_output"}:
             attempt += 1
         units[key] = {
             "state": "running", "attempt": attempt, "input_digest": digest,
@@ -287,6 +287,10 @@ class DurableWorkflowExecution:
 
     def wait_for_output(self, key, references):
         record = self.check()
+        units = deepcopy(record.get("units") or {})
+        if (units.get(key) or {}).get("state") == "running":
+            units[key]["state"] = "waiting_output"
+            record = self._update(record, {"units": units})
         self.store.wait(self.lease.token, state="waiting_output", gate={
             "id": uuid.uuid4().hex, "kind": "output", "unit_id": key,
             "input_digest": (record.get("units") or {}).get(key, {}).get("input_digest", ""),

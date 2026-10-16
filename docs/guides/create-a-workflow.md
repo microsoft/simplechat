@@ -4,7 +4,7 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
-version: "0.261.333"
+version: "0.261.343"
 ---
 
 ## What this does
@@ -49,7 +49,7 @@ last run failed, was cancelled or completed with task errors, or by **Trigger**.
 
 **Create workflow** and **Edit** open the editor as a page of its own. The
 workflow is laid out in sections: **Basics**, **Trigger and schedule**, **File
-Sync**, **Execution**, **Shared references**, **Tasks** and **Alerts**, with
+Sync**, **Execution**, **Shared references**, **Tasks**, **Results** and **Alerts**, with
 **Limits** for a structured workflow. Each section's header says what it is set
 to, and a chip points out a section that isn't ready, such as **Needs
 configuration** on Basics until the workflow has a name, or on File Sync until
@@ -89,6 +89,63 @@ you need; saving in V2 never brings a deleted workflow back.
 
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
+
+## Choose chat capabilities
+
+Starting in **0.261.343**, new ordinary workflows use **Orchestration
+(automatic)** when your administrator has enabled chat orchestration. Each new
+run plans the saved instructions using the existing available chat tools, under
+the workflow user's identity. A scheduled run does not require an open browser.
+Where orchestration is unavailable, new workflows retain the supported core
+capability default instead.
+
+Choose **Selected capabilities** when a tool is essential. For example, select
+**Search the web** for an events digest that must use current information. A
+checked tool is a requirement, not just permission to consider it: the task
+fails rather than substituting a model-only answer when required execution
+cannot finish. Existing administrator settings, source access and optional role
+policies still apply. Select charts or diagrams when the final answer needs
+those outputs; they are output requirements, not separate search tools.
+
+Tasks inherit the workflow selection unless you choose a task override. An
+override replaces the workflow selection. **Off** uses the existing plain-model
+path where supported. Existing saved workflows keep their former behavior
+until you change their selection; a saved, frozen chat plan keeps its separate
+replay rules.
+
+Ask AI can change the workflow default, a task override, or restore inheritance.
+For example: "Search the web for current Washington, DC events every Friday,
+and create a personal conversation with the results." Review the capability
+and Results changes, not only the task's wording, before saving.
+
+## Choose where results appear
+
+The **Results** section separates the workflow's execution history from the
+outcome people should read:
+
+| Choice | What happens |
+| --- | --- |
+| Run history only | Keep the run's audit and outputs without another automatically delivered conversation. |
+| Create a results conversation | Publish that run's outcome into a new, dated conversation. New ordinary workflows default to a private conversation in their own scope. |
+| Delivered by a task/agent | Let an existing task or agent choose its delivery destination, without an automatic extra result copy. |
+
+A personal workflow can create personal or shared personal results. A group
+workflow can create private group-scoped or shared group results, bound to its
+own group. For shared results, choose named recipients; a shared group result
+also offers **All current group members**, resolved when the run delivers.
+Dynamic recipient discovery remains the responsibility of existing agent
+actions.
+
+Each run has a separate audit conversation. Generated titles use the workflow
+name and run date/time; **Workflow** appears as a tag beneath the title rather
+than a title prefix. Existing conversations and titles are not bulk-renamed.
+Retries reuse the same run and delivery records.
+
+Open the delivered conversation to continue with normal chat capabilities.
+Sharing results does not grant access to the private audit. Alerts open the
+saved results destination, with run history available separately to authorized
+readers. This is distinct from **Ask in chat**, which deliberately answers only
+from a selected saved run.
 
 ## Create a workflow from chat
 
@@ -821,6 +878,9 @@ the workflow to do but not which fields hold it, or to make the same kind of
 change across many tasks. It never saves. Its changes are highlighted like your
 own, and you review them before you save.
 
+From **0.261.343**, this also works for group workflows you can manage, and can
+change chat-capability defaults, task overrides and Results delivery.
+
 From **0.261.332**, a new-workflow goal can generate a name, description, and
 initial task instead of only explaining how to use the editor. Follow-ups such
 as “Give this a name and a description” use the goal already in the thread.
@@ -861,12 +921,12 @@ changing the source system's alarm configuration or sending email. Review each r
 and attention options on the proposal card before creating it. Personal workflows alert their
 owner, not a whole group.
 
-**Ask AI** appears when your administrator has turned the assistant on, the
-workflow is personal, and you can edit it. Group workflows don't offer it.
+**Ask AI** appears when your administrator has turned the assistant on for an
+available workflow scope and you can edit that workflow.
 
 ### Ask for a change
 
-1. Open a personal workflow in the V2 editor, or choose **Edit** on a workflow
+1. Open a personal or authorized group workflow in the V2 editor, or choose **Edit** on a workflow
    proposal in chat.
 2. Choose **Ask AI** at the top of the editor page, or in the footer when the
    editor opens from a chat proposal. To ask about one task, choose
@@ -1225,14 +1285,16 @@ Starting in **0.261.253**, that conversation is where people read the result:
   opening briefing, that message is hidden once the reply arrives. The
   conversation doesn't show the same findings twice, once as if the person the
   workflow runs as had written them. The message is still stored.
-- The workflow's own conversation, **Workflow: *name***, is hidden from the chat
-  list the first time a run delivers its result this way. It still records every
-  run. Open it from the workflow alert's **Show more** links, or with the eye icon
+- The run's audit conversation is hidden from the chat list when its result is
+  delivered this way. From **0.261.343**, each new run has a separate audit with
+  a dated title and a **Workflow** tag. Open it from the workflow alert's
+  **Show more** links, or with the eye icon
   that shows hidden conversations in the classic chat list. If you show it again,
   later runs leave it visible.
 
-A workflow that doesn't create a conversation keeps its results in its own
-conversation, as before.
+A workflow configured for **Run history only** keeps its result in its audit.
+The Results section can create a separate conversation without an agent; use
+**Delivered by a task/agent** when an agent intentionally controls delivery.
 
 ## Troubleshooting
 
@@ -1245,7 +1307,7 @@ conversation, as before.
 | Save is refused with "This schedule runs more often than the administrator allows." | The new or changed interval is shorter than the administrator's minimum | Choose the interval the message names or longer, or use a calendar schedule. |
 | A calendar schedule's time zone isn't accepted | The name isn't an exact IANA time zone that the server offers; names are case-sensitive | Choose a zone from the **Time zone** list, such as `America/New_York`. |
 | The classic editor won't open a workflow | It uses a calendar schedule, advanced data flow, or a **Merge files** task, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
-| The V2 editor has no **Ask AI** tab | The assistant is turned off, the workflow belongs to a group, or the editor can't change the workflow, for example because it's running or you can only view it | Ask an admin to turn on **Enable AI Workflow Assistant**, or open a personal workflow you can edit. |
+| The V2 editor has no **Ask AI** tab | The assistant is turned off, the workflow scope is unavailable, or the editor can't change the workflow, for example because it's running or you can only view it | Ask an admin to check **Enable AI Workflow Assistant** and scope access, or open a workflow you can edit. |
 | Ask AI says the saved workflow changed | Someone saved the workflow after you opened it | Choose **Reload workflow**. Reloading discards your unsaved changes, so copy anything you need first. |
 
 ## Related
